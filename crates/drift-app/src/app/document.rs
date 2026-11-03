@@ -562,10 +562,11 @@ impl DriftApp {
     }
 
     #[cfg(not(feature = "demo"))]
-    fn saved(&self) -> drift_io::Saved {
+    fn saved(&mut self) -> drift_io::Saved {
         let mut meta = self.drawing.file.meta.clone();
         meta.generator = Some(format!("Drift {}", drift_platform::VERSION));
-        drift_io::save_checked(&self.drawing.editor.doc, &meta)
+        // (Mid block edit, as if it had finished: the edit goes on here, #322.)
+        drift_io::save_checked(&self.drawing.editor.doc_as_saved(), &meta)
     }
 
     #[cfg(not(feature = "demo"))]

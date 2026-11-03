@@ -293,6 +293,12 @@ struct Drawing {
     align_edge: Option<drift_core::FillId>,
     /// The previewed page, as of a document revision.
     preview_cache: Option<(u64, drift_core::SheetId, drift_draft::page::Drawing)>,
+    /// While a block is edited in place, the drawing as if editing had finished, that the
+    /// sheet preview draws (see [`Drawing::finished_for_preview`]), kept while the preview
+    /// shows and the layers' switches stay as they were.
+    finished_preview: Option<(PreviewKey, Editor)>,
+    /// How many times `finished_preview` was made (for tests).
+    finished_previews_made: usize,
     /// Delete was pressed with several views picked on a sheet: waiting for a yes.
     confirm_delete_set: bool,
     /// Add view from a sheet in progress: the sheet the view drawn next goes on.
@@ -425,6 +431,8 @@ impl Drawing {
             hatch_snap: None,
             note_edit: None,
             preview_cache: None,
+            finished_preview: None,
+            finished_previews_made: 0,
             confirm_delete_set: false,
             add_view_on: None,
             pdf_left_out: Default::default(),
@@ -857,12 +865,8 @@ impl DriftApp {
                 path: self.drawing.file.path.clone(),
                 dirty,
             };
-            let (doc, file_meta) = (&self.drawing.editor.doc, &self.drawing.file.meta);
-            let text = || {
-                let mut meta = file_meta.clone();
-                meta.generator = Some(format!("Drift {}", drift_platform::VERSION));
-                drift_io::save(doc, &meta)
-            };
+            let (editor, file_meta) = (&mut self.drawing.editor, &self.drawing.file.meta);
+            let text = || session_text(editor, file_meta);
             match slot.write(stamp, text) {
                 Ok(_) => {
                     // (A session from a Drift before session files isn't restored again.)
@@ -872,11 +876,9 @@ impl DriftApp {
                 Err(e) => log::error!("autosave to the session file failed: {e}"),
             }
         }
-        let mut meta = self.drawing.file.meta.clone();
-        meta.generator = Some(format!("Drift {}", drift_platform::VERSION));
         storage.set_string(
             KEY_DOCUMENT,
-            drift_io::save(&self.drawing.editor.doc, &meta),
+            session_text(&mut self.drawing.editor, &self.drawing.file.meta),
         );
         storage.set_string(KEY_NAME, self.drawing.file.name.clone());
         let path = self
@@ -889,6 +891,19 @@ impl DriftApp {
         storage.set_string(KEY_PATH, path);
         storage.set_string(KEY_DIRTY, if self.is_dirty() { "1" } else { "0" }.into());
     }
+}
+
+/// What a sheet preview's finished drawing was made from: the block edit's group and each
+/// layer's shown and printed switches.
+type PreviewKey = (drift_core::GroupId, Vec<(drift_core::LayerId, bool, bool)>);
+
+/// The text an autosave keeps of the drawing: mid block edit, as if it had finished, so a
+/// restored session isn't doubled (#322).
+#[cfg(not(feature = "demo"))]
+fn session_text(editor: &mut Editor, file_meta: &drift_io::Metadata) -> String {
+    let mut meta = file_meta.clone();
+    meta.generator = Some(format!("Drift {}", drift_platform::VERSION));
+    drift_io::save(&editor.doc_as_saved(), &meta)
 }
 
 /// Time the solver on chained-rectangle sketches (one connected component each).

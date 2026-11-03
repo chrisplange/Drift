@@ -974,6 +974,16 @@ pub fn sheet_drawing(
     d
 }
 
+/// Run `f` (something that prints or exports the drawing) on the drawing as if a block
+/// being edited in place had finished, so the block shows once, as it now stands; outside a
+/// block edit, on `ed` itself. The edit in `ed` goes on untouched.
+pub fn as_finished<R>(ed: &mut Editor, f: impl FnOnce(&mut Editor) -> R) -> R {
+    match ed.finished_view() {
+        Some(mut finished) => f(&mut finished),
+        None => f(ed),
+    }
+}
+
 /// Model space at true size (world millimetres), for DXF. Annotations are sized for the
 /// document's drawing scale, and line type patterns scaled by it.
 pub fn model_drawing(

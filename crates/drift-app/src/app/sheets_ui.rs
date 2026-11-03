@@ -366,20 +366,17 @@ impl DriftApp {
         let count = sheets.len();
         self.hatch_patterns
             .update(self.drawing.editor.doc.custom_patterns());
-        sheets
-            .iter()
-            .enumerate()
-            .map(|(i, (s, views))| {
-                crate::output::sheet_drawing(
-                    &mut self.drawing.editor,
-                    &self.hatch_patterns,
-                    painter,
-                    s,
-                    views,
-                    (i + 1, count),
-                )
-            })
-            .collect()
+        let patterns = &self.hatch_patterns;
+        // (Mid block edit, with the block as it now stands.)
+        crate::output::as_finished(&mut self.drawing.editor, |ed| {
+            sheets
+                .iter()
+                .enumerate()
+                .map(|(i, (s, views))| {
+                    crate::output::sheet_drawing(ed, patterns, painter, s, views, (i + 1, count))
+                })
+                .collect()
+        })
     }
 
     #[cfg(not(feature = "demo"))]
@@ -443,13 +440,17 @@ impl DriftApp {
         self.hatch_patterns
             .update(self.drawing.editor.doc.custom_patterns());
         let only = self.model_scope();
-        let d = crate::output::model_page(
-            &mut self.drawing.editor,
-            &self.hatch_patterns,
-            painter,
-            only.as_ref(),
-            self.model_annotations,
-        );
+        let (patterns, annotate) = (&self.hatch_patterns, self.model_annotations);
+        let page = |ed: &mut Editor| {
+            crate::output::model_page(ed, patterns, painter, only.as_ref(), annotate)
+        };
+        // Mid block edit: everything with the block as it now stands; the selection (of the
+        // drawing as it is here, where its ids are) as it is, the copy being edited not in it.
+        let d = if only.is_some() {
+            page(&mut self.drawing.editor)
+        } else {
+            crate::output::as_finished(&mut self.drawing.editor, page)
+        };
         (!d.items.is_empty()).then_some(d)
     }
 
@@ -489,12 +490,10 @@ impl DriftApp {
     ) -> Result<Vec<u8>, String> {
         self.hatch_patterns
             .update(self.drawing.editor.doc.custom_patterns());
-        crate::output::cad_file(
-            &mut self.drawing.editor,
-            &self.hatch_patterns,
-            painter,
-            format,
-        )
+        let patterns = &self.hatch_patterns;
+        crate::output::as_finished(&mut self.drawing.editor, |ed| {
+            crate::output::cad_file(ed, patterns, painter, format)
+        })
     }
 
     /// Export DWG / DXF: first the dialog choosing the format.
@@ -1351,8 +1350,9 @@ impl DriftApp {
             self.hatch_patterns
                 .update(self.drawing.editor.doc.custom_patterns());
             let views = self.drawing.editor.doc.placed_views(&sheet);
+            let ed = self.drawing.finished_for_preview();
             let d = crate::output::sheet_drawing(
-                &mut self.drawing.editor,
+                ed,
                 &self.hatch_patterns,
                 &painter,
                 &sheet,
@@ -2519,6 +2519,41 @@ impl DriftApp {
         self.drawing.view.preview.center
             + DVec2::new(f64::from(v.x), -f64::from(v.y))
                 / f64::from(self.drawing.view.preview.zoom)
+    }
+}
+
+impl crate::Drawing {
+    /// What the sheet preview draws the model from: while a block is edited in place, the
+    /// drawing as if editing had finished, made once while the preview shows (again only if a
+    /// layer's switches change; the sheet and its views come from the drawing here, so they
+    /// follow every change). Making it takes as long as finding the drawing's areas, so a
+    /// change to the model made meanwhile shows when editing finishes or the preview is
+    /// shown again. Otherwise the drawing itself.
+    pub(crate) fn finished_for_preview(&mut self) -> &mut Editor {
+        let ed = &mut self.editor;
+        let Some(group) = ed
+            .block_edit
+            .map(|e| e.group)
+            .filter(|_| ed.edit_group().is_some())
+        else {
+            self.finished_preview = None;
+            return &mut self.editor;
+        };
+        let key = (
+            group,
+            ed.doc
+                .layers()
+                .map(|(id, l)| (id, l.visible, l.printable))
+                .collect(),
+        );
+        if self.finished_preview.as_ref().map(|(k, _)| k) != Some(&key) {
+            self.finished_preview = ed.finished_view().map(|view| (key, view));
+            self.finished_previews_made += 1;
+        }
+        match &mut self.finished_preview {
+            Some((_, view)) => view,
+            None => &mut self.editor,
+        }
     }
 }
 

@@ -147,6 +147,8 @@ impl Editor {
             return false;
         }
         self.refresh_driven();
+        // (Before adopting: a copy made in a block edit joins it as curves.)
+        self.explode_copies_in_block_edit();
         self.adopt_into_open_group();
         self.make_new_curves_construction();
         self.follow_walls();
@@ -535,8 +537,10 @@ impl Editor {
     pub fn undo(&mut self) -> bool {
         self.settle_areas();
         let done = self.history.undo(&mut self.doc);
-        // (Past the start of a block edit or a group's making, nothing is open any more.)
+        // (Past the start of a block edit or a group's making, nothing is open any more;
+        // back past its end, the block edit is open again.)
         self.drop_lost_edit();
+        self.resume_block_edit();
         // (Fills are back as they were: whether each was kept whole across curves is found
         // again when it is next looked at, and shapes' areas and holes now.)
         self.fill_crossed.clear();
@@ -549,8 +553,10 @@ impl Editor {
     pub fn redo(&mut self) -> bool {
         self.settle_areas();
         let done = self.history.redo(&mut self.doc);
-        // (Past the start of a block edit or a group's making, nothing is open any more.)
+        // (Past the start of a block edit or a group's making, nothing is open any more;
+        // back past its end, the block edit is open again.)
         self.drop_lost_edit();
+        self.resume_block_edit();
         // (Fills are back as they were: whether each was kept whole across curves is found
         // again when it is next looked at, and shapes' areas and holes now.)
         self.fill_crossed.clear();

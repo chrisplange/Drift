@@ -254,6 +254,38 @@ impl Document {
             .is_some_and(|j| matches!(j.get(&Key::Fill(id)), Some(None)))
     }
 
+    /// Block copies added in the open transaction (that still exist).
+    pub fn instances_created_in_transaction(&self) -> Vec<InstanceId> {
+        let Some(journal) = &self.journal else {
+            return Vec::new();
+        };
+        let mut ids: Vec<InstanceId> = journal
+            .iter()
+            .filter_map(|(key, before)| match (key, before) {
+                (Key::Instance(id), None) if self.instances.contains_key(id) => Some(*id),
+                _ => None,
+            })
+            .collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    /// Texts added in the open transaction (that still exist).
+    pub fn texts_created_in_transaction(&self) -> Vec<TextId> {
+        let Some(journal) = &self.journal else {
+            return Vec::new();
+        };
+        let mut ids: Vec<TextId> = journal
+            .iter()
+            .filter_map(|(key, before)| match (key, before) {
+                (Key::Text(id), None) if self.texts.contains_key(id) => Some(*id),
+                _ => None,
+            })
+            .collect();
+        ids.sort_unstable();
+        ids
+    }
+
     /// Entity `id` as it was when the open transaction began (as it is now outside one, or
     /// if the transaction hasn't touched it). None if it didn't exist then.
     pub fn entity_before_transaction(&self, id: EntityId) -> Option<Entity> {

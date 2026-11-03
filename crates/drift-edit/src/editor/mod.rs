@@ -212,6 +212,12 @@ pub struct Editor {
     pub hovered_instance: Option<drift_core::InstanceId>,
     /// A block being edited in place.
     pub block_edit: Option<crate::blocks::BlockEdit>,
+    /// Every block edit begun in this drawing, by its group: an undo or redo that brings
+    /// the group back is back in that edit (#319). (Group ids aren't used twice.)
+    pub(crate) block_edits: HashMap<drift_core::GroupId, crate::blocks::BlockEdit>,
+    /// The copies the last commit turned into a block's curves, inside a block edit (a
+    /// block holds no copies, #318), and the curves each became.
+    pub(crate) exploded: HashMap<drift_core::InstanceId, Vec<EntityId>>,
     /// What the Base point tool's click is for: a block's new base point, or the base point
     /// of a block being made.
     pub base_point_pick: Option<crate::blocks::BasePointPick>,
@@ -316,6 +322,16 @@ pub struct Editor {
 pub(crate) type LoweringCache = Option<(u64, Option<std::rc::Rc<drift_solver::Lowering>>)>;
 
 impl Editor {
+    /// An editor over `doc` with `prefs` and nothing worked out yet (no snap index, no
+    /// analysis): what only reads the drawing, such as output, needs no more.
+    pub(crate) fn bare(doc: Document, prefs: EditPrefs) -> Self {
+        Self {
+            doc,
+            prefs,
+            ..Default::default()
+        }
+    }
+
     pub fn new(doc: Document) -> Self {
         let mut editor = Self {
             doc,

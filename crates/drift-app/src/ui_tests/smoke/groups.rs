@@ -530,3 +530,69 @@ fn smoke_block_edit_stays_inside_until_esc() {
     assert!(ed.block_edit.is_none(), "Esc finished editing");
     assert_eq!(ed.doc.block(block).unwrap().fills.len(), 1);
 }
+
+/// #318 #319: undo and redo across Edit block and Finish stay in block edit mode, and a copy
+/// placed while editing goes into the block as curves (Esc ends the Place block tool first,
+/// then the edit).
+#[test]
+fn smoke_block_edit_undo_redo_keeps_editing() {
+    let Some(mut h) = harness() else { return };
+    view(&mut h, DVec2::new(-10.0, -20.0), DVec2::new(130.0, 50.0));
+    let (sides, _) = rectangle(&mut h, DVec2::ZERO, DVec2::new(40.0, 30.0), Fill::No);
+    let (copy, block) = {
+        let ed = &mut h.state_mut().drawing.editor;
+        ed.selection = sides.iter().copied().collect();
+        let copy = ed.make_block("Box").unwrap();
+        ed.selected_instances.clear();
+        (copy, ed.doc.instance(copy).unwrap().block)
+    };
+    h.run();
+    let inside = screen(&h, DVec2::new(10.0, 15.0));
+    let editing = |h: &Harness<'_, DriftApp>| {
+        h.state().drawing.editor.block_edit.map(|e| e.instance) == Some(copy)
+            && h.query_by_label("Finish editing").is_some()
+    };
+    double_click(&mut h, inside);
+    assert!(editing(&h), "editing the block");
+    // Undo leaves it; redo is back in it.
+    h.key_press_modifiers(EguiModifiers::COMMAND, Key::Z);
+    h.run();
+    assert!(h.state().drawing.editor.block_edit.is_none());
+    h.key_press_modifiers(EguiModifiers::COMMAND | EguiModifiers::SHIFT, Key::Z);
+    h.run();
+    assert!(editing(&h), "redo edits the block again");
+    // Place block inside it: the copy lands as the block's curves.
+    h.state_mut().drawing.editor.place_block = Some(block);
+    h.key_press(Key::I);
+    h.run();
+    assert_eq!(h.state().tool.kind(), ToolKind::Block);
+    click_world(&mut h, DVec2::new(80.0, 10.0));
+    assert_eq!(h.state().drawing.editor.doc.instances().count(), 1);
+    // Esc ends the tool, not the edit; Esc again finishes.
+    h.key_press(Key::Escape);
+    h.run();
+    assert_eq!(h.state().tool.kind(), ToolKind::Select);
+    assert!(editing(&h), "Esc ended the tool only");
+    h.key_press(Key::Escape);
+    h.run();
+    {
+        let ed = &h.state().drawing.editor;
+        assert!(ed.block_edit.is_none(), "Esc finished editing");
+        assert_eq!(ed.doc.block(block).unwrap().items.len(), 8);
+    }
+    // Undo of the finish: editing again, with one copy and the block as it was.
+    h.key_press_modifiers(EguiModifiers::COMMAND, Key::Z);
+    h.run();
+    assert!(editing(&h), "undo of Finish edits the block again");
+    {
+        let ed = &h.state().drawing.editor;
+        assert_eq!(ed.doc.instances().count(), 1);
+        assert_eq!(ed.doc.block(block).unwrap().items.len(), 4);
+    }
+    h.key_press_modifiers(EguiModifiers::COMMAND | EguiModifiers::SHIFT, Key::Z);
+    h.run();
+    let ed = &h.state().drawing.editor;
+    assert!(ed.block_edit.is_none());
+    assert_eq!(ed.doc.block(block).unwrap().items.len(), 8);
+    assert_eq!(ed.doc.groups().count(), 0);
+}

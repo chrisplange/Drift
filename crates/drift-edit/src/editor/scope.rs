@@ -28,6 +28,14 @@ impl Editor {
         {
             return Some(scope.clone());
         }
+        let scope = std::rc::Rc::new(self.group_scope(g)?);
+        *self.edit_scope_cache.borrow_mut() = Some((g, structure, scope.clone()));
+        Some(scope)
+    }
+
+    /// What a group open for editing holds, found now: its members, the points of their
+    /// curves, and what walls, openings and offsets made of them generate.
+    pub(crate) fn group_scope(&self, g: drift_core::GroupId) -> Option<HashSet<EntityId>> {
         let members = &self.doc.group(g)?.members;
         let mut scope: HashSet<EntityId> = members.iter().copied().collect();
         scope.extend(self.doc.defining_points(members.iter().copied()));
@@ -56,8 +64,6 @@ impl Editor {
             .collect();
         scope.extend(self.doc.defining_points(made.iter().copied()));
         scope.extend(made);
-        let scope = std::rc::Rc::new(scope);
-        *self.edit_scope_cache.borrow_mut() = Some((g, structure, scope.clone()));
         Some(scope)
     }
 
@@ -152,5 +158,38 @@ impl Editor {
             self.scoped_regions = None;
             self.region_moving = None;
         }
+    }
+
+    /// After an undo or redo: back in the block edit whose group is there again (redo of
+    /// "Edit block", undo of "Finish editing block", #319), when its copy still places its
+    /// block. Otherwise nothing is open.
+    pub(crate) fn resume_block_edit(&mut self) {
+        if self.block_edit.is_some() {
+            return;
+        }
+        let holds = |e: &crate::blocks::BlockEdit| {
+            self.doc.group(e.group).is_some()
+                && self.doc.block(e.block).is_some()
+                && self
+                    .doc
+                    .instance(e.instance)
+                    .is_some_and(|i| i.block == e.block)
+        };
+        // (One at most: an edit's group goes when it finishes.)
+        let Some(edit) = self
+            .block_edits
+            .values()
+            .filter(|e| holds(e))
+            .max_by_key(|e| e.group)
+            .copied()
+        else {
+            return;
+        };
+        self.block_edit = Some(edit);
+        self.open_group = Some(edit.group);
+        self.scoped_regions = None;
+        self.region_moving = None;
+        // (No copies stay picked inside a block edit: the one edited among them.)
+        self.retain_in_scope();
     }
 }

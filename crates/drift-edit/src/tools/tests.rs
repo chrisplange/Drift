@@ -3689,12 +3689,380 @@ fn undo_past_entering_a_block_edit_leaves_it() {
     assert_eq!(ed.instance_at(v(0.0, 5.0), TOL), Some(copy));
     assert_eq!(ed.doc.block(block).unwrap().items, items);
     assert_eq!(ed.doc.instance(copy).unwrap().at, at);
-    // Redo puts the exploded geometry back (as a plain group: redo doesn't edit again).
+    // Redo puts the exploded geometry back, being edited again (#319).
     assert!(ed.redo());
-    assert!(ed.block_edit.is_none());
+    assert!(ed.block_edit.is_some());
     assert!(ed.doc.contains(loose));
     assert!(ed.undo());
     assert_eq!(ed.instance_at(v(0.0, 5.0), TOL), Some(copy));
+}
+
+/// The curves copy `copy` shows, in the world.
+fn copy_shapes(ed: &Editor, copy: drift_core::InstanceId) -> Vec<Shape> {
+    ed.doc
+        .instance_items(copy)
+        .into_iter()
+        .map(|i| i.shape)
+        .filter(|s| !matches!(s, Shape::Point(_)))
+        .collect()
+}
+
+/// Whether `shapes` hold the line from `a` to `b` (either way round).
+fn has_line(shapes: &[Shape], a: DVec2, b: DVec2) -> bool {
+    shapes.iter().any(|s| {
+        matches!(s, Shape::Line { a: p, b: q }
+            if (p.distance(a) < 1e-6 && q.distance(b) < 1e-6)
+                || (p.distance(b) < 1e-6 && q.distance(a) < 1e-6))
+    })
+}
+
+#[test]
+fn an_offset_made_in_a_block_edit_goes_into_the_block() {
+    let (mut ed, copy, other, _, _) = block_edit_fixture();
+    let block = ed.doc.instance(copy).unwrap().block;
+    let entities = ed.doc.len();
+    ed.edit_block(copy);
+    // The short line above the rectangle, offset 2 up.
+    let short = member_line(&ed, v(15.0, 20.0), v(18.0, 20.0));
+    let x = ed.offset(short, 2.0, v(16.0, 25.0)).expect("offset");
+    assert!(ed.in_scope(ed.offset_curves(x)[0]));
+    ed.finish_block_edit();
+    assert!(ed.block_edit.is_none());
+    assert_eq!(ed.doc.block(block).unwrap().items.len(), 6);
+    // Every copy shows it: the second, 100 to the right, too.
+    assert!(has_line(
+        &copy_shapes(&ed, copy),
+        v(15.0, 22.0),
+        v(18.0, 22.0)
+    ));
+    assert!(has_line(
+        &copy_shapes(&ed, other),
+        v(115.0, 22.0),
+        v(118.0, 22.0)
+    ));
+    // Nothing of the edit is left in the drawing (the offset's distance went, and is told).
+    assert_eq!(ed.doc.len(), entities);
+    assert_eq!(ed.doc.offsets().count(), 0);
+    assert_eq!(ed.doc.groups().count(), 0);
+    assert!(
+        ed.out
+            .notice
+            .as_deref()
+            .is_some_and(|n| n.contains("1 left out")),
+        "{:?}",
+        ed.out.notice
+    );
+}
+
+#[test]
+fn a_fill_on_an_offset_in_a_block_edit_goes_into_the_block() {
+    let (mut ed, copy, _, _, _) = block_edit_fixture();
+    let block = ed.doc.instance(copy).unwrap().block;
+    ed.edit_block(copy);
+    // The rectangle offset 2 inwards, and the area inside the offset filled (its outline is
+    // all offset pieces).
+    let side = member_line(&ed, v(0.0, 0.0), v(20.0, 0.0));
+    ed.offset(side, 2.0, v(10.0, 5.0)).expect("offset");
+    let mut tool = ToolKind::Fill.create();
+    click(&mut ed, tool.as_mut(), v(5.0, 5.0));
+    assert_eq!(ed.doc.fills().count(), 1);
+    ed.finish_block_edit();
+    let b = ed.doc.block(block).unwrap();
+    assert_eq!(b.items.len(), 9);
+    assert_eq!(b.fills.len(), 1);
+    assert_eq!(ed.doc.fills().count(), 0);
+}
+
+#[test]
+fn a_copy_pasted_in_a_block_edit_becomes_block_curves() {
+    let (mut ed, copy, other, _, _) = block_edit_fixture();
+    let block = ed.doc.instance(copy).unwrap().block;
+    ed.selected_instances = [other].into();
+    let clip = ed.copy_selection().expect("copied");
+    ed.edit_block(copy);
+    let before = member_curves(&ed);
+    ed.paste(&clip, Some(v(10.0, 50.0))).expect("pasted");
+    // No copy inside a block: the pasted one is the block's curves, picked.
+    assert_eq!(ed.doc.instances().count(), 2);
+    assert!(ed.selected_instances.is_empty());
+    let now = member_curves(&ed);
+    assert_eq!(now.len(), before.len() + 5);
+    assert_eq!(ed.selection.len(), 5);
+    assert!(
+        ed.selection
+            .iter()
+            .all(|id| now.contains(id) && !before.contains(id))
+    );
+    assert!(
+        ed.out
+            .notice
+            .as_deref()
+            .is_some_and(|n| n.contains("plain curves"))
+    );
+    // The copy and its curves are one step.
+    assert!(ed.undo());
+    assert!(ed.block_edit.is_some());
+    assert_eq!(ed.doc.instances().count(), 2);
+    assert_eq!(member_curves(&ed), before);
+    assert!(ed.redo());
+    assert!(ed.block_edit.is_some());
+    assert_eq!(ed.doc.instances().count(), 2);
+    assert_eq!(member_curves(&ed).len(), before.len() + 5);
+    ed.finish_block_edit();
+    assert_eq!(ed.doc.block(block).unwrap().items.len(), 10);
+    assert_eq!(ed.doc.instances().count(), 2);
+}
+
+#[test]
+fn a_copy_mirrored_in_a_block_edit_becomes_block_curves() {
+    let (mut ed, copy, other, _, _) = block_edit_fixture();
+    let block = ed.doc.instance(copy).unwrap().block;
+    ed.edit_block(copy);
+    let before = member_curves(&ed);
+    // (As a script could: the other copy mirrored about the rectangle's top.)
+    let top = member_line(&ed, v(0.0, 10.0), v(20.0, 10.0));
+    let (_, made, _) = ed
+        .mirror_with(&[], &[other], top, &Default::default())
+        .expect("mirrored");
+    assert_eq!(made.len(), 1);
+    assert!(ed.doc.instance(made[0]).is_none());
+    assert_eq!(ed.doc.instances().count(), 2);
+    assert_eq!(member_curves(&ed).len(), before.len() + 5);
+    ed.finish_block_edit();
+    assert_eq!(ed.doc.block(block).unwrap().items.len(), 10);
+}
+
+#[test]
+fn placing_a_block_in_a_block_edit_places_curves() {
+    let (mut ed, copy, _, _, _) = block_edit_fixture();
+    let block = ed.doc.instance(copy).unwrap().block;
+    ed.edit_block(copy);
+    let before = member_curves(&ed).len();
+    ed.place_block = Some(block);
+    let mut tool = ToolKind::Block.create();
+    click(&mut ed, tool.as_mut(), v(40.0, 40.0));
+    assert_eq!(ed.doc.instances().count(), 2);
+    assert_eq!(member_curves(&ed).len(), before + 5);
+    assert_eq!(ed.selection.len(), 5);
+    // The tool keeps placing; its cancel doesn't end the edit.
+    click(&mut ed, tool.as_mut(), v(40.0, 80.0));
+    assert_eq!(member_curves(&ed).len(), before + 10);
+    tool.cancel(&mut ed);
+    assert!(ed.block_edit.is_some());
+    // A block can't be made inside one.
+    assert!(ed.make_block("Inner").is_err());
+}
+
+#[test]
+fn a_text_made_in_a_block_edit_stays_and_is_told() {
+    let (mut ed, copy, _, _, _) = block_edit_fixture();
+    let block = ed.doc.instance(copy).unwrap().block;
+    let items = ed.doc.block(block).unwrap().items.clone();
+    ed.edit_block(copy);
+    let t = ed.add_text(drift_core::SketchText::new("Label", v(2.0, 2.0), 2.0));
+    assert!(
+        ed.out
+            .notice
+            .as_deref()
+            .is_some_and(|n| n.contains("stays in the drawing")),
+        "{:?}",
+        ed.out.notice
+    );
+    ed.finish_block_edit();
+    assert!(ed.doc.text(t).is_some());
+    assert_eq!(ed.doc.block(block).unwrap().items, items);
+}
+
+#[test]
+fn a_wall_drawn_in_a_block_edit_goes_in_as_plain_geometry() {
+    let (mut ed, copy, _, _, _) = block_edit_fixture();
+    let block = ed.doc.instance(copy).unwrap().block;
+    ed.edit_block(copy);
+    ed.prefs.wall_thickness = 2.0;
+    let mut wall = ToolKind::Wall.create();
+    for at in [v(30.0, 0.0), v(50.0, 0.0)] {
+        click(&mut ed, wall.as_mut(), at);
+    }
+    wall.handle(Input::Finish, &mut ed);
+    let (_, w) = ed.doc.walls().next().expect("a wall");
+    let centre = ed.doc.path(w.centre).unwrap().curves.clone();
+    let faces = w.made.curves.len();
+    let poche = w.made.fills.len();
+    assert!(faces > 0 && poche > 0, "{faces} faces, {poche} pochés");
+    assert!(centre.iter().all(|c| ed.in_scope(*c)));
+    ed.finish_block_edit();
+    let b = ed.doc.block(block).unwrap();
+    assert_eq!(b.items.len(), 5 + faces);
+    assert_eq!(b.fills.len(), poche);
+    // The centreline isn't one of them; nothing of the wall is left.
+    assert!(!has_line(
+        &copy_shapes(&ed, copy),
+        v(30.0, 0.0),
+        v(50.0, 0.0)
+    ));
+    assert_eq!(ed.doc.walls().count(), 0);
+}
+
+#[test]
+fn finish_tells_what_a_block_leaves_out() {
+    let (mut ed, copy, _, loose, _) = block_edit_fixture();
+    // A dimension outside the block: the loose line's length.
+    let EntityKind::Line { a: la, b: lb } = ed.doc.get(loose).unwrap().kind else {
+        unreachable!()
+    };
+    let outside = ed
+        .add_dimension(
+            drift_core::Constraint::Distance {
+                a: la,
+                b: lb,
+                value: 30.0,
+            },
+            None,
+        )
+        .unwrap();
+    // Nothing added: no notice.
+    ed.edit_block(copy);
+    ed.out.notice = None;
+    ed.finish_block_edit();
+    assert_eq!(ed.out.notice, None);
+    // A dimension on the rectangle's bottom: one left out.
+    ed.edit_block(copy);
+    let bottom = member_line(&ed, v(0.0, 0.0), v(20.0, 0.0));
+    let EntityKind::Line { a, b } = ed.doc.get(bottom).unwrap().kind else {
+        unreachable!()
+    };
+    ed.add_dimension(drift_core::Constraint::Distance { a, b, value: 20.0 }, None)
+        .unwrap();
+    ed.out.notice = None;
+    ed.finish_block_edit();
+    assert!(
+        ed.out
+            .notice
+            .as_deref()
+            .is_some_and(|n| n.ends_with(": 1 left out")),
+        "{:?}",
+        ed.out.notice
+    );
+    assert!(
+        ed.doc.constraint(outside).is_some(),
+        "the outside dimension stays"
+    );
+}
+
+#[test]
+fn undo_and_redo_of_edit_block_keep_edit_mode() {
+    let (mut ed, copy, _, _, _) = block_edit_fixture();
+    ed.edit_block(copy);
+    let edit = ed.block_edit;
+    let members = member_curves(&ed);
+    assert!(ed.undo());
+    assert!(ed.block_edit.is_none());
+    assert!(ed.redo());
+    assert_eq!(ed.block_edit, edit);
+    assert_eq!(ed.open_group, edit.map(|e| e.group));
+    assert_eq!(member_curves(&ed), members);
+    // The copy is hidden again, and Ctrl+A picks the block's curves alone.
+    assert_eq!(ed.instance_at(v(0.0, 5.0), TOL), None);
+    ed.select_all();
+    assert_eq!(ed.selection.len(), 5);
+    picks_stay_inside(&ed);
+}
+
+#[test]
+fn undo_of_finish_returns_to_edit_mode() {
+    let (mut ed, copy, _, _, _) = block_edit_fixture();
+    let block = ed.doc.instance(copy).unwrap().block;
+    let original = ed.doc.block(block).unwrap().clone();
+    let copies: Vec<_> = ed.doc.instances().map(|(id, i)| (id, *i)).collect();
+    ed.edit_block(copy);
+    let edit = ed.block_edit;
+    let mut line = LineTool::default();
+    click(&mut ed, &mut line, v(2.0, 2.0));
+    click(&mut ed, &mut line, v(8.0, 2.0));
+    line.handle(Input::Finish, &mut ed);
+    let members = member_curves(&ed);
+    assert_eq!(members.len(), 6);
+    ed.finish_block_edit();
+    let finished = ed.doc.block(block).unwrap().clone();
+    assert_eq!(finished.items.len(), 6);
+    // Undo: editing again, the copy hidden and not picked, one group, the drawing's copies.
+    assert!(ed.undo());
+    assert_eq!(ed.block_edit, edit);
+    assert_eq!(member_curves(&ed), members);
+    assert!(ed.selected_instances.is_empty());
+    assert_eq!(ed.instance_at(v(0.0, 5.0), TOL), None);
+    assert_eq!(ed.doc.groups().count(), 1);
+    let now: Vec<_> = ed.doc.instances().map(|(id, i)| (id, *i)).collect();
+    assert_eq!(now, copies);
+    assert_eq!(ed.doc.block(block), Some(&original));
+    // Redo finishes again, the same.
+    assert!(ed.redo());
+    assert!(ed.block_edit.is_none() && ed.open_group.is_none());
+    assert_eq!(ed.doc.block(block), Some(&finished));
+    assert_eq!(ed.doc.groups().count(), 0);
+    let now: Vec<_> = ed.doc.instances().map(|(id, i)| (id, *i)).collect();
+    assert_eq!(now, copies);
+}
+
+#[test]
+fn undo_across_switching_edits() {
+    let (mut ed, a, b, _, _) = block_edit_fixture();
+    ed.edit_block(a);
+    let edit_a = ed.block_edit;
+    // Double-clicking the other copy finishes this edit and edits that one.
+    ed.edit_block(b);
+    let edit_b = ed.block_edit;
+    assert_eq!(edit_b.map(|e| e.instance), Some(b));
+    assert!(ed.undo());
+    assert!(ed.block_edit.is_none() && ed.open_group.is_none());
+    assert!(ed.undo());
+    assert_eq!(ed.block_edit, edit_a);
+    assert!(ed.redo());
+    assert!(ed.block_edit.is_none() && ed.open_group.is_none());
+    assert!(ed.redo());
+    assert_eq!(ed.block_edit, edit_b);
+    assert_eq!(ed.doc.groups().count(), 1);
+}
+
+#[test]
+fn saving_in_a_block_edit_writes_it_finished() {
+    let (mut ed, copy, _, _, _) = block_edit_fixture();
+    let block = ed.doc.instance(copy).unwrap().block;
+    let entities = ed.doc.len();
+    let copies: Vec<_> = ed.doc.instances().map(|(id, i)| (id, *i)).collect();
+    ed.edit_block(copy);
+    // A line drawn and the short line offset, in the block.
+    let mut line = LineTool::default();
+    click(&mut ed, &mut line, v(2.0, 2.0));
+    click(&mut ed, &mut line, v(8.0, 2.0));
+    line.handle(Input::Finish, &mut ed);
+    let short = member_line(&ed, v(15.0, 20.0), v(18.0, 20.0));
+    ed.offset(short, 2.0, v(16.0, 25.0)).expect("offset");
+    let (revision, undo) = (
+        ed.doc.revision(),
+        ed.history.undo_label().map(str::to_owned),
+    );
+    let (edit, members) = (ed.block_edit, member_curves(&ed));
+    let text = drift_io::save(&ed.doc_as_saved(), &Default::default());
+    // Read back: the block as it stands, its copies, no group, nothing of the edit loose.
+    let (saved, _) = drift_io::load(&text).expect("reads back");
+    assert_eq!(saved.block(block).unwrap().items.len(), 7);
+    let now: Vec<_> = saved.instances().map(|(id, i)| (id, *i)).collect();
+    assert_eq!(now, copies);
+    assert_eq!(saved.groups().count(), 0);
+    assert_eq!(saved.offsets().count(), 0);
+    assert_eq!(saved.len(), entities);
+    // The edit goes on, untouched.
+    assert_eq!(ed.block_edit, edit);
+    assert_eq!(member_curves(&ed), members);
+    assert_eq!(ed.doc.revision(), revision);
+    assert_eq!(ed.history.undo_label().map(str::to_owned), undo);
+    // And finishing gives the block that was saved.
+    let as_saved = saved.block(block).unwrap().clone();
+    ed.finish_block_edit();
+    assert_eq!(ed.doc.block(block), Some(&as_saved));
+    // Outside an edit, the drawing itself (no copy made).
+    assert!(matches!(ed.doc_as_saved(), std::borrow::Cow::Borrowed(_)));
 }
 
 #[test]

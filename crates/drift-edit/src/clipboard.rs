@@ -562,7 +562,7 @@ impl Editor {
             .iter()
             .filter_map(|id| made.entities.get(id).copied())
             .collect();
-        self.selected_instances = made.instances.iter().copied().collect();
+        self.pick_made_copies(made.instances.iter().copied());
         self.selected_fills = made.fills;
         self.selected_texts = made.texts.iter().copied().collect();
         self.selected_region = None;

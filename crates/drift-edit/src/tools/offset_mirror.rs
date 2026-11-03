@@ -189,7 +189,7 @@ impl Tool for MirrorTool {
                 match ed.mirror_with(&ids, &instances, axis, &riders) {
                     Ok((copies, instances, (texts, notes))) => {
                         ed.selection = copies.into_iter().collect();
-                        ed.selected_instances = instances.into_iter().collect();
+                        ed.pick_made_copies(instances);
                         ed.selected_texts = texts.into_iter().collect();
                         ed.selected_annotation = None;
                         ed.annotation_picks = notes

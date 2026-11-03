@@ -1,7 +1,7 @@
 //! Blocks in the editor: picking and placing copies, making a block from the selection,
 //! exploding copies, editing a block in place, and adding blocks from the library.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use drift_core::{
     Block, BlockId, BlockItem, Bounds, DVec2, EntityId, Fill, FillId, GroupId, Instance,
@@ -38,6 +38,29 @@ pub enum BasePointPick {
 /// A block-coordinate shape or fill moved by `by` (the block's own coordinates shifted).
 fn shifted(by: DVec2) -> Instance {
     Instance::new(BlockId(0), by)
+}
+
+/// What finishing a block edit writes: the block as it now stands, the fills it took in,
+/// and the temporary geometry to go. Worked out once from the editor and applied to the
+/// drawing (Finish) or to a copy of it (saving mid-edit), so the two are the same.
+struct Writeback {
+    id: BlockId,
+    block: Block,
+    filled: Vec<FillId>,
+    delete: Vec<EntityId>,
+    group: GroupId,
+}
+
+impl Writeback {
+    fn apply(self, doc: &mut drift_core::Document) {
+        doc.set_block(self.id, self.block);
+        for f in self.filled {
+            doc.remove_fill(f);
+        }
+        // (Offsets, walls and openings go with what they're made of.)
+        doc.delete(self.delete);
+        doc.remove_group(self.group);
+    }
 }
 
 impl Editor {
@@ -255,6 +278,10 @@ impl Editor {
 
     /// The curves a block made now would hold, their extent, and its name.
     fn block_source(&self, name: &str) -> Result<(Vec<EntityId>, Bounds, String), String> {
+        // (Its copy would be the edited block's curves again: a block holds no copies.)
+        if self.block_edit.is_some() {
+            return Err("Finish editing the block first".into());
+        }
         let referenced = self.doc.defining_points(
             self.selection
                 .iter()
@@ -524,7 +551,7 @@ impl Editor {
             Ok(id) => {
                 self.commit("Place block");
                 self.selection.clear();
-                self.selected_instances = [id].into();
+                self.pick_made_copies([id]);
             }
             Err(e) => {
                 self.doc.rollback();
@@ -730,6 +757,45 @@ impl Editor {
         self.selection = created.into_iter().collect();
     }
 
+    /// Inside a block edit, the copies the open transaction made become the block's own
+    /// curves (a block holds no copies, so none can hold itself), in the same step; and a
+    /// text made there is said to stay in the drawing (#318).
+    pub(crate) fn explode_copies_in_block_edit(&mut self) {
+        self.exploded.clear();
+        if self.block_edit.is_none() || self.edit_group().is_none() {
+            return;
+        }
+        let copies = self.doc.instances_created_in_transaction();
+        for id in &copies {
+            let curves = self.add_copy_geometry(*id);
+            self.doc.remove_instance(*id);
+            self.exploded.insert(*id, curves);
+        }
+        if !copies.is_empty() {
+            self.out.notice = Some("Block copies become plain curves inside a block".into());
+        } else if !self.doc.texts_created_in_transaction().is_empty() {
+            self.out.notice = Some(
+                "Texts aren't part of a block: this one stays in the drawing when editing \
+                 finishes"
+                    .into(),
+            );
+        }
+    }
+
+    /// Pick copies just made (`made`): those that a block edit turned into its curves (see
+    /// [`explode_copies_in_block_edit`](Self::explode_copies_in_block_edit)) as their
+    /// curves.
+    pub(crate) fn pick_made_copies(&mut self, made: impl IntoIterator<Item = InstanceId>) {
+        self.selected_instances.clear();
+        for id in made {
+            if self.doc.instance(id).is_some() {
+                self.selected_instances.insert(id);
+            } else if let Some(curves) = self.exploded.get(&id) {
+                self.selection.extend(curves.iter().copied());
+            }
+        }
+    }
+
     /// Start editing a copy's block in place: the copy becomes geometry in an open group;
     /// what's drawn joins it. [`finish_block_edit`](Self::finish_block_edit) writes it back.
     pub fn edit_block(&mut self, instance: InstanceId) {
@@ -752,11 +818,13 @@ impl Editor {
         self.commit("Edit block");
         match group {
             Ok(group) => {
-                self.block_edit = Some(BlockEdit {
+                let edit = BlockEdit {
                     block,
                     instance,
                     group,
-                });
+                };
+                self.block_edit = Some(edit);
+                self.block_edits.insert(group, edit);
                 self.open_group = Some(group);
                 self.selected_instances.clear();
                 self.selection.clear();
@@ -765,22 +833,38 @@ impl Editor {
         }
     }
 
-    /// The curves of a block being edited in place, as they are now, in block coordinates.
-    fn edited_items(&self, edit: &BlockEdit) -> Option<Vec<BlockItem>> {
-        let group = self.doc.group(edit.group)?;
-        let copy = self.doc.instance(edit.instance)?;
+    /// What a block being edited in place is drawn with now: the edit's
+    /// [scope](Self::group_scope) less the points of its curves (lone points stay) and its
+    /// walls' centrelines. Offsets, walls and openings go in as what they made, plain (as
+    /// Detach and Explode walls leave them, #318).
+    fn edit_curves(&self, edit: &BlockEdit) -> Option<BTreeSet<EntityId>> {
+        let scope = self.group_scope(edit.group)?;
         let referenced = self.doc.defining_points(
-            group
-                .members
+            scope
                 .iter()
                 .copied()
                 .filter(|id| self.doc.get(*id).is_some_and(|e| !e.kind.is_point())),
         );
+        let centrelines: HashSet<EntityId> = self
+            .doc
+            .walls()
+            .filter_map(|(_, w)| self.doc.path(w.centre))
+            .flat_map(|p| p.curves.iter().copied())
+            .collect();
         Some(
-            group
-                .members
+            scope
+                .into_iter()
+                .filter(|id| !referenced.contains(id) && !centrelines.contains(id))
+                .collect(),
+        )
+    }
+
+    /// The curves of a block being edited in place, as they are now, in block coordinates.
+    fn edited_items(&self, edit: &BlockEdit) -> Option<Vec<BlockItem>> {
+        let copy = self.doc.instance(edit.instance)?;
+        Some(
+            self.edit_curves(edit)?
                 .iter()
-                .filter(|id| !referenced.contains(id))
                 .filter_map(|id| {
                     let e = self.doc.get(*id)?;
                     let shape = self.doc.shape(*id)?;
@@ -811,6 +895,30 @@ impl Editor {
             .collect()
     }
 
+    /// What finishing a block edit writes, worked out from the drawing as it is now (see
+    /// [`Writeback`]). None when the edit's group, copy or block is gone.
+    fn writeback(&mut self, edit: &BlockEdit) -> Option<Writeback> {
+        let (Some(group), Some(copy), Some(mut block), Some(items), Some(curves)) = (
+            self.doc.group(edit.group).cloned(),
+            self.doc.instance(edit.instance).copied(),
+            self.doc.block(edit.block).cloned(),
+            self.edited_items(edit),
+            self.edit_curves(edit),
+        ) else {
+            return None;
+        };
+        block.items = items;
+        let (fills, filled) = self.capture_fills(&curves, &copy);
+        block.fills = fills;
+        Some(Writeback {
+            id: edit.block,
+            block,
+            filled,
+            delete: group.members.into_iter().chain(curves).collect(),
+            group: edit.group,
+        })
+    }
+
     /// Write the edited geometry back into the block (every copy updates) and remove the
     /// temporary geometry.
     pub fn finish_block_edit(&mut self) {
@@ -818,28 +926,59 @@ impl Editor {
             return;
         };
         self.open_group = None;
-        let (Some(group), Some(copy), Some(mut block), Some(items)) = (
-            self.doc.group(edit.group).cloned(),
-            self.doc.instance(edit.instance).copied(),
-            self.doc.block(edit.block).cloned(),
-            self.edited_items(&edit),
-        ) else {
+        let Some(writeback) = self.writeback(&edit) else {
             return;
         };
-        block.items = items;
-        let (fills, filled) = self.capture_fills(&group.members, &copy);
-        block.fills = fills;
+        // What a block can't hold goes with the geometry: say how much.
+        let drafting = |doc: &drift_core::Document| {
+            doc.constraint_count()
+                + doc.measurements().count()
+                + doc.property_dims().count()
+                + doc.annotations().count()
+        };
+        let before = drafting(&self.doc);
         self.doc.begin();
-        self.doc.set_block(edit.block, block);
-        for f in filled {
-            self.doc.remove_fill(f);
-        }
-        self.doc.delete(group.members.iter().copied());
-        self.doc.remove_group(edit.group);
+        writeback.apply(&mut self.doc);
+        let left_out = before.saturating_sub(drafting(&self.doc));
         self.commit("Finish editing block");
+        if left_out > 0 {
+            self.out.notice = Some(format!(
+                "Block finished. Relations, dimensions and notes don't go into a block: \
+                 {left_out} left out"
+            ));
+        }
         self.selection.clear();
         self.selected_instances = [edit.instance].into();
         self.drop_lost_edit();
+    }
+
+    /// The drawing as a file should hold it: while a block is edited in place, as if editing
+    /// had finished (the block as it now stands, its copy shown, no temporary group, #322),
+    /// with the edit going on here untouched. Otherwise the drawing itself.
+    pub fn doc_as_saved(&mut self) -> std::borrow::Cow<'_, drift_core::Document> {
+        let writeback = match self.block_edit {
+            Some(edit) if self.edit_group().is_some() => self.writeback(&edit),
+            _ => None,
+        };
+        match writeback {
+            Some(writeback) => {
+                let mut doc = self.doc.clone();
+                writeback.apply(&mut doc);
+                std::borrow::Cow::Owned(doc)
+            }
+            None => std::borrow::Cow::Borrowed(&self.doc),
+        }
+    }
+
+    /// While a block is edited in place, an editor over the drawing as if editing had
+    /// finished ([`doc_as_saved`](Self::doc_as_saved)), for what prints or exports it: no
+    /// history, nothing open or picked, this one's preferences. None outside a block edit.
+    pub fn finished_view(&mut self) -> Option<Editor> {
+        if self.block_edit.is_none() || self.edit_group().is_none() {
+            return None;
+        }
+        let doc = self.doc_as_saved().into_owned();
+        Some(Editor::bare(doc, self.prefs.clone()))
     }
 
     /// Leave the open group, finishing a block edit if that's what it is.

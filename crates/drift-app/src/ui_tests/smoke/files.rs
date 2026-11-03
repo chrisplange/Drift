@@ -115,6 +115,97 @@ fn smoke_files_unknown_fields_are_saved_back() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A drawing whose saved text, read back, holds exactly two copies of one block of `items`
+/// items, no group and nothing loose (#322).
+#[track_caller]
+fn saved_finished(text: &str, items: usize) {
+    let (doc, _) = drift_io::load(text).expect("the saved drawing reads back");
+    assert_eq!(doc.instances().count(), 2, "one copy each, none doubled");
+    let blocks: Vec<_> = doc.blocks().collect();
+    assert_eq!(blocks.len(), 1);
+    assert_eq!(blocks[0].1.items.len(), items, "the block as it now stands");
+    assert_eq!(doc.groups().count(), 0, "no \"Editing …\" group");
+    assert!(doc.is_empty(), "no loose curves: {} entities", doc.len());
+}
+
+/// #322: saving while a block is edited in place (Ctrl+S, and the autosave a restored session
+/// comes from) writes the drawing as if editing had finished, and the edit goes on.
+#[test]
+fn smoke_files_save_during_block_edit_writes_it_finished() {
+    let Some(mut h) = harness() else { return };
+    // A 40 × 30 block with two copies, in a file.
+    let text = {
+        let mut ed = drift_edit::editor::Editor::new(drift_core::Document::new());
+        ed.doc.begin();
+        let p = [(0.0, 0.0), (40.0, 0.0), (40.0, 30.0), (0.0, 30.0)]
+            .map(|(x, y)| ed.doc.add_point(DVec2::new(x, y)));
+        ed.selection = (0..4)
+            .map(|i| ed.doc.add_line(p[i], p[(i + 1) % 4]).unwrap())
+            .collect();
+        ed.commit("Rectangle");
+        let copy = ed.make_block("Box").unwrap();
+        let i = *ed.doc.instance(copy).unwrap();
+        ed.place_instance(i.block, i.at + DVec2::new(80.0, 0.0), 0.0, false);
+        drift_io::save(&ed.doc, &Default::default())
+    };
+    let dir = scratch_dir("smoke-save-block-edit");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("Blocks.drift");
+    std::fs::write(&path, &text).unwrap();
+    drop_file(&mut h, &path);
+    h.run_steps(2);
+    view(&mut h, DVec2::new(-10.0, -20.0), DVec2::new(130.0, 50.0));
+    let inside = screen(&h, DVec2::new(10.0, 15.0));
+    double_click(&mut h, inside);
+    assert!(h.state().drawing.editor.block_edit.is_some(), "editing");
+    // A line drawn in the block.
+    {
+        let ed = &mut h.state_mut().drawing.editor;
+        ed.doc.begin();
+        let (a, b) = (
+            ed.doc.add_point(DVec2::new(5.0, 5.0)),
+            ed.doc.add_point(DVec2::new(35.0, 5.0)),
+        );
+        ed.doc.add_line(a, b).unwrap();
+        ed.commit("Line");
+    }
+    h.run();
+    let edit = h.state().drawing.editor.block_edit;
+    let undo = h
+        .state()
+        .drawing
+        .editor
+        .history
+        .undo_label()
+        .map(str::to_owned);
+    h.key_press_modifiers(EguiModifiers::COMMAND, Key::S);
+    h.run_steps(3);
+    assert!(!h.state().is_dirty(), "saved");
+    saved_finished(&std::fs::read_to_string(&path).unwrap(), 5);
+    // The autosave's text the same.
+    {
+        let app = h.state_mut();
+        let meta = app.drawing.file.meta.clone();
+        saved_finished(&crate::session_text(&mut app.drawing.editor, &meta), 5);
+    }
+    // Still editing, with nothing undone or added.
+    let app = h.state();
+    assert_eq!(app.drawing.editor.block_edit, edit);
+    assert_eq!(
+        app.drawing.editor.history.undo_label().map(str::to_owned),
+        undo
+    );
+    assert_eq!(app.drawing.editor.doc.groups().count(), 1);
+    assert!(h.query_by_label("Finish editing").is_some());
+    h.key_press(Key::Escape);
+    h.run();
+    assert!(
+        h.state().drawing.editor.block_edit.is_none(),
+        "Esc finishes"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The record types (group 0) in a DXF file.
 fn dxf_kinds(dxf: &str) -> Vec<&str> {
     let lines: Vec<&str> = dxf.lines().map(str::trim).collect();

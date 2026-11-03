@@ -327,3 +327,88 @@ fn smoke_sheet_views_list_is_left_justified() {
 fn placed_first(ed: &drift_edit::editor::Editor, id: drift_core::SheetId) -> drift_core::ViewId {
     ed.doc.sheet(id).unwrap().viewports[0].view
 }
+
+/// A sheet showing the model while a block is edited in place draws the block once, as it
+/// now stands; the drawing it's made from is made again only when the model's geometry
+/// changes, not on every change to the sheet.
+#[test]
+fn smoke_sheet_preview_during_a_block_edit() {
+    let Some(mut h) = harness() else { return };
+    let sheet = a_sheet(&mut h);
+    // The rectangle made a block, edited in place, with a line drawn in it.
+    h.state_mut().show_sheet(None);
+    {
+        let ed = &mut h.state_mut().drawing.editor;
+        ed.selection = ed
+            .doc
+            .iter()
+            .filter(|(_, e)| !e.kind.is_point())
+            .map(|(id, _)| id)
+            .collect();
+        let copy = ed.make_block("Box").unwrap();
+        ed.edit_block(copy);
+        ed.doc.begin();
+        let (a, b) = (
+            ed.doc.add_point(DVec2::new(10.0, 10.0)),
+            ed.doc.add_point(DVec2::new(50.0, 10.0)),
+        );
+        ed.doc.add_line(a, b).unwrap();
+        ed.commit("Line");
+    }
+    h.run();
+    let made = |h: &Harness<'_, DriftApp>| h.state().drawing.finished_previews_made;
+    let start = made(&h);
+    h.state_mut().show_sheet(Some(sheet));
+    h.run();
+    h.run();
+    assert_eq!(made(&h), start + 1, "made once for the preview");
+    let page = |h: &mut Harness<'_, DriftApp>| {
+        let painter = painter(h);
+        h.state_mut().pages(&painter).remove(0)
+    };
+    let preview = |h: &Harness<'_, DriftApp>| h.state().drawing.preview_cache.clone().unwrap().2;
+    assert_eq!(
+        preview(&h),
+        page(&mut h),
+        "the preview is the page as it prints"
+    );
+    // A change to the sheet alone: the preview follows, the drawing isn't made again.
+    {
+        let ed = &mut h.state_mut().drawing.editor;
+        let mut s = ed.doc.sheet(sheet).unwrap().clone();
+        s.fields.title = "Changed".into();
+        ed.doc.begin();
+        ed.doc.set_sheet(sheet, s);
+        ed.commit("Title");
+    }
+    h.run();
+    h.run();
+    assert_eq!(
+        made(&h),
+        start + 1,
+        "not made again for a change to the sheet"
+    );
+    assert_eq!(preview(&h), page(&mut h));
+    // A change to the model (the line undone, still editing): not made again meanwhile;
+    // shown again, the preview is the page.
+    h.state_mut().drawing.editor.undo();
+    h.state_mut().drawing.editor.undo();
+    h.run();
+    h.run();
+    assert!(
+        h.state().drawing.editor.block_edit.is_some(),
+        "still editing"
+    );
+    assert_eq!(
+        made(&h),
+        start + 1,
+        "not made again while the preview shows"
+    );
+    h.state_mut().show_sheet(None);
+    h.run();
+    h.state_mut().show_sheet(Some(sheet));
+    h.run();
+    h.run();
+    assert_eq!(made(&h), start + 2, "made again once, shown again");
+    assert_eq!(preview(&h), page(&mut h));
+}

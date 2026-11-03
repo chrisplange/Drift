@@ -110,7 +110,7 @@ impl Editor {
             .collect();
         let n =
             self.selection.len() + made.instances.len() + made.texts.len() + made.annotations.len();
-        self.selected_instances = made.instances.into_iter().collect();
+        self.pick_made_copies(made.instances);
         self.selected_fills = made.fills;
         self.selected_texts = made.texts.into_iter().collect();
         self.selected_region = None;

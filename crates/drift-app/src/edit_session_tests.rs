@@ -319,3 +319,94 @@ fn the_assistant_keeps_drifts_tool_preferences_on_a_new_drawing() {
         }
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// Output during a block edit
+
+/// A block of a 20 × 10 rectangle, its copy where it was made and a second 100 to the right,
+/// the first copy edited in place with a line drawn in it.
+fn block_being_edited() -> Editor {
+    let mut ed = Editor::new(Document::new());
+    ed.prefs.auto_relations = false;
+    ed.doc.begin();
+    let p = [(0.0, 0.0), (20.0, 0.0), (20.0, 10.0), (0.0, 10.0)]
+        .map(|(x, y)| ed.doc.add_point(v(x, y)));
+    ed.selection = (0..4)
+        .map(|i| ed.doc.add_line(p[i], p[(i + 1) % 4]).unwrap())
+        .collect();
+    ed.commit("Rectangle");
+    let copy = ed.make_block("Box").unwrap();
+    let i = *ed.doc.instance(copy).unwrap();
+    ed.place_instance(i.block, i.at + v(100.0, 0.0), 0.0, false);
+    ed.edit_block(copy);
+    ed.doc.begin();
+    let (a, b) = (ed.doc.add_point(v(2.0, 2.0)), ed.doc.add_point(v(8.0, 2.0)));
+    ed.doc.add_line(a, b).unwrap();
+    ed.commit("Line");
+    ed
+}
+
+fn output_painter() -> eframe::egui::Painter {
+    eframe::egui::Painter::new(
+        eframe::egui::Context::default(),
+        eframe::egui::LayerId::background(),
+        eframe::egui::Rect::from_min_size(
+            eframe::egui::Pos2::ZERO,
+            eframe::egui::vec2(800.0, 800.0),
+        ),
+    )
+}
+
+/// Export and print made during a block edit draw the drawing as finishing would: the block
+/// once, as it now stands, in every copy; and the edit goes on.
+#[test]
+fn output_during_a_block_edit_is_the_finished_drawing() {
+    use crate::output::{CadFormat, as_finished, cad_file, model_drawing, sheet_pages};
+    let painter = output_painter();
+    let mut patterns = drift_edit::fills::PatternLibrary::default();
+    let mut editing = block_being_edited();
+    let mut finished = block_being_edited();
+    finished.finish_block_edit();
+    let undo = editing.history.undo_label().map(str::to_owned);
+    // The model (DXF R12's drawing), the DXF itself, and the sheets (print and PDF).
+    let model = as_finished(&mut editing, |ed| model_drawing(ed, &patterns, &painter));
+    assert_eq!(model, model_drawing(&mut finished, &patterns, &painter));
+    // (The drawing as it is here draws the copy and the edit's curves both.)
+    assert_ne!(model, model_drawing(&mut editing, &patterns, &painter));
+    let dxf = as_finished(&mut editing, |ed| {
+        cad_file(ed, &patterns, &painter, CadFormat::DxfR12)
+    })
+    .unwrap();
+    assert_eq!(
+        dxf,
+        cad_file(&mut finished, &patterns, &painter, CadFormat::DxfR12).unwrap()
+    );
+    let pages = as_finished(&mut editing, |ed| {
+        sheet_pages(ed, &mut patterns, &painter, "Box")
+    });
+    assert_eq!(
+        pages,
+        sheet_pages(&mut finished, &mut patterns, &painter, "Box")
+    );
+    // Still editing, nothing undone or added.
+    assert!(editing.block_edit.is_some());
+    assert_eq!(editing.history.undo_label().map(str::to_owned), undo);
+    assert_eq!(editing.doc.groups().count(), 1);
+}
+
+/// The selection exported during a block edit: what is picked inside it, the copy being
+/// edited not drawn as well.
+#[test]
+fn the_selection_exported_during_a_block_edit_is_drawn_once() {
+    let painter = output_painter();
+    let patterns = drift_edit::fills::PatternLibrary::default();
+    let mut ed = block_being_edited();
+    let g = ed.edit_group().unwrap();
+    let line = ed.doc.group(g).unwrap().members.iter().copied().find(|id| {
+        matches!(ed.doc.shape(*id), Some(drift_core::Shape::Line { a, .. }) if a == v(2.0, 2.0))
+    });
+    ed.selection = line.into_iter().collect();
+    let only = crate::output::Scope::of_selection(&ed, None);
+    let d = crate::output::model_page(&mut ed, &patterns, &painter, only.as_ref(), false);
+    assert_eq!(d.items.len(), 1, "{:?}", d.items);
+}

@@ -158,7 +158,8 @@ pub(super) fn save(s: &mut Session, a: &Value) -> Res {
         return Err(crate::app::document::not_saved_non_finite(id));
     }
     s.meta.generator = Some(format!("Drift {}", drift_platform::VERSION));
-    let saved = drift_io::save_checked(&s.editor.doc, &s.meta);
+    // (Mid block edit, as if it had finished, #322.)
+    let saved = drift_io::save_checked(&s.editor.doc_as_saved(), &s.meta);
     if saved.loses_newer_data && args::opt_bool(a, "anyway")? != Some(true) {
         return Err(format!(
             "{} Nothing was saved. Save with \"anyway\": true to save all the same, or to a new \
@@ -341,13 +342,15 @@ pub(super) fn export(s: &mut Session, a: &Value) -> Res {
     let painter = s.painter();
     let bytes = match format.as_str() {
         "pdf" => {
-            let pages =
-                crate::output::sheet_pages(&mut s.editor, &mut s.patterns, &painter, &title);
+            let pages = crate::output::as_finished(&mut s.editor, |ed| {
+                crate::output::sheet_pages(ed, &mut s.patterns, &painter, &title)
+            });
             drift_io::pdf::write(&pages, &title)
         }
         "svg" => {
-            let pages =
-                crate::output::sheet_pages(&mut s.editor, &mut s.patterns, &painter, &title);
+            let pages = crate::output::as_finished(&mut s.editor, |ed| {
+                crate::output::sheet_pages(ed, &mut s.patterns, &painter, &title)
+            });
             let index = args::opt_f64(a, "sheet")?.unwrap_or(1.0).max(1.0) as usize - 1;
             let page = pages
                 .get(index)
@@ -362,7 +365,9 @@ pub(super) fn export(s: &mut Session, a: &Value) -> Res {
                 _ => CadFormat::DxfR12,
             };
             s.patterns.update(s.editor.doc.custom_patterns());
-            crate::output::cad_file(&mut s.editor, &s.patterns, &painter, cad)?
+            crate::output::as_finished(&mut s.editor, |ed| {
+                crate::output::cad_file(ed, &s.patterns, &painter, cad)
+            })?
         }
         "png" => {
             let mut image = None;

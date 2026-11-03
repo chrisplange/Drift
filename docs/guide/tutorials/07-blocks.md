@@ -135,9 +135,13 @@ or the axis a profile turns about. Exporting a block uses its base point as its 
    shows as a small cross. Change it, add to it, delete from it; anything you draw joins
    the block. **Set base point** at the top of the **Inspector** moves the base point, as
    above.
-3. Press Esc, click outside, or click **Finish editing** at the top of the **Inspector**.
+3. Press Esc, or click **Finish editing** at the top of the **Inspector**.
 
-Every copy updates.
+Every copy updates. A block holds curves and fills: offsets, walls and block copies you
+make while editing go in as plain curves, and a text stays in the drawing. Relations and
+dimensions don't go into a block; Drift says how many were left out. Undo and Redo step
+back into the edit. Saving while you edit saves the block as it stands, and you keep
+editing.
 
 Right-click a block in the **Blocks** panel to rename it, select its copies or delete it.
 Deleting a block deletes its copies.

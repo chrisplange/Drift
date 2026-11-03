@@ -228,7 +228,14 @@ impl DriftApp {
                 self.drawing.view.active_sheet = Some(id);
                 self.drawing.view.sheet_preview = true;
             }
-            None => self.drawing.view.sheet_preview = false,
+            None => {
+                self.drawing.view.sheet_preview = false;
+                // (The model may change meanwhile: a preview drawn from a block edit's finished
+                // drawing is made again, with its page.)
+                if self.drawing.finished_preview.take().is_some() {
+                    self.drawing.preview_cache = None;
+                }
+            }
         }
     }
 

@@ -2734,15 +2734,18 @@ fn shows_over(doc: &Document, layer: LayerId, theirs: &Appearance, mine: &Appear
 
 /// Put ends of `curves` that stop within `tol` of another of them onto it, and say how many
 /// moved. Files round their coordinates, so an end drawn to meet the middle of a curve can
-/// stop a little short of it, and then the area it closes isn't found.
+/// stop a little short of it, and then the area it closes isn't found. What is in `gone`
+/// (to be deleted) is passed over, and the points left unused here are added to it.
 ///
-/// Only open ends move: the end of one curve with no other use (not another curve's point,
-/// a centre or a handle, nor a point of its own in `lone`). Each goes to the nearest point
-/// of the nearest curve (the first of those as near); an arc's end goes to the point of the
-/// arc's own circle nearest that, so the arc keeps its radius. Ends are taken in id order.
-/// An end isn't moved further than a quarter of its own curve, so no short curve collapses
-/// or turns round. (No other point is within `tol` of an end before: points that close are
-/// one point already.) Where an end would land within `tol` of a point already there (two
+/// Open ends move, and corners: the end of one curve, or of two (#271), with no other use
+/// (not another curve's point, a centre or a handle, nor a point of its own in `lone`). A
+/// corner's curves both follow it. Each goes to the nearest point of the nearest other
+/// curve (the first of those as near); an arc's end goes to the point of the arc's own
+/// circle nearest that, so the arc keeps its radius (a corner with an arc or an elliptical
+/// arc stays: it can't keep both on their curves). Ends are taken in id order. An end isn't
+/// moved further than a quarter of its own curve (of either curve at a corner), so no short
+/// curve collapses or turns round. (No other point is within `tol` of an end before: points
+/// that close are one point already.) Where an end would land within `tol` of a point already there (two
 /// ends stopping short of one spot from either side), it becomes that point instead, so
 /// points stay more than `tol` apart. An arc's end is only moved, never made another point
 /// (its end is kept on its circle, which would move the other point), so two arc ends can
@@ -2751,6 +2754,10 @@ fn shows_over(doc: &Document, layer: LayerId, theirs: &Appearance, mine: &Appear
 /// joined curve's end with it (both then end on the curve, as they should, and the move is
 /// at most `tol`), with the quarter-length guard checked against its own curve only.
 ///
+/// Everything the import made has ids from `lo` on ([`first_made`]), and all the curves
+/// from `lo` on are its: they are looked up by id - `lo`, not through the document's maps
+/// (tens of thousands of times).
+///
 /// The curves near an end are found through a box index of their bounds (one bulk load and
 /// one small query per open end), the points near where it lands through a grid of cells
 /// `tol` wide.
@@ -2758,24 +2765,25 @@ fn ends_onto_curves(
     doc: &mut Document,
     curves: &[EntityId],
     lone: &BTreeSet<EntityId>,
+    lo: u32,
     tol: f64,
+    gone: &mut Vec<EntityId>,
 ) -> usize {
-    // Everything the import made has ids from `lo` on (its points are new, made just before
-    // the first curve that uses them), and all the curves from `lo` on are its: they are
-    // looked up by id - `lo`, not through the document's maps (tens of thousands of times).
-    let Some(&first) = curves.first() else {
+    if curves.is_empty() {
         return 0;
-    };
-    let lo = doc
-        .get(first)
-        .map_or(first.0, |e| {
-            e.kind.points().map(|p| p.0).fold(first.0, u32::min)
-        })
-        .min(lone.iter().map(|p| p.0).min().unwrap_or(u32::MAX));
+    }
     let slot = |id: EntityId| id.0.checked_sub(lo).map(|i| i as usize);
+    // What is to go is passed over.
+    let mut going: Vec<bool> = Vec::new();
+    for i in gone.iter().filter_map(|&g| slot(g)) {
+        if going.len() <= i {
+            going.resize(i + 1, false);
+        }
+        going[i] = true;
+    }
     let mut at: Vec<Option<DVec2>> = Vec::new();
-    // Each point's uses among the curves, and the curve it is an end of.
-    let mut uses: Vec<(u32, Option<EntityId>)> = Vec::new();
+    // Each point's uses among the curves, and the (first two) curves it is an end of.
+    let mut uses: Vec<(u32, u32, [Option<EntityId>; 2])> = Vec::new();
     let mut shapes: Vec<(EntityId, Shape)> = Vec::with_capacity(curves.len());
     for (id, e) in doc.iter() {
         let Some(i) = slot(id) else {
@@ -2783,7 +2791,10 @@ fn ends_onto_curves(
         };
         if at.len() <= i {
             at.resize(i + 1, None);
-            uses.resize(i + 1, (0, None));
+            uses.resize(i + 1, (0, 0, [None; 2]));
+        }
+        if going.get(i).copied().unwrap_or(false) {
+            continue;
         }
         match e.kind {
             EntityKind::Point(p) => at[i] = Some(p),
@@ -2795,11 +2806,15 @@ fn ends_onto_curves(
                     };
                     if uses.len() <= j {
                         at.resize(j + 1, None);
-                        uses.resize(j + 1, (0, None));
+                        uses.resize(j + 1, (0, 0, [None; 2]));
                     }
-                    uses[j].0 += 1;
+                    let u = &mut uses[j];
+                    u.0 += 1;
                     if ends.is_some_and(|e| e.contains(&p)) {
-                        uses[j].1 = Some(id);
+                        if let Some(slot) = u.2.get_mut(u.1 as usize) {
+                            *slot = Some(id);
+                        }
+                        u.1 += 1;
                     }
                 }
             }
@@ -2829,14 +2844,20 @@ fn ends_onto_curves(
     let mut arcs = BTreeSet::new();
     let mut freed = Vec::new();
     for i in 0..uses.len() {
-        let (count, end_of) = uses[i];
-        let (Some(own), Some(from)) = (end_of, at[i]) else {
+        let (count, end_uses, end_of) = uses[i];
+        let (Some(own), Some(from)) = (end_of[0], at[i]) else {
             continue;
         };
         let p = EntityId(lo + i as u32);
-        if count != 1 || lone.contains(&p) {
+        // An open end, or a corner of two curves (a closed curve's own start isn't one).
+        let other = end_of[1].filter(|_| count == 2);
+        if count != end_uses
+            || !(count == 1 || other.is_some_and(|o| o != own))
+            || lone.contains(&p)
+        {
             continue;
         }
+        let owners = [Some(own), other];
         let reach = drift_core::Bounds {
             min: from - DVec2::splat(tol),
             max: from + DVec2::splat(tol),
@@ -2844,7 +2865,7 @@ fn ends_onto_curves(
         let mut best: Option<(f64, DVec2)> = None;
         for k in index.near(&reach) {
             let (id, shape) = &shapes[k];
-            if *id == own {
+            if owners.contains(&Some(*id)) {
                 continue;
             }
             let q = drift_geom::nearest_point(shape, from);
@@ -2859,7 +2880,18 @@ fn ends_onto_curves(
         let Some(kind) = doc.get(own).map(|e| e.kind) else {
             continue;
         };
-        let length = by_shape.get(&own).map_or(0.0, |&k| shapes[k].1.length());
+        let other_kind = other.and_then(|o| doc.get(o)).map(|e| e.kind);
+        if other_kind.is_some_and(|k| {
+            matches!(k, EntityKind::Arc { .. } | EntityKind::EllipseArc { .. })
+                || matches!(kind, EntityKind::Arc { .. } | EntityKind::EllipseArc { .. })
+        }) {
+            continue;
+        }
+        let length = owners
+            .iter()
+            .flatten()
+            .map(|c| by_shape.get(c).map_or(0.0, |&k| shapes[k].1.length()))
+            .fold(f64::INFINITY, f64::min);
         if d == 0.0 || d > length / 4.0 {
             continue;
         }
@@ -2903,9 +2935,26 @@ fn ends_onto_curves(
         if let Some(q) = there
             && !matches!(kind, EntityKind::Arc { .. })
         {
+            let q = EntityId(lo + q);
             let mut joined = kind;
-            joined.replace_point(p, EntityId(lo + q));
-            if doc.set_entity_kind(own, joined).is_ok() {
+            joined.replace_point(p, q);
+            let mut joined_other = other_kind;
+            if let Some(k) = &mut joined_other {
+                k.replace_point(p, q);
+            }
+            // Both of a corner's curves, or neither.
+            let ok = doc.set_entity_kind(own, joined).is_ok()
+                && match (other, joined_other) {
+                    (Some(o), Some(k)) => {
+                        let done = doc.set_entity_kind(o, k).is_ok();
+                        if !done {
+                            let _ = doc.set_entity_kind(own, kind);
+                        }
+                        done
+                    }
+                    _ => true,
+                };
+            if ok {
                 at[i] = None;
                 freed.push(p);
                 moved += 1;
@@ -2917,11 +2966,404 @@ fn ends_onto_curves(
         }
     }
     doc.normalize_arcs_using(&arcs);
-    // (One pass over the drawing for all of them.)
-    if !freed.is_empty() {
-        doc.delete(freed);
-    }
+    gone.extend(freed);
     moved
+}
+
+/// The first id an import made, from the first of its `curves` (its points are new, made
+/// just before the first curve that uses them) and its `lone` points.
+fn first_made(doc: &Document, curves: &[EntityId], lone: &BTreeSet<EntityId>) -> u32 {
+    let lone = lone.iter().map(|p| p.0).min().unwrap_or(u32::MAX);
+    curves.first().map_or(lone, |&first| {
+        doc.get(first)
+            .map_or(first.0, |e| {
+                e.kind.points().map(|p| p.0).fold(first.0, u32::min)
+            })
+            .min(lone)
+    })
+}
+
+/// What [`overlaps_trimmed`] did: lines dropped (wholly covered), trimmed, and split in two
+/// or more, and the lines made.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Overlaps {
+    dropped: usize,
+    trimmed: usize,
+    split: usize,
+    /// Lines made as the pieces of split lines (each split line keeps one piece).
+    made: usize,
+}
+
+/// Trim lines among `curves` that lie along another on the same layer (within `tol`) and
+/// overlap it, so they meet it instead (#269): PDFs often stroke a line over part of another,
+/// or twice a few nanometres apart, and the areas between are slivers. New pieces are
+/// added to `curves`, dropped lines taken out; fills that named a line cut back also name
+/// its pieces and the lines that cover what it lost.
+///
+/// Two lines are along each other if each one's ends are within `tol` of the other's line
+/// and their stretches along it overlap by more than `tol`. Of lines that are, in a chain,
+/// the one that shows (as [`shows_over`] says: heavier, then continuous over dashed, then
+/// the later drawn; and drawn geometry over construction) stays whole, and each next keeps
+/// only the parts no earlier one covers. Where all look the same, the longest stays whole,
+/// then the earliest drawn. A cut end is the covering line's end point, so the pieces join;
+/// a piece no longer than `tol` isn't made. An end a line no longer has that another curve
+/// still uses (where that curve met it) is put on the covering line. No points are made;
+/// the lines dropped and the points left unused are added to `gone`, for the caller to
+/// delete.
+///
+/// Pairs of lines near each other are found in one walk of a tree of their bounds.
+fn overlaps_trimmed(
+    doc: &mut Document,
+    curves: &mut Vec<EntityId>,
+    lone: &BTreeSet<EntityId>,
+    lo: u32,
+    tol: f64,
+    gone: &mut Vec<EntityId>,
+) -> Overlaps {
+    struct Stroke {
+        id: EntityId,
+        ends: [EntityId; 2],
+        at: [DVec2; 2],
+        layer: LayerId,
+        look: Appearance,
+        style: drift_core::LineKind,
+        order: Option<i32>,
+    }
+    // The import's lines, in one pass over the drawing in id order (their points come before
+    // them, kept by id - `lo` as `ends_onto_curves` does); and each point's uses by curves,
+    // and whether one is a circle's, arc's or ellipse's (which isn't moved onto a line: it
+    // would take the curve off its shape).
+    let slot = |id: EntityId| id.0.checked_sub(lo).map(|i| i as usize);
+    let mut at: Vec<DVec2> = Vec::new();
+    let mut uses: Vec<(u32, bool)> = Vec::new();
+    let mut lines: Vec<Stroke> = Vec::new();
+    for (id, e) in doc.iter() {
+        let Some(i) = slot(id) else {
+            continue;
+        };
+        if let EntityKind::Point(p) = e.kind {
+            if at.len() <= i {
+                at.resize(i + 1, DVec2::NAN);
+                uses.resize(i + 1, (0, false));
+            }
+            at[i] = p;
+            continue;
+        }
+        let held = !matches!(e.kind, EntityKind::Line { .. } | EntityKind::Bezier { .. });
+        for p in e.kind.points() {
+            if let Some(u) = slot(p).and_then(|j| uses.get_mut(j)) {
+                u.0 += 1;
+                u.1 |= held;
+            }
+        }
+        let EntityKind::Line { a, b } = e.kind else {
+            continue;
+        };
+        let point = |p: EntityId| slot(p).and_then(|j| at.get(j)).copied();
+        let (Some(pa), Some(pb)) = (point(a), point(b)) else {
+            continue;
+        };
+        lines.push(Stroke {
+            id,
+            ends: [a, b],
+            at: [pa, pb],
+            layer: e.layer,
+            look: e.appearance,
+            style: e.style,
+            order: e.order,
+        });
+    }
+    // How far `p` is from the line `s` lies on.
+    let off = |s: &Stroke, p: DVec2| {
+        let d = s.at[1] - s.at[0];
+        d.perp_dot(p - s.at[0]).abs() / d.length()
+    };
+    let along = |s: &Stroke, o: &Stroke| {
+        if s.layer != o.layer
+            || o.at.iter().any(|&p| off(s, p) > tol)
+            || s.at.iter().any(|&p| off(o, p) > tol)
+        {
+            return false;
+        }
+        let u = (s.at[1] - s.at[0]).normalize();
+        let t = |p: DVec2| (p - s.at[0]).dot(u);
+        let (o0, o1) = (t(o.at[0]), t(o.at[1]));
+        o0.max(o1).min(s.at[0].distance(s.at[1])) - o0.min(o1).max(0.0) > tol
+    };
+    // Pairs whose bounds come within `tol` of each other, in one walk of a tree of them.
+    let boxes = rstar::RTree::bulk_load(
+        lines
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                let pad = DVec2::splat(tol / 2.0);
+                let (min, max) = (s.at[0].min(s.at[1]) - pad, s.at[0].max(s.at[1]) + pad);
+                rstar::primitives::GeomWithData::new(
+                    rstar::primitives::Rectangle::from_corners(min.to_array(), max.to_array()),
+                    i,
+                )
+            })
+            .collect(),
+    );
+    // Chains of lines along each other (union-find, each root the chain's first line).
+    fn find(root: &mut [usize], mut i: usize) -> usize {
+        while root[i] != i {
+            root[i] = root[root[i]];
+            i = root[i];
+        }
+        i
+    }
+    let mut root: Vec<usize> = (0..lines.len()).collect();
+    let mut any = false;
+    for (a, b) in boxes.intersection_candidates_with_other_tree(&boxes) {
+        let (i, k) = (a.data, b.data);
+        if i < k && along(&lines[i], &lines[k]) {
+            let (a, b) = (find(&mut root, i), find(&mut root, k));
+            if a != b {
+                root[a.max(b)] = a.min(b);
+                any = true;
+            }
+        }
+    }
+    let mut done = Overlaps::default();
+    if !any {
+        return done;
+    }
+    let mut chains: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    for i in 0..lines.len() {
+        let r = find(&mut root, i);
+        chains.entry(r).or_default().push(i);
+    }
+    // What took the place of each line cut back that a fill names.
+    let named: std::collections::HashSet<EntityId> = doc
+        .fills()
+        .flat_map(|(_, f)| f.boundary.iter().copied())
+        .collect();
+    let mut instead: HashMap<EntityId, Vec<EntityId>> = HashMap::new();
+    // Ends a line no longer has, with (an index into `covering`) the lines that cover where
+    // it was.
+    let mut freed: Vec<(EntityId, usize)> = Vec::new();
+    let mut covering: Vec<Vec<EntityId>> = Vec::new();
+    let mut made: Vec<EntityId> = Vec::new();
+    let mut count = |p: EntityId, by: i32| {
+        if let Some(u) = slot(p).and_then(|j| uses.get_mut(j)) {
+            u.0 = u.0.saturating_add_signed(by);
+        }
+    };
+    for chain in chains.into_values().filter(|c| c.len() > 1) {
+        let length = |i: &usize| lines[*i].at[0].distance(lines[*i].at[1]);
+        let first = &lines[chain[0]];
+        let alike = chain.iter().all(|&i| {
+            let s = &lines[i];
+            (s.look, s.style, s.order) == (first.look, first.style, first.order)
+        });
+        let mut order = chain.clone();
+        if alike {
+            order.sort_by(|a, b| length(b).total_cmp(&length(a)).then(a.cmp(b)));
+        } else {
+            let (weight, line_type) = doc
+                .layer(first.layer)
+                .map_or((LineWeight::default(), LineType::Continuous), |l| {
+                    (l.weight, l.line_type)
+                });
+            let rank = |i: &usize| {
+                let s = &lines[*i];
+                (
+                    s.style != drift_core::LineKind::Construction,
+                    s.look.weight.unwrap_or(weight),
+                    s.look.line_type.unwrap_or(line_type) == LineType::Continuous,
+                    *i,
+                )
+            };
+            order.sort_by_key(|i| std::cmp::Reverse(rank(i)));
+        }
+        let top = &lines[order[0]];
+        let u = (top.at[1] - top.at[0]).normalize();
+        let t = |p: DVec2| (p - top.at[0]).dot(u);
+        // What the lines so far kept, along the top one: pieces by where they start (in an
+        // order of keys that sorts as the numbers do, then the order kept), with where they
+        // end, the points there, the line and the line it is (part of). Pieces of lines along
+        // each other don't overlap; a chain can hold lines that aren't along each other
+        // (each along a third), and their pieces may.
+        let key = |t: f64| {
+            let b = t.to_bits() as i64;
+            b ^ ((((b >> 63) as u64) >> 1) as i64)
+        };
+        type Kept = ((f64, EntityId), (f64, EntityId), EntityId, usize);
+        let mut kept: BTreeMap<(i64, usize), Kept> = BTreeMap::new();
+        // The longest piece kept, for finding those that start before a line and reach it.
+        let mut longest = 0.0_f64;
+        for &i in &order {
+            let s = &lines[i];
+            let (mut s0, mut s1) = ((t(s.at[0]), s.ends[0]), (t(s.at[1]), s.ends[1]));
+            let reversed = s0.0 > s1.0;
+            if reversed {
+                std::mem::swap(&mut s0, &mut s1);
+            }
+            // The parts outside what lines along it kept, and those lines kept over the rest.
+            let mut pieces: Vec<[EntityId; 2]> = Vec::new();
+            let mut by: Vec<EntityId> = Vec::new();
+            let mut from = s0;
+            let near = kept
+                .range((key(s0.0 - longest), 0)..(key(s1.0), 0))
+                .map(|(_, k)| k)
+                .filter(|(_, _, _, of)| along(s, &lines[*of]));
+            for (k0, k1, line, _) in near {
+                if k1.0 <= from.0 {
+                    continue;
+                }
+                by.push(*line);
+                if k0.0 - from.0 > tol && from.1 != k0.1 {
+                    pieces.push([from.1, k0.1]);
+                }
+                from = *k1;
+            }
+            if s1.0 - from.0 > tol && from.1 != s1.1 {
+                pieces.push([from.1, s1.1]);
+            }
+            if pieces == [[s0.1, s1.1]] {
+                longest = longest.max(s1.0 - s0.0);
+                kept.insert((key(s0.0), kept.len()), (s0, s1, s.id, i));
+                continue;
+            }
+            if reversed {
+                for p in &mut pieces {
+                    p.reverse();
+                }
+            }
+            by.sort_unstable();
+            by.dedup();
+            let Some((head, rest)) = pieces.split_first() else {
+                gone.push(s.id);
+                for &p in &s.ends {
+                    count(p, -1);
+                    freed.push((p, covering.len()));
+                }
+                if named.contains(&s.id) {
+                    instead.insert(s.id, by.clone());
+                }
+                covering.push(by);
+                done.dropped += 1;
+                continue;
+            };
+            if doc
+                .set_entity_kind(
+                    s.id,
+                    EntityKind::Line {
+                        a: head[0],
+                        b: head[1],
+                    },
+                )
+                .is_err()
+            {
+                continue;
+            }
+            for &p in &s.ends {
+                count(p, -1);
+                if !head.contains(&p) {
+                    freed.push((p, covering.len()));
+                }
+            }
+            for &p in head {
+                count(p, 1);
+            }
+            // The pieces kept, where they are along the top line.
+            let mut keep = |[a, b]: [EntityId; 2], line: EntityId| {
+                let (Some(&pa), Some(&pb)) = (
+                    slot(a).and_then(|j| at.get(j)),
+                    slot(b).and_then(|j| at.get(j)),
+                ) else {
+                    return;
+                };
+                let (ta, tb) = ((t(pa), a), (t(pb), b));
+                let (k0, k1) = if ta.0 <= tb.0 { (ta, tb) } else { (tb, ta) };
+                longest = longest.max(k1.0 - k0.0);
+                kept.insert((key(k0.0), kept.len()), (k0, k1, line, i));
+            };
+            keep(*head, s.id);
+            let mut parts = Vec::new();
+            for &[a, b] in rest {
+                if let Ok(id) = doc.add_line(a, b) {
+                    keep([a, b], id);
+                    count(a, 1);
+                    count(b, 1);
+                    let _ = doc.set_entity_layer(id, s.layer);
+                    let _ = doc.set_appearance(id, s.look);
+                    doc.set_style(id, s.style);
+                    if s.order.is_some() {
+                        let _ = doc.set_order(id, s.order);
+                    }
+                    parts.push(id);
+                }
+            }
+            if parts.is_empty() {
+                done.trimmed += 1;
+            } else {
+                done.split += 1;
+                done.made += parts.len();
+                made.extend(&parts);
+            }
+            if named.contains(&s.id) {
+                instead.insert(
+                    s.id,
+                    [s.id].into_iter().chain(parts).chain(by.clone()).collect(),
+                );
+            }
+            covering.push(by);
+        }
+    }
+    // Fills that named a line cut back name what took its place.
+    let changed: Vec<(drift_core::FillId, Fill)> = doc
+        .fills()
+        .filter(|(_, f)| f.boundary.iter().any(|e| instead.contains_key(e)))
+        .map(|(id, f)| {
+            let mut f = f.clone();
+            f.boundary = f
+                .boundary
+                .iter()
+                .flat_map(|e| instead.get(e).cloned().unwrap_or_else(|| vec![*e]))
+                .collect();
+            f.boundary.sort_unstable();
+            f.boundary.dedup();
+            (id, f)
+        })
+        .collect();
+    for (id, f) in changed {
+        doc.set_fill(id, f);
+    }
+    let dropped: BTreeSet<EntityId> = gone.iter().copied().collect();
+    curves.retain(|c| !dropped.contains(c));
+    curves.extend(made);
+    // Ends a line no longer has go if nothing else uses them; if something does (another
+    // curve meets the line there), they are put on the line that covers them, so what meets
+    // there still meets it (they were within `tol` of it).
+    freed.sort_unstable_by_key(|(p, _)| *p);
+    freed.dedup_by_key(|(p, _)| *p);
+    for (p, by) in freed {
+        let by = &covering[by];
+        let Some(&(n, held)) = slot(p).and_then(|j| uses.get(j)) else {
+            continue;
+        };
+        if lone.contains(&p) || held {
+            continue;
+        }
+        if n == 0 {
+            gone.push(p);
+            continue;
+        }
+        let Ok(from) = doc.point(p) else {
+            continue;
+        };
+        let nearest = by
+            .iter()
+            .filter_map(|c| doc.shape(*c))
+            .map(|shape| drift_geom::nearest_point(&shape, from))
+            .min_by(|a, b| a.distance(from).total_cmp(&b.distance(from)));
+        if let Some(to) = nearest.filter(|to| *to != from && to.distance(from) <= tol) {
+            let _ = doc.set_point(p, to);
+        }
+    }
+    done
 }
 
 /// Every point `add_to_document` makes for `shape` is a number within [`MAX_COORD`] (a NaN
@@ -3160,12 +3602,102 @@ impl Patterns {
     }
 }
 
+/// Points within a tolerance of each other as one point, found through a grid of cells
+/// that wide.
+struct SharedPoints {
+    tol: f64,
+    cells: HashMap<(i64, i64), Vec<(DVec2, EntityId)>>,
+}
+
+impl SharedPoints {
+    fn new(tol: f64) -> Self {
+        Self {
+            tol,
+            cells: HashMap::new(),
+        }
+    }
+
+    /// The point at `p` (within the tolerance), or the one `make` makes for it.
+    fn at(&mut self, p: DVec2, make: impl FnOnce() -> EntityId) -> EntityId {
+        let tol = self.tol;
+        let cell = ((p.x / tol).round() as i64, (p.y / tol).round() as i64);
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                if let Some(list) = self
+                    .cells
+                    .get(&(cell.0.saturating_add(dx), cell.1.saturating_add(dy)))
+                    && let Some((_, id)) = list.iter().find(|(q, _)| q.distance(p) <= tol)
+                {
+                    return *id;
+                }
+            }
+        }
+        let id = make();
+        self.cells.entry(cell).or_default().push((p, id));
+        id
+    }
+}
+
+/// A shape on its shared points (`point` gives the one for a position), with a circle's
+/// radius. None for a shape out of range or a line whose ends are one point.
+fn on_points(shape: &Shape, mut point: impl FnMut(DVec2) -> EntityId) -> Option<(OnPoints, f64)> {
+    if !finite(shape) {
+        return None;
+    }
+    Some(match *shape {
+        Shape::Line { a, b } => {
+            let (pa, pb) = (point(a), point(b));
+            if pa == pb {
+                return None;
+            }
+            (OnPoints::Line([pa, pb]), 0.0)
+        }
+        Shape::Circle { center, radius } => (OnPoints::Circle(point(center)), radius),
+        Shape::Arc {
+            center,
+            radius,
+            start,
+            sweep,
+        } => {
+            let c = point(center);
+            let s = point(center + DVec2::from_angle(start) * radius);
+            let e2 = point(center + DVec2::from_angle(start + sweep) * radius);
+            if s == e2 {
+                (OnPoints::Circle(c), radius)
+            } else {
+                (OnPoints::Arc([c, s, e2]), radius)
+            }
+        }
+        Shape::Ellipse {
+            center,
+            major,
+            minor,
+            start,
+            sweep,
+        } => {
+            let (axes, ends) =
+                drift_core::shape::ellipse_handles(center, major, minor, start, sweep);
+            let [c, m, n] = axes.map(&mut point);
+            match ends {
+                Some([s, e2]) => {
+                    let (s, e2) = (point(s), point(e2));
+                    (OnPoints::EllipseArc([c, m, n, s, e2]), 0.0)
+                }
+                None => (OnPoints::Ellipse([c, m, n]), 0.0),
+            }
+        }
+        Shape::Bezier { p } => (OnPoints::Bezier(p.map(point)), 0.0),
+        Shape::Point(p) => (OnPoints::Point(point(p)), 0.0),
+    })
+}
+
 /// Add an import to a document (inside the caller's transaction): curves on layers of the
 /// same names, text, hatches as fills on their boundaries, blocks and their copies, and
 /// layouts as sheets. Points that coincide (within [`tolerance::IMPORT_JOIN`] of the
 /// drawing's size) are one point, so the imported outlines stay connected; ends that stop
-/// that close to another curve are put on it; a curve drawn twice on a layer comes in once.
-/// The report's notes say how many of each.
+/// that close to another curve are put on it; a curve drawn twice on a layer comes in once,
+/// and a line drawn over part of another on it is trimmed to meet it. The report's notes say
+/// how many of each.
 pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
     let mut report = ImportReport {
         skipped: import.skipped.clone(),
@@ -3233,75 +3765,10 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
         report.layers += 1;
         id
     };
-    // Shared points, found through a grid of cells `tol` wide.
-    let mut points: BTreeMap<(i64, i64), Vec<(DVec2, EntityId)>> = BTreeMap::new();
-    let mut point = |doc: &mut Document, p: DVec2| -> EntityId {
-        let cell = ((p.x / tol).round() as i64, (p.y / tol).round() as i64);
-        for dx in -1..=1 {
-            for dy in -1..=1 {
-                if let Some(list) =
-                    points.get(&(cell.0.saturating_add(dx), cell.1.saturating_add(dy)))
-                    && let Some((_, id)) = list.iter().find(|(q, _)| q.distance(p) <= tol)
-                {
-                    return *id;
-                }
-            }
-        }
-        let id = doc.add_point(p);
-        points.entry(cell).or_default().push((p, id));
-        id
-    };
-    // A shape on its shared points (made as needed), with a circle's radius.
-    let mut on_points = |doc: &mut Document, shape: &Shape| -> Option<(OnPoints, f64)> {
-        if !finite(shape) {
-            return None;
-        }
-        Some(match *shape {
-            Shape::Line { a, b } => {
-                let (pa, pb) = (point(doc, a), point(doc, b));
-                if pa == pb {
-                    return None;
-                }
-                (OnPoints::Line([pa, pb]), 0.0)
-            }
-            Shape::Circle { center, radius } => (OnPoints::Circle(point(doc, center)), radius),
-            Shape::Arc {
-                center,
-                radius,
-                start,
-                sweep,
-            } => {
-                let c = point(doc, center);
-                let s = point(doc, center + DVec2::from_angle(start) * radius);
-                let e2 = point(doc, center + DVec2::from_angle(start + sweep) * radius);
-                if s == e2 {
-                    (OnPoints::Circle(c), radius)
-                } else {
-                    (OnPoints::Arc([c, s, e2]), radius)
-                }
-            }
-            Shape::Ellipse {
-                center,
-                major,
-                minor,
-                start,
-                sweep,
-            } => {
-                let (axes, ends) =
-                    drift_core::shape::ellipse_handles(center, major, minor, start, sweep);
-                let [c, m, n] = axes.map(|q| point(doc, q));
-                match ends {
-                    Some([s, e2]) => {
-                        let (s, e2) = (point(doc, s), point(doc, e2));
-                        (OnPoints::EllipseArc([c, m, n, s, e2]), 0.0)
-                    }
-                    None => (OnPoints::Ellipse([c, m, n]), 0.0),
-                }
-            }
-            Shape::Bezier { p } => (OnPoints::Bezier(p.map(|q| point(doc, q))), 0.0),
-            Shape::Point(p) => (OnPoints::Point(point(doc, p)), 0.0),
-        })
-    };
+    // Shared points.
+    let mut shared = SharedPoints::new(tol);
+    let mut on_doc_points =
+        |doc: &mut Document, shape: &Shape| on_points(shape, |p| shared.at(p, || doc.add_point(p)));
     // Curves already added, by the points they use, so a stroke drawn twice comes in once
     // and a hatch finds the outline it was drawn on instead of doubling it. (Points are
     // shared within `tol`, so curves this close are on the same points.)
@@ -3319,7 +3786,7 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
             *report.skipped.entry(TOO_LARGE.into()).or_insert(0) += 1;
             continue;
         }
-        let Some((on, radius)) = on_points(doc, &e.shape) else {
+        let Some((on, radius)) = on_doc_points(doc, &e.shape) else {
             continue;
         };
         let key = on.key();
@@ -3373,57 +3840,6 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
         ));
     }
 
-    // A curve by what it is (to `tol`), for a block's hatch edges to find its curves.
-    let key_of = |shape: &Shape| -> Option<(u8, [i64; 6])> {
-        let q = |v: f64| (v / tol).round() as i64;
-        Some(match *shape {
-            Shape::Line { a, b } => {
-                let (a, b) = if (a.x, a.y) <= (b.x, b.y) {
-                    (a, b)
-                } else {
-                    (b, a)
-                };
-                (0, [q(a.x), q(a.y), q(b.x), q(b.y), 0, 0])
-            }
-            Shape::Circle { center, radius } => (1, [q(center.x), q(center.y), q(radius), 0, 0, 0]),
-            Shape::Arc {
-                center,
-                radius,
-                start,
-                sweep,
-            } => {
-                let (s, e) = (
-                    center + DVec2::from_angle(start) * radius,
-                    center + DVec2::from_angle(start + sweep) * radius,
-                );
-                (
-                    2,
-                    [q(center.x), q(center.y), q(s.x), q(s.y), q(e.x), q(e.y)],
-                )
-            }
-            // A Bézier either way round (its middle handles say which way it bends).
-            Shape::Bezier { p } => {
-                let p = if (p[0].x, p[0].y) <= (p[3].x, p[3].y) {
-                    p
-                } else {
-                    [p[3], p[2], p[1], p[0]]
-                };
-                (
-                    3,
-                    [
-                        q(p[0].x),
-                        q(p[0].y),
-                        q(p[1].x),
-                        q(p[1].y),
-                        q(p[3].x),
-                        q(p[3].y),
-                    ],
-                )
-            }
-            _ => return None,
-        })
-    };
-
     let add_text = |doc: &mut Document, t: &DxfText, layer: LayerId| {
         let mut text = SketchText::new(t.text.clone(), t.at, t.height);
         text.angle = t.angle.rem_euclid(360.0);
@@ -3454,7 +3870,7 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
         let mut boundary = Vec::new();
         for (k, shapes) in h.loops.iter().enumerate() {
             for shape in shapes {
-                let Some((on, radius)) = on_points(doc, shape) else {
+                let Some((on, radius)) = on_doc_points(doc, shape) else {
                     continue;
                 };
                 let key = on.key();
@@ -3501,9 +3917,33 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
         report.fills += 1;
     }
 
+    // Lines stroked over part of another, along the same line, are trimmed to meet it, so
+    // no slivers lie between them.
+    let lo = first_made(doc, &curves, &lone);
+    // What goes, deleted at the end (one pass over the drawing).
+    let mut gone = Vec::new();
+    let Overlaps {
+        dropped,
+        trimmed,
+        split,
+        made,
+    } = overlaps_trimmed(doc, &mut curves, &lone, lo, tol, &mut gone);
+    let overlapping = dropped + trimmed + split;
+    if overlapping > 0 {
+        report.curves = report.curves + made - dropped;
+        report.notes.push(format!(
+            "{overlapping} {} along another on the same layer {} trimmed to meet it.",
+            if overlapping == 1 { "line" } else { "lines" },
+            if overlapping == 1 { "was" } else { "were" }
+        ));
+    }
+
     // Ends that stop just short of another curve (as PDFs round their coordinates) are put
     // on it, so the areas they close are found.
-    let joined = ends_onto_curves(doc, &curves, &lone, tol);
+    let joined = ends_onto_curves(doc, &curves, &lone, lo, tol, &mut gone);
+    if !gone.is_empty() {
+        doc.delete(gone);
+    }
     if joined > 0 {
         report.notes.push(format!(
             "{joined} {} just short of another curve {} joined to it.",
@@ -3544,17 +3984,38 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
                 // Its hatches fill the area of its curves around their seeds: their
                 // boundaries join the curves where they aren't curves already (as
                 // construction, if the import says fill edges are).
+                // An edge is one of its curves if it is on the same points (shared within
+                // `tol`, as the drawing's own curves are), with the same radius.
+                let mut shared = SharedPoints::new(tol);
+                let mut next = 0;
+                let mut key_of = |shape: &Shape| {
+                    on_points(shape, |p| {
+                        shared.at(p, || {
+                            next += 1;
+                            EntityId(next)
+                        })
+                    })
+                    .map(|(on, radius)| (on.key(), radius))
+                };
+                // Each curve's key, made when first needed (most edges are one of its
+                // curves exactly).
+                let mut keys: Vec<Option<Option<(OnPoints, f64)>>> = vec![None; items.len()];
                 let mut fills = Vec::new();
                 for h in &def.hatches {
                     let Some((seed, _)) = interior(h) else {
                         continue;
                     };
                     for shape in h.loops.iter().flatten().filter(|s| finite(s)) {
-                        let key = key_of(shape);
-                        let known = items.iter().any(|it| {
-                            it.shape == *shape || (key.is_some() && key_of(&it.shape) == key)
-                        });
+                        let mut known = items.iter().any(|it| it.shape == *shape);
+                        let key = if known { None } else { key_of(shape) };
+                        if let Some((a, r)) = key {
+                            known = (0..items.len()).any(|i| {
+                                let k = *keys[i].get_or_insert_with(|| key_of(&items[i].shape));
+                                k.is_some_and(|(b, q)| a == b && same_radius(r, q))
+                            });
+                        }
                         if !known {
+                            keys.push(Some(key));
                             items.push(drift_core::BlockItem {
                                 shape: *shape,
                                 style: if import.fill_edges_construction {

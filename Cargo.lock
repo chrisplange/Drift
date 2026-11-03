@@ -1259,6 +1259,7 @@ dependencies = [
  "png",
  "proptest",
  "roxmltree 0.21.1",
+ "rstar",
  "serde",
  "serde_json",
  "skrifa",

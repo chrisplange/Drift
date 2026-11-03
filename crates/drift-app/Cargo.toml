@@ -73,6 +73,9 @@ drift-edit = { workspace = true, features = ["test-support"] }
 egui_kittest = { version = "0.36.2", features = ["eframe", "wgpu", "snapshot"] }
 pollster = "1.0"
 proptest = "1"
+# Reading exported SVG and PDF back in the export tests (both already in the build).
+roxmltree = "0.21.1"
+miniz_oxide = "0.9.1"
 
 # Signs test releases so the updater's verification can be checked (and makes the release
 # signing key: `cargo run -p drift-app --example update_key`).

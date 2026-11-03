@@ -757,3 +757,137 @@ fn perf_big_sheet_fills() {
         );
     }
 }
+
+/// A big drawing's sheet exported (#258): the `DRIFT_BIG` file, imported as geometry, in a
+/// view of part of it (`DRIFT_PART`, below; by default the box from a tenth to
+/// six tenths of the way across and up), where curves cross the
+/// window's edges, and in a view of all of it (nothing to cut). For each: building the sheet (what the
+/// preview rebuilds), writing the PDF and SVG (and their sizes), and a preview frame at fit to
+/// page; medians of `DRIFT_REPS` (5) runs.
+///
+/// `DRIFT_BIG=<file> cargo test --release -p drift-app perf_big_sheet_export -- --ignored --nocapture`
+#[test]
+#[ignore = "big-drawing probe: needs DRIFT_BIG and a GPU"]
+fn perf_big_sheet_export() {
+    use drift_core::{Bounds, Sheet, View, Viewport};
+    use eframe::egui;
+
+    let Ok(path) = std::env::var("DRIFT_BIG") else {
+        return;
+    };
+    let reps: usize = std::env::var("DRIFT_REPS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(5);
+    let mut h = Harness::builder()
+        .with_size([1600.0, 1000.0])
+        .wgpu()
+        .build_eframe(|cc| crate::DriftApp::new(cc));
+    h.run();
+    let name = std::path::Path::new(&path)
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let bytes = std::fs::read(&path).unwrap();
+    h.state_mut()
+        .begin_import(&name, bytes, Some(ImportAs::Geometry), 0.0);
+    let mut pending = h.state_mut().pending_import.take().expect("pending");
+    h.state_mut().finish_import(&mut pending, 0.0);
+    let model: Bounds = h.state().fit_bounds();
+    let ctx = egui::Context::default();
+    crate::theme::install_fonts(&ctx);
+    let screen = egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(1600.0, 1000.0));
+    let painter = egui::Painter::new(ctx.clone(), egui::LayerId::background(), screen);
+    let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
+    let patterns = drift_edit::fills::PatternLibrary::default();
+    let ed = &mut h.state_mut().drawing.editor;
+    // The part's corners as fractions of the drawing's box (`DRIFT_PART`: "x0,y0,x1,y1").
+    let f: Vec<f64> = std::env::var("DRIFT_PART")
+        .unwrap_or_else(|_| "0.1,0.1,0.6,0.6".into())
+        .split(',')
+        .map(|v| v.trim().parse().unwrap())
+        .collect();
+    let at = |x: f64, y: f64| model.min + model.size() * DVec2::new(x, y);
+    for (label, crop) in [
+        (
+            "part",
+            Bounds {
+                min: at(f[0], f[1]),
+                max: at(f[2], f[3]),
+            },
+        ),
+        ("all", model),
+    ] {
+        let mut sheet = Sheet::new(label);
+        let size = sheet.size();
+        let scale = (crop.size().x / (size.x - 40.0)).max(crop.size().y / (size.y - 40.0));
+        let view = ed.doc.add_view(View::new(label, crop, scale));
+        sheet.viewports.push(Viewport::new(view, size * 0.5));
+        ed.doc.add_sheet(sheet.clone());
+        let views = ed.doc.placed_views(&sheet);
+        let mut build =
+            || crate::output::sheet_drawing(ed, &patterns, &painter, &sheet, &views, (1, 1));
+        let d = build();
+        let built = median(reps, || {
+            std::hint::black_box(build());
+        });
+        let (mut pdf, mut svg) = (Vec::new(), String::new());
+        let pdf_ms = median(reps, || {
+            pdf = drift_io::pdf::write(std::slice::from_ref(&d), label)
+        });
+        let svg_ms = median(reps, || svg = drift_io::svg::write(&d));
+        let fit =
+            ((screen.width() - 48.0) / size.x as f32).min((screen.height() - 48.0) / size.y as f32);
+        let centre = size * 0.5;
+        let to_screen = |p: DVec2| {
+            let v = (p - centre) * f64::from(fit);
+            Pos2::new(800.0 + v.x as f32, 500.0 - v.y as f32)
+        };
+        let page = egui::Rect::from_two_pos(to_screen(DVec2::ZERO), to_screen(size));
+        let frame = median(reps, || {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |ui| {
+                    let p = ui.painter().with_clip_rect(page.intersect(screen));
+                    crate::output::paint_drawing(&p, &d, to_screen, fit);
+                },
+            );
+            out.textures_delta.clear();
+            std::hint::black_box(ctx.tessellate(out.shapes, out.pixels_per_point));
+        });
+        println!(
+            "PERF sheet export, {label}: {} items; sheet {built:.1} ms, PDF {pdf_ms:.1} ms \
+             ({} bytes), SVG {svg_ms:.1} ms ({} bytes), preview frame {frame:.1} ms",
+            d.items.len(),
+            pdf.len(),
+            svg.len()
+        );
+        if let Ok(dir) = std::env::var("DRIFT_EXPORT_OUT") {
+            std::fs::write(format!("{dir}/{label}.pdf"), &pdf).unwrap();
+            std::fs::write(format!("{dir}/{label}.svg"), &svg).unwrap();
+        }
+        // branch-only: the crop by itself
+        let whole = crate::output::uncropped_sheet(ed, &patterns, &painter, &sheet, &views, (1, 1));
+        let mut times: Vec<f64> = (0..reps)
+            .map(|_| {
+                let mut c = whole.clone();
+                let t = Instant::now();
+                c.crop_to_windows();
+                let took = ms(t);
+                std::hint::black_box(c);
+                took
+            })
+            .collect();
+        times.sort_by(f64::total_cmp);
+        println!(
+            "PERF sheet export, {label}: crop {:.1} ms ({} items before)",
+            times[reps / 2],
+            whole.items.len()
+        );
+        // end branch-only
+    }
+}

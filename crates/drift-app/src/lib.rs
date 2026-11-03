@@ -13,6 +13,8 @@ mod commands;
 mod dock;
 #[cfg(test)]
 mod edit_session_tests;
+#[cfg(test)]
+mod export_crop_tests;
 pub mod fonts;
 mod icons;
 mod layers_ui;

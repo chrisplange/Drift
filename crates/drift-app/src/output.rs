@@ -904,9 +904,23 @@ fn view(
 }
 
 /// A sheet as printed, with its `views` (from `Document::placed_views`): each view of the
-/// sketch at its scale, seen through its frame, under the views' titles, the border, title
-/// block and revision table, in the sheet's colours.
+/// sketch at its scale, cropped to its frame (#258), under the views' titles, the border,
+/// title block and revision table, in the sheet's colours.
 pub fn sheet_drawing(
+    ed: &mut Editor,
+    patterns: &PatternLibrary,
+    painter: &egui::Painter,
+    sheet: &Sheet,
+    views: &[PlacedView],
+    number: (usize, usize),
+) -> Drawing {
+    let mut d = uncropped_sheet(ed, patterns, painter, sheet, views, number);
+    d.crop_to_windows();
+    d
+}
+
+/// [`sheet_drawing`] with each view's whole drawing in it, seen through its frame.
+pub(crate) fn uncropped_sheet(
     ed: &mut Editor,
     patterns: &PatternLibrary,
     painter: &egui::Painter,
@@ -1324,7 +1338,8 @@ pub fn paint_drawing(
         };
         let line = |pts: Vec<Pos2>, corners: bool| {
             if dashes.len() >= 2 && dashes[0] > 1.0 {
-                crate::overlay::dashed(p, &pts, stroke, dashes[0], dashes[1]);
+                let phase = it.pen.dash_offset * f64::from(px);
+                crate::overlay::dashed_from(p, &pts, stroke, dashes[0], dashes[1], phase);
             } else {
                 round(&pts, corners);
                 p.add(egui::Shape::line(pts, stroke));
@@ -1391,11 +1406,20 @@ pub fn paint_drawing(
                         mesh.add_triangle(base, base + 1, base + 2);
                     }
                     p.add(egui::Shape::mesh(mesh));
-                    let rings: Vec<Vec<Pos2>> = rings
-                        .iter()
-                        .map(|r| r.iter().map(|q| to_screen(*q)).collect())
-                        .collect();
-                    smooth_edges(p, rings, fill);
+                    // A fill cut at a view's window isn't smoothed along the window's edge
+                    // (where its cut rings run to and fro, #258): the window cuts it there.
+                    let screen = |r: &[DVec2]| r.iter().map(|q| to_screen(*q)).collect();
+                    let mut edges = Vec::new();
+                    for r in rings {
+                        match it
+                            .clip
+                            .and_then(|w| drift_draft::crop::off_window_edge(r, w))
+                        {
+                            Some(runs) => edges.extend(runs.iter().map(|run| (screen(run), false))),
+                            None => edges.push((screen(r), true)),
+                        }
+                    }
+                    smooth_edges(p, edges, fill);
                 }
             }
             // Sketch text in its own font: its glyphs, filled.
@@ -1522,7 +1546,7 @@ fn fill_outlines(
     p.add(egui::Shape::mesh(mesh));
     let rings = rings
         .iter()
-        .map(|r| r.iter().map(|q| to_screen(*q)).collect())
+        .map(|r| (r.iter().map(|q| to_screen(*q)).collect(), true))
         .collect();
     smooth_edges(p, rings, color);
 }
@@ -1531,18 +1555,23 @@ fn fill_outlines(
 /// tessellates, not of a mesh handed to it, and the window has no multisampling. Each ring
 /// (outer or hole, in screen points) is stroked one pixel wide in the fill's colour, so its
 /// edge comes out as smooth as a line; the fill grows by half a pixel. A ring under a pixel
-/// across, or outside what the painter shows, isn't stroked: nothing would show.
-fn smooth_edges(p: &egui::Painter, rings: Vec<Vec<Pos2>>, color: Color32) {
+/// across, or outside what the painter shows, isn't stroked: nothing would show. Each comes
+/// with whether it is a whole ring (closed) or a run of one's edges.
+fn smooth_edges(p: &egui::Painter, rings: Vec<(Vec<Pos2>, bool)>, color: Color32) {
     let pixel = 1.0 / p.pixels_per_point();
     let stroke = egui::Stroke::new(pixel, color);
     let clip = p.clip_rect();
-    for ring in rings {
+    for (ring, closed) in rings {
         let bounds = egui::Rect::from_points(&ring);
-        if ring.len() >= 3
+        if ring.len() >= if closed { 3 } else { 2 }
             && bounds.width().max(bounds.height()) >= pixel
             && bounds.intersects(clip)
         {
-            p.add(egui::Shape::closed_line(ring, stroke));
+            p.add(if closed {
+                egui::Shape::closed_line(ring, stroke)
+            } else {
+                egui::Shape::line(ring, stroke)
+            });
         }
     }
 }

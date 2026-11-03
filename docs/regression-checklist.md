@@ -84,6 +84,9 @@ touches them:
   right size and scale, in colour, greys or black and white as the sheet says.
 - **PDF and SVG viewers.** An exported sheet opens in Acrobat or Preview, and the SVG in a
   browser and Inkscape, looking like the screen (fills over and under as drawn, line weights).
+  A sheet whose view shows only part of the drawing, its PDF opened in Illustrator: Release
+  Clipping Mask shows nothing outside the view, and dashed lines cut at the view's edge keep
+  their dashes where they were (#258; `cargo test -p drift-app export_crop`).
 - **macOS.** Trackpad pinch to zoom and two-finger pan, a Retina display (sharp lines and text at
   2×), Cmd in place of Ctrl in menus and shortcuts.
 - **Windows.** High-DPI displays at 125 %, 150 % and 200 %, and a window moved between monitors

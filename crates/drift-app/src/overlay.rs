@@ -25,22 +25,55 @@ impl ScreenMap {
     }
 }
 
-/// `path` dashed, as far as it shows in `painter`'s clip rectangle (see [`dashes`]).
+/// `path` dashed, as far as it shows in `painter`'s clip rectangle (see [`dashes_from`]).
 pub fn dashed(painter: &egui::Painter, path: &[Pos2], stroke: Stroke, dash: f32, gap: f32) {
-    painter.extend(dashes(path, painter.clip_rect(), stroke, dash, gap));
+    dashed_from(painter, path, stroke, dash, gap, 0.0);
+}
+
+/// [`dashed`], starting `phase` points into the pattern (a piece of a cropped item, #258).
+pub fn dashed_from(
+    painter: &egui::Painter,
+    path: &[Pos2],
+    stroke: Stroke,
+    dash: f32,
+    gap: f32,
+    phase: f64,
+) {
+    painter.extend(dashes_from(
+        path,
+        painter.clip_rect(),
+        stroke,
+        dash,
+        gap,
+        phase,
+    ));
+}
+
+/// [`dashes_from`] the pattern's start.
+#[cfg(test)]
+pub fn dashes(path: &[Pos2], clip: Rect, stroke: Stroke, dash: f32, gap: f32) -> Vec<egui::Shape> {
+    dashes_from(path, clip, stroke, dash, gap, 0.0)
 }
 
 /// `path` as dashes, only where it crosses `clip` (padded by the stroke): a frame or
 /// leader zoomed far past the canvas costs no more than the part of it on screen (#150).
-/// Each dash keeps its place along the whole path, so panning doesn't make them crawl.
-pub fn dashes(path: &[Pos2], clip: Rect, stroke: Stroke, dash: f32, gap: f32) -> Vec<egui::Shape> {
+/// Each dash keeps its place along the whole path, so panning doesn't make them crawl. The
+/// pattern starts `phase` points in (a piece of an item cropped at a view's window, #258).
+pub fn dashes_from(
+    path: &[Pos2],
+    clip: Rect,
+    stroke: Stroke,
+    dash: f32,
+    gap: f32,
+    phase: f64,
+) -> Vec<egui::Shape> {
     let clip = clip.expand(stroke.width + 1.0);
     let period = f64::from(dash + gap);
     let mut out = Vec::new();
     if period <= 0.0 || !period.is_finite() {
         return out;
     }
-    let mut along = 0.0;
+    let mut along = phase;
     for w in path.windows(2) {
         let (a, b) = (w[0], w[1]);
         let length = f64::from((b - a).length());
@@ -652,5 +685,39 @@ mod tests {
             )
             .is_empty()
         );
+    }
+    /// A piece of a path cropped at a view's window (#258), dashed from how far along the
+    /// whole path it starts, has its dashes where the whole path has them.
+    #[test]
+    fn a_cropped_piece_dashes_from_where_it_starts() {
+        let clip = Rect::from_min_max(Pos2::new(-100.0, -100.0), Pos2::new(300.0, 300.0));
+        let stroke = Stroke::new(1.0, Color32::WHITE);
+        let whole = [
+            Pos2::new(0.0, 20.0),
+            Pos2::new(60.0, 20.0),
+            Pos2::new(60.0, 90.0),
+        ];
+        // From 23.5 along.
+        let piece = [Pos2::new(23.5, 20.0), whole[1], whole[2]];
+        let all = ends(&dashes(&whole, clip, stroke, 6.0, 4.0));
+        let cut = ends(&dashes_from(&piece, clip, stroke, 6.0, 4.0, 23.5));
+        let unshifted = ends(&dashes(&piece, clip, stroke, 6.0, 4.0));
+        let within = |p: Pos2, [c, d]: [Pos2; 2]| {
+            (c.distance(p) + p.distance(d) - c.distance(d)).abs() < 1e-3
+        };
+        let matches = |dashes: &[[Pos2; 2]]| {
+            dashes.iter().all(|[a, b]| {
+                all.iter()
+                    .any(|dash| within(*a, *dash) && within(*b, *dash))
+            })
+        };
+        assert!(matches(&cut));
+        // Every whole dash past the piece's start is there.
+        assert_eq!(
+            cut.len(),
+            all.iter().filter(|[_, b]| b.x > 23.5 || b.y > 20.0).count()
+        );
+        // (From 0, they'd be out of step.)
+        assert!(!matches(&unshifted));
     }
 }

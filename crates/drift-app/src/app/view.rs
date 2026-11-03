@@ -841,7 +841,7 @@ impl DriftApp {
                 // Right-click cancels a grab, as in Blender.
                 self.tool.cancel(&mut self.drawing.editor);
             } else {
-                self.tool.handle(Input::Finish, &mut self.drawing.editor);
+                self.tool.secondary_click(&mut self.drawing.editor);
             }
         }
         if !self.tool.is_busy() {

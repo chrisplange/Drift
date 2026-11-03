@@ -23,6 +23,8 @@ mod fills;
 mod groups;
 /// Import…, the drop dialog, a file that can't be read.
 mod import;
+/// Modify tools: Fillet on several corners in one undo step.
+mod modify;
 /// Offsets: a circle, an ellipse, a pen curve and a mixed chain offset as one object each.
 mod offsets;
 /// Openings: a door placed with Space for its swing, picked, deleted, undone, reopened.

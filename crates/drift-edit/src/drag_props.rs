@@ -1582,6 +1582,309 @@ fn an_unlandable_move_gives_the_same_compromise_at_any_size() {
     }
 }
 
+/// What a solve keeps that no relation names, checked directly (`drift_solver::unmet` reads
+/// only relations' rows): every arc's end on the circle through its start, every midpoint
+/// on its line's middle. The first broken one, if any.
+fn broken_structure(ed: &Editor) -> Option<String> {
+    let at = |p| ed.doc.point(p).unwrap();
+    for (id, e) in ed.doc.iter() {
+        if let drift_core::EntityKind::Arc { center, start, end } = e.kind {
+            let (r0, r1) = (at(center).distance(at(start)), at(center).distance(at(end)));
+            if (r0 - r1).abs() > 1e-9 * r0.max(1.0) {
+                return Some(format!("arc {id:?}: ends {r0} and {r1} from its centre"));
+            }
+        }
+    }
+    for (_, c) in ed.doc.constraints() {
+        if let Constraint::Midpoint { point, line } = *c
+            && let Some(drift_core::EntityKind::Line { a, b }) = ed.doc.get(line).map(|e| e.kind)
+        {
+            let (a, b) = (at(a), at(b));
+            let off = at(point).distance((a + b) / 2.0);
+            if off > 1e-9 * a.distance(b).max(1.0) {
+                return Some(format!("midpoint {point:?} is {off} off its line's middle"));
+            }
+        }
+    }
+    None
+}
+
+/// The parameters a move of `ids` drags (all their points, as the Select tool's).
+fn dragged_by(ed: &Editor, ids: &[EntityId]) -> Vec<Param> {
+    ed.doc
+        .defining_points(ids.iter().copied())
+        .into_iter()
+        .flat_map(Param::point)
+        .collect()
+}
+
+/// Drag `ids` by `offset` in `steps` calls (each from the last accepted offset), checking
+/// after every accepted call that no arc or midpoint was left broken. How many calls were
+/// accepted.
+fn drag_keeping_structure(ed: &mut Editor, ids: &[EntityId], offset: DVec2, steps: u32) -> u32 {
+    let dragged = dragged_by(ed, ids);
+    ed.doc.begin();
+    let mut applied = DVec2::ZERO;
+    let mut accepted = 0;
+    for k in 1..=steps {
+        let target = offset * f64::from(k) / f64::from(steps);
+        if ed.drag(ids, target - applied, &dragged) {
+            applied = target;
+            accepted += 1;
+            if let Some(broken) = broken_structure(ed) {
+                panic!("call {k} of {steps} was accepted with {broken}");
+            }
+        }
+    }
+    ed.doc.rollback();
+    accepted
+}
+
+/// e13's sketch (#280): two arcs sharing an end, the first's centre fixed; the second's
+/// centre is dragged by [`TWO_ARCS_DRAG`].
+fn two_arcs_one_fixed() -> Sketch {
+    let p = DVec2::new;
+    Sketch {
+        points: vec![
+            p(0.0, 0.0),
+            p(8.0, 0.0),
+            p(2.3431457505076203, -5.65685424949238),
+            p(-9.656854249492381, -5.65685424949238),
+            p(-1.1715728752538102, -14.142135623730951),
+        ],
+        curves: vec![Curve::Arc(1, 0, 2), Curve::Arc(3, 4, 2)],
+        rels: vec![Rel::Fix(1)],
+    }
+}
+
+const TWO_ARCS_DRAG: DVec2 = DVec2::new(0.0, -8.147331698170428);
+
+/// #281 J1: a step whose solve stopped at its iteration cap naming no conflict (the arcs'
+/// rows belong to no relation) was kept as it was, an arc's end left 1.18 mm off its circle,
+/// and the drag ended differently at another size. A step that doesn't finish is taken in
+/// smaller steps or refused, never kept: the same calls go at either size.
+#[test]
+fn a_step_the_solve_does_not_finish_is_not_kept() {
+    let sketch = two_arcs_one_fixed();
+    let small = Similarity {
+        scale: 0.25,
+        turn: 0.0,
+        shift: DVec2::new(0.0, 435.56956075701453),
+    };
+    for steps in [1, 4] {
+        let accepted = [Similarity::IDENTITY, small].map(|t| {
+            let mut built = Built::new(&sketch, t).unwrap();
+            let ids = [built.points[3]];
+            drag_keeping_structure(&mut built.ed, &ids, t.vector(TWO_ARCS_DRAG), steps)
+        });
+        assert_eq!(accepted[0], accepted[1], "in {steps} calls");
+        // (Not by refusing everything: in 4 calls the first ones go.)
+        assert!(steps == 1 || accepted[0] >= 1, "in {steps} calls none went");
+    }
+}
+
+/// #281 J2 (f10, #282): moving a line whose neighbouring arc turns at every step size
+/// carries the arc along, and that carried step doesn't finish whole; in halves it does. It
+/// was refused unhalved ("a conflict is the same at any size"), though a rigid move meets
+/// every relation.
+#[test]
+fn a_carried_step_that_does_not_finish_whole_goes_in_halves() {
+    let p = DVec2::new;
+    let sketch = Sketch {
+        points: vec![
+            p(0.0, 0.0),
+            p(-9.659258262890683, -2.588190451025208),
+            p(8.0, 0.0),
+            p(2.3431457505076203, 5.656854249492381),
+            p(-4.8296291314453415, -1.294095225512604),
+            p(5.1703708685546585, -1.294095225512604),
+            p(-5.65685424949238, 5.656854249492381),
+            p(-5.656854249492379, -2.3431457505076194),
+        ],
+        curves: vec![
+            Curve::Line(0, 1),
+            Curve::Arc(2, 3, 0),
+            Curve::Line(4, 5),
+            Curve::Arc(6, 7, 0),
+        ],
+        rels: vec![Rel::Midpoint(4, 0)],
+    };
+    let offset = p(-17.99131491084439, 0.0);
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let ids = [built.curves[2]];
+    let run = drag(&mut built, &ids, offset, 1).unwrap();
+    assert!(run.committed && run.refused == 0, "the move was refused");
+    for i in [4, 5] {
+        let want = run.start[i] + offset;
+        assert!(
+            close(run.end[i], want, want.length()),
+            "point {i} at {}",
+            run.end[i]
+        );
+    }
+    assert_eq!(broken_structure(&built.ed), None);
+}
+
+/// f3's sketch (#282) and its move: after the first small step, the drag's solve doesn't
+/// finish at any step size.
+fn never_finishes() -> (Sketch, DVec2) {
+    let p = DVec2::new;
+    let sketch = Sketch {
+        points: vec![
+            p(0.0, 0.0),
+            p(8.0, 0.0),
+            p(2.3431457505076203, 5.656854249492381),
+            p(2.3431457505076203, 5.656854249492381),
+            p(-7.316112512383063, 3.0686637984671727),
+            p(9.414213562373096, 12.727922061357855),
+            p(15.0, 0.0),
+            p(13.65685424949238, -5.6568542494923815),
+            p(28.145741643828405, -1.7745685729545704),
+        ],
+        curves: vec![
+            Curve::Arc(1, 2, 0),
+            Curve::Line(3, 4),
+            Curve::Line(2, 5),
+            Curve::Line(0, 6),
+            Curve::Line(7, 8),
+        ],
+        rels: vec![Rel::OnCurve(3, 0), Rel::Tangent(2, 0), Rel::OnCurve(7, 0)],
+    };
+    (sketch, p(0.0, -18.003814381075802))
+}
+
+/// #281: a move whose solve doesn't finish even in its smallest steps is refused, leaving
+/// everything where it was, and pushes nothing along (a solve left part way says nothing of
+/// what turns).
+#[test]
+fn a_move_that_never_finishes_is_refused_pushing_nothing() {
+    let (sketch, offset) = never_finishes();
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let ids = [built.curves[1], built.curves[4]];
+    let dragged = dragged_by(&built.ed, &ids);
+    let before = built.positions();
+    built.ed.doc.begin();
+    assert!(!built.ed.drag(&ids, offset, &dragged));
+    assert!(
+        !built.ed.drag_pushed(),
+        "a refused frame pushed curves along"
+    );
+    assert_eq!(built.positions(), before);
+    built.ed.doc.rollback();
+}
+
+/// #281: a frame whose steps don't finish spends at most
+/// `UNFINISHED_WORK` (`editor/drag.rs`) on smaller steps (each such solve runs
+/// to the solver's iteration cap over the whole part), then one solve for each step it still
+/// tries (the whole move, the first half at each of a stepped step's 5 depths): not tens of
+/// them. With 300 bars hanging from it, one of f3's unfinished solves spends it all.
+#[test]
+fn a_big_part_that_cannot_finish_spends_its_budget_only() {
+    let (mut sketch, offset) = never_finishes();
+    let mut last = 6;
+    for k in 0..300 {
+        let next = sketch.points.len();
+        sketch.points.push(DVec2::new(15.0, -1.0 - f64::from(k)));
+        sketch.curves.push(Curve::Line(last, next));
+        last = next;
+    }
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let ids = [built.curves[1], built.curves[4]];
+    let dragged = dragged_by(&built.ed, &ids);
+    built.ed.doc.begin();
+    assert!(!built.ed.drag(&ids, offset, &dragged));
+    let unfinished = built.ed.drag_unfinished;
+    assert!(
+        unfinished <= 1 + 6,
+        "the refused frame ran {unfinished} unfinished solves of {}",
+        built.ed.drag_solves()
+    );
+    built.ed.doc.rollback();
+}
+
+/// A drawing that already conflicts: a line held 10 long from a fixed point to one held
+/// both level with it and plumb under it, which can't all hold; `extra` adds more, given the
+/// fixed point. Every solve of a drag in that part fails on those old conflicts. Returns the
+/// editor and what `extra` returned.
+fn already_conflicting<T>(
+    extra: impl FnOnce(&mut drift_core::Document, EntityId) -> T,
+) -> (Editor, T) {
+    let mut doc = drift_core::Document::new();
+    doc.begin();
+    let a = doc.add_point(DVec2::new(8.0, 0.0));
+    let b = doc.add_point(DVec2::new(18.0, 0.0));
+    let line = doc.add_line(a, b).unwrap();
+    for c in [
+        Constraint::Fix {
+            point: a,
+            at: DVec2::new(8.0, 0.0),
+        },
+        Constraint::Horizontal { line },
+        Constraint::Vertical { line },
+        Constraint::Distance { a, b, value: 10.0 },
+    ] {
+        doc.add_constraint(c).unwrap();
+    }
+    let out = extra(&mut doc, a);
+    doc.commit("Conflicting");
+    let ed = Editor::new(doc);
+    assert!(
+        !ed.analysis().conflicts.is_empty(),
+        "the drawing should conflict"
+    );
+    (ed, out)
+}
+
+/// A drag in a drawing that already conflicts goes as it did before #281: its solves fail
+/// only on conflicts the drawing had, which don't stop every later edit.
+#[test]
+fn a_drawing_already_in_conflict_still_drags() {
+    let (mut ed, tip) = already_conflicting(|doc, a| {
+        let tip = doc.add_point(DVec2::new(8.0, 12.0));
+        doc.add_line(a, tip).unwrap();
+        tip
+    });
+    let offset = DVec2::new(3.0, 2.0);
+    ed.doc.begin();
+    assert!(ed.drag(&[tip], offset, &Param::point(tip)));
+    assert_eq!(ed.doc.point(tip).unwrap(), DVec2::new(11.0, 14.0));
+    ed.doc.rollback();
+}
+
+/// #281: an old conflict elsewhere in the part doesn't excuse a solve that broke an arc. The
+/// report names only the old conflicts (the arcs' rows belong to no relation), yet the step
+/// didn't finish: it goes as it does without the conflict. A drag the old conflict alone
+/// fails still goes.
+#[test]
+fn an_old_conflict_does_not_excuse_a_broken_arc() {
+    let (mut ed, (centre, tip)) = already_conflicting(|doc, a| {
+        // e13's arcs, the first centred on the fixed point, and a line hanging from it.
+        let p = |doc: &mut drift_core::Document, x, y| doc.add_point(DVec2::new(x, y));
+        let p0 = p(doc, 0.0, 0.0);
+        let p2 = p(doc, 2.3431457505076203, -5.65685424949238);
+        let p3 = p(doc, -9.656854249492381, -5.65685424949238);
+        let p4 = p(doc, -1.1715728752538102, -14.142135623730951);
+        doc.add_arc(a, p0, p2).unwrap();
+        doc.add_arc(p3, p4, p2).unwrap();
+        let tip = p(doc, 8.0, 12.0);
+        doc.add_line(a, tip).unwrap();
+        (p3, tip)
+    });
+    let alone = {
+        let mut built = Built::new(&two_arcs_one_fixed(), Similarity::IDENTITY).unwrap();
+        let ids = [built.points[3]];
+        drag_keeping_structure(&mut built.ed, &ids, TWO_ARCS_DRAG, 4)
+    };
+    assert_eq!(
+        drag_keeping_structure(&mut ed, &[centre], TWO_ARCS_DRAG, 4),
+        alone
+    );
+    ed.doc.begin();
+    assert!(ed.drag(&[tip], DVec2::new(3.0, 2.0), &Param::point(tip)));
+    assert_eq!(ed.doc.point(tip).unwrap(), DVec2::new(11.0, 14.0));
+    ed.doc.rollback();
+}
+
 /// #97: a move that leaves a tangent line behind. The line hangs from the moved arc's end and
 /// lies along the moved line A (ending where A ends, at its own point), so it stays tangent
 /// only by keeping its direction while its far end stays put: the move squeezes it to nothing

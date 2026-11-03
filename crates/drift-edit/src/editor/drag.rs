@@ -20,12 +20,28 @@ const WANDERED: usize = 1;
 /// each over its own part only.)
 const DRAG_SOLVES: u32 = 200;
 
+/// The work a drag frame may spend, for one part of what it drags, on solves that don't
+/// finish (see `Editor::unfinished`), counted as each one's scope times its iterations (the
+/// way `drag_solved` counts scope): 4 such solves of a part of 16 curves and points, each at
+/// the solver's iteration cap of 100 (enough to halve a small part's step a few times; more
+/// buys few drags and costs refused frames of mid-sized parts several times what they were).
+/// Such a step is taken again in halves, as a step that
+/// turns the shape is, but those solves run to the cap, so without this a move that can't be
+/// finished at any size would spend the frame's every solve ([`DRAG_SOLVES`]) at that cost
+/// and be refused anyway (#281). Work, not solves: one of a part of thousands costs what
+/// hundreds of a small one do. Once it is spent, a step whose solve doesn't finish is refused
+/// as it is, not halved (that solve still runs: only it can tell), and the steps that do
+/// finish go on; so past it a frame runs at most one more unfinished solve for each step
+/// [`Editor::drag`] still tries: the whole move, then the first half at each of a stepped
+/// step's 5 depths (0 to 4), again for each round of carried curves.
+const UNFINISHED_WORK: usize = 4 * 16 * 100;
+
 /// Lines no longer than this (mm) have no way round that a drag keeps (see
 /// [`Editor::drag`]'s steps): a flattened curve's error, below anything drawn.
 const NO_WAY_ROUND: f64 = drift_core::tolerance::FLATTEN_MM;
 
-/// How many times a step that turns the shape is halved before the curves it turns are taken
-/// to be pushed along.
+/// How many times a step that fails or turns the shape is halved before it is refused (or,
+/// where the smallest step turns, the curves it turns are taken to be pushed along).
 const MAX_SPLITS: u32 = 6;
 
 /// The drag [`Editor::drag`] is in the middle of. Every frame solves from the geometry as
@@ -126,6 +142,8 @@ struct DragFrame<'a> {
     touching: &'a Rc<drift_solver::TouchingEnds>,
     /// Solves this frame may still run.
     solves_left: u32,
+    /// The work it may still spend on solves that don't finish ([`UNFINISHED_WORK`]).
+    unfinished_left: usize,
     /// The most its solves have wandered (see `SolveReport::wandered`).
     wandered: usize,
     /// A step pushed curves along.
@@ -139,7 +157,9 @@ impl Editor {
     ///
     /// A move that would turn an arc inside out or put a tangent curve on the other side of
     /// its line (a solve can meet every relation that way) is taken in smaller steps, which
-    /// follow the shape round; if even small steps turn it, the move is refused.
+    /// follow the shape round; if even small steps turn it, the move is refused. So is a step
+    /// whose solve doesn't finish: it is taken in smaller steps, and refused if even those
+    /// don't (never kept part way, with an arc off its circle).
     ///
     /// Moving whole curves carries the lines hanging from them along where it can, at their
     /// length, rather than stretching them; dragging a point reshapes what it ends.
@@ -204,6 +224,7 @@ impl Editor {
         let mut ok = true;
         let mut pushed = false;
         self.drag_solves = 0;
+        self.drag_unfinished = 0;
         self.drag_solved = 0;
         // What goes exactly where it is moved goes in one move, from where the drag found
         // it (as `Document::translate` would move it: arcs' ends kept on their circles).
@@ -238,6 +259,7 @@ impl Editor {
                 lowered_lines: &part.lowered_lines,
                 touching: &part.touching,
                 solves_left: DRAG_SOLVES,
+                unfinished_left: UNFINISHED_WORK,
                 wandered: 0,
                 pushed: false,
             };
@@ -693,9 +715,10 @@ impl Editor {
     }
 
     /// One step of [`drag`](Self::drag) from `before` (the scope's geometry now), split in
-    /// halves (up to `MAX_SPLITS` deep) where it turns the shape. False, with the geometry
-    /// part way, if it can't go (or the frame has run all the solves it may); then `turned`
-    /// holds the curves even the smallest step turned.
+    /// halves (up to `MAX_SPLITS` deep) where its solve fails or it turns the shape. False,
+    /// with the geometry part way, if it can't go (or the frame has run all the solves it
+    /// may); then `turned` holds the curves even the smallest step turned, where that step's
+    /// solve finished.
     #[allow(clippy::too_many_arguments)]
     fn drag_in_steps(
         &mut self,
@@ -787,7 +810,13 @@ impl Editor {
             },
         );
         frame.wandered = frame.wandered.max(report.wandered);
-        let conflicts = self.new_conflicts(&report);
+        let unfinished = self.unfinished(&report);
+        if unfinished {
+            frame.unfinished_left = frame
+                .unfinished_left
+                .saturating_sub(frame.scope.len() * report.iterations.max(1));
+            self.drag_unfinished += 1;
+        }
         let mut flipped: Vec<EntityId> = carried_lines
             .iter()
             .chain(&lowered_lines)
@@ -799,20 +828,20 @@ impl Editor {
             )
             .map(|&(line, ..)| line)
             .collect();
-        if !conflicts && flipped.is_empty() && !orientation.turned(&self.doc) {
+        if !unfinished && flipped.is_empty() && !orientation.turned(&self.doc) {
             return true;
         }
-        if depth >= MAX_SPLITS {
-            // Even the smallest step turns these. (Or can't be solved: a curve the move has
-            // left behind until nothing is left of it, a tangent line squeezed to a point,
-            // turns as it goes through zero and the solve fails on it.)
+        if depth >= MAX_SPLITS && !unfinished {
+            // Even the smallest step turns these. (A solve that didn't finish left the
+            // geometry part way, which says nothing of what turns.)
             *turned = orientation.turned_curves(&self.doc);
             turned.append(&mut flipped);
         }
         self.restore_geometry(before);
-        // (Only a turn is worth smaller steps: a conflict is the same at any size.)
-        if conflicts
-            || depth >= MAX_SPLITS
+        // (A solve that doesn't finish at one size may at a smaller one: the drag's relations
+        // held where it began.)
+        if depth >= MAX_SPLITS
+            || (unfinished && frame.unfinished_left == 0)
             || !self.drag_in_steps(frame, ids, delta / 2.0, carried, before, depth + 1, turned)
         {
             return false;

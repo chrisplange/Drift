@@ -119,6 +119,8 @@ pub struct Editor {
     drag_session: Option<DragSession>,
     /// How many solves the last drag call ran (for the perf tests).
     pub(crate) drag_solves: u32,
+    /// Of those, how many didn't finish (see [`Editor::unfinished`]; for the tests).
+    pub(crate) drag_unfinished: u32,
     /// How many entities those solves took in, all told (for the tests: what a frame of a
     /// drag costs).
     pub(crate) drag_solved: usize,

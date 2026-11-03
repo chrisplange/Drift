@@ -658,6 +658,91 @@ fn perf_drag_pushing_an_arc() {
     println!("  solves per frame: most {most}, {all} in all; {refused} frames refused");
 }
 
+/// f3's sketch (`drag_props::never_finishes`, #282): a move of two lines on an arc whose
+/// solve doesn't finish at any step size, so every frame is refused; with `chain` bars
+/// hanging from the arc's free end, free (`related` false) or each held at its length (in
+/// the failing solve then). Returns (editor, the two lines).
+fn never_finishing(chain: usize, related: bool) -> (Editor, [EntityId; 2]) {
+    let mut doc = Document::new();
+    doc.begin();
+    let p = [
+        v(0.0, 0.0),
+        v(8.0, 0.0),
+        v(2.3431457505076203, 5.656854249492381),
+        v(2.3431457505076203, 5.656854249492381),
+        v(-7.316112512383063, 3.0686637984671727),
+        v(9.414213562373096, 12.727922061357855),
+        v(15.0, 0.0),
+        v(13.65685424949238, -5.6568542494923815),
+        v(28.145741643828405, -1.7745685729545704),
+    ]
+    .map(|q| doc.add_point(q));
+    let arc = doc.add_arc(p[1], p[2], p[0]).unwrap();
+    let a = doc.add_line(p[3], p[4]).unwrap();
+    let tangent = doc.add_line(p[2], p[5]).unwrap();
+    doc.add_line(p[0], p[6]).unwrap();
+    let b = doc.add_line(p[7], p[8]).unwrap();
+    for c in [
+        Constraint::PointOnCurve {
+            point: p[3],
+            curve: arc,
+        },
+        Constraint::Tangent { a: tangent, b: arc },
+        Constraint::PointOnCurve {
+            point: p[7],
+            curve: arc,
+        },
+    ] {
+        doc.add_constraint(c).unwrap();
+    }
+    let mut last = p[6];
+    for k in 0..chain {
+        let next = doc.add_point(v(15.0, -1.0 - k as f64));
+        doc.add_line(last, next).unwrap();
+        if related {
+            doc.add_constraint(Constraint::Distance {
+                a: last,
+                b: next,
+                value: doc.point(last).unwrap().distance(v(15.0, -1.0 - k as f64)),
+            })
+            .unwrap();
+        }
+        last = next;
+    }
+    doc.commit("Never finishes");
+    (Editor::new(doc), [a, b])
+}
+
+/// The refused frame's cost (#281): a move whose solve doesn't finish at any step size,
+/// held still so that every frame tries it again, alone and in a big part.
+#[test]
+#[ignore = "torture test: run with --release --ignored --nocapture"]
+fn perf_drag_refused() {
+    println!();
+    for (chain, related) in [(0, false), (2_000, false), (100, true)] {
+        let (mut ed, ids) = never_finishing(chain, related);
+        let dragged: Vec<drift_solver::Param> = ed
+            .doc
+            .defining_points(ids)
+            .into_iter()
+            .flat_map(drift_solver::Param::point)
+            .collect();
+        let delta = v(0.0, -18.003814381075802);
+        ed.doc.begin();
+        let mut solves = Vec::new();
+        let mut refused = 0;
+        let r = time(20, |_| {
+            refused += usize::from(!ed.drag(&ids, delta, &dragged));
+            solves.push(ed.drag_solves);
+        });
+        ed.doc.rollback();
+        let what = if related { "held" } else { "free" };
+        report(&format!("refused drag, {chain} {what} bars (per frame)"), r);
+        let most = solves.iter().max().copied().unwrap_or(0);
+        println!("  solves per frame: most {most}; {refused} of 20 frames refused");
+    }
+}
+
 /// The torture sketch plus what makes a drawing heavy without changing often: a large
 /// embedded font, blocks with many curves, an underlay with many curves, imported patterns.
 fn heavy_document() -> Document {

@@ -219,12 +219,22 @@ impl DriftApp {
             .into_iter()
             .filter(|id| self.drawing.editor.doc.contains(*id))
             .collect();
+        // (Inside a block or group being edited, only its own are picked; it still zooms to
+        // an issue outside.)
+        self.drawing.editor.retain_in_scope();
+        // Close enough to see the gap, not just the curves around it.
+        let pad = DVec2::splat(issue.distance().unwrap_or(1.0).max(1.0) * 20.0);
         if self.zoom_to_selection()
             && let Some(bounds) = self.drawing.view.fit_target
         {
-            // Close enough to see the gap, not just the curves around it.
-            let pad = DVec2::splat(issue.distance().unwrap_or(1.0).max(1.0) * 20.0);
             let at = issue_at(&self.drawing.editor.doc, issue).unwrap_or(bounds.center());
+            self.drawing.view.fit_target = Some(Bounds {
+                min: at - pad,
+                max: at + pad,
+            });
+        } else if self.drawing.editor.edit_scope().is_some()
+            && let Some(at) = issue_at(&self.drawing.editor.doc, issue)
+        {
             self.drawing.view.fit_target = Some(Bounds {
                 min: at - pad,
                 max: at + pad,

@@ -853,6 +853,7 @@ impl DriftApp {
             });
         if pick_far {
             self.drawing.editor.selection = report.far.iter().copied().collect();
+            self.drawing.editor.retain_in_scope();
         }
         if check {
             self.open_sketch_check();

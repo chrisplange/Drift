@@ -535,6 +535,8 @@ impl Editor {
     pub fn undo(&mut self) -> bool {
         self.settle_areas();
         let done = self.history.undo(&mut self.doc);
+        // (Past the start of a block edit or a group's making, nothing is open any more.)
+        self.drop_lost_edit();
         // (Fills are back as they were: whether each was kept whole across curves is found
         // again when it is next looked at, and shapes' areas and holes now.)
         self.fill_crossed.clear();
@@ -547,6 +549,8 @@ impl Editor {
     pub fn redo(&mut self) -> bool {
         self.settle_areas();
         let done = self.history.redo(&mut self.doc);
+        // (Past the start of a block edit or a group's making, nothing is open any more.)
+        self.drop_lost_edit();
         // (Fills are back as they were: whether each was kept whole across curves is found
         // again when it is next looked at, and shapes' areas and holes now.)
         self.fill_crossed.clear();

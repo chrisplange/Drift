@@ -672,6 +672,41 @@ impl DriftApp {
         };
         let notes = self.layout_notes(&annotation_painter, &map);
         let temps = self.layout_temp_dims(&annotation_painter, &map);
+        // While a group or block is open for editing, only its own dimensions, relations and
+        // notes pick (all are drawn).
+        let ed = &self.drawing.editor;
+        let (pick_dims, pick_glyphs, pick_notes) = if ed.edit_scope().is_some() {
+            let dims: Vec<_> = dims
+                .iter()
+                .filter(|d| ed.constraint_in_scope(&d.constraint))
+                .cloned()
+                .collect();
+            let glyphs: Vec<_> = glyphs
+                .iter()
+                .filter(|g| {
+                    ed.doc
+                        .constraint(g.id)
+                        .is_some_and(|c| ed.constraint_in_scope(c))
+                })
+                .cloned()
+                .collect();
+            let notes: Vec<_> = notes
+                .iter()
+                .filter(|n| ed.annotation_in_scope(n.id))
+                .cloned()
+                .collect();
+            (
+                std::borrow::Cow::Owned(dims),
+                std::borrow::Cow::Owned(glyphs),
+                std::borrow::Cow::Owned(notes),
+            )
+        } else {
+            (
+                std::borrow::Cow::Borrowed(&dims[..]),
+                std::borrow::Cow::Borrowed(&glyphs[..]),
+                std::borrow::Cow::Borrowed(&notes[..]),
+            )
+        };
 
         // Feed pointer input to the active tool.
         let dragging = response.dragged_by(PointerButton::Primary);
@@ -688,9 +723,17 @@ impl DriftApp {
             || self.text_pointer(ui, &response, &map)
             || self.align_edge_input(ui, &response, &map, pos)
             || self.hatch_input(ui, &response, &map, hatch.as_ref(), snap)
-            || self.note_input(ui, &response, &map, &notes, &dims, &glyphs, pos)
+            || self.note_input(
+                ui,
+                &response,
+                &map,
+                &pick_notes,
+                &pick_dims,
+                &pick_glyphs,
+                pos,
+            )
             || self.temp_dim_input(ui, &response, &map, &temps, pos)
-            || self.annotation_input(ui, &response, &map, &dims, &glyphs, pos)
+            || self.annotation_input(ui, &response, &map, &pick_dims, &pick_glyphs, pos)
             || self.view_crop_input(ui, &response, &map, pos, snap);
         if consumed {
             self.drawing.view.pointer = pos.map(|pos| self.make_pointer(&map, pos, snap));
@@ -744,7 +787,7 @@ impl DriftApp {
                     .handle(Input::DragEnd(released, mods), &mut self.drawing.editor);
             }
         }
-        self.take_box_pick(&map, &dims, &notes);
+        self.take_box_pick(&map, &pick_dims, &pick_notes);
         // With the select tool, right-click opens a menu for what's under the pointer (picking
         // it first, as in Illustrator) or for the view.
         let menu_tool = self.tool.kind() == ToolKind::Select && !self.tool.is_busy();

@@ -294,11 +294,20 @@ impl Editor {
         exclude: impl Fn(EntityId) -> bool,
         exclude_copy: impl Fn(drift_core::InstanceId) -> bool,
     ) -> Option<Snap> {
-        // (Walls' hidden centrelines aren't snapped to.)
+        // (Walls' hidden centrelines aren't snapped to. In a block being edited, only its own
+        // geometry is: a join to anything else, other copies included, would be lost when
+        // the edit is written back.)
         let hidden = self.hidden_centrelines();
+        let scope = self.snap_scope();
         let snap = self.snap_sketch_and_underlays(p, options, |id| {
-            exclude(id) || hidden.contains(&id) || !self.snappable(id)
+            exclude(id)
+                || hidden.contains(&id)
+                || !self.snappable(id)
+                || scope.as_ref().is_some_and(|s| !s.contains(&id))
         });
+        if scope.is_some() {
+            return snap;
+        }
         let Some(block) = self.block_snap(p, options.tolerance, exclude_copy) else {
             return snap;
         };

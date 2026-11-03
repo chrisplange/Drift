@@ -3258,6 +3258,518 @@ fn drawing_inside_an_open_group_adds_to_it() {
     assert_eq!(ed.doc.group(g).unwrap().members.len(), before + 1);
 }
 
+/// #265 #298 #299: a block made of a 20 × 10 rectangle and a short line above it (15, 20)–
+/// (18, 20), its copy where it was made and a second copy 100 to the right; outside them a
+/// loose line crossing the rectangle at x = 10 (from y −5 to 25) and a text. Returns the
+/// editor, the first copy, the second, the loose line and the text.
+fn block_edit_fixture() -> (
+    Editor,
+    drift_core::InstanceId,
+    drift_core::InstanceId,
+    EntityId,
+    drift_core::TextId,
+) {
+    let mut doc = Document::new();
+    let p =
+        [(0.0, 0.0), (20.0, 0.0), (20.0, 10.0), (0.0, 10.0)].map(|(x, y)| doc.add_point(v(x, y)));
+    let mut block: BTreeSet<EntityId> = (0..4)
+        .map(|i| doc.add_line(p[i], p[(i + 1) % 4]).unwrap())
+        .collect();
+    let (a, b) = (doc.add_point(v(15.0, 20.0)), doc.add_point(v(18.0, 20.0)));
+    block.insert(doc.add_line(a, b).unwrap());
+    let mut ed = Editor::new(doc);
+    ed.prefs.auto_relations = false;
+    ed.selection = block;
+    let copy = ed.make_block("Box").unwrap();
+    let i = *ed.doc.instance(copy).unwrap();
+    ed.place_instance(i.block, i.at + v(100.0, 0.0), 0.0, false);
+    let other = ed
+        .doc
+        .instances()
+        .map(|(id, _)| id)
+        .find(|id| *id != copy)
+        .unwrap();
+    ed.doc.begin();
+    let (a, b) = (
+        ed.doc.add_point(v(10.0, -5.0)),
+        ed.doc.add_point(v(10.0, 25.0)),
+    );
+    let loose = ed.doc.add_line(a, b).unwrap();
+    let text = ed
+        .doc
+        .add_text(drift_core::SketchText::new("Note", v(50.0, -30.0), 5.0));
+    ed.commit("Outside");
+    ed.selection.clear();
+    ed.selected_instances.clear();
+    (ed, copy, other, loose, text)
+}
+
+/// The line of the group being edited from `a` to `b` (either way round).
+fn member_line(ed: &Editor, a: DVec2, b: DVec2) -> EntityId {
+    let g = ed.edit_group().expect("editing");
+    ed.doc
+        .group(g)
+        .unwrap()
+        .members
+        .iter()
+        .copied()
+        .find(|id| {
+            matches!(ed.doc.shape(*id), Some(Shape::Line { a: p, b: q })
+                if (p.distance(a) < 1e-9 && q.distance(b) < 1e-9)
+                    || (p.distance(b) < 1e-9 && q.distance(a) < 1e-9))
+        })
+        .expect("a member line")
+}
+
+/// The curves of the group being edited.
+fn member_curves(ed: &Editor) -> BTreeSet<EntityId> {
+    let g = ed.edit_group().expect("editing");
+    ed.doc
+        .group(g)
+        .unwrap()
+        .members
+        .iter()
+        .copied()
+        .filter(|id| ed.doc.get(*id).is_some_and(|e| !e.kind.is_point()))
+        .collect()
+}
+
+/// What's picked is all inside the group being edited (no copies, texts or outside fills).
+fn picks_stay_inside(ed: &Editor) {
+    let scope = ed.edit_scope().expect("editing");
+    assert!(
+        ed.selection.iter().all(|id| scope.contains(id)),
+        "{:?}",
+        ed.selection
+    );
+    assert!(
+        ed.selected_instances.is_empty(),
+        "{:?}",
+        ed.selected_instances
+    );
+    assert!(ed.selected_texts.is_empty(), "{:?}", ed.selected_texts);
+    assert!(ed.selected_fills.iter().all(|f| ed.fill_in_scope(*f)));
+}
+
+#[test]
+fn select_all_in_block_edit_picks_only_the_block() {
+    let (mut ed, copy, _, loose, _) = block_edit_fixture();
+    ed.edit_block(copy);
+    let curves = member_curves(&ed);
+    assert_eq!(curves.len(), 5);
+    ed.select_all();
+    assert_eq!(ed.selection, curves);
+    assert!(!ed.selection.contains(&loose));
+    picks_stay_inside(&ed);
+    // A box round everything picks the block's curves alone too.
+    ed.selection.clear();
+    let mut tool = SelectTool::default();
+    box_select(
+        &mut ed,
+        &mut tool,
+        v(-40.0, -40.0),
+        v(160.0, 60.0),
+        Modifiers::default(),
+    );
+    assert_eq!(ed.selection, curves);
+    picks_stay_inside(&ed);
+    // So does picking a layer's curves, and the Blocks panel can't pick copies.
+    let layer = ed.doc.get(loose).unwrap().layer;
+    ed.select_layer(layer);
+    assert_eq!(ed.selection, curves);
+    let block = ed.doc.instance(copy).unwrap().block;
+    ed.select_copies(block);
+    picks_stay_inside(&ed);
+}
+
+#[test]
+fn select_all_in_an_open_group_picks_only_its_members() {
+    let (mut ed, _) = rotated_rectangle_fixture();
+    let g = ed.make_group().expect("grouped");
+    let members = ed.doc.group(g).unwrap().members.clone();
+    let mut line = LineTool::default();
+    click(&mut ed, &mut line, v(40.0, 0.0));
+    click(&mut ed, &mut line, v(50.0, 0.0));
+    line.handle(Input::Finish, &mut ed);
+    ed.doc
+        .add_text(drift_core::SketchText::new("Note", v(50.0, 30.0), 5.0));
+    ed.open_group = Some(g);
+    ed.select_all();
+    assert_eq!(ed.selection, members);
+    picks_stay_inside(&ed);
+    ed.selection.clear();
+    let mut tool = SelectTool::default();
+    box_select(
+        &mut ed,
+        &mut tool,
+        v(-20.0, -20.0),
+        v(80.0, 50.0),
+        Modifiers::default(),
+    );
+    assert_eq!(ed.selection, members);
+    picks_stay_inside(&ed);
+}
+
+#[test]
+fn a_click_outside_an_open_group_or_block_keeps_editing() {
+    let (mut ed, copy, other, loose, _) = block_edit_fixture();
+    let block = ed.doc.instance(copy).unwrap().block;
+    let items = ed.doc.block(block).unwrap().items.clone();
+    ed.edit_block(copy);
+    let mut tool = SelectTool::default();
+    let side = member_line(&ed, v(0.0, 10.0), v(0.0, 0.0));
+    // Empty canvas, the loose line, the other copy's edge, the text: still editing, nothing
+    // outside picked, the block as it was.
+    for at in [v(60.0, 40.0), v(10.0, -3.0), v(100.0, 5.0), v(51.0, -28.0)] {
+        click(&mut ed, &mut tool, v(0.0, 2.0));
+        assert_eq!(ed.selection, [side].into());
+        click(&mut ed, &mut tool, at);
+        assert!(ed.block_edit.is_some(), "a click at {at} finished the edit");
+        assert!(ed.open_group.is_some());
+        assert!(!ed.selection.contains(&loose));
+        picks_stay_inside(&ed);
+        assert_eq!(
+            ed.doc.block(block).unwrap().items,
+            items,
+            "not written back"
+        );
+    }
+    // The empty canvas let go of the pick inside the block.
+    click(&mut ed, &mut tool, v(0.0, 2.0));
+    click(&mut ed, &mut tool, v(60.0, 40.0));
+    assert!(ed.selection.is_empty());
+    // Esc finishes it.
+    assert!(tool.cancel(&mut ed));
+    assert!(ed.block_edit.is_none() && ed.open_group.is_none());
+    assert!(ed.doc.contains(loose));
+    // Double-clicking another copy while editing edits that one instead; a double-click on
+    // outside geometry does nothing.
+    ed.edit_block(copy);
+    tool.handle(Input::DoubleClick(ptr(&ed, &tool, v(10.0, -3.0))), &mut ed);
+    assert_eq!(ed.block_edit.map(|e| e.instance), Some(copy));
+    tool.handle(Input::DoubleClick(ptr(&ed, &tool, v(100.0, 5.0))), &mut ed);
+    assert_eq!(ed.block_edit.map(|e| e.instance), Some(other));
+    assert!(tool.cancel(&mut ed));
+    assert!(ed.block_edit.is_none());
+
+    // The same in a plain open group, with another group's filled shape and a line outside.
+    let (mut ed, _) = rotated_rectangle_fixture();
+    let g = ed.make_group().expect("grouped");
+    let mut rect = RectangleTool::default();
+    click(&mut ed, &mut rect, v(40.0, 40.0));
+    click(&mut ed, &mut rect, v(60.0, 50.0));
+    ed.add_fill_at(v(50.0, 45.0)).expect("filled");
+    ed.select_all();
+    ed.selection.retain(|id| ed.doc.group_of(*id).is_none());
+    let other_group = ed.make_group().expect("the other group");
+    let mut line = LineTool::default();
+    click(&mut ed, &mut line, v(30.0, -5.0));
+    click(&mut ed, &mut line, v(30.0, 15.0));
+    line.handle(Input::Finish, &mut ed);
+    ed.selection.clear();
+    ed.selected_fills.clear();
+    ed.open_group = Some(g);
+    for at in [v(80.0, 30.0), v(30.0, 0.0), v(40.0, 45.0), v(50.0, 45.0)] {
+        click(&mut ed, &mut tool, v(4.0, 0.0));
+        assert_eq!(ed.selection.len(), 1);
+        click(&mut ed, &mut tool, at);
+        assert_eq!(ed.open_group, Some(g), "a click at {at} left the group");
+        picks_stay_inside(&ed);
+    }
+    assert_ne!(Some(other_group), ed.open_group);
+    assert!(tool.cancel(&mut ed));
+    assert_eq!(ed.open_group, None);
+}
+
+#[test]
+fn block_edit_fill_sees_only_the_block() {
+    let (mut ed, copy, _, loose, _) = block_edit_fixture();
+    let loose_shape = ed.doc.shape(loose);
+    let block = ed.doc.instance(copy).unwrap().block;
+    ed.edit_block(copy);
+    let rect: BTreeSet<EntityId> = [
+        member_line(&ed, v(0.0, 0.0), v(20.0, 0.0)),
+        member_line(&ed, v(20.0, 0.0), v(20.0, 10.0)),
+        member_line(&ed, v(20.0, 10.0), v(0.0, 10.0)),
+        member_line(&ed, v(0.0, 10.0), v(0.0, 0.0)),
+    ]
+    .into();
+    // The area left of the loose line is the whole rectangle: the loose line isn't there.
+    let region = ed.visible_region_at(v(5.0, 5.0)).expect("an area");
+    assert!((region.area - 200.0).abs() < 1e-6, "{}", region.area);
+    assert_eq!(
+        ed.region_curves(&region)
+            .into_iter()
+            .collect::<BTreeSet<_>>(),
+        rect
+    );
+    // The Fill tool fills it, bounded by the rectangle alone.
+    let mut tool = ToolKind::Fill.create();
+    click(&mut ed, tool.as_mut(), v(5.0, 5.0));
+    let (f, fill) = ed.doc.fills().next().expect("a fill");
+    assert_eq!(fill.boundary.iter().copied().collect::<BTreeSet<_>>(), rect);
+    let area = ed.fill_shapes().get(&f).map(|s| s.region.area);
+    assert!(area.is_some_and(|a| (a - 200.0).abs() < 1e-6), "{area:?}");
+    assert!(ed.fill_in_scope(f));
+    // Finishing takes it into the block; the loose line is as it was.
+    ed.finish_block_edit();
+    assert_eq!(ed.doc.block(block).unwrap().fills.len(), 1);
+    assert_eq!(ed.doc.shape(loose), loose_shape);
+}
+
+#[test]
+fn block_edit_trim_and_extend_see_only_the_block() {
+    let (mut ed, copy, _, loose, _) = block_edit_fixture();
+    let loose_shape = ed.doc.shape(loose);
+    let constraints = ed.doc.constraints().count();
+    ed.edit_block(copy);
+    let bottom = member_line(&ed, v(0.0, 0.0), v(20.0, 0.0));
+    let short = member_line(&ed, v(15.0, 20.0), v(18.0, 20.0));
+    // Trimming the bottom side next to the loose line takes the whole side: nothing in the
+    // block cuts it.
+    let mut trim = ToolKind::Trim.create();
+    click(&mut ed, trim.as_mut(), v(14.0, 0.0));
+    assert!(!ed.doc.contains(bottom), "the whole side went");
+    assert_eq!(member_curves(&ed).len(), 4);
+    assert_eq!(ed.doc.shape(loose), loose_shape);
+    assert_eq!(
+        ed.doc.constraints().count(),
+        constraints,
+        "nothing kept on the loose line"
+    );
+    // Extending the short line to the left finds nothing in the block to reach.
+    assert!(
+        ed.extend_target_against(short, v(15.0, 20.0), None)
+            .is_err()
+    );
+    let mut extend = ToolKind::Extend.create();
+    click(&mut ed, extend.as_mut(), v(15.5, 20.0));
+    assert!(matches!(ed.doc.shape(short), Some(Shape::Line { a, .. }) if a.x >= 15.0 - 1e-9));
+    // The tools can't reach the loose line, nor can a split or trim by id.
+    assert!(ed.split_at(loose, v(10.0, 0.0)).is_err());
+    assert!(ed.trim_at_against(loose, v(10.0, 0.0), None).is_err());
+    assert_eq!(ed.doc.shape(loose), loose_shape);
+}
+
+#[test]
+fn a_curve_drawn_in_a_block_edit_is_in_scope_at_once() {
+    let (mut ed, copy, _, _, _) = block_edit_fixture();
+    ed.edit_block(copy);
+    // (The scope as it is before the line, kept: the line must still join it.)
+    assert!(ed.edit_scope().is_some());
+    // A line across the rectangle at x = 5, drawn in the edit.
+    let mut line = LineTool::default();
+    click(&mut ed, &mut line, v(5.0, -2.0));
+    click(&mut ed, &mut line, v(5.0, 12.0));
+    line.handle(Input::Finish, &mut ed);
+    let drawn = member_line(&ed, v(5.0, -2.0), v(5.0, 12.0));
+    assert!(ed.in_scope(drawn));
+    // It divides the rectangle's area, and the bottom side trims at it.
+    let region = ed.visible_region_at(v(2.0, 5.0)).expect("an area");
+    assert!((region.area - 50.0).abs() < 1e-6, "{}", region.area);
+    let bottom = member_line(&ed, v(0.0, 0.0), v(20.0, 0.0));
+    let mut trim = ToolKind::Trim.create();
+    ed.selection.clear();
+    click(&mut ed, trim.as_mut(), v(2.0, 0.0));
+    assert!(
+        matches!(ed.doc.shape(bottom), Some(Shape::Line { a, b })
+            if (a.x - 5.0).abs() < 1e-9 || (b.x - 5.0).abs() < 1e-9),
+        "{:?}",
+        ed.doc.shape(bottom)
+    );
+}
+
+#[test]
+fn moving_a_region_in_a_block_edit_finds_its_areas_once() {
+    let (mut ed, copy, _, _, _) = block_edit_fixture();
+    ed.edit_block(copy);
+    // The rectangle's area, picked, and moved by its outline in twelve frames.
+    ed.selected_region = Some(v(5.0, 5.0));
+    let r = ed.region().expect("the rectangle's area");
+    let ids = ed.region_curves(&r);
+    ed.selection = ids.iter().copied().collect();
+    let found = ed.scoped_regions_found;
+    ed.doc.begin();
+    let mut offset = DVec2::ZERO;
+    for _ in 0..12 {
+        let step = v(0.5, 0.25);
+        assert!(ed.drag(&ids, step, &[]));
+        offset += step;
+        ed.region_motion = Some(crate::editor::RegionMotion::Move(offset));
+        ed.sync();
+        // The area moves along with its outline.
+        let now = ed.region().expect("still picked");
+        assert!((now.area - r.area).abs() < 1e-9);
+        assert!(now.centroid.distance(r.centroid + offset) < 1e-9);
+    }
+    assert!(
+        ed.scoped_regions_found - found <= 1,
+        "found {} times in 12 frames",
+        ed.scoped_regions_found - found
+    );
+    // Landed: found afresh where it is now.
+    ed.commit("Move");
+    ed.region_motion = None;
+    ed.selected_region = Some(v(5.0, 5.0) + offset);
+    let landed = ed.region().expect("found again");
+    assert!(landed.centroid.distance(r.centroid + offset) < 1e-9);
+    assert!(ed.region_moving.is_none());
+    // Finishing the edit lets go of the block's areas.
+    assert!(ed.scoped_regions.is_some());
+    ed.finish_block_edit();
+    assert!(ed.scoped_regions.is_none(), "kept after the edit ended");
+}
+
+#[test]
+fn editing_a_block_snaps_only_to_the_block() {
+    let (mut ed, copy, _, _, _) = block_edit_fixture();
+    let opts = SnapOptions {
+        tolerance: TOL,
+        grid: None,
+        from: None,
+    };
+    ed.edit_block(copy);
+    let scope = ed.edit_scope().unwrap();
+    // The loose line's end and the other copy's corner aren't snapped to; the block's own
+    // corner is.
+    let near = |ed: &Editor, at: DVec2| ed.snap(at, opts, |_| false).map(|s| (s.at, s.entity));
+    assert!(near(&ed, v(10.1, 25.1)).is_none_or(|(_, e)| e.is_none_or(|e| scope.contains(&e))));
+    assert!(near(&ed, v(100.1, 0.1)).is_none_or(|(at, _)| at.distance(v(100.0, 0.0)) > 1e-9));
+    let corner = near(&ed, v(0.1, 0.1)).expect("the block's corner");
+    assert!(corner.1.is_some_and(|e| scope.contains(&e)));
+    // In a plain open group, the drawing around it still snaps.
+    ed.finish_block_edit();
+    let (mut ed, _) = rotated_rectangle_fixture();
+    let g = ed.make_group().unwrap();
+    let mut line = LineTool::default();
+    click(&mut ed, &mut line, v(40.0, 0.0));
+    click(&mut ed, &mut line, v(50.0, 0.0));
+    line.handle(Input::Finish, &mut ed);
+    ed.open_group = Some(g);
+    let s = ed
+        .snap(v(40.1, 0.1), opts, |_| false)
+        .expect("the outside end");
+    assert!(s.entity.is_some_and(|e| !ed.in_scope(e)));
+}
+
+#[test]
+fn grouping_inside_a_block_edit_keeps_editing() {
+    let (mut ed, copy, _, _, _) = block_edit_fixture();
+    ed.edit_block(copy);
+    let g = ed.open_group;
+    ed.select_all();
+    assert!(ed.make_group().is_none());
+    ed.ungroup();
+    assert!(ed.block_edit.is_some());
+    assert_eq!(ed.open_group, g);
+    assert_eq!(ed.edit_group(), g);
+}
+
+#[test]
+fn undo_past_entering_a_block_edit_leaves_it() {
+    let (mut ed, copy, _, loose, _) = block_edit_fixture();
+    let block = ed.doc.instance(copy).unwrap().block;
+    let items = ed.doc.block(block).unwrap().items.clone();
+    let at = ed.doc.instance(copy).unwrap().at;
+    ed.edit_block(copy);
+    // The copy is hidden while it is edited.
+    assert_eq!(ed.instance_at(v(0.0, 5.0), TOL), None);
+    let mut tool = ToolKind::Fill.create();
+    click(&mut ed, tool.as_mut(), v(5.0, 5.0));
+    assert_eq!(ed.doc.fills().count(), 1);
+    // Undo the fill: still editing.
+    assert!(ed.undo());
+    assert_eq!(ed.doc.fills().count(), 0);
+    assert!(ed.block_edit.is_some() && ed.edit_scope().is_some());
+    // Undo entering: nothing is open, the copy picks again, the block is as it was.
+    assert!(ed.undo());
+    assert!(ed.block_edit.is_none(), "no edit left without its group");
+    assert!(ed.open_group.is_none());
+    assert!(ed.edit_scope().is_none());
+    assert_eq!(ed.instance_at(v(0.0, 5.0), TOL), Some(copy));
+    assert_eq!(ed.doc.block(block).unwrap().items, items);
+    assert_eq!(ed.doc.instance(copy).unwrap().at, at);
+    // Redo puts the exploded geometry back (as a plain group: redo doesn't edit again).
+    assert!(ed.redo());
+    assert!(ed.block_edit.is_none());
+    assert!(ed.doc.contains(loose));
+    assert!(ed.undo());
+    assert_eq!(ed.instance_at(v(0.0, 5.0), TOL), Some(copy));
+}
+
+#[test]
+fn generated_geometry_is_in_the_scope_through_its_record() {
+    // A wall ring in an open group: its faces bound the room, which fills.
+    let mut ed = Editor::default();
+    ed.prefs.auto_relations = false;
+    ed.prefs.wall_thickness = 10.0;
+    let mut wall = ToolKind::Wall.create();
+    for at in [
+        v(0.0, 0.0),
+        v(100.0, 0.0),
+        v(100.0, 60.0),
+        v(0.0, 60.0),
+        v(0.0, 0.0),
+    ] {
+        click(&mut ed, wall.as_mut(), at);
+    }
+    let w = ed.doc.walls().next().unwrap().1.clone();
+    let centre = ed.doc.path(w.centre).unwrap().curves.clone();
+    ed.selection = centre.iter().copied().collect();
+    let g = ed.make_group().expect("grouped");
+    // And a loose line beside it, offset.
+    let mut line = LineTool::default();
+    click(&mut ed, &mut line, v(200.0, 0.0));
+    click(&mut ed, &mut line, v(250.0, 0.0));
+    line.handle(Input::Finish, &mut ed);
+    ed.open_group = Some(g);
+    assert!(w.made.entities().all(|e| ed.in_scope(e)));
+    let floor = ed.add_fill_at(v(50.0, 30.0)).expect("the room fills");
+    let area = ed.fill_shapes().get(&floor).map(|s| s.region.area);
+    assert!(
+        area.is_some_and(|a| (a - 90.0 * 50.0).abs() < 1e-6),
+        "{area:?}"
+    );
+    // An offset of a member is in the scope; one of the outside line isn't.
+    let side = centre[0];
+    let x = ed.offset(side, 3.0, v(50.0, 20.0)).expect("offset");
+    assert!(ed.offset_curves(x).iter().all(|c| ed.in_scope(*c)));
+}
+
+#[test]
+fn only_annotations_inside_an_open_group_pick() {
+    let (mut ed, _) = rotated_rectangle_fixture();
+    let g = ed.make_group().unwrap();
+    let mut line = LineTool::default();
+    click(&mut ed, &mut line, v(40.0, 0.0));
+    click(&mut ed, &mut line, v(40.0, 20.0));
+    line.handle(Input::Finish, &mut ed);
+    click(&mut ed, &mut line, v(50.0, 0.0));
+    click(&mut ed, &mut line, v(50.0, 20.0));
+    line.handle(Input::Finish, &mut ed);
+    let outside: Vec<EntityId> = ed
+        .doc
+        .iter()
+        .filter(|(id, e)| !e.kind.is_point() && ed.doc.group_of(*id).is_none())
+        .map(|(id, _)| id)
+        .collect();
+    let inside: Vec<EntityId> = ed.doc.group(g).unwrap().members.iter().copied().collect();
+    let between = Constraint::Distance {
+        a: outside[0],
+        b: outside[1],
+        value: 10.0,
+    };
+    let own = Constraint::Distance {
+        a: inside[0],
+        b: inside[2],
+        value: 10.0,
+    };
+    assert!(ed.constraint_in_scope(&between) && ed.constraint_in_scope(&own));
+    ed.open_group = Some(g);
+    assert!(!ed.constraint_in_scope(&between));
+    assert!(ed.constraint_in_scope(&own));
+}
+
 #[test]
 fn duplicate_copies_curves_and_their_relations_then_grabs_the_copy() {
     let (mut ed, line, [a, b], _) = move_fixture();

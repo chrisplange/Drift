@@ -839,6 +839,7 @@ impl Editor {
         self.commit("Finish editing block");
         self.selection.clear();
         self.selected_instances = [edit.instance].into();
+        self.drop_lost_edit();
     }
 
     /// Leave the open group, finishing a block edit if that's what it is.
@@ -848,6 +849,8 @@ impl Editor {
         } else {
             self.open_group = None;
         }
+        // (Its areas aren't kept.)
+        self.drop_lost_edit();
     }
 
     /// Change the picked copies' block.
@@ -863,8 +866,13 @@ impl Editor {
         self.commit("Replace block");
     }
 
-    /// Pick every copy of a block.
+    /// Pick every copy of a block (not while a group or block is open for editing: copies
+    /// are outside it).
     pub fn select_copies(&mut self, block: BlockId) {
+        if self.edit_scope().is_some() {
+            self.out.notice = Some("Finish editing to pick the copies".into());
+            return;
+        }
         self.selection.clear();
         self.selected_instances = self
             .doc

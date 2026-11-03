@@ -432,3 +432,101 @@ fn smoke_groups_stacked_copies_show_as_overlapping() {
     assert_eq!(left[0].0, copy, "the earlier copy stays");
     assert!(h.state().drawing.editor.overlapping_instances().is_empty());
 }
+
+/// #299 #298 #265: inside a block being edited, a click outside it (empty canvas, a line from
+/// outside crossing it, another copy) keeps editing, and the hint says how to leave; Ctrl+A
+/// picks the block's curves alone; the Fill tool fills the block's own rectangle, which the
+/// outside line doesn't cut; Esc finishes and writes the fill into the block.
+#[test]
+fn smoke_block_edit_stays_inside_until_esc() {
+    let Some(mut h) = harness() else { return };
+    view(&mut h, DVec2::new(-10.0, -20.0), DVec2::new(130.0, 50.0));
+    let (sides, _) = rectangle(&mut h, DVec2::ZERO, DVec2::new(40.0, 30.0), Fill::No);
+    let (copy, block) = {
+        let ed = &mut h.state_mut().drawing.editor;
+        ed.selection = sides.iter().copied().collect();
+        let copy = ed.make_block("Box").unwrap();
+        let i = *ed.doc.instance(copy).unwrap();
+        ed.place_instance(i.block, i.at + DVec2::new(80.0, 0.0), 0.0, false);
+        // A line from outside, across the rectangle.
+        ed.doc.begin();
+        let a = ed.doc.add_point(DVec2::new(20.0, -10.0));
+        let b = ed.doc.add_point(DVec2::new(20.0, 45.0));
+        let line = ed.doc.add_line(a, b).unwrap();
+        // And a dimension between it and another line from outside, inside any box round
+        // the block.
+        let c = ed.doc.add_point(DVec2::new(30.0, -10.0));
+        let d = ed.doc.add_point(DVec2::new(30.0, 45.0));
+        let other_line = ed.doc.add_line(c, d).unwrap();
+        ed.relate(drift_core::Constraint::Distance {
+            a: line,
+            b: other_line,
+            value: 10.0,
+        });
+        ed.commit("Lines");
+        ed.selection.clear();
+        ed.selected_instances.clear();
+        (copy, i.block)
+    };
+    h.run();
+    let inside = screen(&h, DVec2::new(10.0, 15.0));
+    double_click(&mut h, inside);
+    assert_eq!(
+        h.state().drawing.editor.block_edit.map(|e| e.instance),
+        Some(copy),
+        "editing the block"
+    );
+    assert!(
+        h.query_by_label_contains("Esc: finish editing").is_some(),
+        "the hint"
+    );
+    for p in [
+        DVec2::new(60.0, 40.0),
+        DVec2::new(20.0, -5.0),
+        DVec2::new(80.0, 10.0),
+    ] {
+        click_world(&mut h, p);
+        let ed = &h.state().drawing.editor;
+        assert!(ed.block_edit.is_some(), "a click at {p} finished the edit");
+        let scope = ed.edit_scope().unwrap();
+        assert!(ed.selection.iter().all(|id| scope.contains(id)));
+        assert!(ed.selected_instances.is_empty());
+    }
+    // A box round it all picks neither the lines from outside nor their dimension.
+    drag(&mut h, DVec2::new(-5.0, -15.0), DVec2::new(125.0, 48.0), 4);
+    {
+        let app = h.state();
+        let ed = &app.drawing.editor;
+        let scope = ed.edit_scope().unwrap();
+        assert!(ed.block_edit.is_some());
+        assert!(!ed.selection.is_empty() && ed.selection.iter().all(|id| scope.contains(id)));
+        assert!(ed.annotation_picks.is_empty() && app.drawing.selected_constraint.is_none());
+    }
+    // Ctrl+A: the block's four sides alone.
+    h.key_press_modifiers(EguiModifiers::COMMAND, Key::A);
+    h.run();
+    {
+        let ed = &h.state().drawing.editor;
+        let scope = ed.edit_scope().unwrap();
+        assert_eq!(ed.selection.len(), 4, "{:?}", ed.selection);
+        assert!(ed.selection.iter().all(|id| scope.contains(id)));
+        assert!(ed.selected_instances.is_empty());
+    }
+    // The Fill tool fills the whole rectangle, left of the line from outside.
+    h.key_press(Key::H);
+    h.run();
+    click_world(&mut h, DVec2::new(10.0, 15.0));
+    {
+        let ed = &mut h.state_mut().drawing.editor;
+        let (f, _) = ed.doc.fills().next().expect("filled");
+        let area = ed.fill_shapes().get(&f).map(|s| s.region.area);
+        assert!(area.is_some_and(|a| (a - 1200.0).abs() < 0.5), "{area:?}");
+    }
+    h.get_by_label("Select").click();
+    h.run();
+    h.key_press(Key::Escape);
+    h.run();
+    let ed = &h.state().drawing.editor;
+    assert!(ed.block_edit.is_none(), "Esc finished editing");
+    assert_eq!(ed.doc.block(block).unwrap().fills.len(), 1);
+}

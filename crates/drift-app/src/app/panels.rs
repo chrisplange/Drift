@@ -501,6 +501,8 @@ impl DriftApp {
         }
         self.drawing.editor.selection = found.iter().copied().collect();
         self.drawing.editor.selected_instances = copies.iter().copied().collect();
+        // (Inside a block or group being edited, only its own.)
+        self.drawing.editor.retain_in_scope();
         let what = match (found.len(), copies.len()) {
             (n, 0) => format!("{n} overlapping curve(s)"),
             (0, n) => format!("{n} stacked block cop{}", if n == 1 { "y" } else { "ies" }),
@@ -1208,6 +1210,7 @@ impl DriftApp {
         }
         if let Some(c) = select {
             self.drawing.editor.selection = c.entities().collect();
+            self.drawing.editor.retain_in_scope();
         }
         if let Some(id) = remove {
             self.drawing.editor.remove_constraint(id);
@@ -1536,6 +1539,20 @@ impl DriftApp {
             )
         } else {
             self.tool.hint()
+        };
+        // Inside a block or group open for editing, a click outside it does nothing: only Esc
+        // (or Finish editing) leaves.
+        let tool_hint = match (
+            &self.drawing.editor.block_edit,
+            self.drawing.editor.edit_group(),
+        ) {
+            (Some(_), Some(_)) if selecting => {
+                format!("Editing the block · Esc: finish editing · {tool_hint}")
+            }
+            (None, Some(_)) if selecting => {
+                format!("Editing the group · Esc: finish editing · {tool_hint}")
+            }
+            _ => tool_hint,
         };
         let hint = if self.drawing.align_edge.is_some() {
             "Align to edge: click one of the shape's edges (the pattern runs along it from its \

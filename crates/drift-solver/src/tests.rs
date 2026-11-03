@@ -1311,3 +1311,45 @@ fn a_tangency_keeps_the_touching_end_it_began_with() {
     assert!(off.abs() < 1e-9, "the arc's end is {off} off the line");
     assert!(unmet(&doc, 1e-8).is_empty(), "{:?}", unmet(&doc, 1e-8));
 }
+
+/// An arc whose end is held off the circle through its start fails on a row no relation
+/// owns: the report names no conflict, and says so (#281). A conflict between relations
+/// names them, and doesn't.
+#[test]
+fn a_failure_no_relation_owns_is_reported() {
+    let mut doc = Document::new();
+    doc.begin();
+    let c = doc.add_point(v(0.0, 0.0));
+    let s = doc.add_point(v(10.0, 0.0));
+    let e = doc.add_point(v(0.0, 10.0));
+    doc.add_arc(c, s, e).unwrap();
+    doc.set_point(e, v(0.0, 12.0)).unwrap();
+    for (point, at) in [(c, v(0.0, 0.0)), (s, v(10.0, 0.0)), (e, v(0.0, 12.0))] {
+        doc.add_constraint(Constraint::Fix { point, at }).unwrap();
+    }
+    let report = solve(&mut doc, &SolveOptions::default());
+    assert!(!report.converged);
+    assert!(report.conflicts.is_empty());
+    assert!(report.unsourced_failure);
+
+    let mut doc = Document::new();
+    doc.begin();
+    let a = doc.add_point(v(0.0, 0.0));
+    let b = doc.add_point(v(10.0, 0.0));
+    let line = doc.add_line(a, b).unwrap();
+    for c in [
+        Constraint::Fix {
+            point: a,
+            at: v(0.0, 0.0),
+        },
+        Constraint::Horizontal { line },
+        Constraint::Vertical { line },
+        Constraint::Distance { a, b, value: 10.0 },
+    ] {
+        doc.add_constraint(c).unwrap();
+    }
+    let report = solve(&mut doc, &SolveOptions::default());
+    assert!(!report.converged);
+    assert!(!report.conflicts.is_empty());
+    assert!(!report.unsourced_failure);
+}

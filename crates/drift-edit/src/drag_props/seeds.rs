@@ -53,10 +53,10 @@ fn a_tangency_touching_at_an_end_keeps_its_form_through_a_drag() {
     explained(r).unwrap();
 }
 
-/// F: a rigid move of the part meets every relation, yet every step size turns an arc.
-/// (`free_move_is_accepted_heavy`, seed 10.)
+/// F (fixed, #281 J2): a rigid move of the part meets every relation, yet every step size
+/// turns an arc; the arc carried along, the carried step didn't finish whole and wasn't tried
+/// smaller. (`free_move_is_accepted_heavy`, seed 10.)
 #[test]
-#[ignore = "#198 F: a free move is refused (an arc turns at every step size)"]
 fn f_free_move_refused_as_an_arc_turns() {
     let plan = Plan {
         ops: vec![
@@ -101,11 +101,11 @@ fn f_free_move_refused_as_an_arc_turns() {
     explained(r).unwrap();
 }
 
-/// F: a rigid move of the part meets every relation, yet the full step doesn't converge
-/// (and a conflict isn't tried smaller).
+/// F: a rigid move of the part meets every relation, yet the full step doesn't converge; in
+/// smaller steps (#281) the first goes, and then none does, down to the smallest.
 /// (`free_move_is_accepted_heavy`, seed 3.)
 #[test]
-#[ignore = "#198 F: a free move is refused (the solve doesn't converge at the full step)"]
+#[ignore = "#282: a free move is refused (the solve doesn't finish at any step size after the first)"]
 fn f_free_move_refused_unconverged() {
     let plan = Plan {
         ops: vec![
@@ -160,7 +160,7 @@ fn f_free_move_refused_unconverged() {
 /// unflagged step moves a free end 35.7 for a drag of 0.3.
 /// (`small_drag_is_continuous_heavy`, seed 7.)
 #[test]
-#[ignore = "#198 I: a hanging line's free end flies on a small drag"]
+#[ignore = "#277: a hanging line's free end flies on a small drag"]
 fn i_hanging_end_flies_on_a_small_drag() {
     let plan = Plan {
         ops: vec![
@@ -200,7 +200,7 @@ fn i_hanging_end_flies_on_a_small_drag() {
 /// and is stretched at a quarter of it, shifted.
 /// (`drag_is_invariant_under_similarity_heavy`, seed 5.)
 #[test]
-#[ignore = "#198 I: a hanging line kept at one size, stretched at another"]
+#[ignore = "#277: a hanging line kept at one size, stretched at another"]
 fn i_hanging_end_depends_on_size() {
     let plan = Plan {
         ops: vec![
@@ -239,7 +239,7 @@ fn i_hanging_end_depends_on_size() {
 /// C: two tangencies on one arc, a fixed point: a drag of 0.06 moves a point 11.9.
 /// (`small_drag_is_continuous_heavy`, seed 20.)
 #[test]
-#[ignore = "#198 C: a small drag through tangent arcs jumps"]
+#[ignore = "#278: a small drag through tangent arcs jumps"]
 fn c_small_drag_jumps_through_tangencies() {
     let plan = Plan {
         ops: vec![
@@ -283,11 +283,11 @@ fn c_small_drag_jumps_through_tangencies() {
     explained(r).unwrap();
 }
 
-/// E: an arc with one fixed point: steps are accepted unconverged with no conflict named,
-/// and the result differs with the sketch's size.
+/// E (fixed, #281 J1): an arc with one fixed point: steps were accepted unconverged with no
+/// conflict named (an arc's end left off its circle), and the result differed with the
+/// sketch's size.
 /// (`drag_is_invariant_under_similarity_heavy`, seed 13.)
 #[test]
-#[ignore = "#198 E: the result depends on size (steps accepted unconverged)"]
 fn e_result_depends_on_size_unconverged() {
     let plan = Plan {
         ops: vec![
@@ -330,7 +330,7 @@ fn e_result_depends_on_size_unconverged() {
 /// E: an arc with a tangent line held vertical: the scaled drag lands elsewhere.
 /// (`drag_is_invariant_under_similarity_heavy`, seed 2.)
 #[test]
-#[ignore = "#198 E: the result depends on size (arc, tangency)"]
+#[ignore = "#280: the result depends on size (arc, tangency)"]
 fn e_result_depends_on_size_tangent() {
     let plan = Plan {
         ops: vec![
@@ -378,7 +378,7 @@ fn e_result_depends_on_size_tangent() {
 /// G: arcs with a tangency and a point on one: the dragged point lands 6e-5 off.
 /// (`move_lands_exactly_heavy`, seed 14.)
 #[test]
-#[ignore = "#198 G: a move lands off its target"]
+#[ignore = "#283: a move lands off its target"]
 fn g_move_lands_off() {
     let plan = Plan {
         ops: vec![
@@ -439,7 +439,7 @@ fn g_move_lands_off() {
 /// H: equal arcs and points on curves: a hanging line goes from 10 to 6 long.
 /// (`move_keeps_untouched_lengths_heavy`, seed 1.)
 #[test]
-#[ignore = "#198 H: an untouched hanging line is stretched"]
+#[ignore = "#284: an untouched hanging line is stretched"]
 fn h_untouched_line_stretched() {
     let plan = Plan {
         ops: vec![
@@ -499,11 +499,11 @@ fn h_untouched_line_stretched() {
 
 /// G: a move of an arc, a line and a line's midpoint coincident with the arc's end, the arc
 /// tangent to that line: every step converges, yet the dragged points end 7 off target. Main
-/// passes it only through steps accepted unconverged (108 of 132 solves at the iteration cap,
-/// no conflict named); the form the tangency touched in as the drag began exposes it.
+/// once passed it only through steps accepted unconverged; the form the tangency touched in
+/// as the drag began exposed it, and every solve converges now.
 /// (`move_lands_exactly_heavy`, seed 7, unshrunk.)
 #[test]
-#[ignore = "#198 G: exposed by the touching-end form; main passes only through unconverged steps"]
+#[ignore = "#283: every solve converges, yet the move lands 7 off (exposed by the touching-end form)"]
 fn g_move_lands_off_with_a_touching_tangency() {
     let plan = Plan {
         ops: vec![
@@ -555,7 +555,7 @@ fn g_move_lands_off_with_a_touching_tangency() {
 /// G: the same, shrunk to one step (it fails on main too).
 /// (`move_lands_exactly_heavy`, seed 7, shrunk.)
 #[test]
-#[ignore = "#198 G: exposed by the touching-end form; main passes only through unconverged steps"]
+#[ignore = "#283: every solve converges, yet the move lands 7 off (exposed by the touching-end form)"]
 fn g_move_lands_off_with_a_touching_tangency_in_one_step() {
     let plan = Plan {
         ops: vec![

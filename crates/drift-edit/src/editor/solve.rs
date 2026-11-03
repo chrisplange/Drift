@@ -114,6 +114,21 @@ impl Editor {
                 .any(|c| !self.analysis().conflicts.contains(c))
     }
 
+    /// True if `report`'s solve didn't finish: it didn't converge, and not only on conflicts
+    /// the document already had (which shouldn't stop every later drag, as for
+    /// [`new_conflicts`](Self::new_conflicts)). A solve that fails naming nothing, or on rows
+    /// no relation owns (an arc's end off its circle), counts too: it left geometry broken
+    /// (#281).
+    pub(crate) fn unfinished(&self, report: &SolveReport) -> bool {
+        !report.converged
+            && (report.unsourced_failure
+                || report.conflicts.is_empty()
+                || report
+                    .conflicts
+                    .iter()
+                    .any(|c| !self.analysis().conflicts.contains(c)))
+    }
+
     /// Solve the constraints, then finish the open transaction and record it for undo. If the
     /// edit made the constraints unsatisfiable it is rolled back and `false` returned.
     /// [`commit`](Self::commit) an import: its fills come in as they were drawn, area fills

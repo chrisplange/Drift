@@ -141,6 +141,11 @@ pub struct SolveReport {
     pub wandered: usize,
     /// Constraints that could not be satisfied.
     pub conflicts: Vec<ConstraintId>,
+    /// A part of the system failed whose rows belong to no constraint (an arc's end on its
+    /// circle, a line's midpoint, an ellipse's axes): it names nothing in
+    /// [`conflicts`](Self::conflicts), so a report that names only conflicts already known
+    /// may still have left geometry broken.
+    pub unsourced_failure: bool,
     /// Constraints already implied by others (found during substitution).
     pub redundant: Vec<ConstraintId>,
     /// Equations that are linearly dependent on others (redundant but consistent).
@@ -1481,6 +1486,11 @@ fn still_at(values: &[f64], tol: &Tolerances) -> f64 {
     tol.length * hi.abs().max(lo.abs()).max(1.0)
 }
 
+/// Whether none of `rows` belongs to a constraint (see [`SolveReport::unsourced_failure`]).
+fn unsourced(sys: &System, rows: &[usize]) -> bool {
+    rows.iter().all(|&r| sys.rows[r].source.is_none())
+}
+
 fn run(sys: &mut System, options: &SolveOptions, iterate: bool) -> SolveReport {
     let tol = &options.tolerances;
     let mut report = SolveReport {
@@ -1498,6 +1508,7 @@ fn run(sys: &mut System, options: &SolveOptions, iterate: bool) -> SolveReport {
             .eval(&|p| values[sys.group_of[p]], &mut Vec::new());
         if res.abs() > row_tolerance(sys, r, &values, tol) {
             failed_rows.push(r);
+            report.unsourced_failure |= sys.rows[r].source.is_none();
         } else {
             // Satisfied, but everything it involves is pinned: it adds nothing.
             report.dependent_equations += 1;
@@ -1518,6 +1529,7 @@ fn run(sys: &mut System, options: &SolveOptions, iterate: bool) -> SolveReport {
             report.wandered = report.wandered.max(outcome.wandered);
             if !outcome.converged {
                 failed_rows.extend(&comp.rows);
+                report.unsourced_failure |= unsourced(sys, &comp.rows);
             }
         } else {
             let col_of = HashMap::new();
@@ -1525,6 +1537,7 @@ fn run(sys: &mut System, options: &SolveOptions, iterate: bool) -> SolveReport {
             for (f, r) in res.iter().zip(&comp.rows) {
                 if f.abs() > row_tolerance(sys, *r, &values, tol) {
                     failed_rows.extend(&comp.rows);
+                    report.unsourced_failure |= unsourced(sys, &comp.rows);
                     break;
                 }
             }

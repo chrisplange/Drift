@@ -204,8 +204,9 @@ fn smoke_dimensions_fix_pins_what_is_still_free() {
     assert_eq!(ed.analysis().dof, Some(2), "free to move again");
 }
 
-/// #235: an offset of a rectangle leaves one offset dimension on the canvas, and a new value
-/// typed into it (double-click its text) moves every side; one undo puts it back.
+/// #235, #247: an offset of a rectangle is one offset with one distance dimension on the
+/// canvas; a new value typed into it (double-click its text) moves every side, as does a
+/// drag of any side; one undo puts it back.
 #[test]
 fn smoke_dimensions_an_offset_has_one_dimension_for_all_its_sides() {
     let Some(mut h) = harness() else { return };
@@ -256,10 +257,15 @@ fn smoke_dimensions_an_offset_has_one_dimension_for_all_its_sides() {
     h.run();
     h.key_press(Key::S);
     h.run();
+    assert_eq!(
+        h.state().drawing.editor.doc.offsets().count(),
+        1,
+        "one offset"
+    );
     double_click(&mut h, shown[0].text_rect.center());
     assert!(
-        h.state().drawing.dimension_edit.is_some(),
-        "editing the offset"
+        h.state().drawing.property_edit.is_some(),
+        "editing the offset's distance"
     );
     h.key_press_modifiers(EguiModifiers::COMMAND, Key::A);
     type_text(&mut h, "3");

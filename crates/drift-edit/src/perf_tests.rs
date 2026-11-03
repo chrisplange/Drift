@@ -1220,3 +1220,93 @@ fn perf_items_and_copy_hover() {
     assert!(handles.0 < 0.3, "hidden handles {:.3} ms", handles.0);
     assert!(hover.0 < 0.5, "copy hover {:.2} ms", hover.0);
 }
+
+/// A hundred rectangle offsets (#247): made again from nothing changed, one source corner
+/// moved and committed (the regeneration of the offsets the edit touched), and twenty drag
+/// frames of one source point of a pen-curve offset (re-fitted every frame). New lines with
+/// this PR: no base to compare with.
+#[test]
+#[ignore = "torture test: run with --release --ignored --nocapture"]
+fn perf_offsets() {
+    use drift_core::{Offset, Side};
+    println!();
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let mut corners = Vec::new();
+    let mut first_line = None;
+    for i in 0..100 {
+        let x0 = f64::from(i % 10) * 100.0;
+        let y0 = f64::from(i / 10) * 100.0;
+        let ps = [
+            v(x0, y0),
+            v(x0 + 60.0, y0),
+            v(x0 + 60.0, y0 + 40.0),
+            v(x0, y0 + 40.0),
+        ]
+        .map(|p| ed.doc.add_point(p));
+        let lines: Vec<EntityId> = (0..4)
+            .map(|k| ed.doc.add_line(ps[k], ps[(k + 1) % 4]).unwrap())
+            .collect();
+        first_line.get_or_insert(lines[0]);
+        corners.push(ps[1]);
+        ed.doc
+            .add_offset(Offset::new(lines, Side::Right, 3.0))
+            .unwrap();
+    }
+    // A pen curve offset too, for the drag.
+    let arch = [
+        v(1200.0, 0.0),
+        v(1200.0, 200.0),
+        v(1600.0, 200.0),
+        v(1600.0, 0.0),
+    ]
+    .map(|p| ed.doc.add_point(p));
+    let curve = ed
+        .doc
+        .add_bezier(arch[0], arch[1], arch[2], arch[3])
+        .unwrap();
+    ed.doc
+        .add_offset(Offset::new(vec![curve], Side::Left, 20.0))
+        .unwrap();
+    ed.commit("Offsets");
+    println!(
+        "  {} offsets, {} entities ({} made by offsets)",
+        ed.doc.offsets().count(),
+        ed.doc.len(),
+        ed.doc.generated_entities().len()
+    );
+    let mut check = ed.doc.clone();
+    report(
+        "regenerate every offset (nothing changed)",
+        time(8, |_| {
+            let r = drift_geom::offsets::regenerate(&mut check);
+            assert!(!r.changed);
+        }),
+    );
+    let corner = corners[0];
+    let at = ed.doc.point(corner).unwrap();
+    report(
+        "move one source corner and commit",
+        time(8, |i| {
+            ed.doc.begin();
+            ed.doc
+                .set_point(corner, at + v((i % 2) as f64, 0.0))
+                .unwrap();
+            assert!(ed.commit("Move"));
+        }),
+    );
+    let dragged = drift_solver::Param::point(arch[1]).to_vec();
+    ed.doc.begin();
+    report(
+        "20 drag frames of a pen curve's handle (re-fitted)",
+        time(8, |i| {
+            for k in 0..20 {
+                let d = v(0.0, (i % 2) as f64 + 0.05 * f64::from(k));
+                assert!(ed.drag(&[arch[1]], d, &dragged));
+            }
+        }),
+    );
+    ed.doc.rollback();
+    ed.sync();
+    let _ = first_line;
+}

@@ -43,6 +43,7 @@ pub(super) enum Key {
     Wall(WallId),
     PropertyDim(PropertyDimId),
     Opening(OpeningId),
+    Offset(OffsetId),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -82,6 +83,7 @@ pub(super) enum Record {
     Wall(Wall),
     PropertyDim(PropertyDim),
     Opening(Opening),
+    Offset(Offset),
 }
 
 /// A constraint left out when opening a document, and why.
@@ -384,6 +386,7 @@ impl Document {
                 .copied()
                 .map(Record::PropertyDim),
             Key::Opening(id) => self.openings.get(&id).cloned().map(Record::Opening),
+            Key::Offset(id) => self.offsets.get(&id).cloned().map(Record::Offset),
         }
     }
 
@@ -612,6 +615,12 @@ impl Document {
             (Key::Opening(id), _) => {
                 self.openings.remove(&id);
             }
+            (Key::Offset(id), Some(Record::Offset(o))) => {
+                self.offsets.insert(id, o);
+            }
+            (Key::Offset(id), _) => {
+                self.offsets.remove(&id);
+            }
         }
     }
 
@@ -674,6 +683,7 @@ impl Document {
         keys.extend(self.walls.keys().map(|id| Key::Wall(*id)));
         keys.extend(self.property_dims.keys().map(|id| Key::PropertyDim(*id)));
         keys.extend(self.openings.keys().map(|id| Key::Opening(*id)));
+        keys.extend(self.offsets.keys().map(|id| Key::Offset(*id)));
         keys
     }
 }

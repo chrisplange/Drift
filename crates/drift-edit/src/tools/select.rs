@@ -20,9 +20,15 @@ pub(super) enum SelectDrag {
     Fillet {
         arc: EntityId,
     },
-    /// Alt-dragging a side of an offset: the offset's distance (`var`) follows the pointer's
-    /// distance from the curve that side is measured from, and every side moves.
+    /// Dragging a piece of an offset (#247): the offset's distance follows the pointer's
+    /// distance from its source, and every piece moves.
     Offset {
+        id: drift_core::OffsetId,
+    },
+    /// Dragging a side of an offset made before #247 (plain curves with hidden distance
+    /// dimensions, `family`): the distance follows the pointer's distance from the curve
+    /// that side is measured from, and every side moves.
+    OffsetSides {
         family: Vec<ConstraintId>,
         from: EntityId,
     },
@@ -246,6 +252,15 @@ impl SelectTool {
         if ed.refuse_locked(&ids) {
             return true;
         }
+        // (An offset's pieces follow its source: alone they can't be moved; with more picked
+        // they are left out and follow.)
+        if instances.is_empty()
+            && riders.is_empty()
+            && !ed.guard_owned(&ids, crate::walls::Op::Move)
+        {
+            return true;
+        }
+        let ids = ed.without_offset_pieces(&ids);
         let area = region.is_some() || (!picked_geometry && !ed.selected_fills.is_empty());
         ed.doc.begin();
         if area {
@@ -634,7 +649,7 @@ impl Tool for SelectTool {
             Some(SelectDrag::Radius { .. }) => {
                 "Resizing the circle (drag its centre to move it) · Esc to cancel".into()
             }
-            Some(SelectDrag::Offset { .. }) => {
+            Some(SelectDrag::Offset { .. } | SelectDrag::OffsetSides { .. }) => {
                 "Changing the offset in steps: every side follows · Alt: freely · Esc to \
                  cancel"
                     .into()
@@ -993,14 +1008,24 @@ impl Tool for SelectTool {
                 }
                 let target = target_at(ed, &p, Purpose::DragStart);
                 match target {
-                    // A side of an offset, on its own (with more picked, a drag moves the
-                    // lot): change the offset.
+                    // A piece of an offset, with nothing else picked: change the offset's
+                    // distance (with more picked, a drag moves the lot, the offset following
+                    // its source).
+                    Some(Pick::Geometry(Target::Entity(id)))
+                        if let Some(x) = ed.offset_of(id)
+                            && ed.selection.iter().all(|s| ed.offset_of(*s) == Some(x)) =>
+                    {
+                        ed.selection = ed.offset_pick_set(x);
+                        ed.doc.begin();
+                        self.drag = Some(SelectDrag::Offset { id: x });
+                    }
+                    // A side of an offset from before #247, on its own: change the offset.
                     Some(Pick::Geometry(Target::Entity(id)))
                         if (ed.selection.is_empty() || ed.selection.iter().eq([&id]))
                             && let Some((family, from)) = ed.offset_side_of(id) =>
                     {
                         ed.doc.begin();
-                        self.drag = Some(SelectDrag::Offset { family, from });
+                        self.drag = Some(SelectDrag::OffsetSides { family, from });
                     }
                     Some(Pick::Geometry(Target::Entity(id))) => {
                         if !ed.selection.contains(&id) {
@@ -1218,7 +1243,21 @@ impl Tool for SelectTool {
                         }
                     }
                 }
-                Some(SelectDrag::Offset { family, from }) => {
+                Some(SelectDrag::Offset { id }) => {
+                    if let Some(d) = ed.offset_distance_at(*id, p.pos()) {
+                        // In round steps for the zoom and the drawing's units, as a fillet
+                        // drag; with Alt, freely (as precise as lengths show).
+                        let d = if p.alt {
+                            ed.shown_length(d)
+                        } else {
+                            let metric = ed.doc.units().length.is_metric();
+                            let step = super::corners::round_step(p.tolerance * 1.5, metric);
+                            ((d / step).round() * step).max(step)
+                        };
+                        ed.drag_offset_distance(*id, d);
+                    }
+                }
+                Some(SelectDrag::OffsetSides { family, from }) => {
                     if let Some(Shape::Line { a, b }) = ed.doc.shape(*from) {
                         let u = (b - a).normalize_or_zero();
                         // In round steps for the zoom and the drawing's units, as a fillet
@@ -1307,7 +1346,7 @@ impl Tool for SelectTool {
                 Some(SelectDrag::Radius { .. }) => {
                     ed.commit("Resize circle");
                 }
-                Some(SelectDrag::Offset { .. }) => {
+                Some(SelectDrag::Offset { .. } | SelectDrag::OffsetSides { .. }) => {
                     ed.commit("Change offset");
                 }
                 Some(SelectDrag::Scale {
@@ -1384,6 +1423,7 @@ impl Tool for SelectTool {
             Some(
                 SelectDrag::Radius { .. }
                 | SelectDrag::Offset { .. }
+                | SelectDrag::OffsetSides { .. }
                 | SelectDrag::Fillet { .. }
                 | SelectDrag::Text { .. }
                 | SelectDrag::Scale { .. }

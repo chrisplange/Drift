@@ -139,7 +139,14 @@ impl SelectTool {
                 None => return false,
             }
         } else {
-            ed.selection.iter().copied().collect()
+            let picked: Vec<EntityId> = ed.selection.iter().copied().collect();
+            if instances.is_empty()
+                && riders.is_empty()
+                && !ed.guard_owned(&picked, crate::walls::Op::Move)
+            {
+                return true;
+            }
+            ed.without_offset_pieces(&picked)
         };
         let pivot = if ids.is_empty() {
             // Only copies of blocks: one turns about its insertion point, several about

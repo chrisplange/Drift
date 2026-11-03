@@ -39,6 +39,7 @@ impl Editor {
             }
         }
         self.apply_wall_thickness()?;
+        self.apply_offset_distance()?;
         self.apply_opening_sizes()
     }
 

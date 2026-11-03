@@ -85,7 +85,7 @@ and **Explode walls** are in the **Build** menu; **Walls from curves** and
 | **Split** | — | Click a curve where it should be cut in two (a circle or ellipse into halves). |
 | **Fillet** | F | Click a corner where two lines meet (or an existing fillet), move to size it, click to apply; or type the radius. F again switches to **Chamfer**. |
 | **Chamfer** | F, F | As the fillet; type the distance, Tab for a second distance. |
-| **Offset** | O | Click a curve (its connected chain is taken too), then the side; or type the distance. |
+| **Offset** | O | Click a curve (its connected chain is taken too), then the side; or type the distance. The result is one offset with one distance that follows its source; drag a piece or type into its dimension to change it; Detach (Inspector) makes plain curves. |
 | **Mirror** | M | Pick geometry first; then click the line to mirror it about. The copies are held symmetric. |
 
 ## Tools started from panels

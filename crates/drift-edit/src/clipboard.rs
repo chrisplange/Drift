@@ -137,8 +137,10 @@ pub fn copy_into(
     };
     // Everything copied: the picked entities and the points they're defined by.
     let mut sources: BTreeSet<EntityId> = BTreeSet::new();
-    // (Walls' faces aren't copied: the walls are, and make them again.)
-    let generated = src.generated_entities();
+    // (Walls' faces aren't copied: the walls are, and make them again. An offset whose
+    // source is all copied is copied as an offset; otherwise its pieces are plain copies.)
+    let picked_curves: BTreeSet<EntityId> = picked.curves.iter().copied().collect();
+    let (offsets, generated) = crate::offsets::copied_as_records(src, &picked_curves);
     let wall_owners = src.wall_owners();
     for &id in picked.curves.iter().filter(|id| !generated.contains(id)) {
         if let Some(e) = src.get(id) {
@@ -306,6 +308,13 @@ pub fn copy_into(
         o.layer = o.layer.map(|l| layer(dst, l));
         let _ = dst.add_opening(o);
     }
+    // Offsets whose source was copied: offsets of the copies (made when committed).
+    let records: Vec<drift_core::Offset> = src
+        .offsets()
+        .filter(|(id, _)| offsets.contains(id))
+        .map(|(_, o)| o.clone())
+        .collect();
+    crate::offsets::copy_offsets(&records, dst, &|e| map.get(&e).copied(), false);
     // Fills bounded by their faces (a room's floor): onto the copies' faces, made now.
     let floors = crate::walls::face_fills(src, &walls, &|e| map.get(&e).copied(), &|p| p + offset);
     if !floors.is_empty() {

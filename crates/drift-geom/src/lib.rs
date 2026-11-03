@@ -4,6 +4,7 @@
 mod index;
 pub mod intersect;
 pub mod offset;
+pub mod offsets;
 mod primitives;
 mod reference;
 pub mod regions;

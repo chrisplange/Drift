@@ -77,6 +77,7 @@ mod pdf_text;
 pub mod profiles;
 mod sheets;
 // What the CAD writers share: layer naming, line types, text escaping.
+mod offsets;
 #[cfg(not(feature = "demo"))]
 mod style;
 #[cfg(not(feature = "demo"))]
@@ -1055,6 +1056,9 @@ struct FileRecord {
     /// Doors, windows and openings in walls (an addition at 42: fixture v42.2).
     #[serde(default)]
     openings: Vec<openings::OpeningRecord>,
+    /// Offsets of chains of curves and what they made (an addition at 44: fixture v44.1).
+    #[serde(default)]
+    offsets: Vec<offsets::OffsetRecord>,
 }
 
 /// A named group of entities.
@@ -1312,6 +1316,8 @@ struct FileOut<'a> {
     property_dims: Vec<walls::PropertyDimRecord>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     openings: Vec<openings::OpeningRecord>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    offsets: Vec<offsets::OffsetRecord>,
 }
 
 /// The drawing as this build writes it, without anything carried through.
@@ -1515,6 +1521,10 @@ fn file_out<'a>(doc: &'a Document, meta: &'a Metadata) -> FileOut<'a> {
         openings: doc
             .openings()
             .map(|(id, o)| openings::opening_record(doc, id, o))
+            .collect(),
+        offsets: doc
+            .offsets()
+            .map(|(id, o)| offsets::offset_record(doc, id, o))
             .collect(),
     }
 }
@@ -2030,8 +2040,10 @@ fn load_value(value: serde_json::Value) -> Result<(Document, Metadata, Vec<Strin
         )
         .map_err(LoadError::Document)?;
     }
-    let wall_notes = walls::insert_all(&mut doc, file.walls, file.property_dims)?;
+    let wall_notes = walls::insert_walls(&mut doc, file.walls)?;
     notes_out.extend(wall_notes);
+    notes_out.extend(offsets::insert_all(&mut doc, file.offsets)?);
+    walls::insert_property_dims(&mut doc, file.property_dims)?;
     notes_out.extend(openings::insert_all(&mut doc, file.openings)?);
     for r in file.views {
         let id_text = r.id.clone();

@@ -214,13 +214,19 @@ impl Editor {
         if !self.selected_instances.is_empty() || self.picks_annotations() {
             return None;
         }
-        // (An opening slides along its wall and flips by its arrows: no box.)
+        // (An opening slides along its wall and flips by its arrows: no box. An offset's
+        // pieces follow its source, and a drag of one changes its distance: no box either.)
         if self.doc.has_openings()
             && !self.selection.is_empty()
             && self
                 .selection
                 .iter()
                 .all(|id| self.opening_of(*id).is_some())
+        {
+            return None;
+        }
+        if !self.selection.is_empty()
+            && self.only_offset_pieces(&self.selection.iter().copied().collect::<Vec<_>>())
         {
             return None;
         }

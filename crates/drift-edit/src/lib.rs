@@ -20,6 +20,9 @@ pub mod frame_items;
 pub mod labels;
 pub mod library;
 pub mod modify;
+pub mod offsets;
+#[cfg(test)]
+mod offsets_tests;
 pub mod openings;
 #[cfg(test)]
 mod openings_props;

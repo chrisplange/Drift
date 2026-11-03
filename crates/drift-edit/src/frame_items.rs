@@ -115,6 +115,9 @@ impl ItemsCache {
                     .map(|(id, _)| *id),
             );
         }
+        if let Some(x) = ed.hovered_offset() {
+            moving.extend(ed.offset_curves(x));
+        }
         let points = ed.points_of(moving.iter().copied());
         moving.extend(points);
         for id in moving {

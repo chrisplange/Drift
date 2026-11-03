@@ -316,6 +316,8 @@ struct Drawing {
     sketch_check: Option<app::checker_ui::SketchCheck>,
     /// The Inspector's thickness field being typed into, for the walls it was opened on.
     wall_thickness_text: Option<(Vec<drift_core::WallId>, String)>,
+    /// The Inspector's offset distance field while it is being typed into, for these offsets.
+    offset_distance_text: Option<(Vec<drift_core::OffsetId>, String)>,
     /// The picked opening's offset (0) or width (1) being typed in the Inspector.
     opening_text: Option<(drift_core::OpeningId, u8, String)>,
     /// The text being typed into (its edits merge into one undo step).
@@ -435,6 +437,7 @@ impl Drawing {
             sketch_check: None,
             temp_dims: Default::default(),
             wall_thickness_text: None,
+            offset_distance_text: None,
             opening_text: None,
             text_typing: None,
             text_focused: None,

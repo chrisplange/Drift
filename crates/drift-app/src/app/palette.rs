@@ -310,6 +310,10 @@ impl DriftApp {
                 let walls: Vec<_> = self.drawing.editor.selected_walls().into_iter().collect();
                 self.drawing.editor.explode_walls(&walls);
             }
+            Command::DetachOffset => {
+                let offsets: Vec<_> = self.drawing.editor.selected_offsets().into_iter().collect();
+                self.drawing.editor.detach_offsets(&offsets);
+            }
             Command::EditFill => {
                 if let Some(f) = self.drawing.editor.picked_shape_fill() {
                     self.drawing.editor.pick_fill_alone(f);

@@ -450,10 +450,17 @@ impl Editor {
         }
         // A wall's face, corner or poché picks the wall: its centreline.
         if self.doc.has_walls()
-            && self.wall_owners().generated(id)
+            && self.wall_owners().by_wall(id)
             && let Some(w) = self.wall_of(id)
         {
             let set = self.wall_pick_set(w);
+            if !set.is_empty() {
+                return set;
+            }
+        }
+        // A piece of an offset picks the offset: every piece.
+        if let Some(x) = self.offset_of(id) {
+            let set = self.offset_pick_set(x);
             if !set.is_empty() {
                 return set;
             }
@@ -473,8 +480,8 @@ impl Editor {
 
     /// Widen the selection to whole groups (except the open one).
     pub fn expand_groups(&mut self) {
-        // (Walls' faces picked by a box are their walls.)
-        if self.doc.has_walls() {
+        // (Walls' faces picked by a box are their walls; an offset's pieces, the offset.)
+        if self.doc.has_walls() || self.doc.has_offsets() {
             let owners = self.wall_owners();
             let faces: Vec<EntityId> = self
                 .selection
@@ -694,7 +701,7 @@ impl Editor {
         // Walls: by their centrelines (their faces aren't picked on their own).
         if self.doc.has_walls() {
             let owners = self.wall_owners();
-            self.selection.retain(|id| !owners.generated(*id));
+            self.selection.retain(|id| !owners.by_wall(*id));
             let curves: Vec<EntityId> = self
                 .doc
                 .walls()

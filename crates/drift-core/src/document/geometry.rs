@@ -634,6 +634,7 @@ impl Document {
         self.prune_groups();
         self.prune_paths();
         self.prune_walls();
+        self.prune_offsets();
     }
 
     /// Walls whose centreline is gone go, with what they made (and come back with it on

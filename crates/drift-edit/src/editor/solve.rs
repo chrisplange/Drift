@@ -150,6 +150,8 @@ impl Editor {
         self.adopt_into_open_group();
         self.make_new_curves_construction();
         self.follow_walls();
+        // (After the walls: an offset's source may be a wall's face.)
+        self.follow_offsets();
         self.follow_paths();
         // On a big drawing the edit is done before the areas its fills follow are found:
         // they are found on a thread, and the fills then follow in this edit's step.
@@ -612,11 +614,20 @@ impl Editor {
     /// as one undo step. `None` with nothing picked; `Some(false)` if relations hold it in
     /// place.
     pub fn nudge(&mut self, delta: DVec2) -> Option<bool> {
-        let ids: Vec<EntityId> = self.selection.iter().copied().collect();
+        let picked: Vec<EntityId> = self.selection.iter().copied().collect();
         let instances = self.picked_instances();
         let riders = self.riders();
-        if ids.is_empty() && instances.is_empty() && riders.is_empty() {
+        if picked.is_empty() && instances.is_empty() && riders.is_empty() {
             return None;
+        }
+        // (An offset's pieces follow its source; alone, they can't be moved.)
+        let ids = self.without_offset_pieces(&picked);
+        if ids.is_empty()
+            && instances.is_empty()
+            && riders.is_empty()
+            && !self.guard_owned(&picked, crate::walls::Op::Move)
+        {
+            return Some(false);
         }
         self.doc.begin();
         self.move_instances(&instances, delta);

@@ -47,8 +47,14 @@ impl OffsetTool {
         else {
             return;
         };
-        if let Err(e) = ed.offset(id, d, side) {
-            ed.out.notice = Some(format!("Offset: {e}"));
+        match ed.offset(id, d, side) {
+            // The offset is picked: its Inspector shows the distance.
+            Ok(x) => {
+                ed.selection = ed.offset_pick_set(x);
+                ed.selected_fills.clear();
+                ed.selected_region = None;
+            }
+            Err(e) => ed.out.notice = Some(format!("Offset: {e}")),
         }
         self.reset(ed);
     }

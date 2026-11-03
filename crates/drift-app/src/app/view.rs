@@ -107,19 +107,21 @@ impl DriftApp {
                 }
             }
         }
-        // Walls' thickness dimensions (drawn as a dimension between the faces).
+        // Walls' thickness dimensions (drawn as a dimension between the faces), and
+        // offsets' distances (between the source and the offset).
         if self.show_dimensions {
             for (q, d) in doc.property_dims() {
-                if let Some((c, at)) = drift_edit::walls::thickness_dimension(doc, d) {
-                    out.extend(
-                        annotations::layout_dimension(painter, doc, None, &c, Some(at), map).map(
-                            |mut l| {
-                                l.property = Some(q);
-                                l
-                            },
-                        ),
-                    );
-                }
+                let layout = if let Some((c, at)) = drift_edit::walls::thickness_dimension(doc, d) {
+                    annotations::layout_dimension(painter, doc, None, &c, Some(at), map)
+                } else if let Some(gap) = drift_edit::offsets::distance_dimension(doc, d) {
+                    annotations::layout_gap(painter, doc, &gap, map)
+                } else {
+                    None
+                };
+                out.extend(layout.map(|mut l| {
+                    l.property = Some(q);
+                    l
+                }));
             }
         }
         out
@@ -416,26 +418,33 @@ impl DriftApp {
         }
     }
 
-    /// Open the in-place editor of a property dimension (a wall's thickness).
+    /// Open the in-place editor of a property dimension (a wall's thickness, an offset's
+    /// distance).
     pub(crate) fn open_property_edit(&mut self, q: drift_core::PropertyDimId) {
-        let Some(d) = self.drawing.editor.doc.property_dim(q) else {
+        let doc = &self.drawing.editor.doc;
+        let Some(d) = doc.property_dim(q) else {
             return;
         };
-        let w = d.target.wall();
-        let Some(wall) = self.drawing.editor.doc.wall(w) else {
-            return;
+        let (expr, value) = match d.target {
+            drift_core::PropertyRef::WallThickness(w) => {
+                let Some(wall) = doc.wall(w) else {
+                    return;
+                };
+                (wall.thickness_expr.clone(), wall.thickness)
+            }
+            drift_core::PropertyRef::OffsetDistance(x) => {
+                let Some(o) = doc.offset(x) else {
+                    return;
+                };
+                (o.distance_expr.clone(), o.distance)
+            }
         };
-        let text = wall.thickness_expr.clone().unwrap_or_else(|| {
-            self.drawing
-                .editor
-                .doc
-                .units()
-                .format_length(wall.thickness)
-        });
+        let text = expr.unwrap_or_else(|| doc.units().format_length(value));
         self.drawing.property_edit = Some((q, text, true));
     }
 
-    /// The in-place editor of a property dimension: Enter sets the wall's thickness.
+    /// The in-place editor of a property dimension: Enter sets the wall's thickness or the
+    /// offset's distance.
     pub(crate) fn property_editor(&mut self, ctx: &egui::Context, dims: &[DimLayout], now: f64) {
         let Some((q, mut text, focus)) = self.drawing.property_edit.take() else {
             return;
@@ -473,15 +482,17 @@ impl DriftApp {
             )
         });
         if !focus && enter {
-            let wall = self
-                .drawing
-                .editor
-                .doc
-                .property_dim(q)
-                .map(|d| d.target.wall());
-            if let Some(w) = wall
-                && let Err(e) = self.drawing.editor.set_wall_thickness(&[w], &text)
-            {
+            let target = self.drawing.editor.doc.property_dim(q).map(|d| d.target);
+            let set = match target {
+                Some(drift_core::PropertyRef::WallThickness(w)) => {
+                    self.drawing.editor.set_wall_thickness(&[w], &text)
+                }
+                Some(drift_core::PropertyRef::OffsetDistance(x)) => {
+                    self.drawing.editor.set_offset_distance(&[x], &text)
+                }
+                None => Ok(()),
+            };
+            if let Err(e) = set {
                 self.set_status(format!("Can't use {text}: {e}"), true, now);
             }
             return;

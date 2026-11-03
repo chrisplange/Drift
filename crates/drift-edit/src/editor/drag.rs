@@ -44,6 +44,83 @@ const NO_WAY_ROUND: f64 = drift_core::tolerance::FLATTEN_MM;
 /// where the smallest step turns, the curves it turns are taken to be pushed along).
 const MAX_SPLITS: u32 = 6;
 
+/// Whether a relation holds geometry where it is, so that the part it is in can't be moved
+/// whole. Every other relation is between the part's own geometry (or a size: a fixed
+/// radius), and moving it all along keeps it.
+fn pins(c: &Constraint) -> bool {
+    match c {
+        Constraint::Fix { .. } | Constraint::FixX { .. } | Constraint::FixY { .. } => true,
+        Constraint::Coincident { .. }
+        | Constraint::Horizontal { .. }
+        | Constraint::Vertical { .. }
+        | Constraint::HorizontalPoints { .. }
+        | Constraint::VerticalPoints { .. }
+        | Constraint::Parallel { .. }
+        | Constraint::Perpendicular { .. }
+        | Constraint::Equal { .. }
+        | Constraint::Tangent { .. }
+        | Constraint::Concentric { .. }
+        | Constraint::Coradial { .. }
+        | Constraint::Collinear { .. }
+        | Constraint::PointOnCurve { .. }
+        | Constraint::Symmetric { .. }
+        | Constraint::Smooth { .. }
+        | Constraint::Midpoint { .. }
+        | Constraint::MidpointOf { .. }
+        | Constraint::EqualDistance { .. }
+        | Constraint::Corner { .. }
+        | Constraint::FixRadius { .. }
+        | Constraint::Distance { .. }
+        | Constraint::Radius { .. }
+        | Constraint::Diameter { .. }
+        | Constraint::HorizontalDistance { .. }
+        | Constraint::VerticalDistance { .. }
+        | Constraint::PointLineDistance { .. }
+        | Constraint::Angle { .. } => false,
+    }
+}
+
+/// The point a relation holds on curves, and those curves: what a move of curves carries
+/// along whole where the point is dragged and the step can't be made otherwise (see
+/// `Editor::carry_holding`).
+fn held_on(c: &Constraint) -> Option<(EntityId, [EntityId; 2])> {
+    match *c {
+        Constraint::PointOnCurve { point, curve } => Some((point, [curve, curve])),
+        Constraint::Midpoint { point, line } => Some((point, [line, line])),
+        Constraint::Corner { point, a, b } => Some((point, [a, b])),
+        // Points held to points (merged, midway, mirrored, level, at a distance): no curve
+        // to carry. A point held at a distance from a line is measured from it, not on it.
+        Constraint::Coincident { .. }
+        | Constraint::MidpointOf { .. }
+        | Constraint::EqualDistance { .. }
+        | Constraint::Symmetric { .. }
+        | Constraint::HorizontalPoints { .. }
+        | Constraint::VerticalPoints { .. }
+        | Constraint::Distance { .. }
+        | Constraint::HorizontalDistance { .. }
+        | Constraint::VerticalDistance { .. }
+        | Constraint::PointLineDistance { .. }
+        | Constraint::Smooth { .. }
+        | Constraint::Fix { .. }
+        | Constraint::FixX { .. }
+        | Constraint::FixY { .. } => None,
+        // Between curves, or their sizes: no point held.
+        Constraint::Horizontal { .. }
+        | Constraint::Vertical { .. }
+        | Constraint::Parallel { .. }
+        | Constraint::Perpendicular { .. }
+        | Constraint::Equal { .. }
+        | Constraint::Tangent { .. }
+        | Constraint::Concentric { .. }
+        | Constraint::Coradial { .. }
+        | Constraint::Collinear { .. }
+        | Constraint::FixRadius { .. }
+        | Constraint::Radius { .. }
+        | Constraint::Diameter { .. }
+        | Constraint::Angle { .. } => None,
+    }
+}
+
 /// The drag [`Editor::drag`] is in the middle of. Every frame solves from the geometry as
 /// the drag found it, moved by the whole way so far, so where the drag is depends on that
 /// alone, not on the way the pointer went there.
@@ -103,6 +180,9 @@ struct DragPart {
     lowered_lines: Vec<EntityId>,
     /// Where its tangencies touched as the drag began: every step lowers them so.
     touching: Rc<drift_solver::TouchingEnds>,
+    /// For a move of curves in a part nothing pins, the curves not moved that relations hold
+    /// its dragged points on (see [`DragFrame::holding`]).
+    holding: Vec<EntityId>,
 }
 
 /// The parts of a drag that go exactly where they are moved ([`DragPart::moves_whole`]), as
@@ -140,6 +220,10 @@ struct DragFrame<'a> {
     lowered_lines: &'a [EntityId],
     /// Where the scope's tangencies touched as the drag began ([`DragPart::touching`]).
     touching: &'a Rc<drift_solver::TouchingEnds>,
+    /// Curves not moved that relations hold dragged points on, where nothing pins the part:
+    /// carried along whole when a step can't be made or doesn't land otherwise (see
+    /// `Editor::carry_holding`). Empty for a point dragged, or a part something pins.
+    holding: &'a [EntityId],
     /// Solves this frame may still run.
     solves_left: u32,
     /// The work it may still spend on solves that don't finish ([`UNFINISHED_WORK`]).
@@ -163,6 +247,10 @@ impl Editor {
     ///
     /// Moving whole curves carries the lines hanging from them along where it can, at their
     /// length, rather than stretching them; dragging a point reshapes what it ends.
+    /// Where nothing pins the part moved (no fixed point, nothing locked, generated or out of
+    /// the group being edited), a move of curves that can't be made, or that leaves what it
+    /// drags off where it was put, carries along whole the curves its dragged points are held
+    /// on (on a curve, at a line's middle, at a corner), and keeps that if it lands.
     ///
     /// Successive calls in one transaction, on the same geometry, are one drag. Each solves
     /// from the geometry as the drag found it, moved by the whole way so far, keeping its
@@ -208,6 +296,7 @@ impl Editor {
                     dragged,
                     &start,
                     lowering.as_deref(),
+                    curves,
                 );
                 let whole = self.whole_move(&parts);
                 (
@@ -258,6 +347,7 @@ impl Editor {
                 constraints: &part.constraints,
                 lowered_lines: &part.lowered_lines,
                 touching: &part.touching,
+                holding: &part.holding,
                 solves_left: DRAG_SOLVES,
                 unfinished_left: UNFINISHED_WORK,
                 wandered: 0,
@@ -325,6 +415,7 @@ impl Editor {
     /// The parts of a drag's scope as it starts (see [`DragPart`]): the dragged ids and
     /// parameters, the starting geometry and smooth anchors of each, and whether it has
     /// anything to solve.
+    #[allow(clippy::too_many_arguments)]
     fn drag_parts(
         &self,
         scope: &HashSet<EntityId>,
@@ -333,6 +424,7 @@ impl Editor {
         dragged: &[Param],
         start: &Geometry,
         lowering: Option<&drift_solver::Lowering>,
+        curves: bool,
     ) -> Vec<DragPart> {
         let part_of: HashMap<EntityId, usize> = parts
             .iter()
@@ -364,6 +456,7 @@ impl Editor {
                 constraints: Vec::new(),
                 lowered_lines: Vec::new(),
                 touching: Rc::default(),
+                holding: Vec::new(),
             })
             .collect();
         for id in &reasons {
@@ -451,6 +544,52 @@ impl Editor {
         for part in &mut out {
             part.moves_whole = !part.needs_solve
                 && !self.stretches_hanging_line(&part.ids, &part.dragged_set, &part.start);
+        }
+        // (Only parts that solve can fail to land; the rest pay nothing for it.)
+        if curves && out.iter().any(|p| p.needs_solve) {
+            // What walls, openings and offsets made, the walls' centrelines, and the offsets'
+            // sources: geometry with a record that remakes it, which a part isn't moved with.
+            let owned: HashSet<EntityId> = if self.doc.has_walls() || self.doc.has_offsets() {
+                self.doc
+                    .wall_owners()
+                    .of
+                    .into_keys()
+                    .chain(
+                        self.doc
+                            .offsets()
+                            .flat_map(|(_, o)| o.source.iter().copied()),
+                    )
+                    .collect()
+            } else {
+                HashSet::new()
+            };
+            let locked = self.doc.locked_entities();
+            let edit_scope = self.edit_scope();
+            for part in out.iter_mut().filter(|p| p.needs_solve) {
+                let pinned = part.constraints.iter().any(|(_, c)| pins(c))
+                    || part.scope.iter().any(|id| {
+                        locked.contains(id)
+                            || owned.contains(id)
+                            || edit_scope.as_ref().is_some_and(|e| !e.contains(id))
+                    });
+                if pinned {
+                    continue;
+                }
+                let dragged =
+                    |p: EntityId| Param::point(p).iter().all(|q| part.dragged_set.contains(q));
+                let mut holding: Vec<EntityId> = part
+                    .constraints
+                    .iter()
+                    .filter(|&&(id, _)| !self.doc.is_driven(id))
+                    .filter_map(|(_, c)| held_on(c))
+                    .filter(|&(point, _)| dragged(point))
+                    .flat_map(|(_, on)| on)
+                    .filter(|curve| !part.ids.contains(curve))
+                    .collect();
+                holding.sort_unstable();
+                holding.dedup();
+                part.holding = holding;
+            }
         }
         out
     }
@@ -707,10 +846,78 @@ impl Editor {
                 self.restore_geometry(before);
             }
         }
+        // In a part nothing pins, a move of curves can always be made, and land: moving the
+        // whole part along meets every relation. A step there that can't be made, or that
+        // leaves the dragged off their targets, is the solve failing, as it does where a
+        // dragged point is held on a curve at a fold (#282, #283).
+        if !frame.holding.is_empty()
+            && !self.drag_no_carry
+            && !(ok && self.landed(frame, delta, before))
+        {
+            ok = self.carry_holding(frame, &ids, &mut carried_points, delta, before, ok);
+        }
         // Only the connected part can have moved.
         self.index
             .update_moved(&self.doc, frame.scope.iter().copied());
         frame.pushed |= ok && !carried_points.is_empty();
+        ok
+    }
+
+    /// Whether the step from `before` left every dragged point where it put it, moved by
+    /// `delta` (to rounding: halves add up to the whole only that closely).
+    fn landed(&self, frame: &DragFrame<'_>, delta: DVec2, before: &Geometry) -> bool {
+        before.points.iter().all(|&(id, p)| {
+            let to = p + delta;
+            !frame.dragged_set.contains(&Param::X(id))
+                || self.doc.point(id).is_ok_and(|at| {
+                    at.distance(to)
+                        <= drift_core::tolerance::same(to.abs().max_element().max(delta.length()))
+                })
+        })
+    }
+
+    /// The step from `before` by `delta` once more, with the curves [`DragFrame::holding`]
+    /// its dragged points on (those `ids` doesn't move already) carried along whole: their
+    /// points start moved with it and give way only after everything else. The result is
+    /// kept only if it lands; otherwise the step is as it was (`ok`: kept where it ended,
+    /// else refused), with nothing carried. The frame's budgets are the step's own.
+    fn carry_holding(
+        &mut self,
+        frame: &mut DragFrame<'_>,
+        ids: &[EntityId],
+        carried_points: &mut Vec<Param>,
+        delta: DVec2,
+        before: &Geometry,
+        ok: bool,
+    ) -> bool {
+        let holding: Vec<EntityId> = frame
+            .holding
+            .iter()
+            .copied()
+            .filter(|id| !ids.contains(id))
+            .collect();
+        if holding.is_empty() {
+            return ok;
+        }
+        let ended = ok.then(|| self.geometry_of(frame.scope));
+        self.restore_geometry(before);
+        let mut carried = carried_points.clone();
+        for p in self.doc.defining_points(holding.iter().copied()) {
+            for q in Param::point(p) {
+                if !frame.dragged_set.contains(&q) && !carried.contains(&q) {
+                    carried.push(q);
+                }
+            }
+        }
+        let ids: Vec<EntityId> = ids.iter().copied().chain(holding).collect();
+        let mut turned = Vec::new();
+        if self.drag_in_steps(frame, &ids, delta, &carried, before, 0, &mut turned)
+            && self.landed(frame, delta, before)
+        {
+            *carried_points = carried;
+            return true;
+        }
+        self.restore_geometry(ended.as_ref().unwrap_or(before));
         ok
     }
 

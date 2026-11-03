@@ -1725,8 +1725,9 @@ fn a_carried_step_that_does_not_finish_whole_goes_in_halves() {
     assert_eq!(broken_structure(&built.ed), None);
 }
 
-/// f3's sketch (#282) and its move: after the first small step, the drag's solve doesn't
-/// finish at any step size.
+/// f3's sketch (#282), its arc's far end fixed, and its move: after the first small step,
+/// the drag's solve doesn't finish at any step size (the two dragged points held on the arc
+/// are a diameter apart, a fold), and with the fix nothing carries the arc along.
 fn never_finishes() -> (Sketch, DVec2) {
     let p = DVec2::new;
     let sketch = Sketch {
@@ -1748,7 +1749,12 @@ fn never_finishes() -> (Sketch, DVec2) {
             Curve::Line(0, 6),
             Curve::Line(7, 8),
         ],
-        rels: vec![Rel::OnCurve(3, 0), Rel::Tangent(2, 0), Rel::OnCurve(7, 0)],
+        rels: vec![
+            Rel::OnCurve(3, 0),
+            Rel::Tangent(2, 0),
+            Rel::OnCurve(7, 0),
+            Rel::Fix(0),
+        ],
     };
     (sketch, p(0.0, -18.003814381075802))
 }
@@ -1883,6 +1889,314 @@ fn an_old_conflict_does_not_excuse_a_broken_arc() {
     assert!(ed.drag(&[tip], DVec2::new(3.0, 2.0), &Param::point(tip)));
     assert_eq!(ed.doc.point(tip).unwrap(), DVec2::new(11.0, 14.0));
     ed.doc.rollback();
+}
+
+/// `sketch` built (moved by `t`), `extra` done to it, and its curves `picked` moved by
+/// `offset` (moved by `t`) in one call, carrying the curves holding dragged points where
+/// it may or (`no_carry`) as a drag did before #282: whether it went, where the points end,
+/// and whether it pushed curves along.
+fn move_once(
+    sketch: &Sketch,
+    t: Similarity,
+    picked: &[usize],
+    offset: DVec2,
+    no_carry: bool,
+    extra: impl FnOnce(&mut Built),
+) -> (bool, Vec<DVec2>, bool) {
+    let mut built = Built::new(sketch, t).unwrap();
+    extra(&mut built);
+    let ids: Vec<EntityId> = picked.iter().map(|&i| built.curves[i]).collect();
+    let dragged = dragged_by(&built.ed, &ids);
+    built.ed.drag_no_carry = no_carry;
+    built.ed.doc.begin();
+    let went = built.ed.drag(&ids, t.vector(offset), &dragged);
+    let out = (went, built.positions(), built.ed.drag_pushed());
+    built.ed.doc.rollback();
+    out
+}
+
+/// A quarter of the size, far from the origin.
+const SMALL: Similarity = Similarity {
+    scale: 0.25,
+    turn: 0.0,
+    shift: DVec2::new(0.0, 435.56956075701453),
+};
+
+/// Two lines whose ends are held on an arc a diameter apart (f3, #282, without its tangent
+/// line), and a move of both lines.
+fn held_a_diameter_apart() -> (Sketch, DVec2) {
+    let p = DVec2::new;
+    let at = |deg: f64| p(8.0, 0.0) + DVec2::from_angle(deg.to_radians()) * 8.0;
+    let sketch = Sketch {
+        points: vec![
+            p(0.0, 0.0),
+            p(8.0, 0.0),
+            at(135.0),
+            at(135.0),
+            at(135.0) + p(-10.0, 0.0),
+            at(315.0),
+            at(315.0) + p(10.0, 0.0),
+        ],
+        curves: vec![Curve::Arc(1, 2, 0), Curve::Line(3, 4), Curve::Line(5, 6)],
+        rels: vec![Rel::OnCurve(3, 0), Rel::OnCurve(5, 0)],
+    };
+    (sketch, p(0.0, -18.0))
+}
+
+/// #282: two lines whose ends are held on an arc a diameter apart, moved together. The arc's
+/// kept radius sits on a fold there (its centre must be exactly midway), so no solve
+/// finished, at any step size, and the move was refused. The arc they are held on is carried
+/// along whole. (A quarter of the size far from the origin, it goes too, but some of its
+/// stalled solves read as finished within the coordinates' tolerance and are kept as they
+/// are: #280, `seeds::e_result_depends_on_size_at_a_fold`.)
+#[test]
+fn a_move_held_on_a_circle_at_a_fold_carries_the_circle_along() {
+    let (sketch, offset) = held_a_diameter_apart();
+    for t in [Similarity::IDENTITY, SMALL] {
+        let start = Built::new(&sketch, t).unwrap().positions();
+        let (went, end, pushed) = move_once(&sketch, t, &[1, 2], offset, false, |_| ());
+        assert!(went, "refused at scale {}", t.scale);
+        if t.scale != 1.0 {
+            continue;
+        }
+        assert!(pushed, "the arc wasn't carried");
+        for (i, (a, b)) in start.iter().zip(&end).enumerate() {
+            let want = *a + t.vector(offset);
+            assert!(
+                close(*b, want, want.length()),
+                "point {i} ended at {b} instead of {want} at scale {}",
+                t.scale
+            );
+        }
+    }
+}
+
+/// g7's sketch (#283): a line's midpoint coincident with an arc's end, the arc tangent to the
+/// line there; a second line kept parallel to and as long as a dragged one, hanging from the
+/// first line's end.
+fn midpoint_at_a_touching_end() -> Sketch {
+    let p = DVec2::new;
+    Sketch {
+        points: vec![
+            p(0.0, 0.0),
+            p(15.0, 0.0),
+            p(7.5, 0.0),
+            p(17.15925826289068, 2.5881904510252074),
+            p(22.071067811865476, -7.071067811865477),
+            p(7.5, 0.0),
+            p(14.571067811865474, -7.071067811865477),
+            p(7.5, 12.0),
+            p(19.5, 12.000000000000004),
+        ],
+        curves: vec![
+            Curve::Line(0, 1),
+            Curve::Line(2, 3),
+            Curve::Line(1, 4),
+            Curve::Line(5, 6),
+            Curve::Line(4, 2),
+            Curve::Arc(7, 8, 2),
+        ],
+        rels: vec![
+            Rel::Midpoint(2, 0),
+            Rel::Coincident(5, 2),
+            Rel::Parallel(2, 3),
+            Rel::Equal(2, 3),
+            Rel::Tangent(0, 5),
+        ],
+    }
+}
+
+/// g7's move: the arc and the lines from its end.
+const MIDPOINT_MOVE: DVec2 = DVec2::new(-2.7019888370729976, 17.00429950861392);
+
+/// #283: a move whose one solve converged on the far branch (a line turned past square to the
+/// one it is kept parallel to), its dragged points 7 off target, was kept. The line holding
+/// the dragged midpoint is carried along instead: everything lands, the line moved whole.
+#[test]
+fn a_move_that_lands_off_carries_the_line_its_midpoint_is_held_on() {
+    let sketch = midpoint_at_a_touching_end();
+    for t in [Similarity::IDENTITY, SMALL] {
+        let start = Built::new(&sketch, t).unwrap().positions();
+        let (went, end, pushed) = move_once(&sketch, t, &[3, 4, 5], MIDPOINT_MOVE, false, |_| ());
+        assert!(went && pushed, "at scale {}", t.scale);
+        // The dragged points (the arc's, both lines') and the carried line's ends.
+        for i in [0, 1, 2, 4, 5, 6, 7, 8] {
+            let want = start[i] + t.vector(MIDPOINT_MOVE);
+            assert!(
+                close(end[i], want, want.length()),
+                "point {i} ended at {} instead of {want} at scale {}",
+                end[i],
+                t.scale
+            );
+        }
+    }
+}
+
+/// #283 (g14): the dragged end of an arc held on a line at the line's tangent end, which a
+/// dragged centre keeps exactly a radius away: a fold, where the move landed 6e-5 off. The
+/// line is carried along and the move lands to rounding.
+#[test]
+fn a_move_held_on_a_line_at_its_tangent_end_lands() {
+    let p = DVec2::new;
+    let sketch = Sketch {
+        points: vec![
+            p(0.0, 0.0),
+            p(8.660254037844387, 4.999999999999999),
+            p(12.0, 0.0),
+            p(3.5147186257614305, 8.485281374238571),
+            p(0.0, -8.0),
+            p(-1.4695761589768238e-15, -16.0),
+            p(-10.000000000000002, -15.999999999999998),
+            p(0.0, -16.0),
+            p(5.656854249492381, -10.34314575050762),
+            p(14.488887394336025, 3.882285676537811),
+        ],
+        curves: vec![
+            Curve::Line(0, 1),
+            Curve::Arc(2, 3, 0),
+            Curve::Arc(4, 0, 5),
+            Curve::Line(5, 6),
+            Curve::Arc(7, 8, 4),
+            Curve::Line(0, 9),
+        ],
+        rels: vec![Rel::Tangent(3, 2), Rel::OnCurve(7, 3)],
+    };
+    let offset = p(0.0, 12.725262082906049);
+    let start = Built::new(&sketch, Similarity::IDENTITY)
+        .unwrap()
+        .positions();
+    let (went, end, _) = move_once(
+        &sketch,
+        Similarity::IDENTITY,
+        &[4, 5],
+        offset,
+        false,
+        |_| (),
+    );
+    assert!(went);
+    // The dragged points: the arc's and the line's from its start.
+    for i in [0, 4, 7, 8, 9] {
+        let off = end[i].distance(start[i] + offset);
+        assert!(
+            off <= drift_core::tolerance::same(30.0),
+            "point {i} landed {off} off"
+        );
+    }
+}
+
+/// #282, #283: where something pins the part, a move is never carried: a fixed point (or a
+/// fixed x), a locked layer, or geometry generated from the part (an offset) keeps the part
+/// from moving whole, and the drag is what it was without the carry (g7's move, landing off).
+/// What pins a part, by name, done to a built sketch.
+type Pin = (&'static str, fn(&mut Built));
+
+#[test]
+fn a_pinned_part_is_never_carried() {
+    let sketch = midpoint_at_a_touching_end();
+    let pins: [Pin; 4] = [
+        ("a fixed x", |b| {
+            let point = b.points[3];
+            let x = b.ed.doc.point(point).unwrap().x;
+            b.ed.add_constraints("Fix x", &[Constraint::FixX { point, x }])
+                .unwrap();
+        }),
+        ("a fixed point", |b| {
+            let point = b.points[3];
+            let at = b.ed.doc.point(point).unwrap();
+            b.ed.add_constraints("Fix", &[Constraint::Fix { point, at }])
+                .unwrap();
+        }),
+        ("a locked layer", |b| {
+            let layer = b.ed.add_layer("Locked");
+            let mut l = b.ed.doc.layer(layer).unwrap().clone();
+            l.locked = true;
+            b.ed.doc.begin();
+            b.ed.doc.set_layer(layer, l);
+            b.ed.doc.set_entity_layer(b.points[3], layer).unwrap();
+            b.ed.commit("Lock");
+        }),
+        ("an offset", |b| {
+            let line = b.curves[1];
+            b.ed.offset(line, 2.0, DVec2::new(12.0, -2.0)).unwrap();
+        }),
+    ];
+    for (what, pin) in pins {
+        let with = move_once(
+            &sketch,
+            Similarity::IDENTITY,
+            &[3, 4, 5],
+            MIDPOINT_MOVE,
+            false,
+            pin,
+        );
+        let without = move_once(
+            &sketch,
+            Similarity::IDENTITY,
+            &[3, 4, 5],
+            MIDPOINT_MOVE,
+            true,
+            pin,
+        );
+        assert!(!with.2, "with {what}, curves were carried");
+        assert_eq!(with, without, "with {what}");
+    }
+}
+
+/// #283: a carry that doesn't land is not kept: the step ends where it did without it
+/// (seed 17's sketch, a fold the carried line can't get past either), nothing pushed.
+#[test]
+fn a_carry_that_does_not_land_leaves_the_step_as_it_was() {
+    let p = DVec2::new;
+    let sketch = Sketch {
+        points: vec![
+            p(0.0, 0.0),
+            p(15.000000000000004, -25.980762113533157),
+            p(-7.4999999999999964, 12.99038105676658),
+            p(8.0, 0.0),
+            p(2.3431457505076203, 5.656854249492381),
+            p(-3.7499999999999982, 6.49519052838329),
+            p(-17.892135623730947, 20.63732615211424),
+            p(3.750000000000001, -6.495190528383289),
+            p(16.74038105676658, 1.00480947161671),
+            p(8.0, 0.0),
+            p(2.3431457505076203, 5.656854249492381),
+            p(16.74038105676658, -18.99519052838329),
+        ],
+        curves: vec![
+            Curve::Line(0, 1),
+            Curve::Line(0, 2),
+            Curve::Arc(3, 4, 0),
+            Curve::Line(5, 6),
+            Curve::Line(7, 8),
+            Curve::Arc(9, 10, 0),
+            Curve::Line(8, 11),
+        ],
+        rels: vec![
+            Rel::Midpoint(5, 1),
+            Rel::OnCurve(7, 0),
+            Rel::Equal(1, 4),
+            Rel::OnCurve(7, 1),
+        ],
+    };
+    let offset = p(0.0, -14.516466897443614);
+    let with = move_once(
+        &sketch,
+        Similarity::IDENTITY,
+        &[3, 5, 6],
+        offset,
+        false,
+        |_| (),
+    );
+    let without = move_once(
+        &sketch,
+        Similarity::IDENTITY,
+        &[3, 5, 6],
+        offset,
+        true,
+        |_| (),
+    );
+    assert!(with.0 && !with.2);
+    assert_eq!(with, without);
 }
 
 /// #97: a move that leaves a tangent line behind. The line hangs from the moved arc's end and

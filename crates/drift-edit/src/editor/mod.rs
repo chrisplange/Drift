@@ -121,6 +121,9 @@ pub struct Editor {
     pub(crate) drag_solves: u32,
     /// Of those, how many didn't finish (see [`Editor::unfinished`]; for the tests).
     pub(crate) drag_unfinished: u32,
+    /// Whether a drag leaves the curves holding its dragged points where they are rather than
+    /// carry them (see `DragFrame::holding`; for the tests: a drag as it was without).
+    pub(crate) drag_no_carry: bool,
     /// How many entities those solves took in, all told (for the tests: what a frame of a
     /// drag costs).
     pub(crate) drag_solved: usize,

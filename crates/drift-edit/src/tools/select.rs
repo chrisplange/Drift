@@ -803,10 +803,9 @@ impl Tool for SelectTool {
                     ed.selected_texts.clear();
                 }
                 // A copy of a block (on its curves, or inside it).
+                // (Only outside a group or block open for editing: inside one, nothing
+                // outside it is hit, and only Esc or Finish editing leaves it.)
                 if let Some(c) = target.and_then(Pick::copy) {
-                    if ed.open_group.is_some() {
-                        ed.close_open_group();
-                    }
                     if mods.command {
                         if !ed.selected_instances.remove(&c) {
                             ed.selected_instances.insert(c);
@@ -863,11 +862,6 @@ impl Tool for SelectTool {
                     && ed.fill_group(f).is_some()
                     && let Some(&first) = ed.shape_outline(f).as_ref().and_then(|o| o.first())
                 {
-                    if let Some(g) = ed.open_group
-                        && ed.doc.group_of(first) != Some(g)
-                    {
-                        ed.close_open_group();
-                    }
                     let set = ed.pick_set(first);
                     if mods.command && ed.selection.contains(&first) {
                         ed.selection.retain(|e| !set.contains(e));
@@ -922,12 +916,6 @@ impl Tool for SelectTool {
                     }
                     _ => None,
                 };
-                // Picking outside the open group closes it.
-                if let (Some(g), Some(id)) = (ed.open_group, hit)
-                    && ed.doc.group_of(id) != Some(g)
-                {
-                    ed.close_open_group();
-                }
                 match hit {
                     Some(id) if mods.command => {
                         let set = ed.pick_set(id);
@@ -956,9 +944,6 @@ impl Tool for SelectTool {
                         };
                         if !mods.shift && !mods.command {
                             ed.selection.clear();
-                            if ed.open_group.is_some() {
-                                ed.close_open_group();
-                            }
                         }
                         ed.selection.extend(curves);
                         ed.expand_groups();
@@ -1324,15 +1309,20 @@ impl Tool for SelectTool {
                     }
                     ed.selection.extend(found);
                     ed.expand_groups();
-                    if filter.blocks() {
+                    // (Inside a group or block open for editing, only what's in it: no copies
+                    // or texts, its own fills.)
+                    let scoped = ed.edit_scope().is_some();
+                    if filter.blocks() && !scoped {
                         let copies = ed.instances_in(&rect, crossing);
                         ed.selected_instances.extend(copies);
                     }
                     if filter.fills() {
                         let fills = ed.fills_in(&rect, crossing);
+                        let fills: Vec<_> =
+                            fills.into_iter().filter(|f| ed.fill_in_scope(*f)).collect();
                         ed.selected_fills.extend(fills);
                     }
-                    if filter.texts() {
+                    if filter.texts() && !scoped {
                         let texts = ed.texts_in(&rect, crossing);
                         ed.selected_texts.extend(texts);
                     }

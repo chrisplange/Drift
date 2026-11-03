@@ -516,13 +516,14 @@ impl Editor {
         self.commit("Set current layer");
     }
 
-    /// Select every curve and standalone point on a layer.
+    /// Select every curve and standalone point on a layer (of the group or block open for
+    /// editing, if one is).
     pub fn select_layer(&mut self, layer: LayerId) {
         let referenced = self.doc.referenced_points();
         self.selection = self
             .doc
             .iter()
-            .filter(|(id, e)| e.layer == layer && !referenced.contains(id))
+            .filter(|(id, e)| e.layer == layer && !referenced.contains(id) && self.in_scope(*id))
             .map(|(id, _)| id)
             .collect();
     }

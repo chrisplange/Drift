@@ -25,6 +25,7 @@ mod pointer;
 #[cfg(any(test, feature = "test-support"))]
 mod probes;
 mod regions;
+mod scope;
 mod selection;
 mod solve;
 #[cfg(test)]
@@ -46,6 +47,7 @@ pub use pointer::{Anchor, Guide, GuideKind, Pointer};
 pub(crate) use regions::RegionsKey;
 pub(crate) use regions::interior_point;
 pub use regions::{RegionMotion, Regions};
+pub use scope::EditScope;
 
 /// Where some geometry is, to put it back after a drag step that went wrong
 /// ([`Editor::drag`]), and what the drag keeps.
@@ -123,6 +125,9 @@ pub struct Editor {
     /// How many times the drawing's areas were found here, and crossed fills' and walls'
     /// pochés' areas (for the tests: what an edit or a frame looked for again).
     pub(crate) regions_found: usize,
+    /// How many times the open group's own areas were found (see
+    /// [`scoped_areas`](Editor::scoped_areas)).
+    pub(crate) scoped_regions_found: usize,
     pub(crate) uncrossed_found: std::cell::Cell<usize>,
     pub(crate) wall_fills_found: std::cell::Cell<usize>,
     pub history: History,
@@ -155,6 +160,20 @@ pub struct Editor {
     scrubbing: Option<(VariableId, String)>,
     /// Closed regions of the solid curves, and what they were found from.
     pub(crate) regions: Option<(RegionsKey, Regions)>,
+    /// The picked region as a move inside an open group found it, and the move's offset
+    /// then (see [`region`](Editor::region)).
+    pub(crate) region_moving: Option<(drift_geom::regions::Region, DVec2)>,
+    /// The areas among the open group's curves alone, while one is open (see
+    /// [`scoped_areas`](Editor::scoped_areas)): (group, its scope, key, areas, the entity
+    /// of each curve index).
+    #[allow(clippy::type_complexity)]
+    pub(crate) scoped_regions: Option<(
+        drift_core::GroupId,
+        EditScope,
+        RegionsKey,
+        Regions,
+        std::rc::Rc<Vec<EntityId>>,
+    )>,
     /// Areas found lately, and the thread finding an edit's.
     pub(crate) areas: regions::AreasState,
     /// A point inside the selected region (regions are recomputed, so they're picked by a
@@ -257,6 +276,9 @@ pub struct Editor {
     /// while the sketch's structure stays the same: (dragged ids, entity and constraint
     /// counts, the connected set).
     drag_scope: std::cell::RefCell<Option<DragScope>>,
+    /// What tools see while a group or block is open for editing (see
+    /// [`edit_scope`](Editor::edit_scope)), by group and document structure.
+    edit_scope_cache: std::cell::RefCell<Option<(drift_core::GroupId, u64, EditScope)>>,
     /// The sketch texts picked, and the one under the pointer.
     pub selected_texts: BTreeSet<drift_core::TextId>,
     pub hovered_text: Option<drift_core::TextId>,

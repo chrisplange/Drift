@@ -2444,10 +2444,14 @@ impl Editor {
         (!ids.is_empty()).then(|| (ids.into_iter().collect(), centre.unwrap_or_default()))
     }
 
-    /// The topmost visible fill under `p`.
+    /// The topmost visible fill under `p` (of the group or block open for editing, if one
+    /// is).
     pub fn fill_at(&mut self, p: DVec2) -> Option<FillId> {
         let shapes = self.fill_shapes();
         self.fills_in_order().into_iter().rev().find(|id| {
+            if !self.fill_in_scope(*id) {
+                return false;
+            }
             let visible = self
                 .doc
                 .fill(*id)
@@ -2470,10 +2474,10 @@ impl Editor {
         Ok(())
     }
 
-    /// The outer boundary curves of the region at `p`.
+    /// The outer boundary curves of the region at `p` (among the curves of the group or block
+    /// open for editing, if one is).
     fn boundary_at(&mut self, p: DVec2) -> Option<Vec<EntityId>> {
-        let regions = self.regions();
-        let ids = self.region_ids();
+        let (regions, ids) = self.scoped_areas();
         let r = region_at(&regions, p)?;
         Some(r.outer.curves().into_iter().map(|i| ids[i]).collect())
     }

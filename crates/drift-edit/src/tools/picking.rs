@@ -66,10 +66,12 @@ impl<'a> Rule<'a> {
         }
     }
 
+    /// (Nothing outside a group or block open for editing, whatever the rule.)
     fn allows(&self, ed: &Editor, id: EntityId) -> bool {
         !(self.locked && ed.is_locked(id))
             && !self.hidden.is_some_and(|h| h.contains(&id))
             && self.filter.is_none_or(|f| f.allows(&ed.doc, id))
+            && ed.in_scope(id)
     }
 }
 
@@ -179,9 +181,12 @@ impl Pick {
 
 /// What the select tool takes under the pointer, first that applies: geometry (nothing
 /// locked, hidden or filtered out), sketch text, a copy of a block, a wall by its poché, a
-/// fill. Empty areas are the caller's: they're picked only where nothing else is.
+/// fill. Empty areas are the caller's: they're picked only where nothing else is. While a
+/// group or block is open for editing, only what's in it: anything else is no hit (a
+/// double-click on another copy still edits that one).
 pub(super) fn target_at(ed: &mut Editor, p: &Pointer, purpose: Purpose) -> Option<Pick> {
     let filter = ed.prefs.pick_filter;
+    let scoped = ed.edit_scope().is_some();
     let geometry = {
         let hidden = ed.hidden_handles();
         // (A drag from a line's middle moves the line; a double-click there opens its group.)
@@ -196,12 +201,14 @@ pub(super) fn target_at(ed: &mut Editor, p: &Pointer, purpose: Purpose) -> Optio
     let double = purpose == Purpose::DoubleClick;
     let clear = !double || entity_at(ed, p.raw, p.tolerance, Rule::UNLOCKED, |_| true).is_none();
     if clear
+        && !scoped
         && (double || filter.texts())
         && let Some(t) = ed.text_at(p.raw, p.tolerance)
     {
         return Some(Pick::Text(t));
     }
     if clear
+        && (!scoped || double)
         && (double || filter.blocks())
         && let Some(c) = ed.instance_at(p.raw, p.tolerance)
     {
@@ -210,6 +217,7 @@ pub(super) fn target_at(ed: &mut Editor, p: &Pointer, purpose: Purpose) -> Optio
     if !filter.fills() {
         return None;
     }
+    // ([`fill_at`](Editor::fill_at) keeps to the open group's.)
     let f = ed.fill_at(p.raw)?;
     Some(match ed.wall_in_fill_at(f, p.raw) {
         Some(w) => Pick::Wall(w, f),

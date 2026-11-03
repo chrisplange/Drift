@@ -31,6 +31,40 @@ impl Editor {
         regions
     }
 
+    /// The closed areas tools pick and fill, with the entity of each curve index in their
+    /// loops: while a group or block is open for editing, those among its own curves alone
+    /// (found from them, so a line from outside neither cuts nor closes one); else the
+    /// drawing's [`regions`](Self::regions).
+    pub fn scoped_areas(&mut self) -> (Regions, std::rc::Rc<Vec<EntityId>>) {
+        let (Some(scope), Some(g)) = (self.edit_scope(), self.edit_group()) else {
+            // (Nothing open: let go of the last open group's areas.)
+            self.scoped_regions = None;
+            self.region_moving = None;
+            let regions = self.regions();
+            return (regions, self.region_ids.clone());
+        };
+        // (Kept while the curves and the group's make-up are the same: a fill added or
+        // restyled changes neither.)
+        let key = self.regions_key();
+        let prior = match &self.scoped_regions {
+            Some((cg, cs, k, regions, ids)) if *cg == g => {
+                if *k == key && (std::rc::Rc::ptr_eq(cs, &scope) || **cs == *scope) {
+                    return (regions.clone(), ids.clone());
+                }
+                Some(regions.clone())
+            }
+            _ => None,
+        };
+        let mut input = self.areas_input(&key);
+        input.curves.retain(|(id, ..)| scope.contains(id));
+        self.scoped_regions_found += 1;
+        // (The last areas found, for their centroids.)
+        let (ids, regions) = input.find(prior.as_deref().map_or(&[], |r| &r[..]));
+        let (regions, ids) = (std::sync::Arc::new(regions), std::rc::Rc::new(ids));
+        self.scoped_regions = Some((g, scope, key, regions.clone(), ids.clone()));
+        (regions, ids)
+    }
+
     pub(super) fn regions_key(&self) -> RegionsKey {
         RegionsKey {
             geometry: self.doc.geometry(),
@@ -122,16 +156,32 @@ impl Editor {
             return None;
         };
         let seed = self.region_motion.map_or(seed, |m| m.apply(seed));
-        let regions = self.regions();
+        // Being moved inside a group or block open for editing: the region as the move
+        // found it, moved along (the open group's areas are found on the spot, not by the
+        // areas worker, so not every frame); found afresh when the move lands.
+        let moving = match self.region_motion {
+            Some(RegionMotion::Move(d)) if self.edit_scope().is_some() => Some(d),
+            _ => {
+                self.region_moving = None;
+                None
+            }
+        };
+        if let (Some(d), Some((region, from))) = (moving, &self.region_moving) {
+            return Some(region.moved(d - *from));
+        }
+        let (regions, ids) = self.scoped_areas();
         // (One whose outline is hidden isn't picked while it can't be seen.)
         if let Some(found) = regions
             .iter()
-            .filter(|r| r.contains(seed) && self.region_shown(r))
+            .filter(|r| r.contains(seed) && self.region_shown(r, &ids))
             .min_by(|a, b| a.area.total_cmp(&b.area))
         {
-            let outline = self.outline_of(found);
+            let outline = outline_of(found, &ids);
             if self.region_outline.as_ref() != Some(&outline) {
                 self.region_outline = Some(outline);
+            }
+            if let Some(d) = moving {
+                self.region_moving = Some((found.clone(), d));
             }
             return Some(found.clone());
         }
@@ -139,7 +189,7 @@ impl Editor {
         let same = self.region_outline.as_ref().and_then(|outline| {
             regions
                 .iter()
-                .find(|r| self.outline_of(r) == *outline && self.region_shown(r))
+                .find(|r| outline_of(r, &ids) == *outline && self.region_shown(r, &ids))
                 .cloned()
         });
         match same {
@@ -167,33 +217,25 @@ impl Editor {
     /// The area a click at `p` picks: the smallest closed area around it whose outline can
     /// be seen. One outlined (in part) by curves on hidden layers is never picked, though it
     /// still bounds fills.
+    /// (Inside a group or block open for editing, among its own areas.)
     pub fn visible_region_at(&mut self, p: DVec2) -> Option<drift_geom::regions::Region> {
-        let regions = self.regions();
+        let (regions, ids) = self.scoped_areas();
         regions
             .iter()
-            .filter(|r| r.contains(p) && self.region_shown(r))
+            .filter(|r| r.contains(p) && self.region_shown(r, &ids))
             .min_by(|a, b| a.area.total_cmp(&b.area))
             .cloned()
     }
 
-    /// Whether every curve of a region's outer outline is on a shown layer (from the last
-    /// [`regions`](Self::regions)).
-    pub(super) fn region_shown(&self, region: &drift_geom::regions::Region) -> bool {
+    /// Whether every curve of a region's outer outline is on a shown layer (`ids`: the entity
+    /// of each curve index, as found with it).
+    fn region_shown(&self, region: &drift_geom::regions::Region, ids: &[EntityId]) -> bool {
         region
             .outer
             .curves()
             .into_iter()
-            .filter_map(|i| self.region_ids.get(i))
+            .filter_map(|i| ids.get(i))
             .all(|id| self.doc.is_visible(*id))
-    }
-
-    /// The curves bounding a region (from the last [`regions`](Self::regions)).
-    pub(super) fn outline_of(&self, region: &drift_geom::regions::Region) -> BTreeSet<EntityId> {
-        std::iter::once(&region.outer)
-            .chain(&region.holes)
-            .flat_map(|l| l.curves())
-            .filter_map(|i| self.region_ids.get(i).copied())
-            .collect()
     }
 
     // ----- Parameters ------------------------------------------------------------------------
@@ -204,6 +246,15 @@ impl Editor {
     pub fn regions_need_fill(&self) -> bool {
         self.doc.rules().regions_need_fill && !self.prefs.pick_any_area
     }
+}
+
+/// The curves bounding a region (`ids`: the entity of each curve index, as found with it).
+fn outline_of(region: &drift_geom::regions::Region, ids: &[EntityId]) -> BTreeSet<EntityId> {
+    std::iter::once(&region.outer)
+        .chain(&region.holes)
+        .flat_map(|l| l.curves())
+        .filter_map(|i| ids.get(i).copied())
+        .collect()
 }
 
 /// Whether `DRIFT_CHECK_REGIONS` is set (see [`Editor::check_caches`]).

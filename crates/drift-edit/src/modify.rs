@@ -482,7 +482,8 @@ impl Editor {
             .unwrap_or(near)
     }
 
-    /// The solid curves that bound a region (outline and holes).
+    /// The solid curves that bound a region (outline and holes), of the group or block open
+    /// for editing if one is.
     pub fn region_curves(&self, region: &drift_geom::regions::Region) -> Vec<EntityId> {
         let edges: Vec<Shape> = std::iter::once(&region.outer)
             .chain(&region.holes)
@@ -494,6 +495,7 @@ impl Editor {
             .filter(|(id, e)| {
                 !e.kind.is_point()
                     && (e.style == drift_core::LineKind::Solid || bounding.contains(id))
+                    && self.in_scope(*id)
             })
             .filter_map(|(id, _)| Some((id, self.doc.shape(id)?)))
             .filter(|(_, shape)| {
@@ -531,7 +533,8 @@ impl Editor {
         self.cuts_against(id, None)
     }
 
-    /// [`cuts`](Self::cuts), by the curves of `against` only when given.
+    /// [`cuts`](Self::cuts), by the curves of `against` only when given (and only by those
+    /// of a group or block open for editing).
     pub fn cuts_against(&self, id: EntityId, against: Option<&CuttingSet>) -> Vec<Cut> {
         let Some(shape) = self.curve_shape(id) else {
             return Vec::new();
@@ -549,8 +552,12 @@ impl Editor {
         bounds.include(bounds.min - DVec2::splat(tol));
         bounds.include(bounds.max + DVec2::splat(tol));
         let mut cuts: Vec<Cut> = Vec::new();
+        let scope = self.edit_scope();
         for other in self.index.query(bounds) {
-            if other == id || against.is_some_and(|s| !s.contains(&self.doc, other)) {
+            if other == id
+                || against.is_some_and(|s| !s.contains(&self.doc, other))
+                || scope.as_ref().is_some_and(|s| !s.contains(&other))
+            {
                 continue;
             }
             let Some(other_shape) = self.curve_shape(other) else {
@@ -691,6 +698,7 @@ impl Editor {
         click: DVec2,
         against: Option<&mut CuttingSet>,
     ) -> Result<(), EditError> {
+        self.refuse_outside(&[id])?;
         self.refuse_owned(&[id], crate::walls::Op::Cut)?;
         let (lo, hi) = self.trim_span_against(id, click, against.as_deref())?;
         let cutting = against
@@ -1259,9 +1267,14 @@ impl Editor {
             _ => (0.0, 1.0),
         };
         let mut best: Option<(f64, DVec2, EntityId)> = None;
-        // (Every curve, not the index's near ones: an extension can reach any distance.)
+        // (Every curve, not the index's near ones: an extension can reach any distance. Only
+        // those of a group or block open for editing.)
+        let scope = self.edit_scope();
         for (other, _) in self.doc.iter() {
-            if other == id || against.is_some_and(|s| !s.contains(&self.doc, other)) {
+            if other == id
+                || against.is_some_and(|s| !s.contains(&self.doc, other))
+                || scope.as_ref().is_some_and(|s| !s.contains(&other))
+            {
                 continue;
             }
             let Some(other_shape) = self.curve_shape(other) else {
@@ -1318,6 +1331,7 @@ impl Editor {
         click: DVec2,
         against: Option<&CuttingSet>,
     ) -> Result<(), EditError> {
+        self.refuse_outside(&[id])?;
         self.refuse_owned(&[id], crate::walls::Op::Cut)?;
         let (end, at, other, existing) = self.extend_target_against(id, click, against)?;
         if self.doc.users_of(end).count() > 1 {
@@ -1348,6 +1362,7 @@ impl Editor {
     /// and pen curves join smoothly. A circle or whole ellipse, which has no ends, is cut
     /// into two halves: at the point and opposite it. Returns the point at the cut.
     pub fn split_at(&mut self, id: EntityId, at: DVec2) -> Result<EntityId, EditError> {
+        self.refuse_outside(&[id])?;
         self.refuse_owned(&[id], crate::walls::Op::Cut)?;
         let shape = self
             .curve_shape(id)

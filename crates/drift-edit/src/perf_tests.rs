@@ -460,6 +460,81 @@ fn perf_import_pdf() {
     write_digest(&mut ed);
 }
 
+/// #265: a real PDF (`DRIFT_PDF`) grouped whole and opened for editing: how long the first
+/// area lookup takes from the open group's curves (found on the spot, not by the areas
+/// worker), against the drawing's own first areas, and the first Fill-tool click inside.
+#[test]
+#[ignore = "torture test: run with --release --ignored --nocapture"]
+fn perf_group_edit_pdf() {
+    let Ok(path) = std::env::var("DRIFT_PDF") else {
+        return;
+    };
+    let ms = |t: Instant| t.elapsed().as_secs_f64() * 1e3;
+    let bytes = std::fs::read(path).unwrap();
+    let art = drift_io::pdf_import::read_artwork(&bytes, 1, "sheet").unwrap();
+    let options = drift_io::vector::ImportOptions {
+        scale: 1.0,
+        construction_edges: true,
+    };
+    let import = drift_io::vector::to_import(&art, &options);
+    let mut ed = Editor::new(Document::new());
+    ed.doc.begin();
+    let r = drift_io::dxf::add_to_document(&mut ed.doc, &import);
+    assert!(ed.commit("Import"));
+    println!("{} curves", r.curves);
+    // (Found afresh, as the areas worker would after an edit.)
+    ed.regions = None;
+    ed.areas = Default::default();
+    let t = Instant::now();
+    let regions = ed.regions();
+    println!(
+        "drawing's areas, found afresh: {:.0} ms ({} areas)",
+        ms(t),
+        regions.len()
+    );
+    // A point inside a small area, to fill.
+    let at = regions
+        .iter()
+        .filter(|r| r.area > 1.0)
+        .min_by(|a, b| a.area.total_cmp(&b.area))
+        .map(|r| crate::editor::interior_point(r, r.centroid))
+        .unwrap();
+    let t = Instant::now();
+    ed.select_all();
+    println!("select all: {:.0} ms", ms(t));
+    let t = Instant::now();
+    let g = ed.make_group().expect("grouped");
+    println!("group: {:.0} ms", ms(t));
+    let t = Instant::now();
+    ed.open_group = Some(g);
+    ed.selection.clear();
+    ed.edit_scope();
+    println!("open, scope found: {:.0} ms", ms(t));
+    let t = Instant::now();
+    let (scoped, _) = ed.scoped_areas();
+    println!(
+        "open group's areas, first: {:.0} ms ({} areas)",
+        ms(t),
+        scoped.len()
+    );
+    let t = Instant::now();
+    ed.scoped_areas();
+    println!("open group's areas, again: {:.3} ms", ms(t));
+    let t = Instant::now();
+    ed.fill_at(at);
+    println!("fill_at (hover) in the group: {:.1} ms", ms(t));
+    let t = Instant::now();
+    ed.add_fill_at(at).expect("filled");
+    println!("first Fill click in the group: {:.0} ms", ms(t));
+    let t = Instant::now();
+    let (scoped, _) = ed.scoped_areas();
+    println!(
+        "open group's areas after the fill: {:.0} ms ({} areas)",
+        ms(t),
+        scoped.len()
+    );
+}
+
 /// Every fill and its area, as text, to the file `DRIFT_DIGEST` names (if any): for checking
 /// a change finds the same areas.
 fn write_digest(ed: &mut Editor) {
@@ -1309,4 +1384,112 @@ fn perf_offsets() {
     ed.doc.rollback();
     ed.sync();
     let _ = first_line;
+}
+
+/// #265 (review): frames of moving a picked region inside an open group: (a) a block edit of
+/// a block-sized drawing, (b) an open group holding the whole drawing of `DRIFT_PDF` (made
+/// with `add_group`). A frame is the drag, the editor's sync and the picked region, as the
+/// canvas asks for it.
+#[test]
+#[ignore = "torture test: run with --release --ignored --nocapture"]
+fn perf_region_move_in_open_group() {
+    use crate::editor::RegionMotion;
+    let frames = |ed: &mut Editor, label: &str| {
+        let r = ed.region().expect("a picked region");
+        let ids = ed.region_curves(&r);
+        assert!(!ids.is_empty(), "the region's curves");
+        ed.selection = ids.iter().copied().collect();
+        let before = ed.regions_found;
+        let scoped_before = ed.scoped_regions_found;
+
+        ed.doc.begin();
+        let mut times = Vec::new();
+        let mut offset = DVec2::ZERO;
+        for _ in 0..12 {
+            let t = Instant::now();
+            let step = v(0.5, 0.25);
+            if ed.drag(&ids, step, &[]) {
+                offset += step;
+                ed.region_motion = Some(RegionMotion::Move(offset));
+            }
+            ed.sync();
+            assert!(ed.region().is_some());
+            times.push(t.elapsed().as_secs_f64() * 1e3);
+        }
+
+        ed.doc.rollback();
+        ed.region_motion = None;
+        ed.sync();
+        times.sort_by(f64::total_cmp);
+        println!(
+            "{label:<44} frame median {:>8.2} ms worst {:>8.2} ms  (moved {offset}; areas found: drawing's {}, the group's {})",
+            times[times.len() / 2],
+            times[times.len() - 1],
+            ed.regions_found - before,
+            ed.scoped_regions_found - scoped_before
+        );
+    };
+    // (a) A block of a 20 × 10 rectangle with a line across it, edited in place, its left
+    // half picked.
+    let mut doc = Document::new();
+    let p =
+        [(0.0, 0.0), (20.0, 0.0), (20.0, 10.0), (0.0, 10.0)].map(|(x, y)| doc.add_point(v(x, y)));
+    let mut lines: BTreeSet<EntityId> = (0..4)
+        .map(|i| doc.add_line(p[i], p[(i + 1) % 4]).unwrap())
+        .collect();
+    let (a, b) = (doc.add_point(v(10.0, 0.0)), doc.add_point(v(10.0, 10.0)));
+    lines.insert(doc.add_line(a, b).unwrap());
+    let mut ed = Editor::new(doc);
+    ed.selection = lines;
+    let copy = ed.make_block("Box").unwrap();
+    ed.edit_block(copy);
+    ed.selected_region = Some(v(5.0, 5.0));
+    frames(&mut ed, "(a) block edit, region move");
+    // (b) The whole PDF in one open group.
+    let Ok(path) = std::env::var("DRIFT_PDF") else {
+        return;
+    };
+    let bytes = std::fs::read(path).unwrap();
+    let art = drift_io::pdf_import::read_artwork(&bytes, 1, "sheet").unwrap();
+    let options = drift_io::vector::ImportOptions {
+        scale: 1.0,
+        construction_edges: true,
+    };
+    let import = drift_io::vector::to_import(&art, &options);
+    let mut ed = Editor::new(Document::new());
+    ed.doc.begin();
+    let r = drift_io::dxf::add_to_document(&mut ed.doc, &import);
+    assert!(ed.commit("Import"));
+    let members: BTreeSet<EntityId> = ed
+        .doc
+        .iter()
+        .filter(|(_, e)| !e.kind.is_point())
+        .map(|(id, _)| id)
+        .collect();
+    ed.doc.begin();
+    let g = ed
+        .doc
+        .add_group(drift_core::Group {
+            name: "All".into(),
+            members,
+        })
+        .unwrap();
+    ed.commit("Group");
+    ed.open_group = Some(g);
+    let regions = ed.regions();
+    let mut small: Vec<_> = regions.iter().filter(|r| r.area > 1.0).collect();
+    small.sort_by(|a, b| a.area.total_cmp(&b.area));
+    // (The smallest whose outline shows, as a click would pick it.)
+    let at = small
+        .iter()
+        .map(|r| crate::editor::interior_point(r, r.centroid))
+        .find(|p| {
+            ed.visible_region_at(*p)
+                .is_some_and(|r| !ed.region_curves(&r).is_empty())
+        })
+        .unwrap();
+    ed.selected_region = Some(at);
+    assert!(ed.region().is_some());
+    println!("({} curves)", r.curves);
+    frames(&mut ed, "(b) the whole PDF in an open group, region move");
 }

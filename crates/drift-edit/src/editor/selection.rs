@@ -416,11 +416,8 @@ impl Editor {
     }
 
     pub(super) fn adopt_into_open_group(&mut self) {
+        self.drop_lost_edit();
         let Some(g) = self.open_group else { return };
-        if self.doc.group(g).is_none() {
-            self.open_group = None;
-            return;
-        }
         let created = self.doc.created_in_transaction();
         // (Walls' faces belong to their walls, which belong through their centrelines.)
         let generated = self.doc.generated_entities();
@@ -585,6 +582,12 @@ impl Editor {
     /// Group the selection (Ctrl/⌘+G). Curves' own points aren't members: the curves carry
     /// them.
     pub fn make_group(&mut self) -> Option<drift_core::GroupId> {
+        // (A group would take its members out of the block being edited, and a block keeps
+        // no groups.)
+        if self.block_edit.is_some() {
+            self.out.notice = Some("Finish editing the block to group what's in it".into());
+            return None;
+        }
         let referenced = self.doc.defining_points(
             self.selection
                 .iter()
@@ -618,6 +621,10 @@ impl Editor {
 
     /// Dissolve the groups the selection belongs to (Ctrl/⌘+Shift+G).
     pub fn ungroup(&mut self) {
+        // (The block being edited is held in a group of its own.)
+        if self.block_edit.is_some() {
+            return;
+        }
         let groups: BTreeSet<drift_core::GroupId> = self
             .selection
             .iter()
@@ -665,7 +672,10 @@ impl Editor {
 
     /// Select everything the filter lets through: every curve and standalone point, and (with
     /// their kinds on) the copies of blocks, sketch text and fills. Nothing hidden or locked.
+    /// While a group or block is open for editing, only what's in it: its curves, points,
+    /// walls and fills (no copies or texts).
     pub fn select_all(&mut self) {
+        let scoped = self.edit_scope().is_some();
         let filter = self.prefs.pick_filter;
         let shown = |doc: &drift_core::Document, layer: drift_core::LayerId| {
             doc.layer(layer).is_some_and(|l| l.visible && !l.locked)
@@ -677,12 +687,17 @@ impl Editor {
                 (!e.kind.is_point() || self.index.role(*id) == Some(PointRole::Standalone))
                     && filter.allows(&self.doc, *id)
                     && shown(&self.doc, e.layer)
+                    && self.in_scope(*id)
             })
             .map(|(id, _)| id)
             .collect();
         self.selected_midpoints.clear();
         self.selected_region = None;
-        if filter.blocks() {
+        if scoped {
+            self.selected_instances.clear();
+            self.selected_texts.clear();
+        }
+        if filter.blocks() && !scoped {
             self.selected_instances = self
                 .doc
                 .instances()
@@ -690,7 +705,7 @@ impl Editor {
                 .map(|(id, _)| id)
                 .collect();
         }
-        if filter.texts() {
+        if filter.texts() && !scoped {
             self.selected_texts = self
                 .doc
                 .texts()
@@ -707,6 +722,7 @@ impl Editor {
                 .walls()
                 .filter(|(_, w)| shown(&self.doc, w.layer))
                 .flat_map(|(id, _)| self.wall_curves(id))
+                .filter(|id| self.in_scope(*id))
                 .collect();
             self.selection.extend(curves);
         }
@@ -718,6 +734,7 @@ impl Editor {
                 .filter(|(id, _)| !owners.fills.contains_key(id))
                 .filter(|(_, f)| shown(&self.doc, f.layer))
                 .map(|(id, _)| id)
+                .filter(|id| self.fill_in_scope(*id))
                 .collect();
         }
     }

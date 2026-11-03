@@ -93,9 +93,13 @@ impl Editor {
         hidden
     }
 
-    /// Whether an entity can be picked: not on a locked layer, and not a hidden handle.
+    /// Whether an entity can be picked: not on a locked layer, not a hidden handle, and not
+    /// outside a group or block open for editing.
     pub fn pickable(&self, id: EntityId, hidden: &BTreeSet<EntityId>) -> bool {
-        !self.is_locked(id) && !hidden.contains(&id) && self.prefs.pick_filter.allows(&self.doc, id)
+        !self.is_locked(id)
+            && !hidden.contains(&id)
+            && self.prefs.pick_filter.allows(&self.doc, id)
+            && self.in_scope(id)
     }
 
     /// Thin lines from anchors to their showing handles.

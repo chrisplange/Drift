@@ -658,11 +658,12 @@ fn perf_drag_pushing_an_arc() {
     println!("  solves per frame: most {most}, {all} in all; {refused} frames refused");
 }
 
-/// f3's sketch (`drag_props::never_finishes`, #282): a move of two lines on an arc whose
-/// solve doesn't finish at any step size, so every frame is refused; with `chain` bars
+/// f3's sketch (#282): a move of two lines held on an arc, the second held at `at` degrees
+/// round it (315: a diameter from the first, a fold where the solve doesn't finish; the
+/// arc's far end `fixed`, nothing carries it and every frame is refused); with `chain` bars
 /// hanging from the arc's free end, free (`related` false) or each held at its length (in
 /// the failing solve then). Returns (editor, the two lines).
-fn never_finishing(chain: usize, related: bool) -> (Editor, [EntityId; 2]) {
+fn held_on_an_arc(chain: usize, related: bool, fixed: bool, at: f64) -> (Editor, [EntityId; 2]) {
     let mut doc = Document::new();
     doc.begin();
     let p = [
@@ -673,8 +674,8 @@ fn never_finishing(chain: usize, related: bool) -> (Editor, [EntityId; 2]) {
         v(-7.316112512383063, 3.0686637984671727),
         v(9.414213562373096, 12.727922061357855),
         v(15.0, 0.0),
-        v(13.65685424949238, -5.6568542494923815),
-        v(28.145741643828405, -1.7745685729545704),
+        v(8.0, 0.0) + DVec2::from_angle(at.to_radians()) * 8.0,
+        v(8.0, 0.0) + DVec2::from_angle(at.to_radians()) * 8.0 + v(14.489, 3.8823),
     ]
     .map(|q| doc.add_point(q));
     let arc = doc.add_arc(p[1], p[2], p[0]).unwrap();
@@ -695,6 +696,13 @@ fn never_finishing(chain: usize, related: bool) -> (Editor, [EntityId; 2]) {
     ] {
         doc.add_constraint(c).unwrap();
     }
+    if fixed {
+        doc.add_constraint(Constraint::Fix {
+            point: p[0],
+            at: v(0.0, 0.0),
+        })
+        .unwrap();
+    }
     let mut last = p[6];
     for k in 0..chain {
         let next = doc.add_point(v(15.0, -1.0 - k as f64));
@@ -714,13 +722,35 @@ fn never_finishing(chain: usize, related: bool) -> (Editor, [EntityId; 2]) {
 }
 
 /// The refused frame's cost (#281): a move whose solve doesn't finish at any step size,
-/// held still so that every frame tries it again, alone and in a big part.
+/// held still so that every frame tries it again, alone and in a big part; and (#282) the
+/// same unpinned, where the arc is carried along, and a move held on the arc that lands,
+/// pinned or not (the check a landed frame pays).
 #[test]
 #[ignore = "torture test: run with --release --ignored --nocapture"]
 fn perf_drag_refused() {
     println!();
-    for (chain, related) in [(0, false), (2_000, false), (100, true)] {
-        let (mut ed, ids) = never_finishing(chain, related);
+    for (chain, related, fixed, at, what) in [
+        (0, false, true, 315.0, "refused drag, 0 free bars"),
+        (2_000, false, true, 315.0, "refused drag, 2000 free bars"),
+        (100, true, true, 315.0, "refused drag, 100 held bars"),
+        (0, false, false, 315.0, "carried drag, 0 free bars"),
+        (2_000, false, false, 315.0, "carried drag, 2000 free bars"),
+        (
+            2_000,
+            false,
+            false,
+            250.0,
+            "held drag landing, 2000 free bars",
+        ),
+        (
+            2_000,
+            false,
+            true,
+            250.0,
+            "held drag landing, pinned, 2000 free bars",
+        ),
+    ] {
+        let (mut ed, ids) = held_on_an_arc(chain, related, fixed, at);
         let dragged: Vec<drift_solver::Param> = ed
             .doc
             .defining_points(ids)
@@ -731,13 +761,24 @@ fn perf_drag_refused() {
         ed.doc.begin();
         let mut solves = Vec::new();
         let mut refused = 0;
-        let r = time(20, |_| {
-            refused += usize::from(!ed.drag(&ids, delta, &dragged));
+        // (A move that goes is taken out and back, as the pointer would: from where the
+        // last frame left it, so a frame that goes doesn't take the next one further.)
+        let mut applied = DVec2::ZERO;
+        let r = time(20, |k| {
+            let target = if k % 2 == 0 || (fixed && at == 315.0) {
+                delta
+            } else {
+                DVec2::ZERO
+            };
+            if ed.drag(&ids, target - applied, &dragged) {
+                applied = target;
+            } else {
+                refused += 1;
+            }
             solves.push(ed.drag_solves);
         });
         ed.doc.rollback();
-        let what = if related { "held" } else { "free" };
-        report(&format!("refused drag, {chain} {what} bars (per frame)"), r);
+        report(&format!("{what} (per frame)"), r);
         let most = solves.iter().max().copied().unwrap_or(0);
         println!("  solves per frame: most {most}; {refused} of 20 frames refused");
     }

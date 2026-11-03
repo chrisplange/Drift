@@ -101,11 +101,11 @@ fn f_free_move_refused_as_an_arc_turns() {
     explained(r).unwrap();
 }
 
-/// F: a rigid move of the part meets every relation, yet the full step doesn't converge; in
-/// smaller steps (#281) the first goes, and then none does, down to the smallest.
+/// F (fixed, #282): a rigid move of the part meets every relation, yet no step finished at
+/// any size: the two dragged points held on the arc are a diameter apart, so the arc's kept
+/// radius sits on a fold and the solve stalls. The arc they are held on is carried along.
 /// (`free_move_is_accepted_heavy`, seed 3.)
 #[test]
-#[ignore = "#282: a free move is refused (the solve doesn't finish at any step size after the first)"]
 fn f_free_move_refused_unconverged() {
     let plan = Plan {
         ops: vec![
@@ -375,10 +375,10 @@ fn e_result_depends_on_size_tangent() {
     explained(r).unwrap();
 }
 
-/// G: arcs with a tangency and a point on one: the dragged point lands 6e-5 off.
-/// (`move_lands_exactly_heavy`, seed 14.)
+/// G (fixed, #283): arcs with a tangency and a point on one: the dragged point is held on a
+/// line at the line's tangent end, a fold, and the move landed 6e-5 off. The line it is held
+/// on is carried along. (`move_lands_exactly_heavy`, seed 14.)
 #[test]
-#[ignore = "#283: a move lands off its target"]
 fn g_move_lands_off() {
     let plan = Plan {
         ops: vec![
@@ -497,13 +497,11 @@ fn h_untouched_line_stretched() {
     explained(r).unwrap();
 }
 
-/// G: a move of an arc, a line and a line's midpoint coincident with the arc's end, the arc
-/// tangent to that line: every step converges, yet the dragged points end 7 off target. Main
-/// once passed it only through steps accepted unconverged; the form the tangency touched in
-/// as the drag began exposed it, and every solve converges now.
-/// (`move_lands_exactly_heavy`, seed 7, unshrunk.)
+/// G (fixed, #283): a move of an arc, a line and a line's midpoint coincident with the arc's
+/// end, the arc tangent to that line: every step converged, yet on the far branch (a line
+/// turned past its parallel's square), the dragged points 7 off target. The line holding the
+/// midpoint is carried along. (`move_lands_exactly_heavy`, seed 7, unshrunk.)
 #[test]
-#[ignore = "#283: every solve converges, yet the move lands 7 off (exposed by the touching-end form)"]
 fn g_move_lands_off_with_a_touching_tangency() {
     let plan = Plan {
         ops: vec![
@@ -552,10 +550,9 @@ fn g_move_lands_off_with_a_touching_tangency() {
     explained(r).unwrap();
 }
 
-/// G: the same, shrunk to one step (it fails on main too).
+/// G (fixed, #283): the same, shrunk to one step.
 /// (`move_lands_exactly_heavy`, seed 7, shrunk.)
 #[test]
-#[ignore = "#283: every solve converges, yet the move lands 7 off (exposed by the touching-end form)"]
 fn g_move_lands_off_with_a_touching_tangency_in_one_step() {
     let plan = Plan {
         ops: vec![
@@ -595,4 +592,180 @@ fn g_move_lands_off_with_a_touching_tangency_in_one_step() {
     let pick = Pick::Curves(16791124099217428280);
     let offset = DVec2::new(-2.7019888370729976, 17.00429950861392);
     explained(moves_land(&plan, &pick, offset, 1)).unwrap();
+}
+
+/// O: a dragged end held where a line is at its nearest to a dragged point (the other end of
+/// a line kept equal to one it crosses): a fold, where the solve stalls short of the target and
+/// the line it is held on can't be carried to it either. (`move_lands_exactly_heavy`, seed 17,
+/// shrunk on main; the seed passes since #282's carry.)
+#[test]
+#[ignore = "fold: the solve stalls at a fold of the relations (coordinator draft O); lands 0.002 off"]
+fn o_move_lands_off_at_a_fold() {
+    let plan = Plan {
+        ops: vec![
+            Op::Step {
+                from: 0,
+                angle: 20,
+                len: 3,
+            },
+            Op::Step {
+                from: 30,
+                angle: 8,
+                len: 1,
+            },
+            Op::Arc {
+                from: 0,
+                angle: 0,
+                radius: 0,
+                sweep: 0,
+                ccw: false,
+            },
+            Op::Mid {
+                line: 13,
+                angle: 9,
+                len: 2,
+            },
+            Op::OnLine {
+                line: 0,
+                at: 0,
+                angle: 2,
+                len: 1,
+            },
+            Op::Arc {
+                from: 0,
+                angle: 0,
+                radius: 0,
+                sweep: 0,
+                ccw: false,
+            },
+            Op::Step {
+                from: 52,
+                angle: 18,
+                len: 2,
+            },
+        ],
+        extras: vec![
+            false, false, false, false, true, false, false, false, false, false, false, false,
+            false, false, true, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
+        ],
+        fix: None,
+        length: None,
+    };
+    let pick = Pick::Curves(11724342438443041768);
+    let offset = DVec2::new(0.0, -14.516466897443614);
+    let steps = 1;
+    explained(moves_land(&plan, &pick, offset, steps)).unwrap();
+}
+
+/// O: two arcs of equal radius sharing ends with a third, none of whose points a relation holds
+/// on a curve: no curve to carry, and the kept radii stall the solve at a fold.
+/// (`free_move_is_accepted_heavy`, seed 18, shrunk on main.)
+#[test]
+#[ignore = "#282: a free move is refused (fold, coordinator draft O)"]
+fn o_free_move_refused_at_a_fold() {
+    let plan = Plan {
+        ops: vec![
+            Op::Step {
+                from: 0,
+                angle: 0,
+                len: 0,
+            },
+            Op::Arc {
+                from: 0,
+                angle: 1,
+                radius: 0,
+                sweep: 3,
+                ccw: false,
+            },
+            Op::Arc {
+                from: 27,
+                angle: 0,
+                radius: 1,
+                sweep: 0,
+                ccw: false,
+            },
+            Op::Arc {
+                from: 6,
+                angle: 0,
+                radius: 0,
+                sweep: 0,
+                ccw: false,
+            },
+            Op::Arc {
+                from: 35,
+                angle: 0,
+                radius: 1,
+                sweep: 1,
+                ccw: false,
+            },
+        ],
+        extras: vec![
+            true, true, false, false, false, true, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false,
+        ],
+        fix: None,
+        length: None,
+    };
+    let pick = Pick::Curves(262210794025958468);
+    let offset = DVec2::new(7.434462470577808, 9.084806060733136);
+    let steps = 1;
+    explained(free_moves_go(&plan, &pick, offset, steps)).unwrap();
+}
+
+/// E: two dragged points held on an arc a diameter apart (f3's shape): at one size the stalled
+/// solve reads as finished within the coordinates' tolerance and is kept reshaped, at the
+/// other it is carried whole; 0.02 apart. On main the same shape was refused at one size only.
+/// (`drag_is_invariant_under_similarity_heavy`, seed 20, shrunk with #282's carry.)
+#[test]
+#[ignore = "#280: the result depends on size (a fold read as finished at one size)"]
+fn e_result_depends_on_size_at_a_fold() {
+    let plan = Plan {
+        ops: vec![
+            Op::Arc {
+                from: 0,
+                angle: 10,
+                radius: 0,
+                sweep: 2,
+                ccw: false,
+            },
+            Op::OnArc {
+                arc: 0,
+                at: 3,
+                angle: 1,
+                len: 3,
+            },
+            Op::Step {
+                from: 53,
+                angle: 4,
+                len: 3,
+            },
+            Op::OnArc {
+                arc: 0,
+                at: 15,
+                angle: 23,
+                len: 1,
+            },
+        ],
+        extras: vec![
+            false, false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
+        ],
+        fix: None,
+        length: None,
+    };
+    let pick = Pick::Curves(10360524982465828250);
+    let offset = DVec2::new(17.645954621075454, 15.209813272136655);
+    let steps = 1;
+    let t = Similarity {
+        scale: 0.25,
+        turn: 0.0,
+        shift: DVec2::new(0.0, 231.67316288164798),
+    };
+    explained(invariant(&plan, &pick, offset, steps, t)).unwrap();
 }

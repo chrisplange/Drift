@@ -356,6 +356,37 @@ fn smoke_groups_mirroring_a_block_copy_makes_a_mirrored_copy() {
     assert_eq!(copies(&h).len(), 1);
 }
 
+/// #311: a lone block copy picked shows the Inspector's Pattern section (it showed none),
+/// and Make linear pattern places copies of the block at each step, in one undo.
+#[test]
+fn smoke_groups_a_lone_block_copy_shows_pattern_and_patterns() {
+    let Some(mut h) = harness() else { return };
+    let copy = flag_block(&mut h);
+    click_world(&mut h, DVec2::new(110.0, 10.0));
+    assert_eq!(h.state().drawing.editor.selected_instances, [copy].into());
+    assert!(h.state().drawing.editor.selection.is_empty());
+    let original = *h.state().drawing.editor.doc.instance(copy).unwrap();
+    // Modify → Linear pattern opens the section.
+    let ctx = h.ctx.clone();
+    h.state_mut()
+        .run_command(&ctx, crate::commands::Command::Pattern(false));
+    h.run();
+    h.run();
+    h.get_by_label("Make linear pattern").click();
+    h.run();
+    let now = copies(&h);
+    assert_eq!(now.len(), 3, "the copy and two more: {now:?}");
+    let mut placed: Vec<f64> = now
+        .iter()
+        .filter(|(_, i)| i.block == original.block)
+        .map(|(_, i)| i.at.x - original.at.x)
+        .collect();
+    placed.sort_by(f64::total_cmp);
+    assert_eq!(placed, [0.0, 20.0, 40.0], "20 apart, the default spacing");
+    undo(&mut h);
+    assert_eq!(copies(&h).len(), 1, "one undo step");
+}
+
 /// #264: Shift+D then Esc leaves no copy stacked on the original (the copy is removed, Redo
 /// brings it back); the same for Ctrl+V then Esc.
 #[test]

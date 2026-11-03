@@ -44,6 +44,8 @@ impl DriftApp {
             n => format!("{n} offsets"),
         };
         app::panels::title(ui, Some(ToolKind::Offset), &name, &layer);
+        self.inspector_layer_row(ui);
+        let doc = &self.drawing.editor.doc;
         theme::section(ui, "Offset");
         // Distance: a value or an expression of variables.
         let same = offsets
@@ -82,7 +84,6 @@ impl DriftApp {
                 self.drawing.editor.out.notice = Some(e.to_string());
             }
         }
-        let doc = &self.drawing.editor.doc;
         theme::row(ui, "Follows", |ui| {
             ui.label(format!(
                 "{source} {} · {} pieces",
@@ -90,34 +91,6 @@ impl DriftApp {
                 first.made.curves.len()
             ));
         });
-        // Layer: the pieces', whichever was picked.
-        let layers: Vec<(drift_core::LayerId, String)> =
-            doc.layers().map(|(id, l)| (id, l.name.clone())).collect();
-        let on = first
-            .made
-            .curves
-            .values()
-            .next()
-            .and_then(|c| doc.get(*c))
-            .map_or(doc.current_layer(), |e| e.layer);
-        let mut to = on;
-        theme::row(ui, "Layer", |ui| {
-            let current = layers
-                .iter()
-                .find(|(id, _)| *id == on)
-                .map_or("?".to_owned(), |(_, n)| n.clone());
-            egui::ComboBox::from_id_salt("offset_layer")
-                .selected_text(current)
-                .width(ui.available_width() - 8.0)
-                .show_ui(ui, |ui| {
-                    for (id, n) in &layers {
-                        ui.selectable_value(&mut to, *id, n);
-                    }
-                });
-        });
-        if to != on {
-            self.drawing.editor.move_selection_to_layer(to);
-        }
         ui.add_space(6.0);
         ui.horizontal_wrapped(|ui| {
             let shown = offsets.iter().all(|x| {

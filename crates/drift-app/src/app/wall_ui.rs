@@ -102,6 +102,8 @@ impl DriftApp {
             n => format!("{n} walls"),
         };
         app::panels::title(ui, Some(ToolKind::Wall), &name, &layer);
+        self.inspector_layer_row(ui);
+        let doc = &self.drawing.editor.doc;
         theme::section(ui, "Wall");
         // Thickness: a value or an expression of variables.
         let same = walls
@@ -172,34 +174,6 @@ impl DriftApp {
             self.drawing
                 .editor
                 .set_wall_poche(&walls, on.then_some(style.clone()));
-        }
-        // Layer: the wall's, whichever part of it was picked.
-        let layers: Vec<(drift_core::LayerId, String)> = self
-            .drawing
-            .editor
-            .doc
-            .layers()
-            .map(|(id, l)| (id, l.name.clone()))
-            .collect();
-        let mut to = first.layer;
-        theme::row(ui, "Layer", |ui| {
-            let current = layers
-                .iter()
-                .find(|(id, _)| *id == first.layer)
-                .map_or("?".to_owned(), |(_, n)| n.clone());
-            egui::ComboBox::from_id_salt("wall_layer")
-                .selected_text(current)
-                .width(ui.available_width() - 8.0)
-                .show_ui(ui, |ui| {
-                    for (id, n) in &layers {
-                        ui.selectable_value(&mut to, *id, n);
-                    }
-                });
-        });
-        if to != first.layer {
-            self.drawing
-                .editor
-                .edit_walls(&walls, "Wall layer", |w| w.layer = to);
         }
         theme::section(ui, "Joins");
         let mut cross = first.cross;

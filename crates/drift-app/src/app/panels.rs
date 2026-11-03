@@ -605,6 +605,83 @@ impl DriftApp {
         );
     }
 
+    /// The Layer row every inspector shows first, under its title (#300): the layer of what
+    /// is picked (curves, walls, shapes, fills, block copies, texts), or "Mixed", and a pick
+    /// moves all of it there in one undo step. A wall counts by its own layer. Nothing with
+    /// a layer picked (dimensions, notes, points): no row.
+    pub(crate) fn inspector_layer_row(&mut self, ui: &mut egui::Ui) {
+        let ed = &self.drawing.editor;
+        let walls = ed.selected_walls();
+        let wall_curves: std::collections::BTreeSet<drift_core::EntityId> =
+            walls.iter().flat_map(|w| ed.wall_curves(*w)).collect();
+        let curves = ed
+            .selection
+            .iter()
+            .filter(|id| !wall_curves.contains(*id))
+            .filter_map(|id| ed.doc.get(*id))
+            .filter(|e| !e.kind.is_point())
+            .map(|e| e.layer);
+        let on: Vec<drift_core::LayerId> = curves
+            .chain(
+                walls
+                    .iter()
+                    .filter_map(|w| ed.doc.wall(*w))
+                    .map(|w| w.layer),
+            )
+            .chain(
+                ed.selected_fills
+                    .iter()
+                    .filter_map(|f| ed.doc.fill(*f))
+                    .map(|f| f.layer),
+            )
+            .chain(
+                ed.selected_instances
+                    .iter()
+                    .filter_map(|i| ed.doc.instance(*i))
+                    .map(|i| i.layer),
+            )
+            .chain(
+                ed.selected_texts
+                    .iter()
+                    .filter_map(|t| ed.doc.text(*t))
+                    .map(|t| t.layer),
+            )
+            .collect();
+        let Some(&first) = on.first() else {
+            return;
+        };
+        let mixed = on.iter().any(|l| *l != first);
+        let text = if mixed {
+            "Mixed".to_owned()
+        } else {
+            ed.doc.layer(first).map_or("?".into(), |l| l.name.clone())
+        };
+        let layers: Vec<(drift_core::LayerId, String)> = ed
+            .doc
+            .layers()
+            .map(|(id, l)| (id, l.name.clone()))
+            .collect();
+        let mut target = None;
+        ui.add_space(4.0);
+        theme::row(ui, "Layer", |ui| {
+            egui::ComboBox::from_id_salt("inspector_layer")
+                .selected_text(text)
+                .width(ui.available_width() - 8.0)
+                .show_ui(ui, |ui| {
+                    for (id, name) in layers {
+                        if ui.selectable_label(!mixed && id == first, name).clicked() {
+                            target = Some(id);
+                        }
+                    }
+                })
+                .response
+                .on_hover_text("The layer of what is picked: pick another to move it there");
+        });
+        if let Some(id) = target {
+            self.drawing.editor.move_selection_to_layer(id);
+        }
+    }
+
     /// Several things picked, text or annotations among them: what they are, and where the
     /// annotations show. Returns true if it showed.
     pub(crate) fn mixed_inspector(&mut self, ui: &mut egui::Ui) -> bool {
@@ -654,6 +731,7 @@ impl DriftApp {
             &format!("{n} selected"),
             &summary.join(" · "),
         );
+        self.inspector_layer_row(ui);
         ui.add_space(4.0);
         ui.label(
             egui::RichText::new(
@@ -787,9 +865,12 @@ impl DriftApp {
                     entity.kind.type_name(),
                     &layer,
                 );
+                let shape = *shape;
+                self.inspector_layer_row(ui);
+                let ed = &self.drawing.editor;
                 theme::section(ui, "Geometry");
                 size_edit = size_rows(ui, ed, *id);
-                property_rows(ui, shape, ed.doc.units());
+                property_rows(ui, &shape, ed.doc.units());
             }
             many => {
                 let mut counts = std::collections::BTreeMap::new();
@@ -806,9 +887,11 @@ impl DriftApp {
                     &format!("{} selected", many.len()),
                     &summary.join(" · "),
                 );
+                self.inspector_layer_row(ui);
             }
         }
 
+        let ed = &self.drawing.editor;
         let curves: Vec<_> = selection
             .iter()
             .filter_map(|id| ed.doc.get(*id))

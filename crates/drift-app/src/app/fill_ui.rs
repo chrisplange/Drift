@@ -358,6 +358,7 @@ impl DriftApp {
                 _ => String::new(),
             };
             app::panels::title(ui, Some(ToolKind::Fill), &title, &why);
+            self.inspector_layer_row(ui);
             if let Some(Err(drift_edit::fills::NotAShape::Corners(_))) = kind
                 && ui
                     .button("Join corners")
@@ -392,41 +393,6 @@ impl DriftApp {
             }
             if aligned {
                 self.pattern_alignment(ui, first);
-            }
-            theme::section(ui, "Layer");
-            let layers: Vec<(drift_core::LayerId, String)> = self
-                .drawing
-                .editor
-                .doc
-                .layers()
-                .map(|(id, l)| (id, l.name.clone()))
-                .collect();
-            let current = self
-                .drawing
-                .editor
-                .doc
-                .layer(fill.layer)
-                .map_or("?".into(), |l| l.name.clone());
-            let mut target = None;
-            egui::ComboBox::from_id_salt("fill_layer")
-                .selected_text(current)
-                .width(ui.available_width() - 8.0)
-                .show_ui(ui, |ui| {
-                    for (id, name) in layers {
-                        if ui.selectable_label(id == fill.layer, name).clicked() {
-                            target = Some(id);
-                        }
-                    }
-                });
-            if let Some(layer) = target {
-                self.drawing.editor.doc.begin();
-                for id in &fills {
-                    if let Some(mut f) = self.drawing.editor.doc.fill(*id).cloned() {
-                        f.layer = layer;
-                        self.drawing.editor.doc.set_fill(*id, f);
-                    }
-                }
-                self.drawing.editor.commit("Move fill to layer");
             }
             theme::section(ui, "Arrange");
             self.arrange_row(ui);

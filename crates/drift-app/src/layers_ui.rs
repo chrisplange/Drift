@@ -1134,7 +1134,8 @@ impl DriftApp {
         ui.add_space(3.0);
     }
 
-    /// Layer and appearance controls for the selected curves (in the Properties tab).
+    /// Appearance controls for the selected curves (in the Properties tab; their layer is
+    /// the Inspector's first row, `inspector_layer_row`).
     pub(crate) fn appearance_panel(&mut self, ui: &mut egui::Ui) {
         let curves: Vec<EntityId> = self
             .drawing
@@ -1153,63 +1154,11 @@ impl DriftApp {
         if curves.is_empty() {
             return;
         }
-        let first = self
-            .drawing
-            .editor
-            .doc
-            .get(curves[0])
-            .copied()
-            .expect("exists");
-        let uniform_layer = curves.iter().all(|id| {
-            self.drawing
-                .editor
-                .doc
-                .get(*id)
-                .is_some_and(|e| e.layer == first.layer)
-        });
         ui.add_space(10.0);
-        let label = |ui: &mut egui::Ui, text: &str| {
-            ui.label(egui::RichText::new(text).color(ui.visuals().weak_text_color()));
-        };
         egui::Grid::new("appearance")
             .num_columns(2)
             .min_col_width(crate::theme::LABEL_WIDTH)
             .show(ui, |ui| {
-                label(ui, "Layer");
-                let text = if uniform_layer {
-                    self.drawing
-                        .editor
-                        .doc
-                        .layer(first.layer)
-                        .map_or("?".into(), |l| l.name.clone())
-                } else {
-                    "(mixed)".into()
-                };
-                let layers: Vec<(LayerId, String)> = self
-                    .drawing
-                    .editor
-                    .doc
-                    .layers()
-                    .map(|(id, l)| (id, l.name.clone()))
-                    .collect();
-                let mut target = None;
-                egui::ComboBox::from_id_salt("selection_layer")
-                    .selected_text(text)
-                    .width(110.0)
-                    .show_ui(ui, |ui| {
-                        for (id, name) in layers {
-                            if ui
-                                .selectable_label(uniform_layer && id == first.layer, name)
-                                .clicked()
-                            {
-                                target = Some(id);
-                            }
-                        }
-                    });
-                if let Some(id) = target {
-                    self.drawing.editor.move_selection_to_layer(id);
-                }
-                ui.end_row();
                 self.stroke_rows(ui, &curves, "selection");
             });
     }

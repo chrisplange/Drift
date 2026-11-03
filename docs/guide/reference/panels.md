@@ -23,21 +23,25 @@ The layout is remembered between sessions.
 
 ## Inspector
 
-What's picked, and what you can do with it. Its contents depend on the selection.
+What's picked, and what you can do with it. Its contents depend on the selection. For
+anything on a layer (curves, shapes, fills and hatches, block copies, walls, offsets and
+texts) the first row, under its name, is **Layer**: pick another layer to move all of it
+there in one step. Picked things on different layers show **Mixed**. Dimensions and notes
+have no layer, and an opening follows its wall.
 
 | Picked | The Inspector shows |
 |---|---|
 | Nothing | A summary: the numbers of curves, relations and layers. |
 | One curve or point | Its **Geometry** as fields: a line's **Length**, **Angle**, **Start** and **End**; a circle's or arc's **Radius**, **Diameter** and **Center**; a point's **Position**. Typing a size sets the dimension that drives it, or adds one (shown as **dim**). Typing a position or angle moves the geometry as far as its relations allow. Fields apply when you press Enter or Tab, or click elsewhere; Esc puts the old value back. |
-| Curves | **Appearance** (**Geometry** / **Construction** / **Centre line**, **Layer**, **Colour**, **Weight**, **Line type**, each "By layer" unless set; **Line type → None** for no stroke), a **Fill** section when whole filled shapes are among them, **Arrange**, **Add relation** and **Add dimension** buttons for what fits, **Pin measurement**, **Pattern**, the **Relations & dimensions** on the selection (each with **×**; **Clear relations** and **Clear dimensions**), and **Delete selection**. |
+| Curves | **Appearance** (**Geometry** / **Construction** / **Centre line**, **Colour**, **Weight**, **Line type**, each "By layer" unless set; **Line type → None** for no stroke), a **Fill** section when whole filled shapes are among them, **Arrange**, **Add relation** and **Add dimension** buttons for what fits, **Pin measurement**, **Pattern** (block copies picked with them are patterned too), the **Relations & dimensions** on the selection (each with **×**; **Clear relations** and **Clear dimensions**), and **Delete selection**. |
 | Circles | **Add centre mark** (or **Add N centre marks**). |
 | A dimension | **Driven (reference)**, its **Text** (**Prefix**, **Suffix**, chips, **Under line**, **Show instead**), and **Show** (**On the canvas**, **On sheets, in print and export**, and **In views** once the drawing has views). |
 | A note or mark | Its text or label, leader, sheet and direction, and **Show**. |
-| A filled shape (its fill, or its whole outline) | One object: **Stroke** (**Line** or **None**; **Colour**, **Weight**, **Line type**), **Fill** (**None**, **Solid** or **Hatch**, and the style; a hatch's **Pattern alignment**: origin, angle, **Align to edge…**, **Reset**), **Layer**, **Arrange**, **Area** and **Perimeter**, and **Delete**. See [Fills and hatches](../tutorials/06-fills-and-hatches.md#4-edit-a-fill). |
-| An area fill or hatch | Its **Style** (a hatch's with **Pattern alignment**), **Layer**, **Arrange**, **Area**, **Perimeter** and **Centroid**, and **Delete**. |
+| A filled shape (its fill, or its whole outline) | One object: **Stroke** (**Line** or **None**; **Colour**, **Weight**, **Line type**), **Fill** (**None**, **Solid** or **Hatch**, and the style; a hatch's **Pattern alignment**: origin, angle, **Align to edge…**, **Reset**), **Arrange**, **Area** and **Perimeter**, and **Delete**. See [Fills and hatches](../tutorials/06-fills-and-hatches.md#4-edit-a-fill). |
+| An area fill or hatch | Its **Style** (a hatch's with **Pattern alignment**), **Arrange**, **Area**, **Perimeter** and **Centroid**, and **Delete**. |
 | A text | Its words, **Height**, **Angle**, **Font**, **Align**, **Spacing** and **Wrap**, and **Convert to curves**. |
 | Several things, with text or annotations among them | How many of each ("4 lines · 1 dimension · 1 note · 1 text"), and **Show** for the dimensions and annotations. Delete, Move, Rotate, Mirror and Copy act on all of it. |
-| A block copy | Laid out as a group: the block's **Name**, its **Definition** (another block to put in its place, and how many copies), **Edit in place**, **Explode** and **Explode to group**; then **Blender profile**, **Placement**, **Layer**, **Set base point**, **Select all copies** and **Delete**. **Blender profile** writes the block to the drawing's profiles file on save (see [Profiles in Blender](../tutorials/13-profiles-in-blender.md)). |
+| A block copy | Laid out as a group: the block's **Name**, its **Definition** (another block to put in its place, and how many copies), **Edit in place**, **Explode** and **Explode to group**; then **Blender profile**, **Placement**, **Pattern**, **Set base point**, **Select all copies** and **Delete**. **Blender profile** writes the block to the drawing's profiles file on save (see [Profiles in Blender](../tutorials/13-profiles-in-blender.md)). |
 | A group | Its **Name**, **Members**, **Edit in place**, **Ungroup** and **Make block** (a block named after it, with its fills). A group is one thing; a block is a thing you reuse (see [Groups and blocks](../tutorials/07-blocks.md#groups-and-blocks)). |
 | A closed area (with area picking on) | **Area**, **Perimeter**, **Centroid** and **Holes**, and **Fill** / **Hatch** buttons. |
 

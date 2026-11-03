@@ -2597,16 +2597,21 @@ impl Editor {
     }
 
     /// Copies of entities moved by `transform` (applied `count` times, 1..=count), with the
-    /// relations among them copied (orientation-dependent ones only if `keep_orientation`).
+    /// relations among them copied (orientation-dependent ones only if `keep_orientation`),
+    /// and of the block copies `instances`: at step k a new copy of the same block, its
+    /// insertion point moved by `transform` and turned `turn(k)` degrees more (#311).
+    #[allow(clippy::type_complexity, clippy::too_many_arguments)]
     fn pattern(
         &mut self,
         ids: &[EntityId],
+        instances: &[drift_core::InstanceId],
         copies: usize,
         transform: impl Fn(usize, DVec2) -> DVec2,
+        turn: impl Fn(usize) -> f64,
         keep_orientation: bool,
         label: &str,
-    ) -> Result<Vec<EntityId>, EditError> {
-        if ids.is_empty() {
+    ) -> Result<(Vec<EntityId>, Vec<drift_core::InstanceId>), EditError> {
+        if ids.is_empty() && instances.is_empty() {
             return Err(invalid("select geometry to pattern first"));
         }
         if copies == 0 {
@@ -2636,6 +2641,7 @@ impl Editor {
         let doc_err = |e: drift_core::DocumentError| invalid(e.to_string());
         self.doc.begin();
         let mut created = Vec::new();
+        let mut placed = Vec::new();
         let result = (|| -> Result<(), EditError> {
             for k in 1..=copies {
                 let mut map: BTreeMap<EntityId, EntityId> = BTreeMap::new();
@@ -2705,11 +2711,25 @@ impl Editor {
                 self.copy_walls_onto(&|e| map.get(&e).copied(), &|p| transform(k, p), false);
                 self.copy_offsets_onto(&|e| map.get(&e).copied(), false);
                 self.copy_groups_onto(|e| map.get(&e).copied());
+                for &id in instances {
+                    let Some(i) = self.doc.instance(id).copied() else {
+                        continue;
+                    };
+                    let step = drift_core::Instance {
+                        at: transform(k, i.at),
+                        angle: (i.angle + turn(k)).rem_euclid(360.0),
+                        ..i
+                    };
+                    let copy = self.doc.add_instance(step).map_err(doc_err)?;
+                    // (A new copy lands on the current layer: this one keeps the original's.)
+                    self.doc.set_instance(copy, step).map_err(doc_err)?;
+                    placed.push(copy);
+                }
             }
             Ok(())
         })();
         self.finish(result, label)?;
-        Ok(created)
+        Ok((created, placed))
     }
 
     /// `count` instances (the original plus copies) spaced by `step`.
@@ -2719,13 +2739,28 @@ impl Editor {
         count: usize,
         step: DVec2,
     ) -> Result<Vec<EntityId>, EditError> {
+        self.linear_pattern_with(ids, &[], count, step)
+            .map(|(created, _)| created)
+    }
+
+    /// [`Self::linear_pattern`] of entities and block copies: the new curves and the new
+    /// copies, each a copy of the same block moved by `step` more than the last.
+    pub fn linear_pattern_with(
+        &mut self,
+        ids: &[EntityId],
+        instances: &[drift_core::InstanceId],
+        count: usize,
+        step: DVec2,
+    ) -> Result<(Vec<EntityId>, Vec<drift_core::InstanceId>), EditError> {
         if step == DVec2::ZERO {
             return Err(invalid("the spacing can't be zero"));
         }
         self.pattern(
             ids,
+            instances,
             count.saturating_sub(1),
             |k, p| p + step * k as f64,
+            |_| 0.0,
             true,
             "Linear pattern",
         )
@@ -2740,6 +2775,21 @@ impl Editor {
         center: DVec2,
         total_degrees: f64,
     ) -> Result<Vec<EntityId>, EditError> {
+        self.circular_pattern_with(ids, &[], count, center, total_degrees)
+            .map(|(created, _)| created)
+    }
+
+    /// [`Self::circular_pattern`] of entities and block copies: the new curves and the new
+    /// copies, each a copy of the same block turned about `center` one step more than the
+    /// last, its own angle turned as far.
+    pub fn circular_pattern_with(
+        &mut self,
+        ids: &[EntityId],
+        instances: &[drift_core::InstanceId],
+        count: usize,
+        center: DVec2,
+        total_degrees: f64,
+    ) -> Result<(Vec<EntityId>, Vec<drift_core::InstanceId>), EditError> {
         if count < 2 {
             return Err(invalid("the count must be at least 2"));
         }
@@ -2751,8 +2801,10 @@ impl Editor {
         };
         self.pattern(
             ids,
+            instances,
             count - 1,
             |k, p| center + drift_core::blocks::exact_rotor(step * k as f64).rotate(p - center),
+            |k| step * k as f64,
             false,
             "Circular pattern",
         )
@@ -3722,6 +3774,95 @@ mod tests {
         );
     }
 
+    /// A block with one copy (an L, asymmetric), and that copy, on a layer of its own.
+    fn block_copy() -> (Editor, drift_core::InstanceId, drift_core::LayerId) {
+        let (mut ed, ids) = with_lines(&[(v(0.0, 0.0), v(10.0, 0.0)), (v(0.0, 0.0), v(0.0, 7.0))]);
+        ed.selection = ids.into_iter().collect();
+        let copy = ed.make_block("L").unwrap();
+        let layer = ed.add_layer("Copies");
+        ed.selection.clear();
+        ed.selected_instances = [copy].into();
+        ed.move_selection_to_layer(layer);
+        ed.doc.begin();
+        let mut placed = *ed.doc.instance(copy).unwrap();
+        placed.at = v(20.0, 5.0);
+        placed.angle = 10.0;
+        ed.doc.set_instance(copy, placed).unwrap();
+        ed.commit("Place");
+        (ed, copy, layer)
+    }
+
+    /// #311: a picked block copy is patterned like a curve. Linear: a new copy of the same
+    /// block at each step, its insertion point moved by the step, turned and scaled as the
+    /// original and on its layer; one undo takes them all back.
+    #[test]
+    fn linear_pattern_places_copies_of_a_block_copy() {
+        let (mut ed, copy, layer) = block_copy();
+        let original = *ed.doc.instance(copy).unwrap();
+        let (curves, copies) = ed
+            .linear_pattern_with(&[], &[copy], 3, v(50.0, 0.0))
+            .unwrap();
+        assert!(curves.is_empty());
+        assert_eq!(copies.len(), 2);
+        assert_eq!(ed.doc.instances().count(), 3);
+        assert_eq!(ed.doc.instance(copy), Some(&original), "the original stays");
+        for (k, id) in copies.iter().enumerate() {
+            let i = *ed.doc.instance(*id).unwrap();
+            assert_eq!(i.block, original.block, "still a copy of the block");
+            assert!(
+                close(i.at, original.at + v(50.0 * (k + 1) as f64, 0.0)),
+                "{}",
+                i.at
+            );
+            assert_eq!((i.angle, i.scale, i.mirror), (10.0, 1.0, false));
+            assert_eq!(i.layer, layer);
+        }
+        assert_eq!(ed.copy_counts().get(&original.block), Some(&3));
+        assert!(ed.undo());
+        assert_eq!(ed.doc.instances().count(), 1, "one undo step");
+        // With curves picked too, both are patterned in the same step.
+        let (mut ed, copy, _) = block_copy();
+        ed.doc.begin();
+        let a = ed.doc.add_point(v(0.0, 30.0));
+        let b = ed.doc.add_point(v(5.0, 30.0));
+        let line = ed.doc.add_line(a, b).unwrap();
+        ed.commit("Line");
+        let (curves, copies) = ed
+            .linear_pattern_with(&[line], &[copy], 3, v(0.0, 40.0))
+            .unwrap();
+        assert_eq!((curves.len(), copies.len()), (2, 2));
+        assert_eq!((lines(&ed).len(), ed.doc.instances().count()), (3, 3));
+        assert!(ed.undo());
+        // (The L's lines are in the block now: the drawing's one line is the loose one.)
+        assert_eq!((lines(&ed).len(), ed.doc.instances().count()), (1, 1));
+    }
+
+    /// #311, circular: four copies round a centre, each one turned 90° more than the last,
+    /// its insertion point turned about the centre as far.
+    #[test]
+    fn circular_pattern_turns_copies_of_a_block_copy() {
+        let (mut ed, copy, _) = block_copy();
+        let original = *ed.doc.instance(copy).unwrap();
+        let centre = v(0.0, 0.0);
+        let (_, copies) = ed
+            .circular_pattern_with(&[], &[copy], 4, centre, 360.0)
+            .unwrap();
+        assert_eq!(copies.len(), 3);
+        for (k, id) in copies.iter().enumerate() {
+            let turn = 90.0 * (k + 1) as f64;
+            let i = *ed.doc.instance(*id).unwrap();
+            assert_eq!(i.block, original.block);
+            let want = drift_core::blocks::exact_rotor(turn).rotate(original.at - centre) + centre;
+            assert!(close(i.at, want), "{k}: {} vs {want}", i.at);
+            assert!(
+                ((i.angle - (10.0 + turn).rem_euclid(360.0)).abs()) < 1e-9,
+                "{k}: {}",
+                i.angle
+            );
+        }
+        assert!(ed.undo());
+        assert_eq!(ed.doc.instances().count(), 1);
+    }
     #[test]
     fn trim_cuts_lines_and_ellipses_where_they_cross() {
         let mut ed = related();

@@ -109,6 +109,8 @@ impl<L: Copy> LayerTable<L> {
 
 /// A line type as CAD files define it (lengths in mm on paper, scaled by `$LTSCALE`).
 pub(crate) struct LineTypeDef {
+    /// Read only by the DWG and DXF R2018 writer (`cad.rs`, the `dwg` feature).
+    #[cfg(feature = "dwg")]
     pub kind: LineType,
     pub name: &'static str,
     pub description: &'static str,
@@ -134,6 +136,7 @@ pub(crate) fn line_types() -> impl Iterator<Item = LineTypeDef> {
     ]
     .into_iter()
     .map(|kind| LineTypeDef {
+        #[cfg(feature = "dwg")]
         kind,
         name: line_type_name(kind),
         description: kind.label(),

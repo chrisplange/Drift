@@ -1391,6 +1391,11 @@ pub fn paint_drawing(
                         mesh.add_triangle(base, base + 1, base + 2);
                     }
                     p.add(egui::Shape::mesh(mesh));
+                    let rings: Vec<Vec<Pos2>> = rings
+                        .iter()
+                        .map(|r| r.iter().map(|q| to_screen(*q)).collect())
+                        .collect();
+                    smooth_edges(p, rings, fill);
                 }
             }
             // Sketch text in its own font: its glyphs, filled.
@@ -1515,6 +1520,31 @@ fn fill_outlines(
         mesh.add_triangle(base, base + 1, base + 2);
     }
     p.add(egui::Shape::mesh(mesh));
+    let rings = rings
+        .iter()
+        .map(|r| r.iter().map(|q| to_screen(*q)).collect())
+        .collect();
+    smooth_edges(p, rings, color);
+}
+
+/// A filled mesh's edges, smoothed (#301): egui feathers the edges of the shapes it
+/// tessellates, not of a mesh handed to it, and the window has no multisampling. Each ring
+/// (outer or hole, in screen points) is stroked one pixel wide in the fill's colour, so its
+/// edge comes out as smooth as a line; the fill grows by half a pixel. A ring under a pixel
+/// across, or outside what the painter shows, isn't stroked: nothing would show.
+fn smooth_edges(p: &egui::Painter, rings: Vec<Vec<Pos2>>, color: Color32) {
+    let pixel = 1.0 / p.pixels_per_point();
+    let stroke = egui::Stroke::new(pixel, color);
+    let clip = p.clip_rect();
+    for ring in rings {
+        let bounds = egui::Rect::from_points(&ring);
+        if ring.len() >= 3
+            && bounds.width().max(bounds.height()) >= pixel
+            && bounds.intersects(clip)
+        {
+            p.add(egui::Shape::closed_line(ring, stroke));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1737,6 +1767,157 @@ mod tests {
         );
     }
 
+    /// The closed paths painted in `color`, as point lists.
+    fn rings_painted(shapes: &[egui::epaint::ClippedShape], color: Color32) -> Vec<Vec<Pos2>> {
+        shapes
+            .iter()
+            .filter_map(|s| match &s.shape {
+                egui::Shape::Path(p)
+                    if p.closed && p.stroke.color == egui::epaint::ColorMode::Solid(color) =>
+                {
+                    Some(p.points.clone())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// A logo on a sheet (a square with a square hole, filled even–odd) is painted as a mesh
+    /// and, over it, both its rings stroked a pixel wide in its colour: egui smooths a
+    /// stroke's edges but not a mesh's (#301).
+    #[test]
+    fn a_sheet_fill_has_smoothed_edges() {
+        let logo = drift_draft::logo::parse(
+            r##"<svg viewBox="0 0 4 4"><path d="m0 0l4 0 0 4-4 0zM1 1h2v2h-2z" fill="#204080" fill-rule="evenodd"/></svg>"##,
+        )
+        .unwrap();
+        let mut d = Drawing::new(DVec2::new(100.0, 100.0));
+        let area = Bounds {
+            min: DVec2::new(10.0, 10.0),
+            max: DVec2::new(50.0, 50.0),
+        };
+        assert!(logo.draw(&mut d, "Logo", area) > 0.0);
+        let Some(Prim::Fill {
+            rings, triangles, ..
+        }) = d.items.first().map(|i| &i.prim)
+        else {
+            panic!("the logo is a fill");
+        };
+        assert_eq!(rings.len(), 2);
+        assert!(!triangles.is_empty(), "drawn as a mesh");
+        let color = Color32::from_rgb(0x20, 0x40, 0x80);
+        let ctx = egui::Context::default();
+        let to_screen = |p: DVec2| Pos2::new(p.x as f32 * 4.0, 400.0 - p.y as f32 * 4.0);
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            paint_drawing(ui.painter(), &d, to_screen, 4.0);
+        });
+        out.textures_delta.clear();
+        assert!(
+            out.shapes
+                .iter()
+                .any(|s| matches!(&s.shape, egui::Shape::Mesh(_))),
+            "the fill"
+        );
+        let painted = rings_painted(&out.shapes, color);
+        assert_eq!(painted.len(), 2, "both rings stroked");
+        for (ring, path) in rings.iter().zip(&painted) {
+            let want: Vec<Pos2> = ring.iter().map(|q| to_screen(*q)).collect();
+            assert_eq!(path, &want, "along the ring");
+        }
+        let width = out
+            .shapes
+            .iter()
+            .find_map(|s| match &s.shape {
+                egui::Shape::Path(p) => Some(p.stroke.width),
+                _ => None,
+            })
+            .unwrap();
+        assert!(
+            (width - 1.0 / ctx.pixels_per_point()).abs() < 1e-6,
+            "{width}"
+        );
+    }
+
+    /// A fill under a pixel across on screen, or outside what the painter shows, gets no edge
+    /// stroke (#301: on a big drawing's sheet at fit, most fills are specks).
+    #[test]
+    fn a_fill_too_small_or_out_of_sight_is_not_stroked() {
+        let logo = drift_draft::logo::parse(
+            r##"<svg viewBox="0 0 4 4"><path d="m0 0l4 0 0 4-4 0zM1 1h2v2h-2z" fill="#204080" fill-rule="evenodd"/></svg>"##,
+        )
+        .unwrap();
+        let mut d = Drawing::new(DVec2::new(100.0, 100.0));
+        let area = Bounds {
+            min: DVec2::new(10.0, 10.0),
+            max: DVec2::new(50.0, 50.0),
+        };
+        logo.draw(&mut d, "Logo", area);
+        let color = Color32::from_rgb(0x20, 0x40, 0x80);
+        let ctx = egui::Context::default();
+        let strokes = |zoom: f32, clip: Option<egui::Rect>| {
+            let to_screen = |p: DVec2| Pos2::new(p.x as f32 * zoom, 400.0 - p.y as f32 * zoom);
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let p = match clip {
+                    Some(c) => ui.painter().with_clip_rect(c),
+                    None => ui.painter().clone(),
+                };
+                paint_drawing(&p, &d, to_screen, zoom);
+            });
+            out.textures_delta.clear();
+            rings_painted(&out.shapes, color).len()
+        };
+        assert_eq!(strokes(4.0, None), 2, "both rings at a size that shows");
+        // 40 mm at 0.02 points per mm: under a pixel.
+        assert_eq!(strokes(0.02, None), 0, "a speck");
+        let elsewhere = egui::Rect::from_min_size(Pos2::new(500.0, 0.0), egui::vec2(100.0, 100.0));
+        assert_eq!(strokes(4.0, Some(elsewhere)), 0, "out of sight");
+    }
+
+    /// What painting a sheet of many fills costs (#301 strokes their edges): 2,000 discs of
+    /// 64 sides, each a mesh, painted and tessellated as a frame of the sheet preview does.
+    /// `cargo test --release -p drift-app perf_sheet_fills -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn perf_sheet_fills() {
+        let mut d = Drawing::new(DVec2::new(420.0, 297.0));
+        for k in 0..2000 {
+            let c = DVec2::new(10.0 + (k % 50) as f64 * 8.0, 10.0 + (k / 50) as f64 * 7.0);
+            let ring: Vec<DVec2> = (0..64)
+                .map(|i| c + DVec2::from_angle(std::f64::consts::TAU * i as f64 / 64.0) * 3.0)
+                .collect();
+            let triangles = (1..63).map(|i| [ring[0], ring[i], ring[i + 1]]).collect();
+            d.push(
+                "Fills",
+                Pen::new(0.0).with_color(Rgb([40, 90, 160])),
+                Prim::Fill {
+                    rings: vec![ring],
+                    triangles,
+                    mask: false,
+                },
+            );
+        }
+        let ctx = egui::Context::default();
+        let to_screen = |p: DVec2| Pos2::new(p.x as f32 * 3.0, 900.0 - p.y as f32 * 3.0);
+        let mut times = Vec::new();
+        for _ in 0..15 {
+            let start = std::time::Instant::now();
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                paint_drawing(ui.painter(), &d, to_screen, 3.0);
+            });
+            out.textures_delta.clear();
+            let meshes = ctx.tessellate(out.shapes, out.pixels_per_point);
+            std::hint::black_box(meshes);
+            times.push(start.elapsed().as_secs_f64() * 1e3);
+        }
+        times.sort_by(f64::total_cmp);
+        println!(
+            "PERF sheet_fills_frame median_ms={:.2} min_ms={:.2} max_ms={:.2}",
+            times[times.len() / 2],
+            times[0],
+            times[times.len() - 1]
+        );
+    }
+
     /// Sheet text zoomed far in (issue #81): past what egui's font atlas holds, it is drawn
     /// as filled outlines, where the laid-out text would have been.
     #[test]
@@ -1775,6 +1956,8 @@ mod tests {
             if zoom > 100.0 {
                 assert_eq!(text, 0);
                 assert!(!points.is_empty());
+                // Its letters' edges smoothed too (#301).
+                assert!(!rings_painted(&out.shapes, Color32::BLACK).is_empty());
                 // Centred on `at`, standing on its baseline.
                 let r = egui::Rect::from_points(&points);
                 assert!((r.center().x - 500.0).abs() < 0.02 * r.width(), "{r:?}");

@@ -1693,7 +1693,7 @@ fn table() -> Vec<Spec> {
             "Linear pattern…",
             "Copies of the selection in a row, a set distance apart (in the Inspector)",
         )
-        .when(When::Curves)
+        .when(When::Selection)
         .aliases(&["ARRAY", "AR", "ARRAYRECT"])
         .words("array copies repeat"),
         Spec::new(
@@ -1703,7 +1703,7 @@ fn table() -> Vec<Spec> {
             "Circular pattern…",
             "Copies of the selection round a centre (in the Inspector)",
         )
-        .when(When::Curves)
+        .when(When::Selection)
         .aliases(&["ARRAYPOLAR", "AR"])
         .words("array polar copies repeat"),
         // Annotate.

@@ -132,6 +132,68 @@ fn smoke_selection_g_from_a_midpoint_and_axis_lock_in_a_drag() {
     assert_eq!(at(&h, a), a0 + DVec2::new(12.0, 0.0));
 }
 
+/// drift-releases#25: a mouse drag of a line, once it has left its base point, shows how far
+/// it has moved and takes a typed distance along the way it is heading, in mm and in feet
+/// and inches.
+#[test]
+fn smoke_selection_mouse_drag_typed_distance() {
+    let Some(mut h) = harness() else { return };
+    view(&mut h, DVec2::new(-20.0, -20.0), DVec2::new(80.0, 60.0));
+    let l = line(&mut h, DVec2::new(0.0, 0.0), DVec2::new(40.0, 20.0));
+    let (a, b) = ends(&h, l);
+    let (a0, b0) = (at(&h, a), at(&h, b));
+    // Pressed on the line's middle and moved 3 right, 4 up (5 along).
+    let drag_and_type = |h: &mut Harness<'_, DriftApp>, typed: &str| -> String {
+        let (from, to) = (
+            screen(h, DVec2::new(20.0, 10.0)),
+            screen(h, DVec2::new(23.0, 14.0)),
+        );
+        h.hover_at(from);
+        h.run();
+        button(h, from, true);
+        h.run();
+        for k in 1..=4 {
+            h.hover_at(from + (to - from) * (k as f32 / 4.0));
+            h.run();
+        }
+        let hint = h.state().tool.hint();
+        type_text(h, typed);
+        h.key_press(Key::Enter);
+        h.run();
+        button(h, to, false);
+        h.run();
+        hint
+    };
+    let hint = drag_and_type(&mut h, "25");
+    assert!(hint.starts_with("Moving · 5.0"), "{hint}");
+    assert!(hint.contains(" mm · type a distance"), "{hint}");
+    // Exactly 25 along (3, 4) / 5 (as near as whole pixels point it), both ends alike.
+    let moved = at(&h, a) - a0;
+    assert!((moved.length() - 25.0).abs() < 1e-9, "{moved:?}");
+    assert!(
+        (moved / 25.0 - DVec2::new(0.6, 0.8)).length() < 1e-3,
+        "{moved:?}"
+    );
+    assert!((at(&h, b) - b0 - moved).length() < 1e-9, "{:?}", at(&h, b));
+    undo(&mut h);
+    assert_eq!(at(&h, a), a0);
+
+    // Feet and inches: the distance as the Inspector shows it, and 24 (inches) typed.
+    h.state_mut()
+        .drawing
+        .editor
+        .set_units(drift_core::Units::architectural());
+    h.run();
+    click_world(&mut h, DVec2::new(10.0, 5.0));
+    let hint = drag_and_type(&mut h, "24");
+    assert!(
+        hint.starts_with("Moving · 3/16\" · type a distance"),
+        "{hint}"
+    );
+    let moved = at(&h, a) - a0;
+    assert!((moved.length() - 24.0 * 25.4).abs() < 1e-9, "{moved:?}");
+}
+
 /// #153: an area whose outline is on a hidden layer can't be picked.
 #[test]
 fn smoke_selection_hidden_layer_area_is_not_picked() {

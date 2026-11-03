@@ -1,10 +1,16 @@
 //! Fillet and Chamfer: click (or press on) a corner where two lines (for a fillet, lines or
 //! arcs) meet, then move the
 //! pointer to size it in steps and click to apply, as Blender's bevel does. The size can be
-//! typed at any time and is kept for the next corner.
+//! typed at any time and is kept for the next corner. Shift+click picks several corners, and
+//! a shape picked when the tool starts brings all of its corners: one size then rounds (or
+//! cuts) them all in one undo step (#293).
+
+use std::collections::HashMap;
 
 use super::picking::{Rule, entity_at};
 use super::*;
+use crate::modify::{Arm, Run, corner_angle};
+use drift_core::tolerance;
 
 /// The corner point under the pointer, if two lines meet there (or, for a fillet, two lines
 /// or arcs).
@@ -129,11 +135,11 @@ pub fn round_step(min: f64, metric: bool) -> f64 {
 /// for. `None` if the pointer is on the corner.
 pub(super) fn fillet_radius_at(corner: DVec2, half: f64, room: f64, p: &Pointer) -> Option<f64> {
     let mut s = Sizing {
-        corner: EntityId(0),
         arc: None,
         at: corner,
         half,
         room,
+        largest: None,
         start: corner,
         moved: true,
         size: 0.0,
@@ -142,17 +148,348 @@ pub(super) fn fillet_radius_at(corner: DVec2, half: f64, room: f64, p: &Pointer)
     (s.size > 0.0).then_some(s.size)
 }
 
+/// The two curves meeting at corner `p` and how each runs from it: lines or arcs for a
+/// fillet (`arcs`), lines for a chamfer.
+fn arms(ed: &Editor, p: EntityId, arcs: bool) -> Option<[(EntityId, Arm); 2]> {
+    if arcs {
+        return ed.fillet_corner(p).ok();
+    }
+    let [(l1, _), (l2, _)] = ed.corner(p).ok()?;
+    Some([(l1, ed.arm(l1, p)?), (l2, ed.arm(l2, p)?)])
+}
+
+/// Whether point `p` is a corner the tool can round (or cut): two curves end there, and not
+/// in line (where a fillet meets its line, say).
+fn is_corner(ed: &Editor, p: EntityId, arcs: bool) -> bool {
+    let (Some(at), Some([(_, a1), (_, a2)])) = (ed.doc.point(p).ok(), arms(ed, p, arcs)) else {
+        return false;
+    };
+    let alpha = 2.0 * corner_angle(at, [a1, a2]).0;
+    (tolerance::ANGLE..=PI - tolerance::ANGLE).contains(&alpha)
+}
+
+/// The largest fillet `fillet_geometry` makes at `at` between `arms`.
+fn largest_fillet(at: DVec2, arms: [Arm; 2]) -> f64 {
+    let fits = |r: f64| crate::modify::fillet_geometry(at, arms, r).is_ok();
+    let (half, room) = corner_angle(at, arms);
+    let (mut lo, mut hi) = (0.0, (room * half.tan()).max(tolerance::SAME));
+    for _ in 0..64 {
+        if !fits(hi) {
+            break;
+        }
+        (lo, hi) = (hi, hi * 2.0);
+    }
+    for _ in 0..60 {
+        let mid = 0.5 * (lo + hi);
+        if fits(mid) {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    lo
+}
+
+/// The largest size (a fillet's radius, or a chamfer's distance along both lines) that fits
+/// every corner in `set` at once. Corners are rounded one after another, so a side between
+/// two of them gives each only what the other leaves: for lines between lines, their cuts
+/// together must fit along it. A corner with an arc takes its share of each curve (half of
+/// one it shares), which is always enough for both.
+fn largest(ed: &Editor, set: &[EntityId], arcs: bool) -> f64 {
+    let corners: Vec<(DVec2, [(EntityId, Arm); 2])> = set
+        .iter()
+        .filter_map(|&c| Some((ed.doc.point(c).ok()?, arms(ed, c, arcs)?)))
+        .collect();
+    let straight =
+        |arms: &[(EntityId, Arm); 2]| arms.iter().all(|(_, a)| matches!(a.run, Run::Line { .. }));
+    // How far along each line a corner's cut reaches, per unit of size.
+    let reach = |at: DVec2, arms: &[(EntityId, Arm); 2]| {
+        if arcs {
+            1.0 / corner_angle(at, [arms[0].1, arms[1].1]).0.tan()
+        } else {
+            1.0
+        }
+    };
+    // Each curve: how many corners of the set it runs from, whether they are all between
+    // lines, and (if so) how far their cuts reach along it together, per unit of size.
+    let mut on: HashMap<EntityId, (u32, bool, f64)> = HashMap::new();
+    for (at, arms) in &corners {
+        for (curve, _) in arms {
+            let e = on.entry(*curve).or_insert((0, true, 0.0));
+            e.0 += 1;
+            e.1 &= straight(arms);
+            e.2 += reach(*at, arms);
+        }
+    }
+    let mut largest = f64::INFINITY;
+    for (at, arms) in &corners {
+        if straight(arms) {
+            for (curve, arm) in arms {
+                let (n, lines, along) = on[curve];
+                largest = largest.min(if lines {
+                    arm.length / along
+                } else {
+                    arm.length / f64::from(n) / reach(*at, arms)
+                });
+            }
+        } else {
+            let share = (*arms).map(|(curve, arm)| Arm {
+                length: arm.length / f64::from(on[&curve].0),
+                ..arm
+            });
+            largest = largest.min(largest_fillet(*at, share));
+        }
+    }
+    largest
+}
+
+/// The corners picked to round or cut together (#293): Shift+click adds or removes one, and
+/// a shape picked when the tool starts brings all of its corners.
+#[derive(Default)]
+struct CornerSet {
+    corners: Vec<EntityId>,
+    /// The picks have been read (once each time the tool is taken up).
+    seeded: bool,
+    /// The drawing's make-up and the group open for editing when the set was last checked.
+    checked: Option<(u64, Option<drift_core::GroupId>)>,
+    /// The corner the click that began sizing added (Esc takes it out again).
+    added: Option<EntityId>,
+    /// A refusal lit the corner it was refused at (in `ed.highlight`).
+    marked: bool,
+}
+
+impl CornerSet {
+    /// Before the tool acts: the picks read the first time, and corners that are no longer
+    /// corners (undone, changed by the AI link) or are outside a group being edited dropped.
+    fn ready(&mut self, ed: &mut Editor, arcs: bool) {
+        if !self.seeded {
+            self.seed(ed, arcs);
+        }
+        let now = (ed.doc.structure(), ed.edit_group());
+        if self.checked != Some(now) {
+            self.checked = Some(now);
+            self.corners
+                .retain(|c| ed.in_scope(*c) && is_corner(ed, *c, arcs));
+            self.added = self.added.filter(|c| self.corners.contains(c));
+        }
+    }
+
+    /// The corners of what is picked: points picked themselves, or whose two curves are
+    /// both picked (a shape's sides, a filled shape's or an area's outline).
+    fn seed(&mut self, ed: &mut Editor, arcs: bool) {
+        self.seeded = true;
+        let is_point =
+            |ed: &Editor, id: &EntityId| ed.doc.get(*id).is_some_and(|e| e.kind.is_point());
+        let mut curves: BTreeSet<EntityId> = ed
+            .selection
+            .iter()
+            .filter(|id| !is_point(ed, id))
+            .copied()
+            .collect();
+        for f in &ed.selected_fills {
+            let Some(fill) = ed.doc.fill(*f) else {
+                continue;
+            };
+            match fill.path.and_then(|p| ed.doc.path(p)) {
+                Some(p) if fill.boundary.is_empty() => curves.extend(p.curves.iter().copied()),
+                _ => curves.extend(fill.boundary.iter().copied()),
+            }
+        }
+        if ed.selected_region.is_some()
+            && let Some(region) = ed.region()
+        {
+            curves.extend(ed.region_curves(&region));
+        }
+        let picked: BTreeSet<EntityId> = ed
+            .selection
+            .iter()
+            .filter(|id| is_point(ed, id))
+            .copied()
+            .collect();
+        let ends = curves
+            .iter()
+            .filter_map(|c| ed.doc.get(*c).and_then(|e| e.kind.ends()))
+            .flatten();
+        let candidates: BTreeSet<EntityId> = picked.iter().copied().chain(ends).collect();
+        self.corners = candidates
+            .into_iter()
+            .filter(|p| {
+                let both =
+                    arms(ed, *p, arcs).is_some_and(|a| a.iter().all(|(c, _)| curves.contains(c)));
+                (picked.contains(p) || both) && ed.in_scope(*p) && is_corner(ed, *p, arcs)
+            })
+            .collect();
+    }
+
+    /// The corners as they stand for a preview (which can't drop the stale ones itself).
+    fn live<'a>(&'a self, ed: &'a Editor, arcs: bool) -> impl Iterator<Item = EntityId> + 'a {
+        let fresh = self.checked == Some((ed.doc.structure(), ed.edit_group()));
+        self.corners
+            .iter()
+            .copied()
+            .filter(move |c| fresh || (ed.in_scope(*c) && is_corner(ed, *c, arcs)))
+    }
+
+    /// Shift+click: the corner under the pointer in or out of the set.
+    fn toggle(&mut self, ed: &mut Editor, p: &Pointer, arcs: bool) {
+        self.unmark(ed);
+        let Some(c) = corner_under(ed, p, arcs) else {
+            ed.out.notice = Some(no_corner_notice(ed, p, arcs));
+            return;
+        };
+        if let Some(i) = self.corners.iter().position(|x| *x == c) {
+            self.corners.remove(i);
+        } else if is_corner(ed, c, arcs) {
+            self.corners.push(c);
+        } else {
+            ed.out.notice = Some(if arcs {
+                "Fillet: the curves here are in line: nothing to round".into()
+            } else {
+                "Chamfer: the lines here are in line: nothing to cut".into()
+            });
+        }
+    }
+
+    /// A click on corner `c` begins sizing: it joins the set (if it isn't in it).
+    fn add(&mut self, ed: &mut Editor, c: EntityId) {
+        self.unmark(ed);
+        self.added = (!self.corners.contains(&c)).then_some(c);
+        if self.added.is_some() {
+            self.corners.push(c);
+        }
+    }
+
+    /// Sizing was cancelled: the corner its click added goes again.
+    fn drop_added(&mut self) {
+        if let Some(c) = self.added.take() {
+            self.corners.retain(|x| *x != c);
+        }
+    }
+
+    fn unmark(&mut self, ed: &mut Editor) {
+        if std::mem::take(&mut self.marked) {
+            ed.highlight.clear();
+        }
+    }
+
+    /// Applied: the set is used up (the picks don't bring it back).
+    fn clear(&mut self) {
+        self.corners.clear();
+        self.added = None;
+    }
+
+    /// The edit refused: say why, and light the corner it was refused at (the edit names it
+    /// by its id, which the user never sees). `fits` is what size would have done.
+    fn refuse(&mut self, ed: &mut Editor, tool: &str, e: EditError, arcs: bool, fits: String) {
+        self.added = None;
+        let why = e.to_string();
+        let (corner, text) = match self.corners[..] {
+            [only] => (Some(only), format!("{tool}: {why}{fits}")),
+            _ => self
+                .corners
+                .iter()
+                .find_map(|c| {
+                    let rest = why.strip_prefix(&format!("at {c}: "))?;
+                    Some((
+                        Some(*c),
+                        format!("{tool}: at the corner marked, {rest}{fits}"),
+                    ))
+                })
+                .unwrap_or((None, format!("{tool}: {why}"))),
+        };
+        ed.out.notice = Some(text);
+        if let Some(c) = corner {
+            ed.highlight = std::iter::once(c)
+                .chain(
+                    arms(ed, c, arcs)
+                        .into_iter()
+                        .flatten()
+                        .map(|(curve, _)| curve),
+                )
+                .collect();
+            self.marked = true;
+        }
+    }
+
+    /// For a refusal's notice: the size that fits them all, if `size` doesn't (rounded down
+    /// so that what it shows fits).
+    fn fits(&self, ed: &Editor, arcs: bool, size: f64, label: &str) -> String {
+        let cap = largest(ed, &self.corners, arcs);
+        if !(cap.is_finite() && cap > 0.0 && cap < size) {
+            return String::new();
+        }
+        let units = ed.doc.units();
+        let step = round_step(cap * 0.01, units.length.is_metric());
+        let shown = (cap * 0.999 / step).floor() * step;
+        if shown <= 0.0 {
+            return String::new();
+        }
+        let every = if self.corners.len() > 1 {
+            " every corner"
+        } else {
+            ""
+        };
+        format!(" ({label}{} fits{every})", units.format_readout(shown))
+    }
+
+    /// Previews of every corner in the set (and the one under the pointer), with a mark on
+    /// each in the set unless the one being sized is all there is.
+    fn preview(
+        &self,
+        ed: &Editor,
+        arcs: bool,
+        hover: Option<EntityId>,
+        sizing: bool,
+        shape: impl Fn(EntityId) -> Option<Shape>,
+    ) -> Vec<SketchItem> {
+        let set: Vec<EntityId> = self.live(ed, arcs).collect();
+        let extra = hover.filter(|h| !sizing && !set.contains(h));
+        let mut items: Vec<SketchItem> = set
+            .iter()
+            .copied()
+            .chain(extra)
+            .filter_map(&shape)
+            .map(preview)
+            .collect();
+        if !(sizing && set.len() == 1) {
+            items.extend(
+                set.iter()
+                    .filter_map(|c| ed.doc.point(*c).ok())
+                    .map(preview_vertex),
+            );
+        }
+        items
+    }
+
+    fn hint(&self, sizing: bool, what: &str, size: &str) -> Option<String> {
+        let n = self.corners.len();
+        match (sizing, n) {
+            (_, 0) | (true, 1) => None,
+            (true, n) => Some(format!(
+                "Move to size {n} {what}s (Alt: freely) · click to apply · type the {size} · \
+                 Esc cancels"
+            )),
+            (false, n) => Some(format!(
+                "{n} corner{} · click one to size them all · type the {size}, Enter · \
+                 Shift+click adds or removes · Esc clears",
+                if n == 1 { "" } else { "s" }
+            )),
+        }
+    }
+}
+
 /// A corner being sized: the size follows the pointer until a click applies it.
 #[derive(Clone, Copy, Debug)]
 struct Sizing {
-    /// The corner point; or, for a fillet that is already there, its arc (the corner is
-    /// then where its lines would meet).
-    corner: EntityId,
+    /// A fillet (or chamfer) that is already there, being re-sized: its arc (or cut line).
     arc: Option<EntityId>,
     /// Where the corner is, half the angle between its lines, and the shorter line's length.
     at: DVec2,
     half: f64,
     room: f64,
+    /// The most the set's corners have room for together (see [`largest`]); None when one
+    /// fillet or chamfer that is already there is re-sized.
+    largest: Option<f64>,
     /// Where the pointer was when sizing began: the size stays as it was (the last one used)
     /// until the pointer moves away from here.
     start: DVec2,
@@ -177,11 +514,11 @@ impl Sizing {
             (cos.acos() / 2.0, l1.min(l2))
         };
         Some(Self {
-            corner,
             arc: None,
             at,
             half,
             room,
+            largest: None,
             start: p.raw,
             moved: false,
             size,
@@ -193,11 +530,11 @@ impl Sizing {
         let f = ed.fillet_at(arc)?;
         let (half, room) = f.half_angle_and_room();
         Some(Self {
-            corner: arc,
             arc: Some(arc),
             at: f.corner,
             half,
             room,
+            largest: None,
             start: p.raw,
             moved: false,
             size: f.radius,
@@ -239,6 +576,7 @@ pub struct FilletTool {
     typed: [Option<f64>; 2],
     hover: Option<EntityId>,
     sizing: Option<Sizing>,
+    set: CornerSet,
 }
 
 impl FilletTool {
@@ -251,8 +589,9 @@ impl FilletTool {
     }
 
     fn begin(&mut self, p: &Pointer, ed: &mut Editor) -> bool {
-        // A fillet that is already there is re-sized in place.
+        // A fillet that is already there is re-sized in place (on its own).
         if let Some(arc) = fillet_under(ed, p) {
+            self.set.unmark(ed);
             self.sizing = Sizing::begin_fillet(ed, arc, p);
             self.hover = None;
             return self.sizing.is_some();
@@ -261,7 +600,14 @@ impl FilletTool {
             ed.out.notice = Some(no_corner_notice(ed, p, true));
             return false;
         };
-        self.sizing = Sizing::begin(ed, corner, p, self.radius(ed), true);
+        self.set.add(ed, corner);
+        self.sizing = Sizing::begin(ed, corner, p, self.radius(ed), true).map(|s| Sizing {
+            largest: Some(largest(ed, &self.set.corners, true)),
+            ..s
+        });
+        if self.sizing.is_none() {
+            self.set.drop_added();
+        }
         self.hover = None;
         self.sizing.is_some()
     }
@@ -270,31 +616,37 @@ impl FilletTool {
         if let Some(s) = &mut self.sizing {
             // The arc passes under the pointer: its middle is r / sin(half) - r from the
             // corner. The tangent points must stay on the lines.
-            s.follow(
-                p,
-                |d, half| d / (1.0 / half.sin() - 1.0),
-                s.room * s.half.tan(),
-            );
+            let largest = s.largest.unwrap_or(s.room * s.half.tan());
+            s.follow(p, |d, half| d / (1.0 / half.sin() - 1.0), largest);
         }
     }
 
+    /// Round every corner in the set (one undo step), or re-size the fillet being sized.
     fn apply(&mut self, ed: &mut Editor) {
-        let Some(s) = self.sizing.take() else {
+        let r = self.radius(ed);
+        let sizing = self.sizing.take();
+        if let Some(Sizing { arc: Some(arc), .. }) = sizing {
+            match ed.refillet(arc, r) {
+                Ok(()) => self.radius = Some(r),
+                Err(e) => ed.out.notice = Some(format!("Fillet: {e}")),
+            }
             return;
-        };
-        let r = self.radius_of(&s);
-        let done = match s.arc {
-            Some(arc) => ed.refillet(arc, r),
-            None => ed.fillet(s.corner, r).map(|_| ()),
-        };
-        match done {
-            Ok(()) => self.radius = Some(r),
-            Err(e) => ed.out.notice = Some(format!("Fillet: {e}")),
         }
-    }
-
-    fn radius_of(&self, s: &Sizing) -> f64 {
-        self.typed[0].filter(|r| *r > 0.0).unwrap_or(s.size)
+        self.set.unmark(ed);
+        if self.set.corners.is_empty() {
+            return;
+        }
+        let corners = self.set.corners.clone();
+        match ed.fillet_corners(&corners, r) {
+            Ok(_) => {
+                self.radius = Some(r);
+                self.set.clear();
+            }
+            Err(e) => {
+                let fits = self.set.fits(ed, true, r, "R ");
+                self.set.refuse(ed, "Fillet", e, true, fits);
+            }
+        }
     }
 }
 
@@ -304,15 +656,20 @@ impl Tool for FilletTool {
     }
 
     fn hint(&self) -> String {
-        if self.sizing.is_some() {
+        if let Some(h) = self.set.hint(self.sizing.is_some(), "fillet", "radius") {
+            h
+        } else if self.sizing.is_some() {
             "Move to size the fillet (Alt: freely) · click to apply · type the radius · Esc cancels"
                 .into()
         } else {
-            "Click a corner where two lines or arcs meet (or a fillet), then move to size it".into()
+            "Click a corner where two lines or arcs meet (or a fillet), then move to size it · \
+             Shift+click: several corners"
+                .into()
         }
     }
 
     fn handle(&mut self, input: Input, ed: &mut Editor) {
+        self.set.ready(ed, true);
         match input {
             Input::Hover(p) if self.sizing.is_some() => self.follow(&p),
             Input::Hover(p) => {
@@ -323,6 +680,15 @@ impl Tool for FilletTool {
                 self.follow(&p);
                 self.apply(ed);
             }
+            Input::Click(p, m) if m.shift => {
+                if fillet_under(ed, &p).is_some() {
+                    ed.out.notice = Some(
+                        "Fillet: Shift+click adds corners; click a fillet to re-size it".into(),
+                    );
+                } else {
+                    self.set.toggle(ed, &p, true);
+                }
+            }
             Input::Click(p, _) => {
                 self.begin(&p, ed);
             }
@@ -331,7 +697,7 @@ impl Tool for FilletTool {
                 self.begin(&p, ed);
             }
             Input::Drag(p) => self.follow(&p),
-            Input::DragEnd(p, _) => {
+            Input::DragEnd(p, _) if self.sizing.is_some() => {
                 self.follow(&p);
                 self.apply(ed);
             }
@@ -340,8 +706,19 @@ impl Tool for FilletTool {
         }
     }
 
-    fn cancel(&mut self, _ed: &mut Editor) -> bool {
-        self.sizing.take().is_some()
+    // A right-click (for the canvas menu) leaves the corners picked: only Enter applies them.
+    fn secondary_click(&mut self, _ed: &mut Editor) {}
+
+    fn cancel(&mut self, ed: &mut Editor) -> bool {
+        self.set.unmark(ed);
+        if self.sizing.take().is_some() {
+            self.set.drop_added();
+            return true;
+        }
+        // Then the set.
+        let had = !self.set.corners.is_empty();
+        self.set.clear();
+        had
     }
 
     fn is_busy(&self) -> bool {
@@ -365,11 +742,17 @@ impl Tool for FilletTool {
     }
 
     fn commit_typed(&mut self, _pointer: &Pointer, ed: &mut Editor) {
+        self.set.ready(ed, true);
         if self.sizing.is_some() {
-            // Typed while sizing: that radius, on this corner.
+            // Typed while sizing: that radius, on these corners.
             self.apply(ed);
         } else if let Some(r) = self.typed[0].filter(|r| *r > 0.0) {
-            self.radius = Some(r);
+            if self.set.corners.is_empty() {
+                self.radius = Some(r);
+            } else {
+                // Typed with corners picked: that radius on all of them.
+                self.apply(ed);
+            }
         }
         self.typed = [None; 2];
     }
@@ -387,14 +770,17 @@ impl Tool for FilletTool {
 
     fn editor_preview(&self, ed: &Editor) -> Vec<SketchItem> {
         let r = self.radius(ed);
-        match self.sizing {
-            Some(Sizing { arc: Some(arc), .. }) => ed.refillet_preview(arc, r),
-            Some(s) => ed.fillet_preview(s.corner, r),
-            None => self.hover.and_then(|c| ed.fillet_preview(c, r)),
+        if let Some(Sizing { arc: Some(arc), .. }) = self.sizing {
+            return ed
+                .refillet_preview(arc, r)
+                .map(preview)
+                .into_iter()
+                .collect();
         }
-        .map(preview)
-        .into_iter()
-        .collect()
+        self.set
+            .preview(ed, true, self.hover, self.sizing.is_some(), |c| {
+                ed.fillet_preview(c, r)
+            })
     }
 }
 
@@ -404,6 +790,7 @@ pub struct ChamferTool {
     typed: [Option<f64>; 2],
     hover: Option<EntityId>,
     sizing: Option<Sizing>,
+    set: CornerSet,
 }
 
 impl ChamferTool {
@@ -427,15 +814,16 @@ impl ChamferTool {
     }
 
     fn begin(&mut self, p: &Pointer, ed: &mut Editor) -> bool {
-        // A chamfer that is already there is re-sized in place.
+        // A chamfer that is already there is re-sized in place (on its own).
         if let Some((cut, c)) = chamfer_under(ed, p) {
+            self.set.unmark(ed);
             let (half, room) = c.half_angle_and_room();
             self.sizing = Some(Sizing {
-                corner: cut,
                 arc: Some(cut),
                 at: c.corner,
                 half,
                 room,
+                largest: None,
                 start: p.raw,
                 moved: false,
                 size: c.legs[0],
@@ -448,7 +836,14 @@ impl ChamferTool {
             return false;
         };
         let size = self.distances(ed).0;
-        self.sizing = Sizing::begin(ed, corner, p, size, false);
+        self.set.add(ed, corner);
+        self.sizing = Sizing::begin(ed, corner, p, size, false).map(|s| Sizing {
+            largest: Some(largest(ed, &self.set.corners, false)),
+            ..s
+        });
+        if self.sizing.is_none() {
+            self.set.drop_added();
+        }
         self.hover = None;
         self.sizing.is_some()
     }
@@ -456,22 +851,42 @@ impl ChamferTool {
     fn follow(&mut self, p: &Pointer) {
         if let Some(s) = &mut self.sizing {
             // The cut passes under the pointer: its middle is d · cos(half) from the corner.
-            s.follow(p, |d, half| d / half.cos(), s.room);
+            let largest = s.largest.unwrap_or(s.room);
+            s.follow(p, |d, half| d / half.cos(), largest);
         }
     }
 
+    /// Cut every corner in the set (one undo step), or re-size the chamfer being sized.
     fn apply(&mut self, ed: &mut Editor) {
         let (d1, d2) = self.distances(ed);
-        let Some(s) = self.sizing.take() else {
+        let sizing = self.sizing.take();
+        if let Some(Sizing { arc: Some(cut), .. }) = sizing {
+            match ed.rechamfer(cut, d1, d2) {
+                Ok(()) => self.distances = Some((d1, d2)),
+                Err(e) => ed.out.notice = Some(format!("Chamfer: {e}")),
+            }
             return;
-        };
-        let done = match s.arc {
-            Some(cut) => ed.rechamfer(cut, d1, d2),
-            None => ed.chamfer(s.corner, d1, d2).map(|_| ()),
-        };
-        match done {
-            Ok(()) => self.distances = Some((d1, d2)),
-            Err(e) => ed.out.notice = Some(format!("Chamfer: {e}")),
+        }
+        self.set.unmark(ed);
+        if self.set.corners.is_empty() {
+            return;
+        }
+        // Which line takes the first distance is only clear at one corner.
+        if self.set.corners.len() > 1 && (d1 - d2).abs() > tolerance::SAME {
+            self.set.added = None;
+            ed.out.notice = Some("Chamfer: two distances work on one corner at a time".into());
+            return;
+        }
+        let corners = self.set.corners.clone();
+        match ed.chamfer_corners(&corners, d1, d2) {
+            Ok(_) => {
+                self.distances = Some((d1, d2));
+                self.set.clear();
+            }
+            Err(e) => {
+                let fits = self.set.fits(ed, false, d1.max(d2), "");
+                self.set.refuse(ed, "Chamfer", e, false, fits);
+            }
         }
     }
 }
@@ -482,16 +897,21 @@ impl Tool for ChamferTool {
     }
 
     fn hint(&self) -> String {
-        if self.sizing.is_some() {
+        if let Some(h) = self.set.hint(self.sizing.is_some(), "chamfer", "distance") {
+            h
+        } else if self.sizing.is_some() {
             "Move to size the chamfer (Alt: freely) · click to apply · type the distance (Tab: \
              second distance) · Esc cancels"
                 .into()
         } else {
-            "Click a corner where two lines meet, then move to size the chamfer".into()
+            "Click a corner where two lines meet, then move to size the chamfer · Shift+click: \
+             several corners"
+                .into()
         }
     }
 
     fn handle(&mut self, input: Input, ed: &mut Editor) {
+        self.set.ready(ed, false);
         match input {
             Input::Hover(p) if self.sizing.is_some() => self.follow(&p),
             Input::Hover(p) => {
@@ -507,6 +927,15 @@ impl Tool for ChamferTool {
                 self.follow(&p);
                 self.apply(ed);
             }
+            Input::Click(p, m) if m.shift => {
+                if corner_under(ed, &p, false).is_none() && chamfer_under(ed, &p).is_some() {
+                    ed.out.notice = Some(
+                        "Chamfer: Shift+click adds corners; click a chamfer to re-size it".into(),
+                    );
+                } else {
+                    self.set.toggle(ed, &p, false);
+                }
+            }
             Input::Click(p, _) => {
                 self.begin(&p, ed);
             }
@@ -514,7 +943,7 @@ impl Tool for ChamferTool {
                 self.begin(&p, ed);
             }
             Input::Drag(p) => self.follow(&p),
-            Input::DragEnd(p, _) => {
+            Input::DragEnd(p, _) if self.sizing.is_some() => {
                 self.follow(&p);
                 self.apply(ed);
             }
@@ -523,8 +952,19 @@ impl Tool for ChamferTool {
         }
     }
 
-    fn cancel(&mut self, _ed: &mut Editor) -> bool {
-        self.sizing.take().is_some()
+    // A right-click (for the canvas menu) leaves the corners picked: only Enter applies them.
+    fn secondary_click(&mut self, _ed: &mut Editor) {}
+
+    fn cancel(&mut self, ed: &mut Editor) -> bool {
+        self.set.unmark(ed);
+        if self.sizing.take().is_some() {
+            self.set.drop_added();
+            return true;
+        }
+        // Then the set.
+        let had = !self.set.corners.is_empty();
+        self.set.clear();
+        had
     }
 
     fn is_busy(&self) -> bool {
@@ -548,13 +988,14 @@ impl Tool for ChamferTool {
     }
 
     fn commit_typed(&mut self, _pointer: &Pointer, ed: &mut Editor) {
+        self.set.ready(ed, false);
         let valid = self.typed.iter().flatten().all(|d| *d > 0.0) && any_typed(self.typed);
-        if self.sizing.is_some() {
-            if valid {
+        if valid {
+            if self.sizing.is_some() || !self.set.corners.is_empty() {
                 self.apply(ed);
+            } else {
+                self.distances = Some(self.distances(ed));
             }
-        } else if valid {
-            self.distances = Some(self.distances(ed));
         }
         self.typed = [None; 2];
     }
@@ -566,13 +1007,16 @@ impl Tool for ChamferTool {
 
     fn editor_preview(&self, ed: &Editor) -> Vec<SketchItem> {
         let (d1, d2) = self.distances(ed);
-        match self.sizing {
-            Some(Sizing { arc: Some(cut), .. }) => ed.rechamfer_preview(cut, d1, d2),
-            Some(s) => ed.chamfer_preview(s.corner, d1, d2),
-            None => self.hover.and_then(|c| ed.chamfer_preview(c, d1, d2)),
+        if let Some(Sizing { arc: Some(cut), .. }) = self.sizing {
+            return ed
+                .rechamfer_preview(cut, d1, d2)
+                .map(preview)
+                .into_iter()
+                .collect();
         }
-        .map(preview)
-        .into_iter()
-        .collect()
+        self.set
+            .preview(ed, false, self.hover, self.sizing.is_some(), |c| {
+                ed.chamfer_preview(c, d1, d2)
+            })
     }
 }

@@ -87,6 +87,12 @@ pub(super) struct Grab {
     pub(super) detach: bool,
     /// Moving by dragging with the mouse: it ends when the button is let go. None for G.
     pub(super) by_mouse: Option<MouseMove>,
+    /// A mouse drag that has left its base point: it takes a typed distance along the way
+    /// it was last heading (`dir`), as well as along a locked axis (drift-releases#25).
+    pub(super) left_base: bool,
+    pub(super) dir: DVec2,
+    /// The drawing's units, for the hint's distance (a mouse drag).
+    pub(super) units: Option<drift_core::units::Units>,
     /// The move was started on a copy just made by Duplicate or Paste of these originals
     /// (none for Paste): cancelling removes the copy, which was never meant to stay stacked
     /// on them, and picks the originals again (#264).
@@ -123,6 +129,9 @@ impl Grab {
             riders: Default::default(),
             detach: false,
             by_mouse: None,
+            left_base: false,
+            dir: DVec2::ZERO,
+            units: None,
             from_copy: None,
         }
     }
@@ -140,6 +149,7 @@ impl Grab {
             instances: ed.picked_instances(),
             riders: ed.riders(),
             by_mouse: Some(MouseMove { point }),
+            units: Some(ed.doc.units()),
             ..Self::new(ids, points, base, start)
         }
     }
@@ -152,10 +162,32 @@ impl Grab {
                 let u = axis.dir();
                 u * self.typed[0].unwrap_or(d.dot(u))
             }
+            // A mouse drag: the typed distance along base → pointer (back through the base
+            // when negative).
+            None if self.by_mouse.is_some() => match self.typed[0] {
+                Some(t) if self.left_base => self.dir * t,
+                _ => d,
+            },
             None if any_typed(self.typed) => {
                 DVec2::new(self.typed[0].unwrap_or(0.0), self.typed[1].unwrap_or(0.0))
             }
             None => d,
+        }
+    }
+
+    /// A distance typed for a mouse drag is in force (along the locked axis, or along the
+    /// way the drag is heading).
+    fn typed_distance(&self) -> Option<f64> {
+        let t = self.typed[0]?;
+        (self.by_mouse.is_some() && (self.lock.is_some() || self.left_base)).then_some(t)
+    }
+
+    /// A mouse drag followed the pointer to `delta`: once it has left the base point, which
+    /// way it is heading.
+    fn heading(&mut self, p: &Pointer) {
+        if self.delta.length() > p.tolerance * 0.5 {
+            self.left_base = true;
+            self.dir = self.delta.normalize();
         }
     }
 
@@ -374,7 +406,12 @@ impl SelectTool {
     /// it.
     fn finish_mouse_move(&mut self, p: &Pointer, ed: &mut Editor) {
         let Some(grab) = self.grab.take() else { return };
-        let point = grab.by_mouse.and_then(|m| m.point);
+        // Moved by a typed distance, the point doesn't land on what is under the pointer:
+        // nothing to join it to (or keep it on).
+        let point = grab
+            .by_mouse
+            .and_then(|m| m.point)
+            .filter(|_| grab.typed_distance().is_none());
         ed.region_motion = None;
         if point.is_none() && grab.applied == DVec2::ZERO {
             // Not moved after all: nothing to keep (not even a join let go).
@@ -511,8 +548,8 @@ impl Tool for SelectTool {
                 if grab.lock.is_some() {
                     &["Distance"]
                 } else if grab.by_mouse.is_some() {
-                    // A mouse drag takes a typed distance once it's locked to an axis.
-                    &[]
+                    // A mouse drag takes a typed distance once it has left its base point.
+                    if grab.left_base { &["Distance"] } else { &[] }
                 } else {
                     &["dX", "dY"]
                 }
@@ -618,11 +655,28 @@ impl Tool for SelectTool {
                 None => "X / Y: lock".into(),
             };
             return if let Some(m) = grab.by_mouse {
-                match m.point {
-                    Some(_) => {
+                // How far it has moved, or the distance typed (drift-releases#25).
+                let moving = match (grab.lock, grab.left_base, grab.units) {
+                    (None, true, Some(units)) => Some(match grab.typed[0] {
+                        Some(t) => format!("Moving · {} typed", units.format_readout(t)),
+                        None => format!(
+                            "Moving · {} · type a distance",
+                            units.format_readout(grab.offset().length())
+                        ),
+                    }),
+                    _ => None,
+                };
+                // (Moved by a typed distance, a point isn't joined to anything.)
+                let joins = m.point.is_some() && grab.typed_distance().is_none();
+                match (joins, moving) {
+                    (true, Some(moving)) => format!(
+                        "{moving} · drop on another point to join them · {lock} · Esc to cancel"
+                    ),
+                    (true, None) => {
                         format!("Drop on another point to join them · {lock} · Esc to cancel")
                     }
-                    None => format!("Moving selection · {lock} · Esc to cancel"),
+                    (false, Some(moving)) => format!("{moving} · {lock} · Esc to cancel"),
+                    (false, None) => format!("Moving selection · {lock} · Esc to cancel"),
                 }
             } else if grab.picking_base {
                 "Click the base point (snaps to points) · Esc: cancel".into()
@@ -677,10 +731,19 @@ impl Tool for SelectTool {
                 match input {
                     Input::Hover(p) | Input::Drag(p) => {
                         grab.delta = crate::modify::move_offset(grab.start, grab.base, &p);
+                        grab.heading(&p);
                         let offset = grab.offset();
                         grab.apply(offset, ed);
                     }
-                    Input::DragEnd(p, _) => self.finish_mouse_move(&p, ed),
+                    Input::DragEnd(p, _) => {
+                        // A typed distance lands where it says, whatever was typed since the
+                        // last frame.
+                        if grab.typed_distance().is_some() {
+                            let offset = grab.offset();
+                            grab.apply(offset, ed);
+                        }
+                        self.finish_mouse_move(&p, ed)
+                    }
                     _ => {}
                 }
                 return;

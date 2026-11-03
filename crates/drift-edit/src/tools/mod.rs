@@ -547,6 +547,12 @@ pub trait Tool {
     /// Enter was pressed while typing: apply the typed values.
     fn commit_typed(&mut self, _pointer: &Pointer, _ed: &mut Editor) {}
 
+    /// A right-click on the canvas while not modal: finishes what the tool is doing, as
+    /// Enter does, unless the tool says otherwise.
+    fn secondary_click(&mut self, ed: &mut Editor) {
+        self.handle(Input::Finish, ed);
+    }
+
     /// A dimension being placed (and its label offset), for the overlay to preview.
     fn pending_dimension(
         &self,

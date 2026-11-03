@@ -78,13 +78,13 @@ and **Explode walls** are in the **Build** menu; **Walls from curves** and
 
 | Tool | Key | What it does |
 |---|---|---|
-| **Move** | G | Moves what is picked (dimmed with nothing picked). From the palette it starts where the pointer last was on the canvas; X / Y lock an axis, type dX Tab dY, B picks the base point. |
+| **Move** | G | Moves what is picked (dimmed with nothing picked). From the palette it starts where the pointer last was on the canvas; X / Y lock an axis, type dX Tab dY, B picks the base point. Dragging the selection with the mouse shows how far it has moved and takes a typed distance towards the pointer (or along a locked axis). |
 | **Rotate** | R with a selection | Turns what is picked: type an angle, B picks the pivot, R again rotates by reference. |
 | **Trim** | T | Click a piece to remove it, up to the curves that cut it; or drag across pieces to trim several. |
 | **Extend** | E | Click near the end of a line or arc to lengthen it to the next curve. |
 | **Split** | — | Click a curve where it should be cut in two (a circle or ellipse into halves). |
-| **Fillet** | F | Click a corner where two lines meet (or an existing fillet), move to size it, click to apply; or type the radius. F again switches to **Chamfer**. |
-| **Chamfer** | F, F | As the fillet; type the distance, Tab for a second distance. |
+| **Fillet** | F | Click a corner where two lines meet (or an existing fillet), move to size it, click to apply; or type the radius. Shift+click several corners, or pick a shape first, and one size rounds them all in one undo step. F again switches to **Chamfer**. |
+| **Chamfer** | F, F | As the fillet, several corners too; type the distance, Tab for a second distance (one corner at a time). |
 | **Offset** | O | Click a curve (its connected chain is taken too), then the side; or type the distance. The result is one offset with one distance that follows its source; drag a piece or type into its dimension to change it; Detach (Inspector) makes plain curves. |
 | **Mirror** | M | Pick geometry first; then click the line to mirror it about. The copies are held symmetric. |
 

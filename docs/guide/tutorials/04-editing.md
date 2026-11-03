@@ -118,9 +118,12 @@ Picked lines moved on their own always stretch the lines joined to them.
 
 Other ways to move:
 
-- **Drag** picked geometry. Drop an end point on another point to join them. X or Y while
+- **Drag** picked geometry. Drop an end point on another point to join them. The status bar
+  shows how far it has moved; type a distance and press Enter (or let go) to move it exactly
+  that far towards the pointer (a negative distance goes the other way). X or Y while
   dragging locks the drag to that axis, as in a G move (press it again to unlock); once
-  locked, type a distance and press Enter to place it exactly.
+  locked, a typed distance goes along the axis. Moved by a typed distance, an end point isn't
+  joined to a point it is let go over.
 - **Arrow keys** nudge the selection one grid step; Shift+arrow, ten.
 - **Inspector fields:** type a new **Start**, **End**, **Center** or **Position**. The
   geometry moves as far as its relations let it.
@@ -227,6 +230,13 @@ cutting curve).
 A second click without moving reuses the last size. Esc or a right-click cancels.
 
 Press F again for the **Chamfer** tool. Type its distance, and Tab for a second distance.
+
+Several corners at once: Shift+click corners to add them (Shift+click again takes one out),
+or pick a shape (or its sides, or its area) before pressing F: all its corners are in the
+set. Click one of them and size it, or just type the size and press Enter: every corner gets
+the same fillet or chamfer, in one undo step. If one of them hasn't room, nothing changes:
+that corner is marked and the status bar says what size fits them all. Esc clears the set; a
+right-click leaves it (for the canvas menu). A chamfer on several corners takes one distance.
 
 A fillet or chamfer takes the look of the corner's lines: round a corner of construction
 lines and the arc is construction too.

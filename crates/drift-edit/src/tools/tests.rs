@@ -6961,3 +6961,496 @@ fn a_direction_already_implied_is_left_out_and_said() {
         Some("Horizontal not added: already implied by existing constraints")
     );
 }
+
+// ---- #293: Fillet and Chamfer on several corners at once ----
+
+/// A `w` × `h` rectangle drawn with the Rectangle tool, and its four sides.
+fn corners_rect(w: f64, h: f64) -> (Editor, Vec<EntityId>) {
+    let mut ed = Editor::default();
+    let mut rect = RectangleTool::default();
+    click(&mut ed, &mut rect, v(0.0, 0.0));
+    click(&mut ed, &mut rect, v(w, h));
+    let sides = ed
+        .doc
+        .iter()
+        .filter(|(_, e)| matches!(e.kind, EntityKind::Line { .. }))
+        .map(|(id, _)| id)
+        .collect();
+    (ed, sides)
+}
+
+fn radii(ed: &Editor) -> Vec<f64> {
+    ed.doc
+        .iter()
+        .filter_map(|(id, e)| match e.kind {
+            EntityKind::Arc { .. } => match ed.doc.shape(id) {
+                Some(Shape::Arc { radius, .. }) => Some((radius * 1e9).round() / 1e9),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
+}
+
+/// The radius the fillet tool's preview shows (the same at every corner of its set).
+fn previewed_radius(tool: &FilletTool, ed: &Editor) -> f64 {
+    let r: Vec<f64> = tool
+        .editor_preview(ed)
+        .iter()
+        .filter_map(|i| match i.shape {
+            Shape::Arc { radius, .. } => Some(radius),
+            _ => None,
+        })
+        .collect();
+    assert!(r.windows(2).all(|w| (w[0] - w[1]).abs() < 1e-12), "{r:?}");
+    r[0]
+}
+
+fn type_and_enter(ed: &mut Editor, tool: &mut dyn Tool, values: [Option<f64>; 2]) {
+    tool.set_typed(values);
+    let p = Pointer::new(v(1000.0, 1000.0), TOL);
+    tool.commit_typed(&p, ed);
+}
+
+#[test]
+fn fillet_tool_rounds_several_shift_clicked_corners_in_one_undo() {
+    let (mut ed, _) = corners_rect(30.0, 20.0);
+    let mut tool = FilletTool::default();
+    for at in [v(0.0, 0.0), v(30.0, 0.0), v(30.0, 20.0)] {
+        shift_click(&mut ed, &mut tool, at);
+    }
+    assert!(!tool.is_busy(), "Shift+click only picks");
+    assert!(tool.hint().starts_with("3 corners"), "{}", tool.hint());
+    // Three marks and their fillets at the kept size.
+    assert_eq!(tool.editor_preview(&ed).len(), 6);
+    click(&mut ed, &mut tool, v(0.0, 20.0));
+    assert!(tool.is_modal());
+    assert!(tool.hint().contains("4 fillets"), "{}", tool.hint());
+    type_and_enter(&mut ed, &mut tool, [Some(5.0), None]);
+    assert_eq!(radii(&ed), [5.0; 4], "{:?}", ed.out.notice);
+    assert!(!tool.is_busy());
+    // One undo step for all four.
+    assert!(ed.undo());
+    assert_eq!((arcs(&ed.doc), lines(&ed.doc), points(&ed.doc)), (0, 4, 4));
+}
+
+#[test]
+fn fillet_tool_takes_every_corner_of_a_picked_shape() {
+    let (mut ed, sides) = corners_rect(30.0, 20.0);
+    ed.selection = sides.iter().copied().collect();
+    // Picked, F, type 3, Enter: no pointer input at all.
+    let mut tool = FilletTool::default();
+    type_and_enter(&mut ed, &mut tool, [Some(3.0), None]);
+    assert_eq!(radii(&ed), [3.0; 4]);
+    // Used up: the picks (still there) don't bring the corners back.
+    type_and_enter(&mut ed, &mut tool, [Some(2.0), None]);
+    assert_eq!(arcs(&ed.doc), 4);
+    // Taken up again, a fresh tool reads the picks again.
+    assert!(ed.undo());
+    let mut tool = FilletTool::default();
+    type_and_enter(&mut ed, &mut tool, [Some(2.0), None]);
+    assert_eq!(radii(&ed), [2.0; 4]);
+
+    // One side picked brings no corner; two sides, the one between them.
+    assert!(ed.undo());
+    let away = Pointer::new(v(99.0, 99.0), TOL);
+    ed.selection = [sides[0]].into();
+    let mut tool = FilletTool::default();
+    tool.handle(Input::Hover(away), &mut ed);
+    assert!(tool.hint().starts_with("Click a corner"), "{}", tool.hint());
+    let next = sides[1..]
+        .iter()
+        .copied()
+        .find(|s| {
+            let ends = |id: EntityId| ed.doc.get(id).and_then(|e| e.kind.ends()).unwrap();
+            ends(*s).iter().any(|p| ends(sides[0]).contains(p))
+        })
+        .unwrap();
+    ed.selection = [sides[0], next].into();
+    let mut tool = FilletTool::default();
+    tool.handle(Input::Hover(away), &mut ed);
+    assert!(tool.hint().starts_with("1 corner "), "{}", tool.hint());
+}
+
+#[test]
+fn fillet_tool_takes_the_corners_of_a_picked_area() {
+    let (mut ed, _) = corners_rect(30.0, 20.0);
+    ed.selection.clear();
+    ed.selected_region = Some(v(15.0, 10.0));
+    assert!(ed.region().is_some());
+    let mut tool = FilletTool::default();
+    type_and_enter(&mut ed, &mut tool, [Some(3.0), None]);
+    assert_eq!(radii(&ed), [3.0; 4]);
+}
+
+#[test]
+fn fillet_tool_seeding_skips_where_a_fillet_meets_its_lines() {
+    let (mut ed, _) = corners_rect(30.0, 20.0);
+    let corner = ed
+        .doc
+        .iter()
+        .find(|(_, e)| e.kind == EntityKind::Point(v(0.0, 0.0)))
+        .map(|(id, _)| id)
+        .unwrap();
+    ed.fillet(corner, 4.0).unwrap();
+    ed.selection = ed
+        .doc
+        .iter()
+        .filter(|(_, e)| !e.kind.is_point())
+        .map(|(id, _)| id)
+        .collect();
+    let mut tool = FilletTool::default();
+    type_and_enter(&mut ed, &mut tool, [Some(2.0), None]);
+    assert_eq!(arcs(&ed.doc), 4, "{:?}", ed.out.notice);
+    let mut r = radii(&ed);
+    r.sort_by(f64::total_cmp);
+    assert_eq!(r, [2.0, 2.0, 2.0, 4.0]);
+}
+
+#[test]
+fn fillet_tool_refuses_all_when_one_corner_has_no_room() {
+    // The short sides are 6: two fillets of 5 don't fit along one.
+    let (mut ed, sides) = corners_rect(30.0, 6.0);
+    ed.selection = sides.iter().copied().collect();
+    let steps = ed.history.undo_label().map(str::to_owned);
+    let mut tool = FilletTool::default();
+    type_and_enter(&mut ed, &mut tool, [Some(5.0), None]);
+    assert_eq!(arcs(&ed.doc), 0);
+    assert_eq!(ed.history.undo_label().map(str::to_owned), steps, "no step");
+    let notice = ed.out.notice.take().unwrap();
+    assert!(notice.contains("the corner marked"), "{notice}");
+    assert!(
+        notice.contains("(R 2.950 mm fits every corner)"),
+        "{notice}"
+    );
+    let id =
+        |w: &str| w.len() > 1 && w.starts_with('e') && w[1..].bytes().all(|c| c.is_ascii_digit());
+    assert!(!notice.split(' ').any(id), "no ids: {notice}");
+    // The corner and its two sides are lit.
+    assert_eq!(ed.highlight.len(), 3);
+    // The size it says fits does.
+    type_and_enter(&mut ed, &mut tool, [Some(2.95), None]);
+    assert_eq!(radii(&ed), [2.95; 4], "{:?}", ed.out.notice);
+    assert!(ed.highlight.is_empty());
+
+    // One corner alone: no id there either, and its size.
+    let (mut ed, _) = corners_rect(30.0, 6.0);
+    let mut tool = FilletTool::default();
+    click(&mut ed, &mut tool, v(0.0, 0.0));
+    type_and_enter(&mut ed, &mut tool, [Some(9.0), None]);
+    let notice = ed.out.notice.take().unwrap();
+    assert!(
+        notice.starts_with("Fillet: the radius is too large"),
+        "{notice}"
+    );
+    assert!(notice.contains("(R 5.900 mm fits)"), "{notice}");
+}
+
+#[test]
+fn fillet_tool_drag_largest_is_the_tightest_corners_room() {
+    let (mut ed, sides) = corners_rect(30.0, 6.0);
+    ed.selection = sides.iter().copied().collect();
+    let mut tool = FilletTool::default();
+    click(&mut ed, &mut tool, v(0.0, 0.0));
+    assert!(tool.is_modal());
+    let mut far = ptr(&ed, &tool, v(-40.0, -40.0));
+    far.alt = true;
+    tool.handle(Input::Hover(far), &mut ed);
+    // Each short side shared by two corners: 3 apiece, not the 6 each has alone.
+    let size = previewed_radius(&tool, &ed);
+    assert!(size < 3.0 && size > 2.99, "{size}");
+    tool.handle(Input::Click(far, Modifiers::default()), &mut ed);
+    assert_eq!(arcs(&ed.doc), 4, "{:?}", ed.out.notice);
+}
+
+#[test]
+fn fillet_tool_set_of_arc_corners_applies_at_the_drag_cap() {
+    // A D: a line and a half circle over it, meeting square at both ends.
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let a = ed.doc.add_point(v(0.0, 0.0));
+    let b = ed.doc.add_point(v(20.0, 0.0));
+    let c = ed.doc.add_point(v(10.0, 0.0));
+    let line = ed.doc.add_line(a, b).unwrap();
+    let arc = ed.doc.add_arc(c, b, a).unwrap();
+    ed.commit("D");
+    ed.selection = [line, arc].into();
+    let mut tool = FilletTool::default();
+    click(&mut ed, &mut tool, v(0.0, 0.0));
+    assert!(tool.hint().contains("2 fillets"), "{}", tool.hint());
+    let mut far = ptr(&ed, &tool, v(5.0, 40.0));
+    far.alt = true;
+    tool.handle(Input::Hover(far), &mut ed);
+    let size = previewed_radius(&tool, &ed);
+    assert!(size > 1.0, "{size}");
+    tool.handle(Input::Click(far, Modifiers::default()), &mut ed);
+    assert_eq!(radii(&ed).len(), 3, "{:?}", ed.out.notice);
+}
+
+#[test]
+fn fillet_tool_set_sharing_a_short_arc_applies_at_the_drag_cap() {
+    // Two lines up from the ends of a short arc: both corners eat into the arc.
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let p = ed.doc.add_point(v(0.0, 0.0));
+    let q = ed.doc.add_point(v(2.0, 0.0));
+    let c = ed.doc.add_point(v(1.0, -1.0));
+    let (p2, q2) = (
+        ed.doc.add_point(v(0.0, 20.0)),
+        ed.doc.add_point(v(2.0, 20.0)),
+    );
+    let arc = ed.doc.add_arc(c, q, p).unwrap();
+    let l1 = ed.doc.add_line(p, p2).unwrap();
+    let l2 = ed.doc.add_line(q, q2).unwrap();
+    ed.commit("U");
+    ed.selection = [arc, l1, l2].into();
+    let mut tool = FilletTool::default();
+    click(&mut ed, &mut tool, v(0.0, 0.0));
+    assert!(tool.hint().contains("2 fillets"), "{}", tool.hint());
+    let mut far = ptr(&ed, &tool, v(-30.0, 40.0));
+    far.alt = true;
+    tool.handle(Input::Hover(far), &mut ed);
+    tool.handle(Input::Click(far, Modifiers::default()), &mut ed);
+    assert_eq!(radii(&ed).len(), 3, "{:?}", ed.out.notice);
+}
+
+#[test]
+fn esc_takes_the_clicked_corner_then_clears_the_set() {
+    let (mut ed, _) = corners_rect(30.0, 20.0);
+    let mut tool = FilletTool::default();
+    shift_click(&mut ed, &mut tool, v(0.0, 0.0));
+    shift_click(&mut ed, &mut tool, v(30.0, 0.0));
+    // Shift+click again takes one out.
+    shift_click(&mut ed, &mut tool, v(30.0, 0.0));
+    assert!(tool.hint().starts_with("1 corner "), "{}", tool.hint());
+    click(&mut ed, &mut tool, v(30.0, 20.0));
+    assert!(tool.hint().contains("2 fillets"), "{}", tool.hint());
+    // Esc: the sizing, and the corner its click added.
+    assert!(tool.cancel(&mut ed));
+    assert!(tool.hint().starts_with("1 corner "), "{}", tool.hint());
+    // Esc: the set.
+    assert!(tool.cancel(&mut ed));
+    assert!(tool.hint().starts_with("Click a corner"), "{}", tool.hint());
+    assert!(
+        !tool.cancel(&mut ed),
+        "then nothing (the app goes back to Select)"
+    );
+    assert_eq!(arcs(&ed.doc), 0);
+}
+
+#[test]
+fn a_corner_undone_away_leaves_the_set() {
+    // Three sides in one step, the fourth (closing two corners) in the next.
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let p = [v(0.0, 0.0), v(30.0, 0.0), v(30.0, 20.0), v(0.0, 20.0)].map(|q| ed.doc.add_point(q));
+    for w in p.windows(2) {
+        ed.doc.add_line(w[0], w[1]).unwrap();
+    }
+    ed.commit("Three sides");
+    ed.doc.begin();
+    ed.doc.add_line(p[3], p[0]).unwrap();
+    ed.commit("Fourth side");
+    let mut tool = FilletTool::default();
+    for at in [v(0.0, 0.0), v(30.0, 0.0), v(30.0, 20.0), v(0.0, 20.0)] {
+        shift_click(&mut ed, &mut tool, at);
+    }
+    assert!(tool.hint().starts_with("4 corners"), "{}", tool.hint());
+    assert!(ed.undo());
+    type_and_enter(&mut ed, &mut tool, [Some(2.0), None]);
+    assert_eq!(radii(&ed), [2.0; 2], "{:?}", ed.out.notice);
+    assert!(ed.out.notice.is_none());
+}
+
+#[test]
+fn chamfer_tool_cuts_several_shift_clicked_corners_in_one_undo() {
+    let (mut ed, _) = corners_rect(30.0, 20.0);
+    let mut tool = ChamferTool::default();
+    for at in [v(0.0, 0.0), v(30.0, 0.0), v(30.0, 20.0)] {
+        shift_click(&mut ed, &mut tool, at);
+    }
+    click(&mut ed, &mut tool, v(0.0, 20.0));
+    assert!(tool.hint().contains("4 chamfers"), "{}", tool.hint());
+    type_and_enter(&mut ed, &mut tool, [Some(2.0), None]);
+    assert_eq!(lines(&ed.doc), 8, "{:?}", ed.out.notice);
+    assert!(ed.undo());
+    assert_eq!((lines(&ed.doc), points(&ed.doc)), (4, 4));
+}
+
+#[test]
+fn chamfer_tool_takes_every_corner_of_a_picked_shape() {
+    let (mut ed, sides) = corners_rect(30.0, 20.0);
+    ed.selection = sides.iter().copied().collect();
+    let mut tool = ChamferTool::default();
+    type_and_enter(&mut ed, &mut tool, [Some(3.0), None]);
+    assert_eq!(lines(&ed.doc), 8, "{:?}", ed.out.notice);
+}
+
+#[test]
+fn chamfer_tool_refuses_all_when_one_corner_has_no_room() {
+    let (mut ed, sides) = corners_rect(30.0, 6.0);
+    ed.selection = sides.iter().copied().collect();
+    let mut tool = ChamferTool::default();
+    type_and_enter(&mut ed, &mut tool, [Some(4.0), None]);
+    assert_eq!(lines(&ed.doc), 4);
+    let notice = ed.out.notice.take().unwrap();
+    assert!(notice.contains("the corner marked"), "{notice}");
+    assert!(notice.contains("(2.950 mm fits every corner)"), "{notice}");
+    assert_eq!(ed.highlight.len(), 3);
+}
+
+#[test]
+fn chamfer_tool_takes_one_distance_for_a_set() {
+    let (mut ed, sides) = corners_rect(30.0, 20.0);
+    ed.selection = sides.iter().copied().collect();
+    let mut tool = ChamferTool::default();
+    // Which line the first distance goes along is only clear at one corner.
+    type_and_enter(&mut ed, &mut tool, [Some(2.0), Some(3.0)]);
+    assert_eq!(lines(&ed.doc), 4);
+    assert_eq!(
+        ed.out.notice.take().as_deref(),
+        Some("Chamfer: two distances work on one corner at a time")
+    );
+    // The same distance twice is one distance.
+    type_and_enter(&mut ed, &mut tool, [Some(2.0), Some(2.0)]);
+    assert_eq!(lines(&ed.doc), 8, "{:?}", ed.out.notice);
+    // One corner takes two.
+    assert!(ed.undo());
+    ed.selection.clear();
+    let mut tool = ChamferTool::default();
+    click(&mut ed, &mut tool, v(0.0, 0.0));
+    type_and_enter(&mut ed, &mut tool, [Some(2.0), Some(3.0)]);
+    assert_eq!(lines(&ed.doc), 5, "{:?}", ed.out.notice);
+}
+
+// ---- drift-releases#25: a typed distance along a mouse drag ----
+
+fn drag_from(ed: &mut Editor, tool: &mut SelectTool, at: DVec2) {
+    let p = ptr(ed, tool, at);
+    tool.handle(Input::DragStart(p, Modifiers::default()), ed);
+}
+
+fn drag_to(ed: &mut Editor, tool: &mut SelectTool, at: DVec2) {
+    let p = ptr(ed, tool, at);
+    tool.handle(Input::Drag(p), ed);
+}
+
+#[test]
+fn mouse_drag_takes_a_typed_distance_along_the_drag() {
+    let (mut ed, pts) = grab_fixture();
+    let mut tool = SelectTool::default();
+    drag_from(&mut ed, &mut tool, v(5.0, 0.0));
+    assert!(
+        tool.fields().is_empty(),
+        "nothing to type on the base point"
+    );
+    assert!(
+        tool.hint().starts_with("Moving selection"),
+        "{}",
+        tool.hint()
+    );
+    drag_to(&mut ed, &mut tool, v(8.0, 4.0));
+    assert_eq!(tool.fields(), ["Distance"]);
+    assert!(
+        tool.hint()
+            .starts_with("Moving · 5.000 mm · type a distance"),
+        "{}",
+        tool.hint()
+    );
+    tool.set_typed([Some(10.0), None]);
+    drag_to(&mut ed, &mut tool, v(8.0, 4.0));
+    assert!(
+        tool.hint().starts_with("Moving · 10.000 mm typed"),
+        "{}",
+        tool.hint()
+    );
+    let p = ptr(&ed, &tool, v(8.0, 4.0));
+    tool.commit_typed(&p, &mut ed);
+    let [a, b] = ends(&ed, pts);
+    assert!(
+        a.distance(v(6.0, 8.0)) < 1e-9 && b.distance(v(16.0, 8.0)) < 1e-9,
+        "{a} {b}"
+    );
+    assert!(ed.undo());
+    assert_eq!(ends(&ed, pts), [v(0.0, 0.0), v(10.0, 0.0)]);
+}
+
+#[test]
+fn mouse_drag_typed_distance_can_go_back_through_the_base() {
+    let (mut ed, pts) = grab_fixture();
+    let mut tool = SelectTool::default();
+    drag_from(&mut ed, &mut tool, v(5.0, 0.0));
+    drag_to(&mut ed, &mut tool, v(8.0, 4.0));
+    tool.set_typed([Some(-10.0), None]);
+    // Back over the base point: still the way it was heading.
+    drag_to(&mut ed, &mut tool, v(5.0, 0.0));
+    assert_eq!(tool.fields(), ["Distance"]);
+    let p = ptr(&ed, &tool, v(5.0, 0.0));
+    tool.handle(Input::DragEnd(p, Modifiers::default()), &mut ed);
+    let [a, _] = ends(&ed, pts);
+    assert!(a.distance(v(-6.0, -8.0)) < 1e-9, "{a}");
+}
+
+#[test]
+fn mouse_drag_axis_lock_still_takes_its_distance() {
+    let (mut ed, pts) = grab_fixture();
+    let mut tool = SelectTool::default();
+    drag_from(&mut ed, &mut tool, v(5.0, 0.0));
+    drag_to(&mut ed, &mut tool, v(8.0, 4.0));
+    assert!(tool.key(ToolKey::X, None, &mut ed));
+    assert_eq!(tool.fields(), ["Distance"]);
+    assert!(
+        tool.hint().contains("X locked: type a distance"),
+        "{}",
+        tool.hint()
+    );
+    tool.set_typed([Some(7.0), None]);
+    drag_to(&mut ed, &mut tool, v(8.0, 4.0));
+    let p = ptr(&ed, &tool, v(8.0, 4.0));
+    tool.commit_typed(&p, &mut ed);
+    assert_eq!(ends(&ed, pts), [v(7.0, 0.0), v(17.0, 0.0)]);
+}
+
+#[test]
+fn a_typed_drag_distance_released_over_a_point_does_not_join() {
+    let drawn = || {
+        let mut ed = Editor::default();
+        let mut line = LineTool::default();
+        click(&mut ed, &mut line, v(0.0, 0.0));
+        click(&mut ed, &mut line, v(10.0, 0.0));
+        line.handle(Input::Finish, &mut ed);
+        click(&mut ed, &mut line, v(20.0, 0.0));
+        click(&mut ed, &mut line, v(20.0, 10.0));
+        ed
+    };
+    let at = |ed: &Editor, q: DVec2| {
+        ed.doc
+            .iter()
+            .any(|(_, e)| matches!(e.kind, EntityKind::Point(p) if p.distance(q) < 1e-9))
+    };
+    // Typed: moved 4 towards the other end, and not joined to it.
+    let mut ed = drawn();
+    let mut sel = SelectTool::default();
+    drag_from(&mut ed, &mut sel, v(20.0, 0.0));
+    drag_to(&mut ed, &mut sel, v(10.3, 0.2));
+    sel.set_typed([Some(4.0), None]);
+    assert!(!sel.hint().contains("join"), "{}", sel.hint());
+    let to = ptr(&ed, &sel, v(10.3, 0.2));
+    assert!(to.snapped_point().is_some());
+    sel.handle(Input::DragEnd(to, Modifiers::default()), &mut ed);
+    assert_eq!(points(&ed.doc), 4, "not joined");
+    assert!(at(&ed, v(16.0, 0.0)));
+    // Nothing typed: joined, as before.
+    let mut ed = drawn();
+    let mut sel = SelectTool::default();
+    drag_from(&mut ed, &mut sel, v(20.0, 0.0));
+    drag_to(&mut ed, &mut sel, v(10.3, 0.2));
+    assert!(
+        sel.hint().contains("drop on another point to join them"),
+        "{}",
+        sel.hint()
+    );
+    let to = ptr(&ed, &sel, v(10.3, 0.2));
+    sel.handle(Input::DragEnd(to, Modifiers::default()), &mut ed);
+    assert_eq!(points(&ed.doc), 3, "joined");
+}

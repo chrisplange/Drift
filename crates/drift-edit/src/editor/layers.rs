@@ -123,7 +123,7 @@ impl Editor {
     }
 
     /// Move what is picked to a layer, one undo step (the right-click menu, the context
-    /// bar, the Layers panel and the shape inspector all do it this way).
+    /// bar, the Layers panel and the Inspector's Layer row all do it this way).
     pub fn move_selection_to_layer(&mut self, layer: LayerId) {
         let what = self.selection_layer_move();
         self.doc.begin();

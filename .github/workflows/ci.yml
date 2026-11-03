@@ -27,8 +27,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets
+      # One crate at a time: built together, the crates' features unify (drift-app turns on
+      # drift-io's `dwg`), which hides warnings a crate gives with its own defaults (#320).
       - name: Clippy (wasm32)
-        run: cargo clippy --target wasm32-unknown-unknown -p drift-core -p drift-geom -p drift-io -p drift-platform -p drift-solver -p drift-render -p drift-edit -p drift-app -p drift-web
+        run: |
+          for crate in drift-core drift-geom drift-io drift-platform drift-solver drift-render drift-edit drift-app drift-web; do
+            cargo clippy --target wasm32-unknown-unknown -p "$crate"
+          done
       - name: Clippy (wasm32, the browser demo)
         run: cargo clippy --target wasm32-unknown-unknown -p drift-web --features demo
 

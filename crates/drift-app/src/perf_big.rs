@@ -645,3 +645,115 @@ fn perf_big_save() {
         std::fs::write(format!("{out}.second"), &second).unwrap();
     }
 }
+
+/// The sheet preview of a big drawing (#301 strokes its fills' edges): the `DRIFT_BIG` file,
+/// imported as geometry, in one view filling a sheet; one preview frame (`paint_drawing` of
+/// the page, then tessellation) at fit to page and zoomed in 8× on the middle, where most
+/// fills are off the page's clip.
+///
+/// `DRIFT_BIG=<file> cargo test --release -p drift-app perf_big_sheet_fills -- --ignored --nocapture`
+#[test]
+#[ignore = "big-drawing probe: needs DRIFT_BIG and a GPU"]
+fn perf_big_sheet_fills() {
+    use drift_core::{Bounds, Sheet, View, Viewport};
+    use drift_draft::page::Prim;
+    use eframe::egui;
+
+    let Ok(path) = std::env::var("DRIFT_BIG") else {
+        return;
+    };
+    let mut h = Harness::builder()
+        .with_size([1600.0, 1000.0])
+        .wgpu()
+        .build_eframe(|cc| crate::DriftApp::new(cc));
+    h.run();
+    let name = std::path::Path::new(&path)
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let bytes = std::fs::read(&path).unwrap();
+    h.state_mut()
+        .begin_import(&name, bytes, Some(ImportAs::Geometry), 0.0);
+    let mut pending = h.state_mut().pending_import.take().expect("pending");
+    h.state_mut().finish_import(&mut pending, 0.0);
+    let model: Bounds = h.state().fit_bounds();
+    let ed = &mut h.state_mut().drawing.editor;
+    let mut sheet = Sheet::new("A-101");
+    let size = sheet.size();
+    let scale = (model.size().x / (size.x - 40.0)).max(model.size().y / (size.y - 40.0));
+    let view = ed.doc.add_view(View::new("Plan", model, scale));
+    sheet.viewports.push(Viewport::new(view, size * 0.5));
+    ed.doc.add_sheet(sheet.clone());
+    let views = ed.doc.placed_views(&sheet);
+    let ctx = egui::Context::default();
+    crate::theme::install_fonts(&ctx);
+    let painter = egui::Painter::new(
+        ctx.clone(),
+        egui::LayerId::background(),
+        egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(1600.0, 1000.0)),
+    );
+    let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
+    let d = crate::output::sheet_drawing(
+        ed,
+        &drift_edit::fills::PatternLibrary::default(),
+        &painter,
+        &sheet,
+        &views,
+        (1, 1),
+    );
+    let exploded = d.exploded();
+    let (mut rings, mut points, mut meshes) = (0, 0, 0);
+    for it in drift_draft::page::without_hatches(&exploded.items) {
+        if let Prim::Fill {
+            rings: r,
+            triangles,
+            ..
+        } = &it.prim
+            && !triangles.is_empty()
+        {
+            meshes += 1;
+            rings += r.len();
+            points += r.iter().map(Vec::len).sum::<usize>();
+        }
+    }
+    println!(
+        "\nsheet: {} items; {meshes} fill meshes, {rings} rings, {points} ring points",
+        d.items.len()
+    );
+    let screen = egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(1600.0, 1000.0));
+    let fit =
+        ((screen.width() - 48.0) / size.x as f32).min((screen.height() - 48.0) / size.y as f32);
+    for (label, zoom) in [("fit to page", fit), ("zoomed in 8x", fit * 8.0)] {
+        let centre = size * 0.5;
+        let to_screen = |p: DVec2| {
+            let v = (p - centre) * f64::from(zoom);
+            Pos2::new(800.0 + v.x as f32, 500.0 - v.y as f32)
+        };
+        let page = egui::Rect::from_two_pos(to_screen(DVec2::ZERO), to_screen(size));
+        let mut times = Vec::new();
+        for _ in 0..9 {
+            let t = Instant::now();
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |ui| {
+                    let p = ui.painter().with_clip_rect(page.intersect(screen));
+                    crate::output::paint_drawing(&p, &d, to_screen, zoom);
+                },
+            );
+            out.textures_delta.clear();
+            std::hint::black_box(ctx.tessellate(out.shapes, out.pixels_per_point));
+            times.push(ms(t));
+        }
+        times.sort_by(f64::total_cmp);
+        println!(
+            "PERF sheet preview frame, {label}: median {:.2} ms, min {:.2}, max {:.2}",
+            times[times.len() / 2],
+            times[0],
+            times[times.len() - 1]
+        );
+    }
+}

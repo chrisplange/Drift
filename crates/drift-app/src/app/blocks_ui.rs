@@ -1,7 +1,7 @@
 //! Blocks in the app: the Blocks tab (library), the inspector for picked copies, and the
 //! block-editing banner.
 
-use drift_core::{BlockId, InstanceId, LayerId, Shape};
+use drift_core::{BlockId, InstanceId, Shape};
 
 use crate::*;
 
@@ -541,10 +541,10 @@ impl DriftApp {
             format!("{} copies", picked.len())
         };
         crate::app::panels::title(ui, Some(ToolKind::Block), &heading, "Block copy");
+        self.inspector_layer_row(ui);
+        let doc = &self.drawing.editor.doc;
         let blocks: Vec<(BlockId, String)> =
             doc.blocks().map(|(id, b)| (id, b.name.clone())).collect();
-        let layers: Vec<(LayerId, String)> =
-            doc.layers().map(|(id, l)| (id, l.name.clone())).collect();
         let units = doc.units();
         let copies = self
             .drawing
@@ -677,32 +677,14 @@ impl DriftApp {
                 ui.checkbox(&mut edited.mirror, "Mirror");
             });
         }
-        theme::row(ui, "Layer", |ui| {
-            let current = layers
-                .iter()
-                .find(|(id, _)| *id == first.layer)
-                .map_or("?".to_owned(), |(_, n)| n.clone());
-            egui::ComboBox::from_id_salt("instance_layer")
-                .selected_text(current)
-                .width(ui.available_width() - 8.0)
-                .show_ui(ui, |ui| {
-                    for (id, n) in &layers {
-                        ui.selectable_value(&mut edited.layer, *id, n);
-                    }
-                });
-        });
+        // (Only a lone copy's placement is edited here; the layer row is at the top.)
         if edited != first {
             self.drawing.editor.doc.begin();
-            if picked.len() == 1 {
-                let _ = self.drawing.editor.doc.set_instance(first_id, edited);
-            } else {
-                for (id, mut i) in picked.clone() {
-                    i.layer = edited.layer;
-                    let _ = self.drawing.editor.doc.set_instance(id, i);
-                }
-            }
+            let _ = self.drawing.editor.doc.set_instance(first_id, edited);
             self.drawing.editor.commit("Edit block copy");
         }
+        let now = ui.input(|i| i.time);
+        self.pattern_panel(ui, now);
         ui.add_space(6.0);
         ui.horizontal_wrapped(|ui| {
             if picked.len() == 1

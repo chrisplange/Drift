@@ -546,6 +546,7 @@ impl DriftApp {
                 format!("{} · on layer {}", t.font.label(), l.name)
             });
         app::panels::title(ui, Some(ToolKind::Text), "Text", &layer);
+        self.inspector_layer_row(ui);
         ui.add_space(4.0);
         let mut words = t.text.clone();
         let rows = words.lines().count().clamp(1, 8);

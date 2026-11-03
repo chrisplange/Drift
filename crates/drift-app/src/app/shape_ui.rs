@@ -69,6 +69,8 @@ impl DriftApp {
             n => (format!("{n} shapes"), String::new()),
         };
         app::panels::title(ui, Some(ToolKind::Rectangle), &name, &detail);
+        // A shape picked whole takes its fill, a fill picked on its own goes alone (#266).
+        self.inspector_layer_row(ui);
         self.group_inspector(ui);
         self.fill_notices(ui, first);
 
@@ -80,8 +82,6 @@ impl DriftApp {
             return true;
         }
 
-        theme::section(ui, "Layer");
-        self.shape_layer_row(ui, &shapes);
         theme::section(ui, "Arrange");
         self.arrange_row(ui);
         if let ([_], Some(shape)) = (
@@ -206,48 +206,6 @@ impl DriftApp {
                 .small()
                 .weak(),
             );
-        }
-    }
-
-    /// The shapes' layer: moving them moves their outlines (with their points) and fills.
-    fn shape_layer_row(&mut self, ui: &mut egui::Ui, shapes: &PickedShapes) {
-        let ed = &self.drawing.editor;
-        let layers: Vec<(drift_core::LayerId, String)> = ed
-            .doc
-            .layers()
-            .map(|(id, l)| (id, l.name.clone()))
-            .collect();
-        let current = shapes
-            .fills
-            .first()
-            .and_then(|f| ed.doc.fill(*f))
-            .map(|f| f.layer);
-        let uniform = shapes
-            .fills
-            .iter()
-            .all(|f| ed.doc.fill(*f).map(|f| f.layer) == current);
-        let text = match current.filter(|_| uniform) {
-            Some(l) => ed.doc.layer(l).map_or("?".into(), |l| l.name.clone()),
-            None => "(mixed)".into(),
-        };
-        let mut target = None;
-        egui::ComboBox::from_id_salt("shape_layer")
-            .selected_text(text)
-            .width(ui.available_width() - 8.0)
-            .show_ui(ui, |ui| {
-                for (id, name) in layers {
-                    if ui
-                        .selectable_label(uniform && Some(id) == current, name)
-                        .clicked()
-                    {
-                        target = Some(id);
-                    }
-                }
-            });
-        // What is picked, as the right-click menu moves it (#266): a shape picked whole
-        // takes its fill, a fill picked on its own goes alone.
-        if let Some(layer) = target {
-            self.drawing.editor.move_selection_to_layer(layer);
         }
     }
 }

@@ -24,6 +24,9 @@ mod docs;
 mod hatch_align;
 /// One way in for drawings: Import…, its presets and dropped files.
 mod import;
+/// The Inspector's first row is the Layer, for every kind of pick (#300).
+#[cfg(not(feature = "demo"))]
+mod inspector_layer;
 /// Alt-click a layer's lock or snap to set the other layers.
 mod layer_toggles;
 /// The live link: assistants editing the open drawing.
@@ -7478,10 +7481,14 @@ fn finding_a_font_keeps_the_menu_open_and_a_pick_closes_it() {
         .click();
     h.run();
     assert!(h.query_by_label("On this computer").is_some(), "open");
-    // Click into "Find a font…" and type: the menu stays open.
+    // Click into "Find a font…" and type: the menu stays open. (The field nearest the menu's
+    // heading: the menu opens above the row when there's no room below.)
+    let heading = h.get_by_label("On this computer").rect().center();
     h.get_all_by_role(Role::TextInput)
-        .filter(|n| n.rect().center().y > row)
-        .min_by(|a, b| a.rect().top().total_cmp(&b.rect().top()))
+        .min_by(|a, b| {
+            let d = |n: &egui_kittest::Node<'_>| n.rect().center().distance(heading);
+            d(a).total_cmp(&d(b))
+        })
         .expect("the find field")
         .click();
     h.run();

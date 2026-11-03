@@ -31,7 +31,16 @@ impl Default for PatternUi {
 }
 
 impl DriftApp {
+    /// The Pattern section, for the picked curves and block copies (#311).
     pub(crate) fn pattern_panel(&mut self, ui: &mut egui::Ui, now: f64) {
+        let instances: Vec<drift_core::InstanceId> = self
+            .drawing
+            .editor
+            .selected_instances
+            .iter()
+            .copied()
+            .filter(|i| self.drawing.editor.doc.instance(*i).is_some())
+            .collect();
         let ids: Vec<drift_core::EntityId> = self
             .drawing
             .editor
@@ -46,7 +55,7 @@ impl DriftApp {
                     .is_some_and(|e| !e.kind.is_point())
             })
             .collect();
-        if ids.is_empty() {
+        if ids.is_empty() && instances.is_empty() {
             return;
         }
         let mut result = None;
@@ -125,7 +134,7 @@ impl DriftApp {
             Some(Ok(PatternRequest::Linear { count, step })) => self
                 .drawing
                 .editor
-                .linear_pattern(&ids, count, step)
+                .linear_pattern_with(&ids, &instances, count, step)
                 .map_err(|e| e.to_string()),
             Some(Ok(PatternRequest::Circular {
                 count,
@@ -134,13 +143,19 @@ impl DriftApp {
             })) => self
                 .drawing
                 .editor
-                .circular_pattern(&ids, count, center, degrees)
+                .circular_pattern_with(&ids, &instances, count, center, degrees)
                 .map_err(|e| e.to_string()),
         };
         match outcome {
-            Ok(created) => {
-                let n = created.len();
-                self.set_status(format!("Pattern: added {n} curves"), false, now);
+            Ok((created, copies)) => {
+                let added = match (created.len(), copies.len()) {
+                    (n, 0) => format!("{n} curves"),
+                    (0, 1) => "1 block copy".to_owned(),
+                    (0, c) => format!("{c} block copies"),
+                    (n, 1) => format!("{n} curves and 1 block copy"),
+                    (n, c) => format!("{n} curves and {c} block copies"),
+                };
+                self.set_status(format!("Pattern: added {added}"), false, now);
             }
             Err(e) => self.set_status(format!("Pattern: {e}"), true, now),
         }

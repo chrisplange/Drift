@@ -37,6 +37,10 @@ fn stroke(pen: &Pen, lts: f64) -> String {
     if !dashes.is_empty() {
         let d: Vec<String> = dashes.iter().map(|v| num(v * lts)).collect();
         let _ = write!(s, " stroke-dasharray=\"{}\"", d.join(" "));
+        // A cropped piece starts its dashes where they were along the whole item (#258).
+        if pen.dash_offset != 0.0 {
+            let _ = write!(s, " stroke-dashoffset=\"{}\"", num(pen.dash_offset));
+        }
     }
     s
 }

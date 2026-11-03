@@ -17,6 +17,10 @@ pub struct Pen {
     pub line_type: LineType,
     /// For an item in a block definition: what it takes from the copy that places it.
     pub by_block: ByBlock,
+    /// How far into its dash pattern the stroke starts (page mm, as the pattern is written):
+    /// a piece of a cropped item carries how far along the whole item it starts (#258), so
+    /// its dashes fall where the whole item's did. 0 for anything uncut.
+    pub dash_offset: f64,
 }
 
 /// The parts of a block item's pen that are its copy's (CAD's "by block"): the pen's own
@@ -37,6 +41,7 @@ impl Pen {
             width,
             line_type: LineType::Continuous,
             by_block: ByBlock::default(),
+            dash_offset: 0.0,
         }
     }
 
@@ -52,6 +57,7 @@ impl Pen {
                 self.line_type
             },
             by_block: ByBlock::default(),
+            dash_offset: self.dash_offset,
         }
     }
 

@@ -102,7 +102,13 @@ fn item_ops(
             .iter()
             .map(|v| n(v * lts * PT_PER_MM))
             .collect();
-        let _ = writeln!(out, "[{}] 0 d", dashes.join(" "));
+        // A cropped piece starts its dashes where they were along the whole item (#258).
+        let phase = if dashes.is_empty() {
+            "0".to_owned()
+        } else {
+            n(pen.dash_offset * PT_PER_MM)
+        };
+        let _ = writeln!(out, "[{}] {phase} d", dashes.join(" "));
     };
     match &item.prim {
         Prim::Line(a, b) => {

@@ -14,7 +14,7 @@ pub struct Palette {
     /// An end point under the pointer: a bright dot, ringed in `selected`.
     pub point_hover: [u8; 4],
     pub selected: [u8; 4],
-    /// The selection's active element: the selection's hue, deeper (hover is the lighter).
+    /// The selection's active element, drawn apart from the rest of the selection.
     pub active: [u8; 4],
     pub preview: [u8; 4],
     /// Geometry that can still move.
@@ -38,7 +38,7 @@ impl Palette {
             hover: [0xff, 0xd2, 0x7a, 0xff],
             point_hover: [0xff, 0xff, 0xff, 0xff],
             selected: [0xf5, 0xa6, 0x23, 0xff],
-            active: [0xff, 0xb0, 0x00, 0xff],
+            active: [0xfb, 0xc9, 0x2b, 0xff],
             preview: [0x5e, 0xd3, 0xa3, 0xff],
             under: [0x5f, 0xa8, 0xf5, 0xff],
             over: [0xff, 0x5d, 0x5d, 0xff],

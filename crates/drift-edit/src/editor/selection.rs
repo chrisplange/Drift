@@ -670,6 +670,19 @@ impl Editor {
         self.commit("Toggle construction");
     }
 
+    /// The active element: the one picked last by a click, while it is still picked (#333).
+    /// A relation added between picked elements keeps it where it can, and the others
+    /// conform to it. None after a box pick, a chain or an area's outline, or a pick that
+    /// takes a whole group, wall or offset.
+    pub fn active(&self) -> Option<EntityId> {
+        self.active.filter(|id| self.selection.contains(id))
+    }
+
+    /// Make `id` the active element (see [`active`](Self::active)); None clears it.
+    pub fn set_active(&mut self, id: Option<EntityId>) {
+        self.active = id;
+    }
+
     /// Select everything the filter lets through: every curve and standalone point, and (with
     /// their kinds on) the copies of blocks, sketch text and fills. Nothing hidden or locked.
     /// While a group or block is open for editing, only what's in it: its curves, points,

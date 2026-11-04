@@ -35,6 +35,8 @@ mod options;
 mod picking;
 /// The tool rail: everything in view, families and their flyouts, Move and Rotate.
 mod rail;
+/// Relations between picked elements: the one picked last stays.
+mod relations;
 /// Picking and moving: filters, G from a midpoint, axis locks, hidden areas, layer toggles.
 mod selection;
 /// Sheets: a sheet, its title block and logo, its view, print and export.

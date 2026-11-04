@@ -714,7 +714,8 @@ impl Tool for SelectTool {
             Some(SelectDrag::Scale { .. }) => "Scaling: dimensions hold · Shift: keep the \
                  shape · Ctrl: about the middle · Alt: scale the dimensions too · Esc to cancel"
                 .into(),
-            None => "Click to select · Shift adds · Ctrl toggles · drag to move or box-select · Tab: chain"
+            None => "Click to select · Shift adds (the last picked is active) · Ctrl toggles · \
+                 drag to move or box-select · Tab: chain"
                 .into(),
         }
     }
@@ -797,6 +798,10 @@ impl Tool for SelectTool {
                 }
             }
             Input::Click(p, mods) => {
+                // A plain click picks afresh: the active element is the one it picks, if any.
+                if !mods.shift && !mods.command {
+                    ed.set_active(None);
+                }
                 // A chain highlighted by Tab: the click picks it (Shift adds it, Ctrl takes
                 // it away).
                 if let Some((_, set)) = ed.chain_preview.take()
@@ -986,14 +991,18 @@ impl Tool for SelectTool {
                             ed.selection.retain(|e| !set.contains(e));
                         } else {
                             ed.selection.extend(set);
+                            ed.set_active(active_pick(ed, id));
                         }
                     }
+                    // (Shift-click of an element already picked makes it the active one.)
                     Some(id) if mods.shift => {
                         let set = ed.pick_set(id);
                         ed.selection.extend(set);
+                        ed.set_active(active_pick(ed, id));
                     }
                     Some(id) => {
                         ed.selection = ed.pick_set(id);
+                        ed.set_active(active_pick(ed, id));
                     }
                     // Inside a closed area (with no fill): its outline curves.
                     None => {
@@ -1086,6 +1095,7 @@ impl Tool for SelectTool {
                             }
                             let set = ed.pick_set(id);
                             ed.selection.extend(set);
+                            ed.set_active(active_pick(ed, id));
                         }
                         // An opening slides along its wall.
                         if let Some(o) = ed.opening_of(id)
@@ -1361,6 +1371,8 @@ impl Tool for SelectTool {
                             .collect()
                     };
                     let add = mods.shift || mods.command;
+                    // A box picks no active element (none was picked last).
+                    ed.set_active(None);
                     if !add {
                         ed.selection.clear();
                         ed.selected_instances.clear();
@@ -1566,4 +1578,11 @@ impl Tool for SelectTool {
         };
         moving.iter().any(|(i, _)| *i == id)
     }
+}
+
+/// The active element a click on `id` makes (#333): `id` itself, unless the click picks a
+/// whole group, wall, opening or offset.
+fn active_pick(ed: &Editor, id: EntityId) -> Option<EntityId> {
+    let set = ed.pick_set(id);
+    (set.len() == 1 && set.contains(&id)).then_some(id)
 }

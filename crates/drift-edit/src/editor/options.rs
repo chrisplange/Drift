@@ -305,6 +305,39 @@ impl Editor {
         }
     }
 
+    /// What the active element means for a relation between what is picked, for the hint
+    /// under the relation options (#333): none while fewer than two things are picked.
+    pub fn active_hint(&self) -> Option<&'static str> {
+        if self.selection.len() + self.selected_midpoints.len() < 2 {
+            return None;
+        }
+        Some(if self.active().is_some() {
+            "The one picked last (drawn heavier) stays; the others conform to it"
+        } else {
+            "No active element: they all move. Shift-click one to keep it"
+        })
+    }
+
+    /// What the relation labelled `label` does with the active element, for its tooltip (see
+    /// [`active_hint`](Self::active_hint)).
+    pub fn relation_role(&self, label: &str) -> Option<&'static str> {
+        self.active_hint()?;
+        if self.active().is_none() {
+            return Some("They all move");
+        }
+        Some(match label {
+            "Perpendicular" | "Parallel" | "Collinear" | "Tangent" => {
+                "The others turn to the active one"
+            }
+            "Coincident" | "Midpoint" | "On curve" | "Symmetric" => {
+                "The others move to the active one"
+            }
+            "Equal" | "Coradial" => "The others take the active one's size",
+            "Concentric" => "The others move onto the active one's centre",
+            _ => return None,
+        })
+    }
+
     /// Dimensions that fit the current selection, at the geometry's current values.
     pub fn dimension_options(&self) -> Vec<ConstraintOption> {
         let sel = self.classify_selection();

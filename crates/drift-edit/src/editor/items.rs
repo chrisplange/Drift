@@ -73,6 +73,7 @@ impl Editor {
             hidden,
             shown_ends,
             selected: self.selection.iter().copied().collect(),
+            active: self.active(),
             picked_walls,
             hovered_wall,
             hovered_offset,
@@ -226,7 +227,9 @@ impl Editor {
             Some(drift_core::Owner::Offset(x)) => Some(x),
             _ => None,
         };
-        let emphasis = if look.selected.contains(&id)
+        let emphasis = if look.active == Some(id) {
+            Emphasis::Active
+        } else if look.selected.contains(&id)
             || wall.is_some_and(|w| look.picked_walls.contains(&w))
         {
             Emphasis::Selected
@@ -319,6 +322,8 @@ pub(crate) struct ItemLook {
     shown_ends: Option<HashSet<EntityId>>,
     /// The editor's selection, for the same lookup.
     selected: HashSet<EntityId>,
+    /// Its active element (see [`Editor::active`]).
+    active: Option<EntityId>,
     picked_walls: BTreeSet<drift_core::WallId>,
     hovered_wall: Option<drift_core::WallId>,
     hovered_offset: Option<drift_core::OffsetId>,

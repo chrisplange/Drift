@@ -1096,7 +1096,13 @@ impl DriftApp {
             }
             ui.menu_button(title, |ui| {
                 for option in &options {
-                    if ui.button(option.label).clicked() {
+                    let mut response = ui.button(option.label);
+                    if !is_dimension
+                        && let Some(role) = self.drawing.editor.relation_role(option.label)
+                    {
+                        response = response.on_hover_text(role);
+                    }
+                    if response.clicked() {
                         if let Some(id) = self.apply_constraint_option(option, is_dimension, now) {
                             self.open_dimension_edit(id);
                         }

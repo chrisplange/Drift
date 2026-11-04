@@ -504,6 +504,8 @@ impl Builder<'_> {
             Emphasis::Normal => (color, half_width, dash),
             Emphasis::Hovered => (p.hover, half_width + 0.5 * ppp, dash),
             Emphasis::Selected => (p.selected, half_width + 0.5 * ppp, dash),
+            // (1.5 px wider than the rest of the selection.)
+            Emphasis::Active => (p.active, half_width + 1.25 * ppp, dash),
             Emphasis::Preview => (p.preview, half_width, dash),
             Emphasis::Remove => (p.over, half_width + 0.7 * ppp, [5.0 * ppp, 3.0 * ppp, 0.0]),
         }
@@ -527,6 +529,7 @@ impl Builder<'_> {
             Emphasis::Normal => (color, radius),
             Emphasis::Hovered => (p.point_hover, 4.0 * ppp),
             Emphasis::Selected => (p.selected, 3.5 * ppp),
+            Emphasis::Active => (p.active, 4.25 * ppp),
             Emphasis::Preview => (p.preview, radius),
             Emphasis::Remove => (p.over, radius),
         }

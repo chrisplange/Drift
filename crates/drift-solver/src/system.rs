@@ -80,6 +80,14 @@ impl Shape {
         }
     }
 
+    /// How long the shape is at `value`, over its parameters `k`: an arc's radius, a
+    /// line's length (a direction's offset is a length too: one end off the line through
+    /// the other).
+    pub fn length(k: &[usize; 4], value: impl Fn(usize) -> f64) -> f64 {
+        let [ax, ay, bx, by] = k.map(value);
+        (bx - ax).hypot(by - ay)
+    }
+
     /// How far off the shape is at `value`, as a distance (a direction's: how far one end is
     /// off the line through the other), and its gradient over [`params`](Self::params), a
     /// unit vector per end. `None` where the shape has collapsed (no distance to keep).

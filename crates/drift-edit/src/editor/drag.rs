@@ -183,6 +183,8 @@ struct DragPart {
     /// For a move of curves in a part nothing pins, the curves not moved that relations hold
     /// its dragged points on (see [`DragFrame::holding`]).
     holding: Vec<EntityId>,
+    /// A move of curves in a part nothing pins (see [`DragFrame::unpinned`]).
+    unpinned: bool,
 }
 
 /// The parts of a drag that go exactly where they are moved ([`DragPart::moves_whole`]), as
@@ -224,10 +226,26 @@ struct DragFrame<'a> {
     /// carried along whole when a step can't be made or doesn't land otherwise (see
     /// `Editor::carry_holding`). Empty for a point dragged, or a part something pins.
     holding: &'a [EntityId],
+    /// A move of curves in a part nothing pins: it can always land, every kept radius and
+    /// length met (moving the whole part along does it), so a step that can't be made, or
+    /// doesn't land, is the solve failing. Such a step is tried once more with the solver's
+    /// fold steps (see `Editor::drag_frame`).
+    unpinned: bool,
+    /// The steps being solved with the fold steps ([`drift_solver::SolveOptions::fold`]).
+    fold: bool,
     /// Solves this frame may still run.
     solves_left: u32,
     /// The work it may still spend on solves that don't finish ([`UNFINISHED_WORK`]).
     unfinished_left: usize,
+    /// The same two for the tries with the fold steps, all of a frame's together (they run
+    /// in place of the two above while they last). A try begins only while a solve that
+    /// runs to the solver's cap still fits in what is left of the work, so a part of more
+    /// than [`UNFINISHED_WORK`] over that cap (64 curves and points) is never tried with
+    /// them, and a frame that can't be made costs at most that much more than it did: a
+    /// frame of a part runs at most [`DRAG_SOLVES`] solves of either kind, so at most twice
+    /// that in all.
+    fold_solves_left: u32,
+    fold_unfinished_left: usize,
     /// The most its solves have wandered (see `SolveReport::wandered`).
     wandered: usize,
     /// A step pushed curves along.
@@ -250,7 +268,10 @@ impl Editor {
     /// Where nothing pins the part moved (no fixed point, nothing locked, generated or out of
     /// the group being edited), a move of curves that can't be made, or that leaves what it
     /// drags off where it was put, carries along whole the curves its dragged points are held
-    /// on (on a curve, at a line's middle, at a corner), and keeps that if it lands.
+    /// on (on a curve, at a line's middle, at a corner), and keeps that if it lands. One that
+    /// still can't, in a part of up to 64 curves and points, is tried once more with the
+    /// solver's fold steps ([`drift_solver::SolveOptions::fold`]), kept only if it lands with
+    /// every kept radius and length met: a drag the kept sizes can't follow still stops.
     ///
     /// Successive calls in one transaction, on the same geometry, are one drag. Each solves
     /// from the geometry as the drag found it, moved by the whole way so far, keeping its
@@ -314,6 +335,7 @@ impl Editor {
         let mut pushed = false;
         self.drag_solves = 0;
         self.drag_unfinished = 0;
+        self.drag_folds = 0;
         self.drag_solved = 0;
         // What goes exactly where it is moved goes in one move, from where the drag found
         // it (as `Document::translate` would move it: arcs' ends kept on their circles).
@@ -348,15 +370,19 @@ impl Editor {
                 lowered_lines: &part.lowered_lines,
                 touching: &part.touching,
                 holding: &part.holding,
+                unpinned: part.unpinned,
+                fold: false,
                 solves_left: DRAG_SOLVES,
                 unfinished_left: UNFINISHED_WORK,
+                fold_solves_left: DRAG_SOLVES,
+                fold_unfinished_left: UNFINISHED_WORK,
                 wandered: 0,
                 pushed: false,
             };
             // (Every frame tries one solve first, even where the last one wandered: skipping
             // it would make where the drag is depend on the way there.)
             ok = self.drag_from_start(&mut frame, to, &part.start);
-            self.drag_solves += DRAG_SOLVES - frame.solves_left;
+            self.drag_solves += 2 * DRAG_SOLVES - frame.solves_left - frame.fold_solves_left;
             pushed |= frame.pushed;
             if !ok {
                 break;
@@ -457,6 +483,7 @@ impl Editor {
                 lowered_lines: Vec::new(),
                 touching: Rc::default(),
                 holding: Vec::new(),
+                unpinned: false,
             })
             .collect();
         for id in &reasons {
@@ -575,6 +602,7 @@ impl Editor {
                 if pinned {
                     continue;
                 }
+                part.unpinned = true;
                 let dragged =
                     |p: EntityId| Param::point(p).iter().all(|q| part.dragged_set.contains(q));
                 let mut holding: Vec<EntityId> = part
@@ -800,8 +828,62 @@ impl Editor {
         before
     }
 
-    /// One call's worth of [`drag`](Self::drag), keeping what `before` says to.
+    /// One call's worth of [`drag`](Self::drag), keeping what `before` says to. A move of
+    /// curves in a part nothing pins that today's steps can't make, or that doesn't land, is
+    /// tried once more from `before` with the solver's fold steps (a kept radius or length
+    /// stalled at a fold, rows with a double root: #282): the same steps, carries and all,
+    /// each solve finishing only where it meets everything. It is kept only if it goes and
+    /// lands; otherwise the frame is exactly as today's steps left it.
     fn drag_frame(&mut self, frame: &mut DragFrame<'_>, delta: DVec2, before: &Geometry) -> bool {
+        let pushed = frame.pushed;
+        let ok = self.drag_frame_steps(frame, delta, before);
+        if frame.fold
+            || !frame.unpinned
+            || self.drag_no_fold
+            || frame.fold_solves_left == 0
+            || frame.scope.len() * drift_solver::MAX_ITERATIONS > frame.fold_unfinished_left
+            || (ok && self.landed(frame, delta, before))
+        {
+            return ok;
+        }
+        // What today's steps leave, to put back if the try fails. A kept try's geometry is
+        // its own solves' alone, so what it pushed is its, from where the frame began. How far
+        // the frame's solves wandered stays what today's steps made it either way: the try
+        // never changes which way `drag_from_start` goes on (a whole move that wandered is
+        // taken again in steps, and one that didn't is kept), so a frame that goes today
+        // isn't sent down a stepped path today's steps never took.
+        let ended = self.geometry_of(frame.scope);
+        let pushed = std::mem::replace(&mut frame.pushed, pushed);
+        let wandered = frame.wandered;
+        self.restore_geometry(before);
+        self.drag_folds += 1;
+        std::mem::swap(&mut frame.solves_left, &mut frame.fold_solves_left);
+        std::mem::swap(&mut frame.unfinished_left, &mut frame.fold_unfinished_left);
+        frame.fold = true;
+        let folded =
+            self.drag_frame_steps(frame, delta, before) && self.landed(frame, delta, before);
+        frame.fold = false;
+        frame.wandered = wandered;
+        std::mem::swap(&mut frame.solves_left, &mut frame.fold_solves_left);
+        std::mem::swap(&mut frame.unfinished_left, &mut frame.fold_unfinished_left);
+        if folded {
+            return true;
+        }
+        self.restore_geometry(&ended);
+        self.index
+            .update_moved(&self.doc, frame.scope.iter().copied());
+        frame.pushed = pushed;
+        ok
+    }
+
+    /// [`drag_frame`](Self::drag_frame)'s steps, solved with the fold steps or not as
+    /// `frame.fold` says.
+    fn drag_frame_steps(
+        &mut self,
+        frame: &mut DragFrame<'_>,
+        delta: DVec2,
+        before: &Geometry,
+    ) -> bool {
         // Free geometry (no relations, nothing pinned, no arcs keeping their shape) goes exactly
         // where it is moved, as in a drawing program: no solve to nudge it. Unless the move
         // stretches a line hanging from moved curves, which a solve carries along instead.
@@ -1013,6 +1095,7 @@ impl Editor {
                 lowering: frame.lowering.clone(),
                 relations: Some(frame.relations.clone()),
                 touching: Some(frame.touching.clone()),
+                fold: frame.fold,
                 ..Default::default()
             },
         );

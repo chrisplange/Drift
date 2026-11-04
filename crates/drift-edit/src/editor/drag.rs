@@ -226,6 +226,9 @@ struct DragFrame<'a> {
     /// carried along whole when a step can't be made or doesn't land otherwise (see
     /// `Editor::carry_holding`). Empty for a point dragged, or a part something pins.
     holding: &'a [EntityId],
+    /// The circles' radii as the drag began, for judging whether a step crushed one (as
+    /// `Geometry::radii` is for arcs; `Geometry::circles` follows each step, to restore it).
+    start_circles: &'a [(EntityId, f64)],
     /// A move of curves in a part nothing pins: it can always land, every kept radius and
     /// length met (moving the whole part along does it), so a step that can't be made, or
     /// doesn't land, is the solve failing. Such a step is tried once more with the solver's
@@ -357,6 +360,7 @@ impl Editor {
         }
         for part in parts.iter().filter(|p| !p.moves_whole) {
             let mut frame = DragFrame {
+                start_circles: &part.start.circles,
                 ids: &part.ids,
                 dragged: &part.dragged,
                 dragged_set: &part.dragged_set,
@@ -1022,8 +1026,14 @@ impl Editor {
         if frame.solves_left == 0 {
             return false;
         }
-        let orientation =
-            drift_solver::Orientation::among(&self.doc, Some(frame.scope), frame.constraints);
+        // (Crushed is judged against the drag's starting radii, which `before` carries.)
+        let orientation = drift_solver::Orientation::among_kept(
+            &self.doc,
+            Some(frame.scope),
+            frame.constraints,
+            &before.radii,
+            frame.start_circles,
+        );
         // Lines carried along at their length point the same way after the step: keeping a
         // length holds just as well with the line turned round (or let go through zero),
         // which a big step can land on as the nearer fit. A line with a dragged end is

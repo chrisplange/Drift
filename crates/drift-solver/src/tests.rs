@@ -1698,3 +1698,165 @@ fn a_row_with_no_gradient_left_that_cannot_hold_is_still_a_conflict() {
     let now: Vec<DVec2> = p.iter().map(|&q| doc.point(q).unwrap()).collect();
     assert_eq!(now, found);
 }
+
+/// An arc about `c` of radius `r` from `from` to `to` (degrees, counter-clockwise), with its
+/// three points.
+fn arc_at(doc: &mut Document, c: DVec2, r: f64, from: f64, to: f64) -> (EntityId, [EntityId; 3]) {
+    let at = |deg: f64| c + r * DVec2::new(deg.to_radians().cos(), deg.to_radians().sin());
+    let pc = doc.add_point(c);
+    let ps = doc.add_point(at(from));
+    let pe = doc.add_point(at(to));
+    (doc.add_arc(pc, ps, pe).unwrap(), [pc, ps, pe])
+}
+
+/// #280: an arc a step closes on itself (its ends together) counts as turned whichever way
+/// round-off leaves it. Read as a sweep, a 270° arc whose end lands a hair past its start
+/// sweeps ~0 (turned) and one a hair short sweeps ~360°, exactly the quarter turn
+/// `SWEEP_JUMP` allows (not turned): the same drag was halved at one size and not another.
+#[test]
+fn an_arc_closed_on_itself_counts_as_turned_either_side_of_round_off() {
+    for side in [1.0, -1.0] {
+        let mut doc = Document::new();
+        let (arc, [_, _, e]) = arc_at(&mut doc, DVec2::ZERO, 8.0, 0.0, -90.0);
+        let before = Orientation::of(&doc, None);
+        doc.set_point(e, v(8.0, side * 1e-13)).unwrap();
+        assert_eq!(
+            before.turned_curves(&doc),
+            vec![arc],
+            "end on the {side} side of the start"
+        );
+    }
+}
+
+/// #280: an arc a step crushes to a point counts as turned, at any size and anywhere (its
+/// sweep, the angle between two vectors of next to no length, says nothing). Crushed evenly
+/// towards its centre, its sweep reads unchanged.
+#[test]
+fn an_arc_crushed_to_a_point_counts_as_turned_at_any_size() {
+    for scale in [1.0, 0.01, 100.0] {
+        for c in [DVec2::ZERO, v(1e5, 1e5)] {
+            let mut doc = Document::new();
+            let (arc, [pc, ps, pe]) = arc_at(&mut doc, c, 8.0 * scale, 0.0, 90.0);
+            let before = Orientation::of(&doc, None);
+            for p in [ps, pe] {
+                let at = doc.point(p).unwrap();
+                doc.set_point(p, c + (at - c) * 1e-9).unwrap();
+            }
+            assert_eq!(doc.point(pc).unwrap(), c);
+            assert_eq!(
+                before.turned_curves(&doc),
+                vec![arc],
+                "at {scale}× about {c}"
+            );
+        }
+    }
+}
+
+/// #280: a small real arc far from the origin is judged by its sweep like any other: a small
+/// change is no turn, and turning it inside out is. (Its radius is next to nothing against
+/// its coordinates, but not against its own sketch; nothing F1 decides depends on where a
+/// drawing is.)
+#[test]
+fn a_small_arc_far_out_is_judged_by_its_sweep() {
+    for far in [1e6, 1e9] {
+        let c = v(far, far);
+        let mut doc = Document::new();
+        let (arc, [_, _, pe]) = arc_at(&mut doc, c, 0.5, 0.0, 90.0);
+        let before = Orientation::of(&doc, None);
+        let at = |deg: f64| c + 0.5 * DVec2::new(deg.to_radians().cos(), deg.to_radians().sin());
+        doc.set_point(pe, at(100.0)).unwrap();
+        assert!(before.turned_curves(&doc).is_empty(), "at {far}");
+        doc.set_point(pe, at(270.0)).unwrap();
+        assert_eq!(before.turned_curves(&doc), vec![arc], "at {far}");
+    }
+}
+
+/// #280: an arc a drag already crushed (against the radius it had as the drag began) has no
+/// way round to keep where the next halved step begins and isn't judged, nor is a tangency to
+/// it, at the origin or far from it alike: its sweep and the side its centre is on are
+/// round-off, and swing at any touch.
+#[test]
+fn an_arc_already_crushed_is_not_judged_at_the_origin_or_far_out() {
+    for c in [DVec2::ZERO, v(1e5, 1e5)] {
+        let mut doc = Document::new();
+        let a = doc.add_point(c + v(-20.0, 5.0));
+        let b = doc.add_point(c + v(20.0, 5.0));
+        let line = doc.add_line(a, b).unwrap();
+        let (arc, [pc, ps, pe]) = arc_at(&mut doc, c, 5.0, 0.0, 90.0);
+        doc.add_constraint(Constraint::Tangent { a: line, b: arc })
+            .unwrap();
+        // Crushed to a millionth of a millimetre since the drag began, a sweep of 90° as it lies.
+        doc.set_point(ps, c + v(1e-6, 0.0)).unwrap();
+        doc.set_point(pe, c + v(0.0, 1e-6)).unwrap();
+        let started = HashMap::from([(arc, 5.0)]);
+        let before = Orientation::among_kept(&doc, None, &[], &started, &[]);
+        let constraints: Vec<_> = doc.constraints().map(|(id, c)| (id, *c)).collect();
+        let before_with_tangency = Orientation::among_kept(&doc, None, &constraints, &started, &[]);
+        // Its end swings round (a sweep of 270°) and its centre crosses the line.
+        doc.set_point(pe, c + v(0.0, -1e-6)).unwrap();
+        for p in [pc, ps, pe] {
+            let at = doc.point(p).unwrap();
+            doc.set_point(p, at + v(0.0, 10.0)).unwrap();
+        }
+        assert!(before.turned_curves(&doc).is_empty(), "about {c}");
+        assert!(
+            before_with_tangency.turned_curves(&doc).is_empty(),
+            "about {c}, with its tangency"
+        );
+    }
+}
+
+/// A kilometre line, for a part much larger than the arcs beside it.
+fn kilometre_line(doc: &mut Document) {
+    let a = doc.add_point(v(-5e5, -10.0));
+    let b = doc.add_point(v(5e5, -10.0));
+    doc.add_line(a, b).unwrap();
+}
+
+/// #280: a small real arc in a large part is judged against its own size, not the part's: a
+/// 0.3 mm arc beside a kilometre line turned inside out is a turn.
+#[test]
+fn a_small_arc_in_a_large_part_turned_inside_out_is_a_turn() {
+    let mut doc = Document::new();
+    kilometre_line(&mut doc);
+    let (arc, [_, _, pe]) = arc_at(&mut doc, DVec2::ZERO, 0.3, 0.0, 90.0);
+    let before = Orientation::of(&doc, None);
+    doc.set_point(pe, v(0.0, -0.3)).unwrap();
+    assert_eq!(before.turned_curves(&doc), vec![arc]);
+}
+
+/// #280: the same, the other way: a 1 mm arc beside a kilometre line shrunk evenly to 0.4 mm
+/// is not crushed.
+#[test]
+fn a_small_arc_in_a_large_part_shrunk_is_not_crushed() {
+    let mut doc = Document::new();
+    kilometre_line(&mut doc);
+    let (_, [pc, ps, pe]) = arc_at(&mut doc, DVec2::ZERO, 1.0, 0.0, 90.0);
+    let before = Orientation::of(&doc, None);
+    for p in [ps, pe] {
+        let at = doc.point(p).unwrap();
+        doc.set_point(p, at * 0.4).unwrap();
+    }
+    assert_eq!(doc.point(pc).unwrap(), DVec2::ZERO);
+    assert!(before.turned_curves(&doc).is_empty());
+}
+
+/// #280: a circle a step crushes to a point counts as turned, as a crushed arc does: a
+/// tangency to it would read its side off a centre lying on the line. (The drag properties
+/// sketch no circles; this is its only guard.)
+#[test]
+fn a_circle_crushed_to_a_point_counts_as_turned() {
+    for c in [DVec2::ZERO, v(1e5, 1e5)] {
+        let mut doc = Document::new();
+        let a = doc.add_point(c + v(-20.0, 5.0));
+        let b = doc.add_point(c + v(20.0, 5.0));
+        let line = doc.add_line(a, b).unwrap();
+        let center = doc.add_point(c);
+        let circle = doc.add_circle(center, 5.0).unwrap();
+        doc.add_constraint(Constraint::Tangent { a: line, b: circle })
+            .unwrap();
+        let before = Orientation::of(&doc, None);
+        doc.set_radius(circle, 1e-9).unwrap();
+        assert_eq!(before.turned_curves(&doc), vec![circle], "about {c}");
+    }
+}

@@ -706,10 +706,28 @@ pub fn degenerate_entities(doc: &Document) -> Vec<EntityId> {
 /// (its centre carried past its ends, so it runs the long way round) or by moving a tangent
 /// curve over to the line's other side; comparing [`Orientation::of`] before and after shows
 /// it ([`Orientation::turned`]), so a drag can take smaller steps or refuse.
+///
+/// A solve can also crush an arc to a point or close it on itself (its ends together). Its
+/// sweep is then whatever round-off makes it: ~0 or ~2π for ends a hair apart either way, any
+/// angle at all for no radius. Read as a sweep, whether it "turned" would hang on the last
+/// bit, and the same drag would be halved at one size or place and not at another (#280). So
+/// an arc that a step leaves collapsed counts as turned, as one turned inside out does: the
+/// drag goes in smaller steps, and pushes the arc along or stops short rather than collapse
+/// it. A circle a step crushes counts as turned the same way (it has no sweep to judge
+/// otherwise). "Crushed" is against the arc's own radius as a drag began
+/// ([`among_kept`](Self::among_kept)), or as the orientation is taken: an arc crushed earlier
+/// in the same drag, met again where a halved step begins, has no way round to keep and isn't
+/// judged, nor are its tangencies. (Not [`degenerate_entities`]: that is measured against the
+/// size of the coordinates, the round-off of where a drawing is, to refuse an edit that
+/// collapses geometry. A decision mid-drag must not depend on where the drawing is, nor on
+/// what else is in the part, so each test here is against the arc's own size.)
 #[derive(Clone, Debug, Default)]
 pub struct Orientation {
-    /// Arcs and their counter-clockwise sweeps (radians).
-    arcs: Vec<(EntityId, f64)>,
+    /// Arcs, their counter-clockwise sweeps (radians) and the radii they are judged crushed
+    /// against.
+    arcs: Vec<(EntityId, f64, f64)>,
+    /// Circles and the radii they are judged crushed against (only that: see above).
+    circles: Vec<(EntityId, f64)>,
     /// Tangent pairs and their side: which side of the line a curve's centre is on (±1), for
     /// two curves whether they touch from outside (+1) or one inside the other (−1), and at a
     /// shared end whether one carries on from the other (−1) or turns back in a cusp (+1).
@@ -739,22 +757,67 @@ impl Orientation {
         scope: Option<&HashSet<EntityId>>,
         constraints: &[(ConstraintId, Constraint)],
     ) -> Self {
+        Self::among_kept(doc, scope, constraints, &HashMap::new(), &[])
+    }
+
+    /// [`among`](Self::among), judging an arc or circle crushed against the radius it had as
+    /// a drag began (`radii`, `circles`: a drag's starting geometry) rather than as this is
+    /// taken: where a drag halves a step, an arc crushed in one half is still crushed where
+    /// the next begins, and a crush spread over many small steps is caught at the step that
+    /// finishes it. Arcs and circles not given keep their radius as they are now. (`circles`
+    /// sorted by id, as a drag's geometry has them.)
+    pub fn among_kept(
+        doc: &Document,
+        scope: Option<&HashSet<EntityId>>,
+        constraints: &[(ConstraintId, Constraint)],
+        radii: &HashMap<EntityId, f64>,
+        circles: &[(EntityId, f64)],
+    ) -> Self {
         let keep = |id: EntityId| scope.is_none_or(|s| s.contains(&id));
-        let arcs = match scope {
-            Some(ids) => ids
-                .iter()
-                .filter_map(|&id| Some((id, arc_sweep(doc, id)?)))
-                .collect(),
-            None => doc
-                .iter()
-                .filter_map(|(id, _)| Some((id, arc_sweep(doc, id)?)))
-                .collect(),
+        let ids: Vec<EntityId> = match scope {
+            Some(ids) => ids.iter().copied().collect(),
+            None => doc.iter().map(|(id, _)| id).collect(),
         };
+        let mut collapsed = HashSet::new();
+        let mut arcs = Vec::new();
+        let mut kept_circles = Vec::new();
+        for &id in &ids {
+            match doc.get(id).map(|e| e.kind) {
+                Some(EntityKind::Arc { .. }) => {
+                    let Some(shape) = ArcShape::of(doc, id) else {
+                        continue;
+                    };
+                    let reference = radii.get(&id).copied().unwrap_or(shape.radius);
+                    if shape.collapsed_from(reference) {
+                        collapsed.insert(id);
+                    } else {
+                        arcs.push((id, shape.sweep, reference));
+                    }
+                }
+                Some(EntityKind::Circle { radius, .. }) => {
+                    let reference = circles
+                        .binary_search_by_key(&id, |&(c, _)| c)
+                        .map_or(radius, |i| circles[i].1);
+                    if crushed(radius, reference) {
+                        collapsed.insert(id);
+                    } else {
+                        kept_circles.push((id, reference));
+                    }
+                }
+                _ => {}
+            }
+        }
         let sides = constraints
             .iter()
             .copied()
             .filter_map(|(id, c)| match c {
-                Constraint::Tangent { a, b } if keep(a) && keep(b) && !doc.is_driven(id) => {
+                Constraint::Tangent { a, b }
+                    if keep(a)
+                        && keep(b)
+                        && !doc.is_driven(id)
+                        && !collapsed.contains(&a)
+                        && !collapsed.contains(&b) =>
+                {
                     Some(((a, b), tangent_side(doc, a, b)?))
                 }
                 _ => None,
@@ -780,28 +843,51 @@ impl Orientation {
                 Some(((a, b), c, distance_sign(doc, &c)?))
             })
             .collect();
-        Self { arcs, sides, signs }
+        Self {
+            arcs,
+            circles: kept_circles,
+            sides,
+            signs,
+        }
     }
 
-    /// True if `doc` has an arc turned inside out, or a tangency moved to the other side,
-    /// since this orientation was taken. Entities added since don't count.
+    /// True if `doc` has an arc turned inside out or collapsed, a circle crushed, or a
+    /// tangency moved to the other side, since this orientation was taken. Entities added
+    /// since don't count.
     pub fn turned(&self, doc: &Document) -> bool {
         !self.turned_curves(doc).is_empty()
     }
 
-    /// The curves [`turned`](Self::turned) would blame: arcs turned inside out, and both
-    /// curves of a tangency that moved to the other side.
+    /// The curves [`turned`](Self::turned) would blame: arcs turned inside out or collapsed,
+    /// circles crushed, and both curves of a tangency that moved to the other side.
     pub fn turned_curves(&self, doc: &Document) -> Vec<EntityId> {
+        let mut collapsed = HashSet::new();
         let mut out: Vec<EntityId> = self
             .arcs
             .iter()
-            .filter(|&&(id, before)| {
-                arc_sweep(doc, id).is_some_and(|now| (now - before).abs() > SWEEP_JUMP)
+            .filter(|&&(id, before, reference)| {
+                ArcShape::of(doc, id).is_some_and(|now| {
+                    if now.collapsed_from(reference) {
+                        collapsed.insert(id);
+                        return true;
+                    }
+                    (now.sweep - before).abs() > SWEEP_JUMP
+                })
             })
-            .map(|&(id, _)| id)
+            .map(|&(id, ..)| id)
             .collect();
+        for &(id, reference) in &self.circles {
+            if circle_radius(doc, id).is_some_and(|r| crushed(r, reference)) {
+                collapsed.insert(id);
+                out.push(id);
+            }
+        }
         for &((a, b), before) in &self.sides {
-            if tangent_side(doc, a, b).is_some_and(|now| now != before) {
+            // (A tangency to an arc the step collapsed has no side: the arc is blamed already.)
+            if !collapsed.contains(&a)
+                && !collapsed.contains(&b)
+                && tangent_side(doc, a, b).is_some_and(|now| now != before)
+            {
                 out.extend([a, b]);
             }
         }
@@ -839,19 +925,73 @@ fn distance_sign(doc: &Document, c: &Constraint) -> Option<f64> {
     }
 }
 
-/// An arc's counter-clockwise sweep from start to end, in (0, 2π].
-fn arc_sweep(doc: &Document, arc: EntityId) -> Option<f64> {
-    let EntityKind::Arc { center, start, end } = doc.get(arc)?.kind else {
-        return None;
-    };
-    let c = doc.point(center).ok()?;
-    let (s, e) = (doc.point(start).ok()? - c, doc.point(end).ok()? - c);
-    let turn = s.perp_dot(e).atan2(s.dot(e));
-    Some(if turn <= 0.0 {
-        turn + std::f64::consts::TAU
-    } else {
-        turn
-    })
+/// An arc (or circle) whose radius has shrunk to this share of the radius it should have
+/// (see [`Orientation`]) has none left. A solve that crushes an arc stops at its tolerance on
+/// the way to no radius at all, which leaves anything from round-off up to some 1e-7 of what
+/// it had, depending on where the drawing is; a drag that shrinks a real arc that far, in one
+/// go, has crushed it. Measured over the heavy drag properties and a census of random drags
+/// (#280): crushed arcs end almost all below 1e-8 of their radius, and the counts thin out
+/// between 1e-8 and 1e-6; moving this tenfold either way changes no heavy outcome and one
+/// census drag in 17,562 (a crush that stalls near this share, which stops a frame or two
+/// sooner or later).
+const COLLAPSED_RADIUS: f64 = 1e-6;
+
+/// An arc as [`Orientation`] sees it.
+#[derive(Clone, Copy, Debug)]
+struct ArcShape {
+    /// Counter-clockwise sweep from start to end, in (0, 2π].
+    sweep: f64,
+    /// The farther of its ends from its centre.
+    radius: f64,
+    /// How far apart its ends are.
+    chord: f64,
+}
+
+impl ArcShape {
+    fn of(doc: &Document, arc: EntityId) -> Option<Self> {
+        let EntityKind::Arc { center, start, end } = doc.get(arc)?.kind else {
+            return None;
+        };
+        let c = doc.point(center).ok()?;
+        let (start, end) = (doc.point(start).ok()?, doc.point(end).ok()?);
+        let (s, e) = (start - c, end - c);
+        let turn = s.perp_dot(e).atan2(s.dot(e));
+        Some(Self {
+            sweep: if turn <= 0.0 {
+                turn + std::f64::consts::TAU
+            } else {
+                turn
+            },
+            radius: s.length().max(e.length()),
+            chord: start.distance(end),
+        })
+    }
+
+    /// Its ends together, within [`SAME`](drift_core::tolerance::SAME) of its radius: its
+    /// sweep reads ~0 or ~2π by round-off.
+    fn ends_together(&self) -> bool {
+        self.chord <= drift_core::tolerance::SAME * self.radius
+    }
+
+    /// Collapsed, against the radius it should have (`reference`): crushed (see [`crushed`]),
+    /// or its ends together.
+    fn collapsed_from(&self, reference: f64) -> bool {
+        crushed(self.radius, reference) || self.ends_together()
+    }
+}
+
+/// A radius crushed to nothing next to the radius it should have: within
+/// [`COLLAPSED_RADIUS`] of it.
+fn crushed(radius: f64, reference: f64) -> bool {
+    radius <= COLLAPSED_RADIUS * reference
+}
+
+/// A circle's radius.
+fn circle_radius(doc: &Document, id: EntityId) -> Option<f64> {
+    match doc.get(id)?.kind {
+        EntityKind::Circle { radius, .. } => Some(radius),
+        _ => None,
+    }
 }
 
 /// The side a tangency touches on (see [`Orientation`]); `None` where it is undecided (a

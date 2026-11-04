@@ -241,6 +241,9 @@ fn i_hanging_end_depends_on_size() {
 
 /// C: two tangencies on one arc, a fixed point: a drag of 0.06 moves a point 11.9.
 /// (`small_drag_is_continuous_heavy`, seed 20.)
+///
+/// (Seed 20's run passes since #280's A1: the case it first failed on was an arc closed on
+/// itself by round-off. This pin is its own minimal case, a wandering first solve: drag-277.)
 #[test]
 #[ignore = "#278: a small drag through tangent arcs jumps"]
 fn c_small_drag_jumps_through_tangencies() {
@@ -720,12 +723,15 @@ fn o_free_move_refused_at_a_fold() {
     explained(free_moves_go(&plan, &pick, offset, steps)).unwrap();
 }
 
-/// E: two dragged points held on an arc a diameter apart (f3's shape): at one size the stalled
-/// solve reads as finished within the coordinates' tolerance and is kept reshaped, at the
-/// other it is carried whole; 0.02 apart. On main the same shape was refused at one size only.
+/// E (#280 A2): two dragged points held on an arc a diameter apart (f3's shape): at one size
+/// the stalled solve reads as finished within the coordinates' tolerance and is kept
+/// reshaped, at the other it is carried whole; 0.02 apart. On main the same shape was refused
+/// at one size only. The tolerance goes with where the drawing is (round-off), so a solve
+/// that closes slowly at a fold holds at one place and not at another: what A2 stands for
+/// (also similarity 3, 6, 16, 17, 18 and 20 after #280's A1). For PR 5 with draft O.
 /// (`drag_is_invariant_under_similarity_heavy`, seed 20, shrunk with #282's carry.)
 #[test]
-#[ignore = "#280: the result depends on size (a fold read as finished at one size)"]
+#[ignore = "#280 A2: a stalled solve reads as finished at one size only (a fold)"]
 fn e_result_depends_on_size_at_a_fold() {
     let plan = Plan {
         ops: vec![
@@ -919,11 +925,13 @@ fn c_no_drag_moves_a_free_end() {
     explained(r).unwrap();
 }
 
-/// E: an arc tangent to a line, a fixed point: the scaled drag lands elsewhere. What
+/// E (#280 A3): an arc tangent to a line, a fixed point: the scaled drag lands elsewhere.
+/// The solve wanders (#103) and `SETTLE_PATIENCE` ends it still moving, wherever round-off
+/// has it by then; no decision of the drag differs between the two sizes. What
 /// `drag_is_invariant_under_similarity_heavy` seed 5 shrinks to once #277's case (pinned
-/// above, `i_hanging_end_depends_on_size`) is fixed.
+/// above, `i_hanging_end_depends_on_size`) is fixed; also similarity 14 and 15's mechanism.
 #[test]
-#[ignore = "#280: the result depends on size (similarity 5 after #277: arc, tangency, fix)"]
+#[ignore = "#280 A3: a wandering solve cut by SETTLE_PATIENCE (similarity 5)"]
 fn e_result_depends_on_size_after_277() {
     let plan = Plan {
         ops: vec![
@@ -1116,6 +1124,417 @@ fn i_unheld_row_with_no_gradient_left_still_goes() {
     assert!(
         run.committed && run.refused == 0,
         "refused {} of 5 steps",
+        run.refused
+    );
+}
+
+/// E (fixed, #280 A1): an arc with a line held on it, the arc and four lines moved: the
+/// step's solve closed the 270° arc on itself, its end a hair past its start or a hair short
+/// by round-off. Read as a sweep that is ~0 (turned: the step is halved) or ~360° (exactly
+/// the quarter turn allowed: not turned), so the same drag went two ways at two sizes. Now
+/// an arc a step closes counts as turned either way. (`drag_is_invariant_under_similarity_heavy`,
+/// seed 7.) Also the scale test: 10×, 0.1×, ¼ far out, a few hundred millimetres along, and a
+/// billionth larger, each the same drag transformed.
+#[test]
+fn e_result_depends_on_size_arc_ends_meet() {
+    let plan = Plan {
+        ops: vec![
+            Op::Arc {
+                from: 0,
+                angle: 18,
+                radius: 2,
+                sweep: 4,
+                ccw: true,
+            },
+            Op::Step {
+                from: 39,
+                angle: 21,
+                len: 1,
+            },
+            Op::Step {
+                from: 4,
+                angle: 18,
+                len: 1,
+            },
+            Op::Step {
+                from: 3,
+                angle: 1,
+                len: 2,
+            },
+            Op::Step {
+                from: 27,
+                angle: 2,
+                len: 2,
+            },
+        ],
+        extras: vec![
+            false, false, false, false, true, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
+        ],
+        fix: None,
+        length: None,
+    };
+    let pick = Pick::Curves(5826560194303214302);
+    let offset = DVec2::new(18.609188948490686, -16.244391113917867);
+    let steps = 1;
+    let p = DVec2::new;
+    for (scale, shift) in [
+        (0.25, p(0.0, -135.96620630717226)),
+        (10.0, p(0.0, 0.0)),
+        (0.1, p(0.0, 0.0)),
+        (0.25, p(-362.0, -288.0)),
+        (1.0, p(0.0, 300.0)),
+        (1.0 + 1e-9, p(0.0, 0.0)),
+    ] {
+        let t = Similarity {
+            scale,
+            turn: 0.0,
+            shift,
+        };
+        if let Err(e) = explained(invariant(&plan, &pick, offset, steps, t)) {
+            panic!("at {scale}× shifted {shift}: {e}");
+        }
+    }
+}
+
+/// The same (#280 A1), one ulp apart: similarity 7's sketch dragged at its size and a
+/// billionth larger ends the same to a hundred-millionth (the scaling's own rounding), where
+/// round-off used to take the arc either side of closing and the two drags 3.4 mm apart.
+#[test]
+fn e_result_depends_on_size_arc_ends_meet_one_ulp() {
+    let plan = Plan {
+        ops: vec![
+            Op::Arc {
+                from: 0,
+                angle: 18,
+                radius: 2,
+                sweep: 4,
+                ccw: true,
+            },
+            Op::Step {
+                from: 39,
+                angle: 21,
+                len: 1,
+            },
+            Op::Step {
+                from: 4,
+                angle: 18,
+                len: 1,
+            },
+            Op::Step {
+                from: 3,
+                angle: 1,
+                len: 2,
+            },
+            Op::Step {
+                from: 27,
+                angle: 2,
+                len: 2,
+            },
+        ],
+        extras: vec![
+            false, false, false, false, true, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
+        ],
+        fix: None,
+        length: None,
+    };
+    let pick = Pick::Curves(5826560194303214302);
+    let offset = DVec2::new(18.609188948490686, -16.244391113917867);
+    let sketch = plan.sketch().unwrap();
+    let t = Similarity {
+        scale: 1.0 + 1e-9,
+        turn: 0.0,
+        shift: DVec2::ZERO,
+    };
+    let mut plain = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let mut moved = Built::new(&sketch, t).unwrap();
+    let (ids_a, ids_b) = (pick.ids(&plain), pick.ids(&moved));
+    let a = drag(&mut plain, &ids_a, offset, 1).unwrap();
+    let b = drag(&mut moved, &ids_b, t.vector(offset), 1).unwrap();
+    assert_eq!((a.committed, a.refused), (b.committed, b.refused));
+    for (i, (pa, pb)) in a.end.iter().zip(&b.end).enumerate() {
+        let want = t.point(*pa);
+        assert!(
+            want.distance(*pb) <= 1e-8 * (pa.length() + offset.length()),
+            "point {i}: {want} wanted, {pb} found"
+        );
+    }
+}
+
+/// E (fixed, #280 A1): an arc with two tangent lines, one held level, a point fixed, moved
+/// at three times the size far from the origin: the step's solve crushed the arc to a point,
+/// whose sweep (the angle between two vectors of next to no length) said turned at one size
+/// and not at the other. A crushed arc now counts as turned at any size.
+/// (`drag_is_invariant_under_similarity_heavy`, seed 1.)
+#[test]
+fn e_result_depends_on_size_arc_crushed() {
+    let plan = Plan {
+        ops: vec![
+            Op::Arc {
+                from: 0,
+                angle: 0,
+                radius: 1,
+                sweep: 1,
+                ccw: true,
+            },
+            Op::Tangent {
+                arc: 0,
+                end: true,
+                forward: true,
+                len: 0,
+            },
+            Op::Tangent {
+                arc: 0,
+                end: true,
+                forward: false,
+                len: 1,
+            },
+        ],
+        extras: vec![
+            true, false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
+        ],
+        fix: Some(14),
+        length: None,
+    };
+    let pick = Pick::Curves(8377514915416449379);
+    let offset = DVec2::new(3.1244537091556617, -14.019893432491916);
+    let t = Similarity {
+        scale: 3.2170815616173343,
+        turn: 0.0,
+        shift: DVec2::new(0.0, -411.16571173760167),
+    };
+    explained(invariant(&plan, &pick, offset, 1, t)).unwrap();
+}
+
+/// E (fixed, #280 A1): two arcs, a line held on one, a point fixed: the moved arc closed on
+/// itself at ¼ size near the origin and not at full size; neither the scale nor the shift
+/// alone does it, only both. (`drag_is_invariant_under_similarity_heavy`, seed 12.)
+#[test]
+fn e_result_depends_on_size_arc_ends_meet_scale_and_shift() {
+    let plan = Plan {
+        ops: vec![
+            Op::Arc {
+                from: 0,
+                angle: 0,
+                radius: 1,
+                sweep: 4,
+                ccw: true,
+            },
+            Op::Arc {
+                from: 1,
+                angle: 0,
+                radius: 0,
+                sweep: 3,
+                ccw: false,
+            },
+            Op::Step {
+                from: 0,
+                angle: 15,
+                len: 2,
+            },
+            Op::Step {
+                from: 0,
+                angle: 0,
+                len: 0,
+            },
+        ],
+        extras: vec![
+            false, false, true, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
+        ],
+        fix: Some(19),
+        length: None,
+    };
+    let pick = Pick::Curves(11632138330893999404);
+    let offset = DVec2::new(-15.32900327832576, 10.88552382031287);
+    let t = Similarity {
+        scale: 0.25,
+        turn: 0.0,
+        shift: DVec2::new(0.0, 4.186292711986068),
+    };
+    explained(invariant(&plan, &pick, offset, 1, t)).unwrap();
+}
+
+/// E (#280 A3): a lone arc, its end dragged at ¼ size near the origin: the arc's kept shape is
+/// off by some eight times the sketch, the step cap lets it close one sketch's width an
+/// iteration, and `SETTLE_PATIENCE` leaves it 0.6 % short. At one size the dragged end then
+/// sits on its target to the bit and `land` skips its pass; at the other it is an ulp off and
+/// the landing pass closes the rest: 6e-5 apart. No relations at all.
+/// (`drag_is_invariant_under_similarity_heavy`, seed 19.)
+#[test]
+#[ignore = "#280 A3: a patience-cut solve, then land skipped on bit-equality at one size"]
+fn e_result_depends_on_size_patience_and_landing() {
+    let plan = Plan {
+        ops: vec![Op::Arc {
+            from: 0,
+            angle: 23,
+            radius: 2,
+            sweep: 2,
+            ccw: true,
+        }],
+        extras: vec![
+            false, false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
+        ],
+        fix: None,
+        length: None,
+    };
+    let t = Similarity {
+        scale: 0.25,
+        turn: 0.0,
+        shift: DVec2::new(29.379660976701263, 0.0),
+    };
+    let offset = DVec2::new(-18.926134486396514, 6.980106084280833);
+    explained(invariant(&plan, &Pick::Point(22), offset, 1, t)).unwrap();
+}
+
+/// E (#280): an arc, three lines and a tangent one, a point fixed, moved in seven steps at ¼
+/// size far out: in the same step, after the same decisions, one size's solve crushes the
+/// arc (its radius 3e-9 of the sketch: turned, so halved) and the other's leaves it whole;
+/// the two drags end 1e-4 apart. Not a threshold (the arc is whole or gone), but two
+/// solutions the solve picks between by round-off, as A2's stalls do.
+/// (`drag_is_invariant_under_similarity_heavy`, seed 11, after #280's A1.)
+#[test]
+#[ignore = "#280 A2: one size's solve crushes an arc, the other's keeps it"]
+fn e_result_depends_on_size_crushed_at_one_size() {
+    let plan = Plan {
+        ops: vec![
+            Op::Arc {
+                from: 0,
+                angle: 20,
+                radius: 0,
+                sweep: 2,
+                ccw: false,
+            },
+            Op::Step {
+                from: 42,
+                angle: 5,
+                len: 2,
+            },
+            Op::Step {
+                from: 60,
+                angle: 8,
+                len: 2,
+            },
+            Op::Step {
+                from: 2,
+                angle: 5,
+                len: 0,
+            },
+            Op::Tangent {
+                arc: 0,
+                end: true,
+                forward: false,
+                len: 2,
+            },
+        ],
+        extras: vec![
+            false, false, false, false, false, true, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
+        ],
+        fix: Some(11),
+        length: None,
+    };
+    let t = Similarity {
+        scale: 0.25,
+        turn: 0.0,
+        shift: DVec2::new(0.0, 351.58307887362463),
+    };
+    let offset = DVec2::new(14.935527528458358, -14.684265805145367);
+    explained(invariant(
+        &plan,
+        &Pick::Curves(447053154812012336),
+        offset,
+        7,
+        t,
+    ))
+    .unwrap();
+}
+
+/// #280 A1: four tangencies, a midpoint, equal and perpendicular lines, a fixed point and a
+/// length, three arcs and a line moved: halving the step, one half crushes an arc, and the next
+/// half read the crushed arc's sweep (round-off) and its tangencies' sides as turned, so the
+/// move was refused outright. An arc already crushed where a step begins isn't judged now, and
+/// the move goes. (A census of random drags, case 470.)
+#[test]
+fn a_move_past_a_crushed_arc_goes() {
+    let plan = Plan {
+        ops: vec![
+            Op::Arc {
+                from: 25,
+                angle: 2,
+                radius: 1,
+                sweep: 1,
+                ccw: true,
+            },
+            Op::Tangent {
+                arc: 54,
+                end: true,
+                forward: true,
+                len: 0,
+            },
+            Op::Arc {
+                from: 19,
+                angle: 22,
+                radius: 0,
+                sweep: 2,
+                ccw: true,
+            },
+            Op::Tangent {
+                arc: 19,
+                end: false,
+                forward: true,
+                len: 3,
+            },
+            Op::Tangent {
+                arc: 58,
+                end: true,
+                forward: false,
+                len: 3,
+            },
+            Op::Tangent {
+                arc: 53,
+                end: true,
+                forward: false,
+                len: 3,
+            },
+            Op::Mid {
+                line: 36,
+                angle: 20,
+                len: 0,
+            },
+        ],
+        extras: vec![
+            false, false, false, false, true, false, false, true, true, true, false, false, true,
+            true, true, true, false, false, false, true, false, true, false, false, false, false,
+            true, true, false, true, false, false, false, true, false, false, true, true, false,
+            false, false, false, false, false, true, false, true, false,
+        ],
+        fix: Some(59),
+        length: Some(25),
+    };
+    let sketch = plan.sketch().unwrap();
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let ids = Pick::Curves(16107383938640796786).ids(&built);
+    let offset = DVec2::new(-14.789257937949609, 1.3311319113522229);
+    let run = drag(&mut built, &ids, offset, 1).unwrap();
+    assert!(
+        run.committed && run.refused == 0,
+        "refused {} of 1",
         run.refused
     );
 }

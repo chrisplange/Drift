@@ -434,7 +434,8 @@ impl Editor {
         // On a wall's corner (or a face, where it can't hold it): a reference dimension.
         if let Some(why) = self.refused_on_walls(&constraint) {
             let id = self.add_driven_dimension(constraint, placement)?;
-            self.out.notice = Some(format!("{why} (it is a reference dimension)"));
+            self.out
+                .inform(format!("{why} (it is a reference dimension)"));
             return Ok(id);
         }
         let id = match self.add_constraints(constraint.type_name(), &[constraint]) {

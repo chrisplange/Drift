@@ -322,7 +322,7 @@ impl DriftApp {
                         // Said, so a drawing taken over doesn't appear unexplained (unless
                         // a note about the last run already says so).
                         if self.unrestored.is_none()
-                            && self.drawing.editor.out.notice.is_none()
+                            && !self.drawing.editor.out.has_message()
                             && self.status_next.is_none()
                         {
                             self.status_next =
@@ -1039,6 +1039,7 @@ impl DriftApp {
             self.drawing.editor.highlight.clear();
             self.tool = kind.create();
             self.drawing.editor.hovered = None;
+            self.drawing.editor.reach = None;
             self.drawing.editor.hovered_fill = None;
         }
     }

@@ -259,7 +259,7 @@ impl SelectTool {
         if crate::editor::is_quarter_turn(angle) {
             ed.restore_after_rotation(&removed, angle);
         } else if !removed.is_empty() {
-            ed.out.notice = Some(format!(
+            ed.out.inform(format!(
                 "Rotated {}: {} horizontal / vertical relation(s) no longer applied and were \
                  removed",
                 ed.doc.units().format_angle(angle),

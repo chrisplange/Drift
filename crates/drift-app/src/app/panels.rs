@@ -735,13 +735,14 @@ impl DriftApp {
         ui.add_space(4.0);
         ui.label(
             egui::RichText::new(
-                "Delete, Move (G), Rotate (R), Mirror and Copy act on all of it. Dimensions \
-                 follow their geometry.",
+                "Delete, Move (G), Rotate (R), Mirror, Pattern and Copy act on all of it. \
+                 Dimensions follow their geometry.",
             )
             .small()
             .weak(),
         );
         self.visibility_section(ui);
+        self.pattern_panel(ui, ui.input(|i| i.time));
         true
     }
 

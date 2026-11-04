@@ -656,7 +656,13 @@ fn auto_relation_onto_point(ed: &mut Editor, relation: Option<GuideKind>, line: 
     };
     let name = ed.doc.constraint(id).map_or("Relation", |c| c.type_name());
     ed.doc.remove_constraint(id);
-    ed.out.notice = Some(format!("{name} not added: {why}"));
+    let text = format!("{name} not added: {why}");
+    // (One that only repeats what the sketch holds already leaves nothing wrong.)
+    if matches!(why, EditError::Redundant) {
+        ed.out.inform(text);
+    } else {
+        ed.out.notice = Some(text);
+    }
 }
 
 /// Unit vector at `degrees`, exact for multiples of 90° (where `cos`/`sin` would leave ~1e-16

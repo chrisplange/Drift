@@ -673,7 +673,7 @@ fn a_split_that_divides_a_fills_area_flags_it_and_keeps_it_whole() {
     // areas (#101): by default it is kept whole and flagged, and the notice says so.
     let mut ed = Editor::new(Document::new());
     let (id, arc, _, _) = fill_over_half_disc_and_lock(&mut ed);
-    ed.out.notice = None;
+    ed.out.info = None;
     ed.split_at(arc, v(60.0, -80.0)).unwrap();
     let (area, _) = found(&mut ed, id);
     assert!((area - (HALF_DISC + LOCK)).abs() < 1.0, "{area}");
@@ -685,7 +685,7 @@ fn a_split_that_divides_a_fills_area_flags_it_and_keeps_it_whole() {
     );
     assert!(
         ed.out
-            .notice
+            .info
             .as_deref()
             .is_some_and(|n| n.contains("2 areas"))
     );
@@ -785,7 +785,7 @@ fn deleting_part_of_a_fills_outline_says_what_became_of_it() {
     let mut ed = Editor::new(Document::new());
     let (_, big, small) = nested_squares(&mut ed);
     let l_shape = ed.add_fill_at(v(25.0, 25.0)).unwrap();
-    ed.out.notice = None;
+    ed.out.info = None;
     ed.selected_fills.clear();
     ed.selection = small.iter().copied().collect();
     ed.delete_selection_with(&[]);
@@ -795,7 +795,7 @@ fn deleting_part_of_a_fills_outline_says_what_became_of_it() {
     ));
     assert!(
         ed.out
-            .notice
+            .info
             .as_deref()
             .is_some_and(|n| n.contains("around its seed"))
     );
@@ -928,7 +928,7 @@ fn trimming_overlapping_filled_circles_leaves_one_fill_on_the_outline() {
     assert!(close(found(&mut ed, fb).0, disc), "b keeps its whole disc");
     assert_eq!(ed.doc.fill(fb).unwrap().seed, v(-930.0, 600.0));
     assert!(ed.out.fill_changes.is_empty(), "{:?}", ed.out.fill_changes);
-    ed.out.notice = None;
+    ed.out.info = None;
     ed.trim_at(cb, v(-800.0, 600.0)).unwrap();
     assert!(ed.doc.fill(fa).is_none(), "the lower fill went");
     assert_eq!(ed.doc.fills().count(), 1);
@@ -940,11 +940,11 @@ fn trimming_overlapping_filled_circles_leaves_one_fill_on_the_outline() {
     );
     assert!(
         ed.out
-            .notice
+            .info
             .as_deref()
             .is_some_and(|n| n.contains("removed")),
         "{:?}",
-        ed.out.notice
+        ed.out.info
     );
     assert!(ed.undo());
     assert_eq!(ed.doc.fills().count(), 2);
@@ -1099,7 +1099,7 @@ fn trimming_two_paths_into_one_outline_joins_them() {
         - 130.0 * (4.0 * 150.0f64.powi(2) - 260.0f64.powi(2)).sqrt();
     assert!(close(found(&mut ed, fa).0, disc - lens));
     assert!(close(found(&mut ed, fb).0, disc));
-    ed.out.notice = None;
+    ed.out.info = None;
     ed.trim_at(cb, v(-800.0, 600.0)).unwrap();
     let paths: Vec<(drift_core::PathId, drift_core::Path)> =
         ed.doc.paths().map(|(id, p)| (id, p.clone())).collect();
@@ -1122,7 +1122,7 @@ fn trimming_two_paths_into_one_outline_joins_them() {
     );
     assert!(
         ed.out
-            .notice
+            .info
             .as_deref()
             .is_some_and(|n| n.contains("removed"))
     );
@@ -1368,11 +1368,11 @@ fn deleting_the_big_square_keeps_the_corner_hatch() {
     );
     assert!(
         ed.out
-            .notice
+            .info
             .as_deref()
             .is_some_and(|n| n.contains("no area is left around it")),
         "{:?}",
-        ed.out.notice
+        ed.out.info
     );
     assert_eq!(
         ed.doc.fills().count(),
@@ -1832,7 +1832,7 @@ fn a_hole_trimmed_open_stays_out_of_its_fill() {
     for shapes in [false, true] {
         let mut ed = Editor::new(Document::new());
         let (id, outer, inner) = filled_ring_and_two_lines(&mut ed, shapes);
-        ed.out.notice = None;
+        ed.out.info = None;
         ed.trim_at(inner, v(0.0, -23.0)).unwrap();
         is_cut_ring(&mut ed, id);
         if !shapes {
@@ -1840,11 +1840,11 @@ fn a_hole_trimmed_open_stays_out_of_its_fill() {
         }
         assert!(
             ed.out
-                .notice
+                .info
                 .as_deref()
                 .is_some_and(|n| n.contains("area around its seed")),
             "{:?}",
-            ed.out.notice
+            ed.out.info
         );
         // An unrelated edit: it keeps the area.
         ed.doc.begin();
@@ -1872,7 +1872,7 @@ fn a_shape_cut_open_with_no_area_left_keeps_its_fill_and_says_so() {
     let id = ed.fill_new_shape(&sides).unwrap();
     ed.commit("Rectangle");
     assert!(close(found(&mut ed, id).0, 800.0));
-    ed.out.notice = None;
+    ed.out.info = None;
     // Nothing cuts the side: the whole of it goes.
     ed.trim_at(sides[1], v(40.0, 10.0)).unwrap();
     assert!(!ed.doc.contains(sides[1]));
@@ -1887,11 +1887,11 @@ fn a_shape_cut_open_with_no_area_left_keeps_its_fill_and_says_so() {
     );
     assert!(
         ed.out
-            .notice
+            .info
             .as_deref()
             .is_some_and(|n| n.contains("keeps its shape")),
         "{:?}",
-        ed.out.notice
+        ed.out.info
     );
     // Saved and opened again: found from the file alone, the same.
     let text = drift_io::save(&ed.doc, &Default::default());
@@ -1982,7 +1982,7 @@ fn a_cut_rings_area_gone_drops_it_and_says_so() {
         .collect();
     assert_eq!(lines.len(), 2);
     ed.out.fill_changes.clear();
-    ed.out.notice = None;
+    ed.out.info = None;
     ed.doc.begin();
     ed.doc.delete(lines);
     ed.commit("Delete");
@@ -1996,11 +1996,11 @@ fn a_cut_rings_area_gone_drops_it_and_says_so() {
     );
     assert!(
         ed.out
-            .notice
+            .info
             .as_deref()
             .is_some_and(|n| n.contains("no area is left")),
         "{:?}",
-        ed.out.notice
+        ed.out.info
     );
     // Another edit doesn't say it again.
     ed.out.fill_changes.clear();

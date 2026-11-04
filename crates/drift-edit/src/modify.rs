@@ -14,6 +14,14 @@ use drift_solver::Param;
 
 use crate::editor::{EditError, Editor};
 
+/// What a pattern made: the new curves, the new block copies, and the copies of the picked
+/// texts and notes.
+pub type Patterned = (
+    Vec<EntityId>,
+    Vec<drift_core::InstanceId>,
+    (Vec<drift_core::TextId>, Vec<drift_core::AnnotationId>),
+);
+
 fn invalid(msg: impl Into<String>) -> EditError {
     EditError::Invalid(msg.into())
 }
@@ -1206,7 +1214,7 @@ impl Editor {
                     names.push(named);
                 }
             }
-            self.out.notice = Some(format!(
+            self.out.inform(format!(
                 "{label} took off {} that no longer held: {}",
                 if freed.len() == 1 {
                     "a relation"
@@ -2599,19 +2607,21 @@ impl Editor {
     /// Copies of entities moved by `transform` (applied `count` times, 1..=count), with the
     /// relations among them copied (orientation-dependent ones only if `keep_orientation`),
     /// and of the block copies `instances`: at step k a new copy of the same block, its
-    /// insertion point moved by `transform` and turned `turn(k)` degrees more (#311).
+    /// insertion point moved by `transform` and turned `turn(k)` degrees more (#311); and of
+    /// the picked texts and notes `riders`, moved or turned as far at each step (#327).
     #[allow(clippy::type_complexity, clippy::too_many_arguments)]
     fn pattern(
         &mut self,
         ids: &[EntityId],
         instances: &[drift_core::InstanceId],
+        riders: &crate::picks::Riders,
         copies: usize,
         transform: impl Fn(usize, DVec2) -> DVec2,
         turn: impl Fn(usize) -> f64,
         keep_orientation: bool,
         label: &str,
-    ) -> Result<(Vec<EntityId>, Vec<drift_core::InstanceId>), EditError> {
-        if ids.is_empty() && instances.is_empty() {
+    ) -> Result<Patterned, EditError> {
+        if ids.is_empty() && instances.is_empty() && riders.is_empty() {
             return Err(invalid("select geometry to pattern first"));
         }
         if copies == 0 {
@@ -2642,6 +2652,7 @@ impl Editor {
         self.doc.begin();
         let mut created = Vec::new();
         let mut placed = Vec::new();
+        let (mut texts, mut notes) = (Vec::new(), Vec::new());
         let result = (|| -> Result<(), EditError> {
             for k in 1..=copies {
                 let mut map: BTreeMap<EntityId, EntityId> = BTreeMap::new();
@@ -2725,11 +2736,17 @@ impl Editor {
                     self.doc.set_instance(copy, step).map_err(doc_err)?;
                     placed.push(copy);
                 }
+                // Texts and notes picked with it: a copy at this step, on this step's copies
+                // of what a note points at (#327).
+                let (t, n) =
+                    self.copy_riders(riders, &|e| map.get(&e).copied(), &|p| transform(k, p));
+                texts.extend(t);
+                notes.extend(n);
             }
             Ok(())
         })();
         self.finish(result, label)?;
-        Ok((created, placed))
+        Ok((created, placed, (texts, notes)))
     }
 
     /// `count` instances (the original plus copies) spaced by `step`.
@@ -2739,25 +2756,28 @@ impl Editor {
         count: usize,
         step: DVec2,
     ) -> Result<Vec<EntityId>, EditError> {
-        self.linear_pattern_with(ids, &[], count, step)
-            .map(|(created, _)| created)
+        self.linear_pattern_with(ids, &[], &Default::default(), count, step)
+            .map(|(created, _, _)| created)
     }
 
     /// [`Self::linear_pattern`] of entities and block copies: the new curves and the new
-    /// copies, each a copy of the same block moved by `step` more than the last.
+    /// copies, each a copy of the same block moved by `step` more than the last; and copies
+    /// of the picked texts and notes `riders`, moved as far.
     pub fn linear_pattern_with(
         &mut self,
         ids: &[EntityId],
         instances: &[drift_core::InstanceId],
+        riders: &crate::picks::Riders,
         count: usize,
         step: DVec2,
-    ) -> Result<(Vec<EntityId>, Vec<drift_core::InstanceId>), EditError> {
+    ) -> Result<Patterned, EditError> {
         if step == DVec2::ZERO {
             return Err(invalid("the spacing can't be zero"));
         }
         self.pattern(
             ids,
             instances,
+            riders,
             count.saturating_sub(1),
             |k, p| p + step * k as f64,
             |_| 0.0,
@@ -2775,21 +2795,23 @@ impl Editor {
         center: DVec2,
         total_degrees: f64,
     ) -> Result<Vec<EntityId>, EditError> {
-        self.circular_pattern_with(ids, &[], count, center, total_degrees)
-            .map(|(created, _)| created)
+        self.circular_pattern_with(ids, &[], &Default::default(), count, center, total_degrees)
+            .map(|(created, _, _)| created)
     }
 
     /// [`Self::circular_pattern`] of entities and block copies: the new curves and the new
     /// copies, each a copy of the same block turned about `center` one step more than the
-    /// last, its own angle turned as far.
+    /// last, its own angle turned as far; and copies of the picked texts and notes `riders`,
+    /// turned as far.
     pub fn circular_pattern_with(
         &mut self,
         ids: &[EntityId],
         instances: &[drift_core::InstanceId],
+        riders: &crate::picks::Riders,
         count: usize,
         center: DVec2,
         total_degrees: f64,
-    ) -> Result<(Vec<EntityId>, Vec<drift_core::InstanceId>), EditError> {
+    ) -> Result<Patterned, EditError> {
         if count < 2 {
             return Err(invalid("the count must be at least 2"));
         }
@@ -2802,6 +2824,7 @@ impl Editor {
         self.pattern(
             ids,
             instances,
+            riders,
             count - 1,
             |k, p| center + drift_core::blocks::exact_rotor(step * k as f64).rotate(p - center),
             |k| step * k as f64,
@@ -3799,8 +3822,8 @@ mod tests {
     fn linear_pattern_places_copies_of_a_block_copy() {
         let (mut ed, copy, layer) = block_copy();
         let original = *ed.doc.instance(copy).unwrap();
-        let (curves, copies) = ed
-            .linear_pattern_with(&[], &[copy], 3, v(50.0, 0.0))
+        let (curves, copies, _) = ed
+            .linear_pattern_with(&[], &[copy], &Default::default(), 3, v(50.0, 0.0))
             .unwrap();
         assert!(curves.is_empty());
         assert_eq!(copies.len(), 2);
@@ -3827,14 +3850,153 @@ mod tests {
         let b = ed.doc.add_point(v(5.0, 30.0));
         let line = ed.doc.add_line(a, b).unwrap();
         ed.commit("Line");
-        let (curves, copies) = ed
-            .linear_pattern_with(&[line], &[copy], 3, v(0.0, 40.0))
+        let (curves, copies, _) = ed
+            .linear_pattern_with(&[line], &[copy], &Default::default(), 3, v(0.0, 40.0))
             .unwrap();
         assert_eq!((curves.len(), copies.len()), (2, 2));
         assert_eq!((lines(&ed).len(), ed.doc.instances().count()), (3, 3));
         assert!(ed.undo());
         // (The L's lines are in the block now: the drawing's one line is the loose one.)
         assert_eq!((lines(&ed).len(), ed.doc.instances().count()), (1, 1));
+    }
+
+    /// A line and a text above it, both picked (the text a rider).
+    fn line_and_text() -> (Editor, EntityId, drift_core::TextId) {
+        let (mut ed, ids) = with_lines(&[(v(0.0, 0.0), v(10.0, 0.0))]);
+        let text = ed.add_text(drift_core::SketchText::new("Label", v(2.0, 5.0), 2.0));
+        ed.selection = ids.iter().copied().collect();
+        ed.selected_texts = [text].into();
+        (ed, ids[0], text)
+    }
+
+    /// The drawing's texts, by where they sit.
+    fn texts_at(ed: &Editor) -> Vec<(DVec2, f64)> {
+        let mut out: Vec<(DVec2, f64)> = ed.doc.texts().map(|(_, t)| (t.at, t.angle)).collect();
+        out.sort_by(|a, b| a.0.x.total_cmp(&b.0.x).then(a.0.y.total_cmp(&b.0.y)));
+        out
+    }
+
+    /// #327: a text picked with the curves is patterned with them: a copy at each step,
+    /// moved as far, in the same undo step.
+    #[test]
+    fn linear_pattern_copies_picked_texts() {
+        let (mut ed, line, _) = line_and_text();
+        let riders = ed.riders();
+        let (curves, _, (texts, notes)) = ed
+            .linear_pattern_with(&[line], &[], &riders, 3, v(50.0, 0.0))
+            .unwrap();
+        assert_eq!((curves.len(), texts.len(), notes.len()), (2, 2, 0));
+        let at: Vec<DVec2> = texts_at(&ed).into_iter().map(|t| t.0).collect();
+        assert_eq!(at.len(), 3);
+        for (k, p) in at.iter().enumerate() {
+            assert!(close(*p, v(2.0 + 50.0 * k as f64, 5.0)), "{k}: {p}");
+        }
+        assert!(ed.undo());
+        assert_eq!(ed.doc.texts().count(), 1, "one undo leaves the one text");
+        assert_eq!(lines(&ed).len(), 1);
+    }
+
+    /// #327, circular: each copy of the text is turned with its step.
+    #[test]
+    fn circular_pattern_turns_picked_texts() {
+        let (mut ed, line, _) = line_and_text();
+        let riders = ed.riders();
+        let (_, _, (texts, _)) = ed
+            .circular_pattern_with(&[line], &[], &riders, 4, v(0.0, 0.0), 360.0)
+            .unwrap();
+        assert_eq!(texts.len(), 3);
+        for (k, id) in texts.iter().enumerate() {
+            let turn = 90.0 * (k + 1) as f64;
+            let t = ed.doc.text(*id).unwrap();
+            let want = drift_core::blocks::exact_rotor(turn).rotate(v(2.0, 5.0));
+            assert!(close(t.at, want), "{k}: {} vs {want}", t.at);
+            assert!(
+                (t.angle - turn.rem_euclid(360.0)).abs() < 1e-9,
+                "{k}: {}",
+                t.angle
+            );
+        }
+        // A text picked alone is patterned too.
+        let (mut ed, _, _) = line_and_text();
+        ed.selection.clear();
+        let riders = ed.riders();
+        ed.linear_pattern_with(&[], &[], &riders, 2, v(0.0, 20.0))
+            .unwrap();
+        assert_eq!(ed.doc.texts().count(), 2);
+    }
+
+    /// #327: notes picked with the line are patterned too: one whose leader points at the
+    /// line points at each step's copy of it; one pointing at a free spot points 50 further at
+    /// each step. One undo leaves the two notes.
+    #[test]
+    fn linear_pattern_copies_picked_notes() {
+        use drift_core::{Anchor, Annotation, Leader};
+        let (mut ed, ids) = with_lines(&[(v(0.0, 0.0), v(10.0, 0.0))]);
+        let line = ids[0];
+        let note = |to: Anchor, at: DVec2| Annotation::Note {
+            text: "Note".into(),
+            at,
+            leaders: vec![Leader::to(to)],
+            style: Default::default(),
+        };
+        ed.doc.begin();
+        let on = ed
+            .doc
+            .add_annotation(note(
+                Anchor::Curve {
+                    curve: line,
+                    t: 0.5,
+                },
+                v(5.0, 10.0),
+            ))
+            .unwrap();
+        let free = ed
+            .doc
+            .add_annotation(note(Anchor::Free(v(30.0, 0.0)), v(30.0, 10.0)))
+            .unwrap();
+        ed.commit("Notes");
+        ed.selection = [line].into();
+        ed.selected_annotation = Some(on);
+        ed.annotation_picks = vec![drift_core::AnnotationRef::Annotation(free)];
+        let riders = ed.riders();
+        assert_eq!(riders.notes.len(), 2);
+        let (curves, _, (_, notes)) = ed
+            .linear_pattern_with(&[line], &[], &riders, 3, v(50.0, 0.0))
+            .unwrap();
+        assert_eq!(notes.len(), 4, "two notes at each of two steps");
+        let lines: Vec<EntityId> = curves
+            .iter()
+            .copied()
+            .filter(|c| matches!(ed.doc.get(*c).unwrap().kind, EntityKind::Line { .. }))
+            .collect();
+        assert_eq!(lines.len(), 2);
+        let mut tips = Vec::new();
+        for id in &notes {
+            let Some(Annotation::Note { leaders, .. }) = ed.doc.annotation(*id) else {
+                panic!("a note");
+            };
+            let tip = ed.doc.anchor_pos(&leaders[0].to).unwrap();
+            match leaders[0].to {
+                Anchor::Curve { curve, .. } => {
+                    let k = lines
+                        .iter()
+                        .position(|l| *l == curve)
+                        .expect("a copy of the line");
+                    assert!(close(tip, v(5.0 + 50.0 * (k + 1) as f64, 0.0)), "{tip}");
+                }
+                Anchor::Free(p) => tips.push(p.x),
+                Anchor::Point(_) => panic!("unexpected point anchor"),
+            }
+        }
+        tips.sort_by(f64::total_cmp);
+        assert_eq!(tips.len(), 2);
+        assert!(close(v(tips[0], 0.0), v(80.0, 0.0)) && close(v(tips[1], 0.0), v(130.0, 0.0)));
+        assert!(ed.undo());
+        assert_eq!(
+            ed.doc.annotations().count(),
+            2,
+            "one undo leaves the two notes"
+        );
     }
 
     /// #311, circular: four copies round a centre, each one turned 90° more than the last,
@@ -3844,8 +4006,8 @@ mod tests {
         let (mut ed, copy, _) = block_copy();
         let original = *ed.doc.instance(copy).unwrap();
         let centre = v(0.0, 0.0);
-        let (_, copies) = ed
-            .circular_pattern_with(&[], &[copy], 4, centre, 360.0)
+        let (_, copies, _) = ed
+            .circular_pattern_with(&[], &[copy], &Default::default(), 4, centre, 360.0)
             .unwrap();
         assert_eq!(copies.len(), 3);
         for (k, id) in copies.iter().enumerate() {

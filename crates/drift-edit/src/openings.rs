@@ -322,7 +322,7 @@ impl Editor {
             })
             .collect();
         if !gone.is_empty() && self.out.notice.is_none() {
-            self.out.notice = Some(match gone.len() {
+            self.out.inform(match gone.len() {
                 1 => format!("Opening {} went with its wall", gone[0]),
                 n => format!("{n} openings went with their walls"),
             });
@@ -390,7 +390,7 @@ impl Editor {
             let _ = self.doc.set_opening(id, moved);
         }
         if removed > 0 && self.out.notice.is_none() {
-            self.out.notice = Some(match removed {
+            self.out.inform(match removed {
                 1 => "An opening was removed: no wall runs where it was".to_owned(),
                 n => format!("{n} openings were removed: no wall runs where they were"),
             });

@@ -87,7 +87,7 @@ says in the status bar what it just did.
 | **Snap to grid** | Shift+G | Yes |
 | **Thin lines** (every line one pixel wide; never changes the output) | Shift+Alt+W | Yes |
 | **Constraint status colours** (off: each curve's own or its layer's colour) | Shift+C | Yes |
-| **Always show end points** (off: only on hovered or picked curves) | Shift+Alt+V | Yes |
+| **Always show end points** (off: only on hovered or picked curves; an arc's or circle's centre shows only while it is hovered or picked, and while the pointer moves in from it to the centre) | Shift+Alt+V | Yes |
 | **Dimensions and notes** | Alt+D | No: shown again at each start |
 | **Hidden annotations (faded)** | Alt+H | Yes |
 | **Relations** | Alt+R | No: shown again at each start |

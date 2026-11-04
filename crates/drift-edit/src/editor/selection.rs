@@ -779,6 +779,8 @@ impl Editor {
             .chain(self.hovered.iter())
             .chain(self.highlight.iter())
             .chain(self.snapped_point.iter());
+        // (A centre being reached for, #259.)
+        out.extend(self.reach_centre());
         for &id in active {
             if let Some(e) = self.doc.get(id) {
                 if e.kind.is_point() {

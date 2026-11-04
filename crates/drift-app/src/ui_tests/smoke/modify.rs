@@ -65,3 +65,56 @@ fn smoke_fillet_several_corners_in_one_undo() {
     h.run();
     assert_eq!(radii(&h), [2.0; 3], "{}", status(&h));
 }
+
+/// #327: lines picked with a text show the mixed Inspector, and it has the Pattern section
+/// (it had none); Make linear pattern copies the text at each step with the lines, and one
+/// undo takes it all back.
+#[test]
+fn smoke_pattern_takes_a_picked_text_along() {
+    let Some(mut h) = harness() else { return };
+    view(&mut h, DVec2::new(-10.0, -10.0), DVec2::new(80.0, 40.0));
+    let (sides, _) = rectangle(&mut h, DVec2::ZERO, DVec2::new(10.0, 10.0), Fill::No);
+    let text = {
+        let ed = &mut h.state_mut().drawing.editor;
+        let text = ed.add_text(drift_core::SketchText::new(
+            "Label",
+            DVec2::new(2.0, 15.0),
+            2.0,
+        ));
+        ed.selection = sides.iter().copied().collect();
+        ed.selected_texts = [text].into();
+        text
+    };
+    h.state_mut().show_panel(Panel::Inspector);
+    h.run();
+    h.run();
+    assert!(
+        h.query_by_label("Pattern").is_some(),
+        "the mixed Inspector has the Pattern section"
+    );
+    // Modify → Linear pattern opens it.
+    let ctx = h.ctx.clone();
+    h.state_mut()
+        .run_command(&ctx, crate::commands::Command::Pattern(false));
+    h.run();
+    h.run();
+    h.get_by_label("Make linear pattern").click();
+    h.run();
+    let at = |h: &Harness<'_, DriftApp>| {
+        let mut xs: Vec<f64> = h
+            .state()
+            .drawing
+            .editor
+            .doc
+            .texts()
+            .map(|(_, t)| (t.at.x * 1e6).round() / 1e6)
+            .collect();
+        xs.sort_by(f64::total_cmp);
+        xs
+    };
+    assert_eq!(at(&h), [2.0, 22.0, 42.0], "20 apart, the default spacing");
+    assert_eq!(lines(&h), 12);
+    undo(&mut h);
+    assert_eq!(at(&h), [2.0]);
+    assert!(h.state().drawing.editor.doc.text(text).is_some());
+}

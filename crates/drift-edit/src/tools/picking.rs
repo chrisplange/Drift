@@ -38,6 +38,8 @@ pub(super) struct Rule<'a> {
     locked: bool,
     /// Handles and wall centrelines that aren't showing.
     hidden: Option<&'a BTreeSet<EntityId>>,
+    /// Centres that aren't showing (#259).
+    centres: bool,
     /// What the pick filter keeps out.
     filter: Option<PickFilter>,
 }
@@ -47,6 +49,7 @@ impl Rule<'static> {
     pub(super) const ANY: Self = Rule {
         locked: false,
         hidden: None,
+        centres: false,
         filter: None,
     };
     /// Anything not on a locked layer.
@@ -57,11 +60,13 @@ impl Rule<'static> {
 }
 
 impl<'a> Rule<'a> {
-    /// What the select tool picks: nothing locked, hidden or filtered out.
-    fn select(filter: PickFilter, hidden: &'a BTreeSet<EntityId>) -> Self {
+    /// What the select tool picks: nothing locked, hidden or filtered out, and (with
+    /// `centres`) no centre that isn't drawn.
+    fn select(filter: PickFilter, hidden: &'a BTreeSet<EntityId>, centres: bool) -> Self {
         Rule {
             locked: true,
             hidden: Some(hidden),
+            centres,
             filter: Some(filter),
         }
     }
@@ -70,6 +75,7 @@ impl<'a> Rule<'a> {
     fn allows(&self, ed: &Editor, id: EntityId) -> bool {
         !(self.locked && ed.is_locked(id))
             && !self.hidden.is_some_and(|h| h.contains(&id))
+            && !(self.centres && ed.centre_unseen(id))
             && self.filter.is_none_or(|f| f.allows(&ed.doc, id))
             && ed.in_scope(id)
     }
@@ -114,9 +120,10 @@ fn geometry_at(ed: &Editor, p: &Pointer, rule: Rule, midpoints: bool) -> Option<
 /// that measure or annotate what they're pointed at.
 pub(super) fn pick_target_with(ed: &Editor, p: &Pointer, filter: PickFilter) -> Option<Target> {
     let hidden = ed.hidden_handles();
+    // (The tools that measure or annotate still take a centre that isn't drawn.)
     let rule = Rule {
         locked: false,
-        ..Rule::select(filter, &hidden)
+        ..Rule::select(filter, &hidden, false)
     };
     geometry_at(ed, p, rule, filter.midpoints())
 }
@@ -189,9 +196,11 @@ pub(super) fn target_at(ed: &mut Editor, p: &Pointer, purpose: Purpose) -> Optio
     let scoped = ed.edit_scope().is_some();
     let geometry = {
         let hidden = ed.hidden_handles();
+        // A centre is picked only where it is drawn: while its curve is hovered or picked
+        // (#259).
         // (A drag from a line's middle moves the line; a double-click there opens its group.)
         let midpoints = filter.midpoints() && matches!(purpose, Purpose::Hover | Purpose::Click);
-        geometry_at(ed, p, Rule::select(filter, &hidden), midpoints)
+        geometry_at(ed, p, Rule::select(filter, &hidden, true), midpoints)
     };
     if let Some(t) = geometry {
         return Some(Pick::Geometry(t));

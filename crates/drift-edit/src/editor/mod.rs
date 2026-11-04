@@ -153,6 +153,9 @@ pub struct Editor {
     /// picked elements keeps (#333). Editor state, not saved; see [`active`](Self::active).
     active: Option<EntityId>,
     pub hovered: Option<EntityId>,
+    /// A curve hovered last whose centre stays shown and pickable while the pointer stays
+    /// within its circle and over nothing else, on its way to the centre (#259).
+    pub reach: Option<EntityId>,
     /// Lines whose midpoints are selected (midpoints aren't entities, but can be picked).
     pub selected_midpoints: BTreeSet<EntityId>,
     /// The line whose midpoint is under the pointer.
@@ -384,7 +387,7 @@ impl Editor {
             ));
         }
         if !notices.is_empty() {
-            editor.out.notice = Some(notices.join(" · "));
+            editor.out.inform(notices.join(" · "));
         }
         editor.sync();
         editor
@@ -422,6 +425,9 @@ impl Editor {
         }
         if self.hovered.is_some_and(|id| !doc.contains(id)) {
             self.hovered = None;
+        }
+        if self.reach.is_some_and(|id| !doc.contains(id)) {
+            self.reach = None;
         }
     }
 

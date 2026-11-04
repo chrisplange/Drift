@@ -554,16 +554,26 @@ impl DriftApp {
             .copied()
             .unwrap_or(0);
         theme::section(ui, "Block copy");
-        let mut typed = name.clone();
+        // What is typed stays as typed while the field has the keyboard: the block takes it
+        // trimmed (and not at all while it is empty or another block's name), so the field
+        // rebuilt from the block's name dropped a space typed at the end (#336).
+        let kept = egui::Id::new(("block_copy_name_typed", first.block));
+        let mut typed = ui
+            .data(|d| d.get_temp::<String>(kept))
+            .unwrap_or_else(|| name.clone());
         theme::row(ui, "Name", |ui| {
-            if ui
+            let field = ui
                 .add(
                     egui::TextEdit::singleline(&mut typed)
                         .desired_width(ui.available_width() - 8.0),
                 )
-                .on_hover_text("The block's name: every copy shares it")
-                .changed()
-            {
+                .on_hover_text("The block's name: every copy shares it");
+            if field.has_focus() {
+                ui.data_mut(|d| d.insert_temp(kept, typed.clone()));
+            } else {
+                ui.data_mut(|d| d.remove::<String>(kept));
+            }
+            if field.changed() {
                 self.rename_block_typed(first.block, &typed);
             }
         });

@@ -1583,3 +1583,118 @@ fn a_fold_solve_that_would_grow_a_radius_is_unfinished_and_changes_nothing() {
     let now: Vec<DVec2> = p.iter().map(|&q| doc.point(q).unwrap()).collect();
     assert_eq!(now, found);
 }
+
+/// #277: a line held vertical and square to a level one, a point held on it, and the level
+/// line and another moved up a little (`small_drag_is_continuous_heavy` seed 7). Once the
+/// dragged are pinned to land, only the vertical's free end is left to move, and it slides
+/// along the line, which neither the angle nor the point on it feels: their gradients there
+/// are round-off. Scaled up to a unit gradient, the angle's round-off residual flung the end
+/// 35.7 away (as far as the drawing is across). It stays where it was.
+#[test]
+fn a_row_only_round_off_ties_to_what_is_left_moves_nothing() {
+    let mut doc = Document::new();
+    let p = [
+        v(0.0, 0.0),
+        v(-10.0, 0.0),
+        v(0.0, 10.0),
+        v(0.0, 2.5),
+        v(19.318516525781366, 7.676380902050415),
+    ]
+    .map(|q| doc.add_point(q));
+    let level = doc.add_line(p[0], p[1]).unwrap();
+    let upright = doc.add_line(p[0], p[2]).unwrap();
+    doc.add_line(p[3], p[4]).unwrap();
+    for c in [
+        Constraint::PointOnCurve {
+            point: p[3],
+            curve: upright,
+        },
+        Constraint::Vertical { line: upright },
+        Constraint::Perpendicular {
+            a: level,
+            b: upright,
+        },
+    ] {
+        doc.add_constraint(c).unwrap();
+    }
+    let free_end = doc.point(p[2]).unwrap();
+    let (report, off) = drag_points(
+        &mut doc,
+        &[p[0], p[1], p[3], p[4]],
+        v(0.0, 0.2975643529800304),
+        &[],
+        false,
+    );
+    assert!(
+        report.converged && off == 0.0,
+        "{report:?}, landed {off} off"
+    );
+    assert_eq!(doc.point(p[2]).unwrap(), free_end);
+}
+
+/// #277: a redundant right angle between a level line and an upright one whose ends are
+/// joined (`drag_is_invariant_under_similarity_heavy` seed 5): with the level and the upright
+/// substituted, the angle's gradient is round-off on everything, and it is the only row.
+/// Its round-off residual swung the upright's free end the drawing's width back and forth
+/// until the solve's patience ran out, so where it ended depended on the drawing's size and
+/// place. Moving the level line leaves the free end where it was, at any size.
+#[test]
+fn a_redundant_angle_with_nothing_left_to_move_moves_nothing() {
+    for (scale, shift) in [(1.0, 0.0), (0.25, -133.47216040592113)] {
+        let at = |x: f64, y: f64| v(x * scale, y * scale + shift);
+        let mut doc = Document::new();
+        let p =
+            [at(0.0, 0.0), at(0.0, 0.0), at(15.0, 0.0), at(0.0, -10.0)].map(|q| doc.add_point(q));
+        let level = doc.add_line(p[1], p[2]).unwrap();
+        let upright = doc.add_line(p[0], p[3]).unwrap();
+        for c in [
+            Constraint::Coincident { a: p[1], b: p[0] },
+            Constraint::Horizontal { line: level },
+            Constraint::Vertical { line: upright },
+            Constraint::Perpendicular {
+                a: level,
+                b: upright,
+            },
+        ] {
+            doc.add_constraint(c).unwrap();
+        }
+        let free_end = doc.point(p[3]).unwrap();
+        let (report, off) = drag_points(
+            &mut doc,
+            &[p[1], p[2]],
+            v(0.0, -6.606701489569068 * scale),
+            &[],
+            false,
+        );
+        assert!(
+            report.converged && off == 0.0,
+            "{report:?}, landed {off} off"
+        );
+        assert_eq!(doc.point(p[3]).unwrap(), free_end, "at {scale}×");
+    }
+}
+
+/// #277: a row with no gradient left that doesn't hold keeps its scale (only one that holds
+/// is left out of the step), and is still a conflict: two level lines held square to each
+/// other. With both substituted level, nothing left to move turns either, so no step can
+/// mend the angle; the solve doesn't converge, names it, and leaves the drawing as it was.
+#[test]
+fn a_row_with_no_gradient_left_that_cannot_hold_is_still_a_conflict() {
+    let mut doc = Document::new();
+    let p = [v(0.0, 0.0), v(10.0, 0.0), v(0.0, 5.0), v(10.0, 5.0)].map(|q| doc.add_point(q));
+    let a = doc.add_line(p[0], p[1]).unwrap();
+    let b = doc.add_line(p[2], p[3]).unwrap();
+    doc.add_constraint(Constraint::Horizontal { line: a })
+        .unwrap();
+    doc.add_constraint(Constraint::Horizontal { line: b })
+        .unwrap();
+    let square = doc
+        .add_constraint(Constraint::Perpendicular { a, b })
+        .unwrap();
+    let found: Vec<DVec2> = p.iter().map(|&q| doc.point(q).unwrap()).collect();
+    let report = solved(&mut doc);
+    assert!(!report.converged, "{report:?}");
+    assert!(report.conflicts.contains(&square), "{report:?}");
+    let now: Vec<DVec2> = p.iter().map(|&q| doc.point(q).unwrap()).collect();
+    assert_eq!(now, found);
+}

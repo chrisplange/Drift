@@ -156,11 +156,12 @@ fn f_free_move_refused_unconverged() {
     explained(r).unwrap();
 }
 
-/// I: lines only (a vertical, a line perpendicular to it, a point on it): one converged,
-/// unflagged step moves a free end 35.7 for a drag of 0.3.
-/// (`small_drag_is_continuous_heavy`, seed 7.)
+/// I (fixed, #277): lines only (a vertical, a line perpendicular to it, a point on it): one
+/// converged, unflagged step moved a free end 35.7 for a drag of 0.3. Once the dragged were
+/// pinned to land, the right angle had only round-off gradient on the vertical's free end,
+/// which slides along it, and scaled up its round-off residual flung the end as far as the
+/// drawing is across. (`small_drag_is_continuous_heavy`, seed 7.)
 #[test]
-#[ignore = "#277: a hanging line's free end flies on a small drag"]
 fn i_hanging_end_flies_on_a_small_drag() {
     let plan = Plan {
         ops: vec![
@@ -196,11 +197,13 @@ fn i_hanging_end_flies_on_a_small_drag() {
     explained(r).unwrap();
 }
 
-/// I: lines only (H/V with a perpendicular): the carried line shrinks 10 → 3.4 at one size
-/// and is stretched at a quarter of it, shifted.
+/// I (fixed, #277): lines only (H/V with a perpendicular): with the lines substituted level
+/// and plumb, the right angle had only round-off gradient, and its round-off residual swung
+/// the upright's free end the drawing's width back and forth until the solve's patience ran
+/// out: where it landed depended on the size and place. (The upright's top end is merged
+/// with a dragged point, so it is reshaped, not carried: 10 → 3.4 at both sizes.)
 /// (`drag_is_invariant_under_similarity_heavy`, seed 5.)
 #[test]
-#[ignore = "#277: a hanging line kept at one size, stretched at another"]
 fn i_hanging_end_depends_on_size() {
     let plan = Plan {
         ops: vec![
@@ -327,10 +330,10 @@ fn e_result_depends_on_size_unconverged() {
     explained(r).unwrap();
 }
 
-/// E: an arc with a tangent line held vertical: the scaled drag lands elsewhere.
+/// E (fixed, #277's cause): an arc with a tangent line held vertical: the scaled drag landed
+/// elsewhere. The tangency had only round-off gradient on what was left to move.
 /// (`drag_is_invariant_under_similarity_heavy`, seed 2.)
 #[test]
-#[ignore = "#280: the result depends on size (arc, tangency)"]
 fn e_result_depends_on_size_tangent() {
     let plan = Plan {
         ops: vec![
@@ -822,4 +825,297 @@ fn o_free_move_refused_at_a_double_root() {
     let pick = Pick::Curves(2255998535123590272);
     let offset = DVec2::new(0.0, 3.5165293026948543);
     explained(free_moves_go(&plan, &pick, offset, 1)).unwrap();
+}
+
+/// D (fixed, #277's cause; #279): tangencies, a level line square to another: out and back in
+/// one drag, a line's free end came back 66 away. Once the dragged were pinned to land, the
+/// right angle had only round-off gradient on what was left to move, and its round-off
+/// residual flung the end. (`drag_out_and_back_does_not_creep_heavy`, seed 5.)
+#[test]
+fn d_out_and_back_through_a_redundant_angle_creeps() {
+    let plan = Plan {
+        ops: vec![
+            Op::Arc {
+                from: 0,
+                angle: 6,
+                radius: 0,
+                sweep: 1,
+                ccw: false,
+            },
+            Op::Close { from: 31, to: 5 },
+            Op::Tangent {
+                arc: 0,
+                end: true,
+                forward: false,
+                len: 3,
+            },
+            Op::Step {
+                from: 0,
+                angle: 0,
+                len: 3,
+            },
+            Op::Tangent {
+                arc: 0,
+                end: false,
+                forward: false,
+                len: 0,
+            },
+        ],
+        extras: vec![
+            false, true, false, false, false, false, false, false, false, true, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
+        ],
+        fix: None,
+        length: None,
+    };
+    let pick = Pick::Curves(15512489140483433875);
+    let offset = DVec2::new(0.0, 0.0);
+    let steps = 1;
+    let r = no_creep(&plan, &pick, offset, steps);
+    explained(r).unwrap();
+}
+
+/// C (fixed, #277's cause; one of #278's): an arc, a line on it held vertical and square to
+/// another: a drag of next to nothing moved a free end 88. The right angle had only
+/// round-off gradient on what was left to move. (`small_drag_is_continuous_heavy`, seed 19.)
+#[test]
+fn c_no_drag_moves_a_free_end() {
+    let plan = Plan {
+        ops: vec![
+            Op::Arc {
+                from: 0,
+                angle: 2,
+                radius: 2,
+                sweep: 1,
+                ccw: false,
+            },
+            Op::OnArc {
+                arc: 0,
+                at: 16,
+                angle: 0,
+                len: 0,
+            },
+            Op::Close { from: 0, to: 1 },
+            Op::Step {
+                from: 47,
+                angle: 6,
+                len: 3,
+            },
+        ],
+        extras: vec![
+            false, true, true, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
+        ],
+        fix: None,
+        length: None,
+    };
+    let pick = Pick::Curves(4262113848630934323);
+    let offset = DVec2::new(0.0, 0.0);
+    let r = continuous(&plan, &pick, offset);
+    explained(r).unwrap();
+}
+
+/// E: an arc tangent to a line, a fixed point: the scaled drag lands elsewhere. What
+/// `drag_is_invariant_under_similarity_heavy` seed 5 shrinks to once #277's case (pinned
+/// above, `i_hanging_end_depends_on_size`) is fixed.
+#[test]
+#[ignore = "#280: the result depends on size (similarity 5 after #277: arc, tangency, fix)"]
+fn e_result_depends_on_size_after_277() {
+    let plan = Plan {
+        ops: vec![
+            Op::Step {
+                from: 0,
+                angle: 4,
+                len: 0,
+            },
+            Op::Arc {
+                from: 6,
+                angle: 6,
+                radius: 0,
+                sweep: 0,
+                ccw: true,
+            },
+            Op::Step {
+                from: 1,
+                angle: 15,
+                len: 2,
+            },
+            Op::Tangent {
+                arc: 0,
+                end: true,
+                forward: false,
+                len: 1,
+            },
+            Op::Step {
+                from: 4,
+                angle: 12,
+                len: 0,
+            },
+        ],
+        extras: vec![
+            false, false, true, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
+        ],
+        fix: Some(35),
+        length: None,
+    };
+    let pick = Pick::Curves(2970465637109295241);
+    let offset = DVec2::new(0.0, -15.38195792032203);
+    let steps = 1;
+    let t = Similarity {
+        scale: 0.25,
+        turn: 0.0,
+        shift: DVec2::new(0.0, 107.82855999007688),
+    };
+    let r = invariant(&plan, &pick, offset, steps, t);
+    explained(r).unwrap();
+}
+
+/// I (fixed, #277), far from the origin: a level line, a plumb one with an end held on the
+/// level one, a line and an arc, the plumb line and one other moved a fifth of a millimetre,
+/// the whole sketch 100 m out. There (not at the origin) the round-off left of an angle's
+/// gradient once the dragged were pinned flung a free end 84 away. The rows left with no
+/// gradient are found against their own gradient, which round-off far out doesn't reach.
+/// (A census of small drags 100 m out.)
+#[test]
+fn i_hanging_end_flies_far_from_the_origin() {
+    let plan = Plan {
+        ops: vec![
+            Op::Step {
+                from: 49,
+                angle: 12,
+                len: 3,
+            },
+            Op::Tangent {
+                arc: 29,
+                end: false,
+                forward: false,
+                len: 2,
+            },
+            Op::Tangent {
+                arc: 9,
+                end: false,
+                forward: true,
+                len: 1,
+            },
+            Op::OnLine {
+                line: 18,
+                at: 0,
+                angle: 6,
+                len: 1,
+            },
+            Op::Step {
+                from: 45,
+                angle: 15,
+                len: 3,
+            },
+            Op::Arc {
+                from: 42,
+                angle: 4,
+                radius: 1,
+                sweep: 0,
+                ccw: false,
+            },
+        ],
+        extras: vec![
+            true, true, false, false, true, true, true, false, true, false, true, false, true,
+            false, false, false, false, true, false, true, false, false, true, false, true, false,
+            false, false, false, false, false, false, false, false, true, true, false, false,
+            false, false, false, false, true, true, true, true, false, false,
+        ],
+        fix: None,
+        length: None,
+    };
+    let pick = Pick::Curves(6866880060382879132);
+    let offset = DVec2::new(0.09964781793467078, 0.1845802573484448);
+    let sketch = plan.sketch().unwrap();
+    let t = Similarity {
+        scale: 1.0,
+        turn: 0.0,
+        shift: DVec2::new(1e5, 1e5),
+    };
+    let mut built = Built::new(&sketch, t).unwrap();
+    let ids = pick.ids(&built);
+    let run = drag(&mut built, &ids, offset, 1).unwrap();
+    assert!(run.committed && run.refused == 0);
+    for i in 0..run.start.len() {
+        let moved = run.start[i].distance(run.end[i]);
+        assert!(
+            moved <= 2.0 * offset.length(),
+            "point {i} moved {moved} for a drag of {}",
+            offset.length()
+        );
+    }
+}
+
+/// #277: a point held on a line whose ends the drag moves, another held on a line through a
+/// fixed point, a midpoint and an arc, dragged in five steps: every step goes. Rows like
+/// these, held on a line with no gradient left over what is still free but not holding,
+/// keep their scale: left out of the step as a holding one is, every step was refused.
+/// (A census of drags.)
+#[test]
+fn i_unheld_row_with_no_gradient_left_still_goes() {
+    let plan = Plan {
+        ops: vec![
+            Op::Step {
+                from: 39,
+                angle: 12,
+                len: 3,
+            },
+            Op::Mid {
+                line: 25,
+                angle: 12,
+                len: 0,
+            },
+            Op::Tangent {
+                arc: 57,
+                end: false,
+                forward: false,
+                len: 0,
+            },
+            Op::Step {
+                from: 0,
+                angle: 23,
+                len: 1,
+            },
+            Op::OnLine {
+                line: 25,
+                at: 0,
+                angle: 19,
+                len: 3,
+            },
+            Op::Arc {
+                from: 45,
+                angle: 9,
+                radius: 1,
+                sweep: 4,
+                ccw: true,
+            },
+        ],
+        extras: vec![
+            false, true, false, false, false, false, false, true, false, false, true, false, false,
+            false, false, false, true, false, false, false, true, false, true, false, false, true,
+            false, true, true, true, false, true, false, false, false, false, false, false, true,
+            false, true, false, false, false, false, false, true, false,
+        ],
+        fix: Some(32),
+        length: None,
+    };
+    let pick = Pick::Curves(2049299765421540780);
+    let offset = DVec2::new(-4.5718023607860125, 13.942411822201512);
+    let sketch = plan.sketch().unwrap();
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let ids = pick.ids(&built);
+    let run = drag(&mut built, &ids, offset, 5).unwrap();
+    assert!(
+        run.committed && run.refused == 0,
+        "refused {} of 5 steps",
+        run.refused
+    );
 }

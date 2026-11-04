@@ -14,6 +14,8 @@ use drift_solver::Param;
 
 use crate::editor::{Anchor, EditError, Editor, Guide, GuideKind, Pointer};
 
+#[cfg(test)]
+mod active_pick_tests;
 mod annotate;
 mod arc;
 mod base_point;

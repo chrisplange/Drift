@@ -123,6 +123,15 @@ choose it.
 
 To pick two things, click the first and Shift+click the second.
 
+The one you pick last is the **active** one, drawn with a heavier highlight. A relation keeps
+it exactly where it is and brings the others to it: pick the line to turn, then the line it
+should be perpendicular to; pick the points to move, then the point they should meet at. If
+the others can't get there on their own (they're fixed, say), the relation is solved as if
+nothing were active, and everything it relates can move. Shift+click something already
+picked to make it the active one instead. A box pick has no active element, and neither do
+relations made by scripts or the AI tools; then everything the relation names moves a
+little. (Walls keep moving together for now.)
+
 Tangent works between a line, circle or arc and a circle or arc anywhere, and between a
 line or arc and a partial ellipse or pen curve where the two meet at an end: it keeps one
 carrying on along the other there.

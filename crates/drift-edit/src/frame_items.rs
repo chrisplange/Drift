@@ -29,6 +29,7 @@ struct Key {
     stack: Option<usize>,
     groups: usize,
     selection: BTreeSet<EntityId>,
+    active: Option<EntityId>,
     selected_instances: BTreeSet<InstanceId>,
     hidden: BTreeSet<EntityId>,
     always_endpoints: bool,
@@ -82,6 +83,7 @@ impl ItemsCache {
             stack: stack.map(|s| std::ptr::from_ref(s) as usize),
             groups: stack.map_or(0, |s| s.groups.len()),
             selection: ed.selection.clone(),
+            active: ed.active(),
             selected_instances: ed.selected_instances.clone(),
             hidden: rest.hidden().clone(),
             always_endpoints: ed.prefs.always_endpoints,
@@ -355,6 +357,16 @@ mod tests {
         check(&mut ed, &mut cache, "picked and hovered");
         ed.hovered = Some(curves[14]);
         check(&mut ed, &mut cache, "picked, another hovered");
+        // The active element is drawn apart (#333): another one, the selection the same,
+        // lights at once (not only when something else makes the lists again).
+        ed.set_active(Some(curves[26]));
+        check(&mut ed, &mut cache, "an active element");
+        let _ = kept(&mut cache, &ed, None);
+        ed.set_active(Some(curves[39]));
+        assert!(
+            kept(&mut cache, &ed, None) == as_before(&ed, None),
+            "another active element"
+        );
         ed.hovered_instance = Some(copies[1]);
         check(&mut ed, &mut cache, "a copy hovered");
         ed.selected_instances = [copies[0]].into_iter().collect();

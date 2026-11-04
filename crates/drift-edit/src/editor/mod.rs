@@ -14,6 +14,8 @@ use drift_solver::{Definition, Param, SolveOptions, SolveReport};
 
 mod drag;
 use drag::DragSession;
+#[cfg(test)]
+mod active_tests;
 mod constraints;
 mod edit_prefs;
 mod filter;
@@ -133,6 +135,10 @@ pub struct Editor {
     /// How many entities those solves took in, all told (for the tests: what a frame of a
     /// drag costs).
     pub(crate) drag_solved: usize,
+    /// The last constraints added: whether they kept the active element where it was, and how
+    /// many iterations the solve they were checked with took (for the tests: none, where it
+    /// was kept).
+    pub(crate) relation_kept: Option<(bool, usize)>,
     /// How many times the drawing's areas were found here, and crossed fills' and walls'
     /// pochés' areas (for the tests: what an edit or a frame looked for again).
     pub(crate) regions_found: usize,
@@ -143,6 +149,9 @@ pub struct Editor {
     pub(crate) wall_fills_found: std::cell::Cell<usize>,
     pub history: History,
     pub selection: BTreeSet<EntityId>,
+    /// The active element: the one picked last, by a click, which a relation added between
+    /// picked elements keeps (#333). Editor state, not saved; see [`active`](Self::active).
+    active: Option<EntityId>,
     pub hovered: Option<EntityId>,
     /// Lines whose midpoints are selected (midpoints aren't entities, but can be picked).
     pub selected_midpoints: BTreeSet<EntityId>,
@@ -402,6 +411,9 @@ impl Editor {
         // Hidden or locked geometry can't stay selected.
         self.selection
             .retain(|id| doc.contains(*id) && doc.is_visible(*id) && !doc.layer_of(*id).locked);
+        if self.active.is_some_and(|id| !self.selection.contains(&id)) {
+            self.active = None;
+        }
         let is_line =
             |id: &EntityId| matches!(doc.get(*id).map(|e| e.kind), Some(EntityKind::Line { .. }));
         self.selected_midpoints.retain(is_line);

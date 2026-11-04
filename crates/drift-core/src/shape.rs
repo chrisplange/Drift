@@ -503,6 +503,9 @@ pub enum Emphasis {
     Normal,
     Hovered,
     Selected,
+    /// The selection's active element: the one picked last, which a relation added between
+    /// picked elements keeps (#333).
+    Active,
     /// Geometry a tool is about to create.
     Preview,
     /// Geometry a tool is about to remove (e.g. a piece being trimmed).

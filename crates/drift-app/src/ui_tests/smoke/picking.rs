@@ -657,3 +657,115 @@ fn smoke_picking_filters_for_the_rest() {
         ),
     ]);
 }
+
+/// #259: View → End points shows an arc's end points, not its centre; the centre shows while
+/// the arc is hovered or picked. A centre that isn't showing can't be picked: a click on it
+/// takes nothing, and a box (only points pickable) doesn't take it; with the arc picked it
+/// shows, and a click takes it.
+#[test]
+fn smoke_picking_an_arcs_centre_shows_and_picks_only_with_its_arc() {
+    let Some(mut h) = harness() else { return };
+    view(&mut h, DVec2::new(-30.0, -30.0), DVec2::new(40.0, 40.0));
+    let (arc, centre, start, end) = {
+        let ed = &mut h.state_mut().drawing.editor;
+        ed.prefs.always_endpoints = true;
+        ed.doc.begin();
+        let c = ed.doc.add_point(DVec2::ZERO);
+        let s = ed.doc.add_point(DVec2::new(20.0, 0.0));
+        let e = ed.doc.add_point(DVec2::new(0.0, 20.0));
+        let arc = ed.doc.add_arc(c, s, e).unwrap();
+        ed.commit("Arc");
+        (arc, c, s, e)
+    };
+    clear(&mut h);
+    let drawn = |h: &Harness<'_, DriftApp>, id: EntityId| {
+        h.state()
+            .drawing
+            .editor
+            .items_tagged(true, true)
+            .iter()
+            .any(|t| t.entity == Some(id))
+    };
+    hover(&mut h, DVec2::new(35.0, -25.0));
+    assert!(
+        drawn(&h, start) && drawn(&h, end),
+        "End points shows the ends"
+    );
+    assert!(!drawn(&h, centre), "but not the centre");
+    let on_arc = DVec2::from_angle(std::f64::consts::FRAC_PI_4) * 20.0;
+    assert_eq!(hover(&mut h, on_arc).entity, Some(arc));
+    assert!(drawn(&h, centre), "the hovered arc's centre shows");
+    hover(&mut h, DVec2::new(35.0, -25.0));
+    assert!(!drawn(&h, centre));
+    // A click where the hidden centre is takes nothing.
+    assert_eq!(hover(&mut h, DVec2::ZERO).entity, None);
+    assert!(
+        click(&mut h, DVec2::ZERO).selection.is_empty(),
+        "no hidden centre"
+    );
+    // Nor does a box with only points pickable.
+    h.state_mut().drawing.editor.prefs.pick_filter = PickFilter::only(PickKind::Points);
+    clear(&mut h);
+    drag(&mut h, DVec2::new(-5.0, -5.0), DVec2::new(5.0, 5.0), 4);
+    assert!(picked(&h).selection.is_empty(), "no hidden centre in a box");
+    // With the arc picked, its centre shows and a click takes it.
+    h.state_mut().drawing.editor.prefs.pick_filter = PickFilter::default();
+    assert_eq!(click(&mut h, on_arc).selection, [arc].into());
+    hover(&mut h, DVec2::new(35.0, -25.0));
+    assert!(drawn(&h, centre), "the picked arc's centre shows");
+    click_world(&mut h, DVec2::ZERO);
+    assert_eq!(picked(&h).selection, [centre].into());
+}
+
+/// #259: the way to an arc's centre is over its arc: hovered, the arc shows its centre, which
+/// stays shown (no flicker) while the pointer goes in across empty canvas, lights up under
+/// the pointer, and a click picks it. Out past the arc's circle, it hides again.
+#[test]
+fn smoke_picking_an_arcs_centre_is_reached_from_its_arc() {
+    let Some(mut h) = harness() else { return };
+    view(&mut h, DVec2::new(-60.0, -60.0), DVec2::new(60.0, 60.0));
+    let (arc, centre) = {
+        let ed = &mut h.state_mut().drawing.editor;
+        ed.doc.begin();
+        let c = ed.doc.add_point(DVec2::ZERO);
+        let s = ed.doc.add_point(DVec2::new(40.0, 0.0));
+        let e = ed.doc.add_point(DVec2::new(0.0, 40.0));
+        let arc = ed.doc.add_arc(c, s, e).unwrap();
+        ed.commit("Arc");
+        (arc, c)
+    };
+    clear(&mut h);
+    let drawn = |h: &Harness<'_, DriftApp>| {
+        h.state()
+            .drawing
+            .editor
+            .items_tagged(true, true)
+            .iter()
+            .any(|t| t.entity == Some(centre))
+    };
+    let dir = DVec2::from_angle(std::f64::consts::FRAC_PI_4);
+    assert_eq!(hover(&mut h, dir * 40.0).entity, Some(arc));
+    assert!(drawn(&h), "the hovered arc shows its centre");
+    // In across empty canvas: the centre stays shown at every step, and frame after frame.
+    for r in [30.0, 20.0, 10.0] {
+        assert_eq!(hover(&mut h, dir * r).entity, None, "empty at {r}");
+        assert!(drawn(&h), "the centre still shows at {r}");
+        h.run();
+        assert!(drawn(&h), "and the frame after, at {r}");
+    }
+    assert_eq!(
+        hover(&mut h, DVec2::ZERO).entity,
+        Some(centre),
+        "the centre lights up"
+    );
+    h.run();
+    assert!(drawn(&h));
+    click_world(&mut h, DVec2::ZERO);
+    assert_eq!(picked(&h).selection, [centre].into(), "a click picks it");
+    // Out past the arc's circle, with nothing picked: hidden again.
+    clear(&mut h);
+    hover(&mut h, dir * 40.0);
+    hover(&mut h, dir * 55.0);
+    assert!(!drawn(&h), "out of reach");
+    assert_eq!(hover(&mut h, DVec2::ZERO).entity, None, "and not picked");
+}

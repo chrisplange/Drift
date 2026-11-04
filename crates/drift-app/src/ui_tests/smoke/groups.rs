@@ -393,6 +393,18 @@ fn smoke_groups_a_lone_block_copy_shows_pattern_and_patterns() {
 fn smoke_groups_shift_d_then_esc_leaves_no_stacked_copy() {
     let Some(mut h) = harness() else { return };
     let copy = flag_block(&mut h);
+    // #312's twin: Join walls with no walls picked is refused, as an error.
+    let ctx = h.ctx.clone();
+    h.state_mut()
+        .run_command(&ctx, crate::commands::Command::JoinWalls);
+    h.run();
+    assert!(
+        status(&h).contains("Pick two walls to join"),
+        "{}",
+        status(&h)
+    );
+    assert!(status_is_error(&h), "a refusal stays an error");
+    h.state_mut().status = None;
     click_world(&mut h, DVec2::new(110.0, 10.0));
     assert_eq!(h.state().drawing.editor.selected_instances, [copy].into());
     h.hover_at(screen(&h, DVec2::new(110.0, 10.0)));
@@ -406,6 +418,8 @@ fn smoke_groups_shift_d_then_esc_leaves_no_stacked_copy() {
     assert_eq!(copies(&h).len(), 1, "Esc removed the unmoved copy");
     assert_eq!(h.state().drawing.editor.selected_instances, [copy].into());
     assert!(status(&h).contains("Copy removed"), "{}", status(&h));
+    // #312: it says what was done, in the plain toast, not as an error.
+    assert!(!status_is_error(&h), "a plain notice");
     h.key_press_modifiers(EguiModifiers::COMMAND | EguiModifiers::SHIFT, Key::Z);
     h.run();
     assert_eq!(copies(&h).len(), 2, "Redo brings the copy back");
@@ -626,4 +640,124 @@ fn smoke_block_edit_undo_redo_keeps_editing() {
     assert!(ed.block_edit.is_none());
     assert_eq!(ed.doc.block(block).unwrap().items.len(), 8);
     assert_eq!(ed.doc.groups().count(), 0);
+}
+
+/// Type `text` the way a keyboard does: each character a key press, its text and the key's
+/// release, one frame each (egui-winit sends Space as `Key::Space` as well as `" "`).
+fn keyboard_type(h: &mut Harness<'_, DriftApp>, text: &str) {
+    for c in text.chars() {
+        let key = if c == ' ' {
+            Some(Key::Space)
+        } else {
+            Key::from_name(&c.to_ascii_uppercase().to_string())
+        };
+        let modifiers = if c.is_ascii_uppercase() {
+            EguiModifiers::SHIFT
+        } else {
+            EguiModifiers::NONE
+        };
+        for pressed in [true, false] {
+            if let Some(key) = key {
+                h.event(Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed,
+                    repeat: false,
+                    modifiers,
+                });
+            }
+            if pressed {
+                h.event(Event::Text(c.to_string()));
+            }
+            h.run();
+        }
+    }
+}
+
+/// The panel text field that has the keyboard, by its text.
+fn focused_field(h: &Harness<'_, DriftApp>) -> String {
+    h.get_by(|n| n.role() == egui::accesskit::Role::TextInput && n.is_focused())
+        .value()
+        .unwrap_or_default()
+}
+
+/// #336: a picked block copy's Name field in the Inspector takes "Block 2 Alternate" typed key
+/// by key: the space before "Alternate" stays (the field was made again from the block's
+/// trimmed name each frame and dropped it), and the block is named so. The Blocks tab's New
+/// block field and its row menu's Name field take spaces too.
+#[test]
+fn smoke_groups_block_name_fields_take_spaces() {
+    let Some(mut h) = harness() else { return };
+    view(&mut h, DVec2::new(-10.0, -10.0), DVec2::new(110.0, 50.0));
+    let (sides, _) = rectangle(&mut h, DVec2::ZERO, DVec2::new(30.0, 30.0), Fill::No);
+    let copy = {
+        let ed = &mut h.state_mut().drawing.editor;
+        ed.selection = sides.iter().copied().collect();
+        let copy = ed.make_block("Block 2").unwrap();
+        ed.selection.clear();
+        ed.selected_instances = [copy].into();
+        copy
+    };
+    h.state_mut().show_panel(Panel::Inspector);
+    h.run();
+    let named = |h: &Harness<'_, DriftApp>| {
+        let doc = &h.state().drawing.editor.doc;
+        let block = doc.instance(copy).unwrap().block;
+        doc.block(block).unwrap().name.clone()
+    };
+    h.get_by(|n| {
+        n.role() == egui::accesskit::Role::TextInput && n.value().as_deref() == Some("Block 2")
+    })
+    .click();
+    h.run();
+    h.key_press(Key::End);
+    h.run();
+    keyboard_type(&mut h, " Alternate");
+    assert_eq!(
+        focused_field(&h),
+        "Block 2 Alternate",
+        "the Inspector's Name field"
+    );
+    assert_eq!(named(&h), "Block 2 Alternate");
+    // Typed in one undo step.
+    undo(&mut h);
+    assert_eq!(named(&h), "Block 2");
+
+    // The Blocks tab's New block field, with another rectangle picked.
+    h.state_mut().drawing.editor.selected_instances.clear();
+    let (more, _) = rectangle(
+        &mut h,
+        DVec2::new(50.0, 0.0),
+        DVec2::new(80.0, 30.0),
+        Fill::No,
+    );
+    h.state_mut().drawing.editor.selection = curves(&h, &more).into_iter().collect();
+    h.state_mut().show_panel(Panel::Blocks);
+    h.run();
+    h.get_by(|n| {
+        n.role() == egui::accesskit::Role::TextInput
+            && n.placeholder().is_some_and(|p| p.starts_with("Block "))
+    })
+    .click();
+    h.run();
+    keyboard_type(&mut h, "Base cabinet");
+    assert_eq!(focused_field(&h), "Base cabinet", "the New block field");
+    // The row menu's Name field of the block made above.
+    {
+        let ed = &mut h.state_mut().drawing.editor;
+        ed.selection.clear();
+        ed.selected_instances.clear();
+    }
+    h.run();
+    h.get_by_label("Block 2").click_secondary();
+    h.run();
+    h.get_by(|n| {
+        n.role() == egui::accesskit::Role::TextInput && n.value().as_deref() == Some("Block 2")
+    })
+    .click();
+    h.run();
+    h.key_press(Key::End);
+    h.run();
+    keyboard_type(&mut h, " 600");
+    assert_eq!(focused_field(&h), "Block 2 600", "the block's Name field");
 }

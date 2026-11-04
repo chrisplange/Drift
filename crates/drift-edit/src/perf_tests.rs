@@ -1344,6 +1344,41 @@ fn perf_items_and_copy_hover() {
         let _ = ed.items_styled(true, true);
     });
     report("10k curves: items with 1,000 picked", picked);
+    // #259: with View → End points on, the lit points are found too (only centres follow
+    // them), where before the toggle skipped that.
+    ed.prefs.always_endpoints = true;
+    let picked_ends = time(20, |_| {
+        let _ = ed.items_styled(true, true);
+    });
+    report(
+        "10k curves: items with 1,000 picked, End points on",
+        picked_ends,
+    );
+    ed.prefs.always_endpoints = false;
+    // #259: the select tool's check of a centre under the pointer, at its worst: every
+    // other curve picked, so it looks through them all.
+    let (circle, centre) = ed
+        .doc
+        .iter()
+        .find_map(|(id, e)| match e.kind {
+            drift_core::EntityKind::Circle { center, .. } => Some((id, center)),
+            _ => None,
+        })
+        .expect("a circle");
+    ed.selection = ed
+        .doc
+        .iter()
+        .filter(|(id, e)| !e.kind.is_point() && *id != circle)
+        .map(|(id, _)| id)
+        .collect();
+    let picks = ed.selection.len();
+    let unseen = time(100, |_| {
+        assert!(ed.centre_unseen(centre));
+    });
+    report(
+        &format!("{picks} picked: a hidden centre under the pointer"),
+        unseen,
+    );
     ed.selection.clear();
     // The same entities spread over 12 layers (as imports come in).
     let layers: Vec<drift_core::LayerId> = (0..12)

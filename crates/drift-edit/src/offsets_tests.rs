@@ -494,7 +494,7 @@ fn an_offset_round_trips_through_a_file_and_is_repaired_on_opening() {
     let (doc, _) = drift_io::load(&text).unwrap();
     assert_eq!(doc, ed.doc);
     let again = Editor::new(doc);
-    assert!(again.out.notice.is_none(), "nothing to repair");
+    assert!(!again.out.has_message(), "nothing to repair");
     assert!(all_at(&gaps(&again, x), 3.0));
     // A piece deleted by hand (an older build, say) comes back on opening.
     let mut doc = ed.doc.clone();
@@ -506,7 +506,7 @@ fn an_offset_round_trips_through_a_file_and_is_repaired_on_opening() {
     assert!(
         repaired
             .out
-            .notice
+            .info
             .as_deref()
             .is_some_and(|n| n.contains("Offsets were repaired"))
     );

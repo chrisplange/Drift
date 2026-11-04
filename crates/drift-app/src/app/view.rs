@@ -776,6 +776,7 @@ impl DriftApp {
             }
         } else {
             self.drawing.editor.hovered = None;
+            self.drawing.editor.reach = None;
             // A drag released off the canvas (e.g. over a side panel) still ends, where the
             // button came up, so a selection box or move doesn't stay stuck.
             if response.drag_stopped_by(PointerButton::Primary)

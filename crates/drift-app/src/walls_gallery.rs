@@ -889,11 +889,11 @@ fn walls_gallery_corner_dimensions_are_references() {
     assert!(ed.doc.is_driven(id));
     assert!(
         ed.out
-            .notice
+            .info
             .as_deref()
             .is_some_and(|n| n.contains("corner follows its joins")),
         "{:?}",
-        ed.out.notice
+        ed.out.info
     );
     // And can't be made driving.
     assert!(ed.set_driven(id, false).is_err());

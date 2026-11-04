@@ -1075,6 +1075,10 @@ impl eframe::App for DriftApp {
             ctx.request_repaint_after(std::time::Duration::from_secs_f64(wait));
         }
         fonts::sync_screen(&ctx, &self.drawing.editor, &mut self.screen_font);
+        // What an edit did, plainly; a refusal or failure as an error (shown over it).
+        if let Some(info) = self.drawing.editor.out.info.take() {
+            self.set_status(info, false, now);
+        }
         if let Some(notice) = self.drawing.editor.out.notice.take() {
             self.set_status(notice, true, now);
         }

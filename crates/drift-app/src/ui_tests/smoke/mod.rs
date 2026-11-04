@@ -194,6 +194,11 @@ fn status(h: &Harness<'_, DriftApp>) -> String {
         .unwrap_or_default()
 }
 
+/// Whether the status bar's message is shown as an error (red, kept longer, logged).
+fn status_is_error(h: &Harness<'_, DriftApp>) -> bool {
+    h.state().status.as_ref().is_some_and(|s| s.error)
+}
+
 /// Press and release at `pos` with `mods` held.
 fn click_with(h: &mut Harness<'_, DriftApp>, pos: Pos2, mods: EguiModifiers) {
     h.hover_at(pos);

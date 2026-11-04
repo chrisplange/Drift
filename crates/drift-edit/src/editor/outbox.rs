@@ -6,8 +6,12 @@ use drift_core::{Constraint, ConstraintId, DVec2, EntityId};
 /// it; a client without a UI reads `notice` and ignores the rest.
 #[derive(Default)]
 pub struct Outbox {
-    /// A message for the UI explaining a refused edit.
+    /// A message for the UI explaining a refused edit, or something that went wrong: shown as
+    /// an error.
     pub notice: Option<String>,
+    /// A message for the UI that only says what a done edit did (relations it took off, what
+    /// went with it): shown plainly, not as an error (see [`Outbox::inform`]).
+    pub info: Option<String>,
     /// Geometry the last commit put far off (see [`drift_core::FAR_MM`]), for the UI to
     /// warn about: an import lists it in its report, anything else says so in the status bar.
     pub far_off: Vec<EntityId>,
@@ -30,4 +34,16 @@ pub struct Outbox {
     pub fill_changes: Vec<crate::fills::FillChange>,
     /// What Walls from lines did last.
     pub from_lines: Option<crate::walls_from_lines::FromLinesReport>,
+}
+
+impl Outbox {
+    /// Say what a done edit did, plainly (`notice` stays for refusals and failures).
+    pub fn inform(&mut self, text: impl Into<String>) {
+        self.info = Some(text.into());
+    }
+
+    /// Whether a message is waiting already, of either kind.
+    pub fn has_message(&self) -> bool {
+        self.notice.is_some() || self.info.is_some()
+    }
 }

@@ -467,7 +467,7 @@ impl SelectTool {
             && ed.undo()
         {
             ed.pick(&originals);
-            ed.out.notice = Some("Copy removed · Redo brings it back".into());
+            ed.out.inform("Copy removed · Redo brings it back");
         }
         true
     }
@@ -790,6 +790,16 @@ impl Tool for SelectTool {
                 ed.hovered_instance = target.and_then(Pick::copy);
                 // Inside a fill (and not on a curve or a copy of a block): the fill.
                 ed.hovered_fill = target.and_then(Pick::fill);
+                // An arc's centre stays in reach on the way in from the arc (#259), over
+                // empty canvas or a fill (a filled circle is filled all the way in).
+                if self.drag.is_none() {
+                    ed.update_reach(
+                        target.and_then(Pick::entity),
+                        matches!(target, None | Some(Pick::Fill(_))),
+                        p.raw,
+                        p.tolerance,
+                    );
+                }
                 // A chain highlighted by Tab lasts while the pointer stays on it.
                 if let Some((_, set)) = &ed.chain_preview
                     && !ed.hovered.is_some_and(|h| set.contains(&h))
@@ -1343,6 +1353,8 @@ impl Tool for SelectTool {
             Input::DragEnd(p, mods) => match self.drag.take() {
                 Some(SelectDrag::Box { start, .. }) => {
                     let hidden = ed.hidden_handles();
+                    // (No centre that isn't drawn, #259.)
+                    let ends = ed.shown_ends();
                     let mut rect = Bounds::from_point(start);
                     rect.include(p.raw);
                     let crossing = p.raw.x < start.x;
@@ -1361,13 +1373,14 @@ impl Tool for SelectTool {
                                         if q.x >= rect.min.x && q.x <= rect.max.x
                                             && q.y >= rect.min.y && q.y <= rect.max.y)
                                     && ed.pickable(*id, &hidden)
+                                    && !ed.end_unseen(&ends, *id)
                             })
                             .collect()
                     } else {
                         ed.index
                             .select_in_rect(&rect, crossing)
                             .into_iter()
-                            .filter(|id| ed.pickable(*id, &hidden))
+                            .filter(|id| ed.pickable(*id, &hidden) && !ed.end_unseen(&ends, *id))
                             .collect()
                     };
                     let add = mods.shift || mods.command;

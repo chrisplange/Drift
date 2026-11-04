@@ -1249,14 +1249,41 @@ fn a_drag_trim_is_one_undo_step() {
     assert_eq!(ed.history.undo_depth(), depth + 1, "one step");
     assert!(
         ed.out
-            .notice
+            .info
             .as_deref()
             .is_some_and(|n| n.starts_with("Trim: 3 pieces")),
         "{:?}",
-        ed.out.notice
+        ed.out.info
     );
     assert!(ed.undo());
     assert_eq!(geometry(&ed), before, "one Ctrl+Z brings every piece back");
+}
+
+/// #312: a drag across pieces says what each trim did (a relation taken off) in its summary,
+/// shown plainly; it isn't lost to the summary.
+#[test]
+fn a_drag_trim_keeps_what_its_trims_said() {
+    let (mut ed, ids) = bar_and_uprights();
+    // The first upright held equal to a line apart: trimmed shorter, that comes off.
+    ed.doc.begin();
+    let a = ed.doc.add_point(v(50.0, -5.0));
+    let b = ed.doc.add_point(v(50.0, 5.0));
+    let apart = ed.doc.add_line(a, b).unwrap();
+    ed.commit("Line");
+    ed.add_constraints(
+        "Equal",
+        &[Constraint::Equal {
+            a: ids[1],
+            b: apart,
+        }],
+    )
+    .unwrap();
+    let mut tool = TrimTool::default();
+    drag_trim(&mut ed, &mut tool, v(10.0, -3.0), v(32.0, -3.0));
+    assert!(ed.out.notice.is_none(), "{:?}", ed.out.notice);
+    let said = ed.out.info.take().unwrap_or_default();
+    assert!(said.starts_with("Trim: 3 pieces"), "{said}");
+    assert!(said.contains("took off a relation"), "{said}");
 }
 
 #[test]
@@ -2712,7 +2739,7 @@ fn rotate_turns_the_selection_about_its_centre() {
         "the corner (0, 0) lands at {expected:?}"
     );
     assert_eq!(hv_count(&ed), (0, 0));
-    assert!(ed.out.notice.take().is_some_and(|n| n.contains("removed")));
+    assert!(ed.out.info.take().is_some_and(|n| n.contains("removed")));
     // One undo step puts it back, relations and all.
     ed.undo();
     assert_eq!(hv_count(&ed), (2, 2));
@@ -3746,11 +3773,11 @@ fn an_offset_made_in_a_block_edit_goes_into_the_block() {
     assert_eq!(ed.doc.groups().count(), 0);
     assert!(
         ed.out
-            .notice
+            .info
             .as_deref()
             .is_some_and(|n| n.contains("1 left out")),
         "{:?}",
-        ed.out.notice
+        ed.out.info
     );
 }
 
@@ -3795,7 +3822,7 @@ fn a_copy_pasted_in_a_block_edit_becomes_block_curves() {
     );
     assert!(
         ed.out
-            .notice
+            .info
             .as_deref()
             .is_some_and(|n| n.contains("plain curves"))
     );
@@ -3862,11 +3889,11 @@ fn a_text_made_in_a_block_edit_stays_and_is_told() {
     let t = ed.add_text(drift_core::SketchText::new("Label", v(2.0, 2.0), 2.0));
     assert!(
         ed.out
-            .notice
+            .info
             .as_deref()
             .is_some_and(|n| n.contains("stays in the drawing")),
         "{:?}",
-        ed.out.notice
+        ed.out.info
     );
     ed.finish_block_edit();
     assert!(ed.doc.text(t).is_some());
@@ -3937,11 +3964,11 @@ fn finish_tells_what_a_block_leaves_out() {
     ed.finish_block_edit();
     assert!(
         ed.out
-            .notice
+            .info
             .as_deref()
             .is_some_and(|n| n.ends_with(": 1 left out")),
         "{:?}",
-        ed.out.notice
+        ed.out.info
     );
     assert!(
         ed.doc.constraint(outside).is_some(),
@@ -4200,9 +4227,11 @@ fn duplicate_then_esc_removes_the_copy_and_picks_the_originals_again() {
     assert_eq!(lines(&ed.doc), 1, "the copy is gone");
     assert_eq!(ed.selection, [line].into(), "the original is picked again");
     assert_eq!(ed.history.redo_label(), Some("Duplicate"));
+    // (#312: it says what was done, not an error.)
+    assert!(ed.out.notice.is_none());
     assert!(
         ed.out
-            .notice
+            .info
             .take()
             .is_some_and(|n| n.contains("Copy removed"))
     );
@@ -5736,11 +5765,11 @@ fn trimming_a_line_held_equal_leaves_the_rest_where_it_is() {
     );
     assert!(
         ed.out
-            .notice
+            .info
             .as_deref()
             .is_some_and(|n| n.contains("Equal ×2")),
         "{:?}",
-        ed.out.notice
+        ed.out.info
     );
     // One undo brings the line and its relations back.
     ed.undo();
@@ -6957,7 +6986,7 @@ fn a_direction_already_implied_is_left_out_and_said() {
     assert_eq!(lines(&ed.doc), 1, "the line is drawn");
     assert_eq!(horizontals(&ed.doc), 0);
     assert_eq!(
-        ed.out.notice.as_deref(),
+        ed.out.info.as_deref(),
         Some("Horizontal not added: already implied by existing constraints")
     );
 }

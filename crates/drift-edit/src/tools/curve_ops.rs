@@ -83,6 +83,8 @@ struct DragTrim {
     trimmed: usize,
     /// What the trims said (relations taken off, fills changed), each once.
     notes: Vec<String>,
+    /// Whether one of them was a warning (an error notice), not just what was done (#312).
+    warned: bool,
     /// Why pieces weren't trimmed, each reason once, with how many.
     skipped: Vec<(String, usize)>,
 }
@@ -132,16 +134,20 @@ impl TrimTool {
     /// Trim the piece of `id` at `at`, against the picked curves if any. In a drag, what it
     /// did or why it couldn't is kept for the drag's notice.
     fn trim(&mut self, ed: &mut Editor, id: EntityId, at: DVec2) -> Result<(), EditError> {
+        // (What was waiting before stays: this trim's messages are the drag's.)
         let said = ed.out.notice.take();
+        let said_info = ed.out.info.take();
         let r = ed.trim_at_against(id, at, self.edges.against.as_mut());
         if let Some(d) = &mut self.drag {
             match &r {
                 Ok(()) => {
                     d.trimmed += 1;
-                    if let Some(n) = ed.out.notice.take()
-                        && !d.notes.contains(&n)
-                    {
-                        d.notes.push(n);
+                    let warning = ed.out.notice.take();
+                    d.warned |= warning.is_some();
+                    for n in warning.into_iter().chain(ed.out.info.take()) {
+                        if !d.notes.contains(&n) {
+                            d.notes.push(n);
+                        }
                     }
                 }
                 Err(e) => {
@@ -155,6 +161,9 @@ impl TrimTool {
         }
         if ed.out.notice.is_none() {
             ed.out.notice = said;
+        }
+        if ed.out.info.is_none() {
+            ed.out.info = said_info;
         }
         self.edges.follow(ed);
         r
@@ -172,8 +181,14 @@ impl TrimTool {
         if n > 1 {
             ed.history.squash_last(n, "Trim");
         }
+        // What it did, plainly; a drag that trimmed nothing was refused, and one whose trims
+        // warned stays a warning (#312).
         if let Some(summary) = d.summary() {
-            ed.out.notice = Some(summary);
+            if d.trimmed == 0 || d.warned {
+                ed.out.notice = Some(summary);
+            } else {
+                ed.out.inform(summary);
+            }
         }
     }
 
@@ -255,6 +270,7 @@ impl Tool for TrimTool {
                     before: ed.history.recorded(),
                     trimmed: 0,
                     notes: Vec::new(),
+                    warned: false,
                     skipped: Vec::new(),
                 });
                 if let Some(id) = curve_under(ed, &p) {

@@ -354,12 +354,15 @@ fn an_opening_goes_with_its_wall_and_stays_when_exploded() {
     // Deleting the wall (by its centreline) deletes the opening, and says so.
     ed.selection = ed.wall_curves(w).into_iter().collect();
     ed.out.notice = None;
+    ed.out.info = None;
     ed.delete_selection();
     assert_eq!(ed.doc.openings().count(), 0);
     assert!(made.iter().all(|e| !ed.doc.contains(*e)));
+    // (#312: it says what was done, not an error.)
+    assert!(ed.out.notice.is_none());
     assert!(
         ed.out
-            .notice
+            .info
             .as_deref()
             .unwrap_or("")
             .contains("went with its wall")

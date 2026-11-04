@@ -37,14 +37,17 @@ impl UnderlayTool {
     fn calibrate(&mut self, b: DVec2, distance: f64, ed: &mut Editor) {
         if self.mode == UnderlayMode::CalibrateImport {
             if let Some(a) = self.first {
-                ed.out.notice = Some(match ed.calibrate_import(a, b, distance) {
-                    Ok(k) => format!(
-                        "Calibrated: that distance is now {} (scaled × {})",
-                        ed.doc.units().format_readout(distance),
-                        trim_factor(k)
-                    ),
-                    Err(e) => e,
-                });
+                match ed.calibrate_import(a, b, distance) {
+                    Ok(k) => {
+                        let text = format!(
+                            "Calibrated: that distance is now {} (scaled × {})",
+                            ed.doc.units().format_readout(distance),
+                            trim_factor(k)
+                        );
+                        ed.out.inform(text);
+                    }
+                    Err(e) => ed.out.notice = Some(e),
+                }
             }
             self.reset();
             return;
@@ -70,7 +73,7 @@ impl UnderlayTool {
                     Some((s, false)) => format!(", scale × {s:.4}"),
                     None => String::new(),
                 };
-                ed.out.notice = Some(format!(
+                ed.out.inform(format!(
                     "Calibrated: that distance is now {}{ratio}",
                     units.format_readout(distance)
                 ));

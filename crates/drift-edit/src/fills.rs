@@ -1352,8 +1352,9 @@ impl Editor {
         }
         self.make_shapes(&touched, walls.as_deref(), &mut changes);
         if !changes.is_empty() {
-            if self.out.notice.is_none() {
-                self.out.notice = Some(self.describe_fill_changes(&changes));
+            if !self.out.has_message() {
+                let text = self.describe_fill_changes(&changes);
+                self.out.inform(text);
             }
             self.out.fill_changes.extend(changes);
         }
@@ -2859,8 +2860,9 @@ impl Editor {
             let _ = self.doc.set_path(*id, followed);
         }
         if !changes.is_empty() {
-            if self.out.notice.is_none() {
-                self.out.notice = Some(self.describe_fill_changes(&changes));
+            if !self.out.has_message() {
+                let text = self.describe_fill_changes(&changes);
+                self.out.inform(text);
             }
             self.out.fill_changes.extend(changes);
         }

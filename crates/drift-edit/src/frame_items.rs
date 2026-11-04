@@ -104,6 +104,7 @@ impl ItemsCache {
         moving.extend(ed.hovered);
         moving.extend(ed.highlight.iter().copied());
         moving.extend(ed.snapped_point);
+        moving.extend(ed.reach_centre());
         if let Some((_, chain)) = &ed.chain_preview {
             moving.extend(chain.iter().copied());
         }

@@ -31,7 +31,8 @@ impl Default for PatternUi {
 }
 
 impl DriftApp {
-    /// The Pattern section, for the picked curves and block copies (#311).
+    /// The Pattern section, for the picked curves and block copies (#311), and the texts and
+    /// notes picked with them (#327).
     pub(crate) fn pattern_panel(&mut self, ui: &mut egui::Ui, now: f64) {
         let instances: Vec<drift_core::InstanceId> = self
             .drawing
@@ -55,7 +56,8 @@ impl DriftApp {
                     .is_some_and(|e| !e.kind.is_point())
             })
             .collect();
-        if ids.is_empty() && instances.is_empty() {
+        let riders = self.drawing.editor.riders();
+        if ids.is_empty() && instances.is_empty() && riders.is_empty() {
             return;
         }
         let mut result = None;
@@ -134,7 +136,7 @@ impl DriftApp {
             Some(Ok(PatternRequest::Linear { count, step })) => self
                 .drawing
                 .editor
-                .linear_pattern_with(&ids, &instances, count, step)
+                .linear_pattern_with(&ids, &instances, &riders, count, step)
                 .map_err(|e| e.to_string()),
             Some(Ok(PatternRequest::Circular {
                 count,
@@ -143,17 +145,25 @@ impl DriftApp {
             })) => self
                 .drawing
                 .editor
-                .circular_pattern_with(&ids, &instances, count, center, degrees)
+                .circular_pattern_with(&ids, &instances, &riders, count, center, degrees)
                 .map_err(|e| e.to_string()),
         };
         match outcome {
-            Ok((created, copies)) => {
-                let added = match (created.len(), copies.len()) {
-                    (n, 0) => format!("{n} curves"),
-                    (0, 1) => "1 block copy".to_owned(),
-                    (0, c) => format!("{c} block copies"),
-                    (n, 1) => format!("{n} curves and 1 block copy"),
-                    (n, c) => format!("{n} curves and {c} block copies"),
+            Ok((created, copies, (texts, notes))) => {
+                let parts: Vec<String> = [
+                    (created.len(), "curve", "curves"),
+                    (copies.len(), "block copy", "block copies"),
+                    (texts.len(), "text", "texts"),
+                    (notes.len(), "note", "notes"),
+                ]
+                .into_iter()
+                .filter(|(n, _, _)| *n > 0)
+                .map(|(n, one, many)| format!("{n} {}", if n == 1 { one } else { many }))
+                .collect();
+                let added = match parts.as_slice() {
+                    [] => "nothing".to_owned(),
+                    [one] => one.clone(),
+                    [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
                 };
                 self.set_status(format!("Pattern: added {added}"), false, now);
             }

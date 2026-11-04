@@ -772,12 +772,12 @@ impl Editor {
             self.exploded.insert(*id, curves);
         }
         if !copies.is_empty() {
-            self.out.notice = Some("Block copies become plain curves inside a block".into());
+            self.out
+                .inform("Block copies become plain curves inside a block");
         } else if !self.doc.texts_created_in_transaction().is_empty() {
-            self.out.notice = Some(
+            self.out.inform(
                 "Texts aren't part of a block: this one stays in the drawing when editing \
-                 finishes"
-                    .into(),
+                 finishes",
             );
         }
     }
@@ -942,7 +942,7 @@ impl Editor {
         let left_out = before.saturating_sub(drafting(&self.doc));
         self.commit("Finish editing block");
         if left_out > 0 {
-            self.out.notice = Some(format!(
+            self.out.inform(format!(
                 "Block finished. Relations, dimensions and notes don't go into a block: \
                  {left_out} left out"
             ));

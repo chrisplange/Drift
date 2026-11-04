@@ -38,7 +38,7 @@ AutoCAD, Rhino or Vectorworks:
 
 | Toggle | Picks |
 |---|---|
-| **Points** | End points, centres and standalone points. With **Edges** off, a box takes every point inside it. |
+| **Points** | End points, centres and standalone points. A centre is picked only while it shows: when its arc or circle is picked, or hovered (it stays shown while the pointer moves in from the curve towards it). With **Edges** off, a box takes every point inside it. |
 | **Edges** | Lines, arcs, circles, ellipses and curves (and the relation symbols on them). |
 | **Fills** | Solid fills and hatches. With **Edges** off, a click inside a shape picks its fill without its outline. |
 | **Areas** | Empty closed areas (to measure or fill them), when **Pick an area only where it is filled or hatched** is off in **File → Drawing settings…**. |
@@ -79,6 +79,8 @@ and shows where the annotations appear. What you do then acts on all of it:
 - **Mirror**, **Shift+D** and **Ctrl+C / Ctrl+V** copy them with the geometry. Mirrored text
   still reads forwards, and a mirrored section mark looks the other way. A copied section or
   elevation mark is a new mark, not linked to the original's view.
+- **Pattern** copies texts and notes at every step with the geometry, moved or turned the
+  same way.
 
 ### Chains with Tab
 
@@ -287,7 +289,8 @@ pattern…** or **Circular pattern…**):
 - **Circular:** a **Count**, an **Angle** and a centre (**Centre X**, **Y**), then
   **Make circular pattern**. 360° spreads the copies evenly round the circle.
 
-Copies keep the relations within the selection. The fields take expressions.
+Copies keep the relations within the selection. Block copies, texts and notes picked with
+the geometry are copied at every step too. The fields take expressions.
 
 ## Groups
 

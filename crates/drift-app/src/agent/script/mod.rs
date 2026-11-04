@@ -143,6 +143,7 @@ pub(super) fn call(s: &mut Session, a: &Value) -> ToolOutput {
         } else {
             ed.history.discard_last(n, &mut ed.doc);
             ed.out.notice = None;
+            ed.out.info = None;
         }
         ed.sync();
     }

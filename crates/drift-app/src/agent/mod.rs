@@ -289,6 +289,7 @@ impl Session {
         let before = self.editor.history.recorded();
         self.editor.out.fill_changes.clear();
         let notice_before = self.editor.out.notice.clone();
+        let info_before = self.editor.out.info.clone();
         let result = f(self);
         if self.editor.doc.in_transaction() {
             self.editor.doc.rollback();
@@ -306,7 +307,11 @@ impl Session {
                     .out
                     .notice
                     .clone()
-                    .filter(|n| notice_before.as_ref() != Some(n));
+                    .filter(|n| notice_before.as_ref() != Some(n))
+                    .or_else(|| {
+                        let info = self.editor.out.info.clone();
+                        info.filter(|n| info_before.as_ref() != Some(n))
+                    });
                 if let Some(o) = v.as_object_mut() {
                     if !fills.is_empty() {
                         o.insert("fills".into(), Value::Array(fills));
@@ -322,6 +327,7 @@ impl Session {
                 let ed = &mut self.editor;
                 ed.history.discard_last(n, &mut ed.doc);
                 ed.out.notice = None;
+                ed.out.info = None;
                 ed.out.fill_changes.clear();
                 ed.sync();
                 Err(format!("{e} (nothing was changed)"))

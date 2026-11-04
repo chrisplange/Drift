@@ -50,16 +50,17 @@ impl Editor {
     pub(crate) fn item_look(&self, status_colors: bool, dark: bool, rest: bool) -> ItemLook {
         let mut hidden = self.hidden_handles();
         hidden.extend(self.preview_hidden.iter().copied());
-        // (Looked up once per entity of the drawing: hashed, not searched.)
-        let shown_ends = (!self.prefs.always_endpoints).then(|| {
-            if rest {
-                self.points_of(self.selection.iter().copied())
-            } else {
-                self.touched_points()
+        let shown_ends = if rest {
+            ShownEnds {
+                all_ends: self.prefs.always_endpoints,
+                shown: self
+                    .points_of(self.selection.iter().copied())
+                    .into_iter()
+                    .collect(),
             }
-            .into_iter()
-            .collect()
-        });
+        } else {
+            self.shown_ends()
+        };
         let (picked_walls, hovered_wall) = self.lit_walls();
         let hovered_wall = hovered_wall.filter(|_| !rest);
         let hovered_offset = self.hovered_offset().filter(|_| !rest);
@@ -79,6 +80,119 @@ impl Editor {
             hovered_offset,
             wall_owners,
         }
+    }
+
+    /// Which end and centre points show now (with what is hovered): the same rule draws them
+    /// and lets the select tool pick them (#259).
+    pub(crate) fn shown_ends(&self) -> ShownEnds {
+        ShownEnds {
+            all_ends: self.prefs.always_endpoints,
+            shown: self.touched_points().into_iter().collect(),
+        }
+    }
+
+    /// Whether the select tool passes over point `id`: a centre that `ends` doesn't draw.
+    /// (An end point is on its curve: the pointer on it lights the curve up, and so the point,
+    /// as it does with only points pickable; so end points stay pickable.)
+    pub(crate) fn end_unseen(&self, ends: &ShownEnds, id: EntityId) -> bool {
+        let role = self.index.role(id);
+        role == Some(PointRole::Center)
+            && self.doc.get(id).is_some_and(|e| e.kind.is_point())
+            && ends.hides(role, id)
+    }
+
+    /// A curve's centre point, and how far its circle reaches from it (an ellipse's: its
+    /// longer half-axis): what [`reach`](Editor::reach) keeps in view.
+    pub(crate) fn centre_and_reach(&self, curve: EntityId) -> Option<(EntityId, f64)> {
+        let d = |a: EntityId, b: EntityId| -> Option<f64> {
+            Some(self.doc.point(a).ok()?.distance(self.doc.point(b).ok()?))
+        };
+        match self.doc.get(curve)?.kind {
+            EntityKind::Circle { center, radius } => Some((center, radius)),
+            EntityKind::Arc { center, start, .. } => Some((center, d(center, start)?)),
+            EntityKind::Ellipse {
+                center,
+                major,
+                minor,
+            }
+            | EntityKind::EllipseArc {
+                center,
+                major,
+                minor,
+                ..
+            } => Some((center, d(center, major)?.max(d(center, minor)?))),
+            _ => None,
+        }
+    }
+
+    /// The centre [`reach`](Editor::reach) keeps shown, if any.
+    pub fn reach_centre(&self) -> Option<EntityId> {
+        self.reach
+            .and_then(|c| self.centre_and_reach(c))
+            .map(|(centre, _)| centre)
+    }
+
+    /// After a select-tool hover that lit `hovered` at `at` (`empty`: nothing under the
+    /// pointer but empty canvas or a fill): a curve with a centre is the one to reach
+    /// into; its centre keeps it; empty canvas within its circle (and the pick radius)
+    /// keeps it; anything else lets go (#259).
+    pub(crate) fn update_reach(
+        &mut self,
+        hovered: Option<EntityId>,
+        empty: bool,
+        at: DVec2,
+        tol: f64,
+    ) {
+        if let Some(h) = hovered
+            && self.centre_and_reach(h).is_some()
+        {
+            self.reach = Some(h);
+            return;
+        }
+        let keep = self
+            .reach
+            .and_then(|c| self.centre_and_reach(c))
+            .is_some_and(|(centre, r)| {
+                hovered == Some(centre)
+                    || (empty
+                        && hovered.is_none()
+                        && self
+                            .doc
+                            .point(centre)
+                            .is_ok_and(|c| c.distance(at) <= r + tol))
+            });
+        if !keep {
+            self.reach = None;
+        }
+    }
+
+    /// [`end_unseen`](Self::end_unseen) for one point under the pointer, without making the
+    /// set of every lit point: a centre is drawn when it, or a curve it is a point of, is
+    /// hovered, highlighted, picked or snapped to (as [`touched_points`](Self::touched_points)
+    /// has it). Only a centre that nothing lights directly looks through the picked curves.
+    pub(crate) fn centre_unseen(&self, id: EntityId) -> bool {
+        if self.index.role(id) != Some(PointRole::Center)
+            || !self.doc.get(id).is_some_and(|e| e.kind.is_point())
+        {
+            return false;
+        }
+        let lit = |c: &EntityId| *c == id;
+        if self.selection.contains(&id)
+            || self.hovered.iter().any(lit)
+            || self.highlight.contains(&id)
+            || self.snapped_point.iter().any(lit)
+            || self.reach_centre() == Some(id)
+        {
+            return false;
+        }
+        let centres = |c: &EntityId| {
+            self.doc
+                .get(*c)
+                .is_some_and(|e| !e.kind.is_point() && e.kind.points().any(|p| p == id))
+        };
+        !(self.hovered.iter().any(centres)
+            || self.highlight.iter().any(centres)
+            || self.selection.iter().any(centres))
     }
 
     /// The points of `ids`: points themselves, curves' defining points.
@@ -147,14 +261,7 @@ impl Editor {
         id: EntityId,
         entity: &drift_core::Entity,
     ) -> bool {
-        look.shown_ends.as_ref().is_some_and(|shown| {
-            entity.kind.is_point()
-                && matches!(
-                    self.index.role(id),
-                    Some(PointRole::Endpoint | PointRole::Center)
-                )
-                && !shown.contains(&id)
-        })
+        entity.kind.is_point() && look.shown_ends.hides(self.index.role(id), id)
     }
 
     fn entity_item_with<'a>(
@@ -170,12 +277,7 @@ impl Editor {
         }
         let role = self.index.role(id);
         // End and centre points of untouched curves stay out of the way.
-        if ends
-            && let Some(shown) = &look.shown_ends
-            && entity.kind.is_point()
-            && matches!(role, Some(PointRole::Endpoint | PointRole::Center))
-            && !shown.contains(&id)
-        {
+        if ends && entity.kind.is_point() && look.shown_ends.hides(role, id) {
             return None;
         }
         let shape = self.index.shape(id)?;
@@ -319,7 +421,7 @@ pub(crate) struct ItemLook {
     dark: bool,
     rest: bool,
     hidden: BTreeSet<EntityId>,
-    shown_ends: Option<HashSet<EntityId>>,
+    shown_ends: ShownEnds,
     /// The editor's selection, for the same lookup.
     selected: HashSet<EntityId>,
     /// Its active element (see [`Editor::active`]).
@@ -328,6 +430,26 @@ pub(crate) struct ItemLook {
     hovered_wall: Option<drift_core::WallId>,
     hovered_offset: Option<drift_core::OffsetId>,
     wall_owners: Option<std::rc::Rc<drift_core::Owners>>,
+}
+
+/// Which end and centre points show (#259): every end point with View → End points on, and
+/// the end and centre points of what is hovered, highlighted, picked or snapped to. A
+/// centre shows only with its curve, the toggle or not.
+pub(crate) struct ShownEnds {
+    all_ends: bool,
+    /// (Looked up once per entity of the drawing: hashed, not searched.)
+    shown: HashSet<EntityId>,
+}
+
+impl ShownEnds {
+    /// Whether a point in `role` stays out of the way (not drawn, not picked).
+    pub(crate) fn hides(&self, role: Option<PointRole>, id: EntityId) -> bool {
+        match role {
+            Some(PointRole::Endpoint) => !self.all_ends && !self.shown.contains(&id),
+            Some(PointRole::Center) => !self.shown.contains(&id),
+            _ => false,
+        }
+    }
 }
 
 impl ItemLook {

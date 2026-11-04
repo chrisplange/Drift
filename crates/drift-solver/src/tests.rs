@@ -1353,3 +1353,233 @@ fn a_failure_no_relation_owns_is_reported() {
     assert!(!report.conflicts.is_empty());
     assert!(!report.unsourced_failure);
 }
+
+/// `points` dragged by `delta` in one step, as a drag of the curves they are on does, with
+/// the `arcs` keeping their radii, with the fold steps or not. Returns the report and how
+/// far the dragged points landed from their targets.
+fn drag_points(
+    doc: &mut Document,
+    points: &[EntityId],
+    delta: DVec2,
+    arcs: &[EntityId],
+    fold: bool,
+) -> (SolveReport, f64) {
+    let radii: HashMap<EntityId, f64> = arcs
+        .iter()
+        .map(|&a| (a, crate::radius_of(doc, a).unwrap()))
+        .collect();
+    let targets: Vec<(EntityId, DVec2)> = points
+        .iter()
+        .map(|&id| (id, doc.point(id).unwrap() + delta))
+        .collect();
+    for &(id, at) in &targets {
+        doc.set_point(id, at).unwrap();
+    }
+    let report = solve(
+        doc,
+        &SolveOptions {
+            dragged: points.iter().flat_map(|&p| Param::point(p)).collect(),
+            radii,
+            fold,
+            ..Default::default()
+        },
+    );
+    let off = targets
+        .iter()
+        .map(|&(id, at)| doc.point(id).unwrap().distance(at))
+        .fold(0.0, f64::max);
+    (report, off)
+}
+
+/// #282: two points held on an arc a diameter apart, moved together. The arc's kept radius
+/// can be met only with its centre exactly midway between them, its least: a fold, where the
+/// minimum-change step closes about the cube of what is left and the solve runs to its cap.
+/// The fold steps meet it: the circle goes with the points, its radius kept.
+#[test]
+fn a_kept_radius_at_a_fold_is_met_with_the_fold_steps() {
+    let at = |deg: f64| v(8.0, 0.0) + DVec2::from_angle(deg.to_radians()) * 8.0;
+    let build = || {
+        let mut doc = Document::new();
+        let e = doc.add_point(v(0.0, 0.0));
+        let c = doc.add_point(v(8.0, 0.0));
+        let s = doc.add_point(at(135.0));
+        let arc = doc.add_arc(c, s, e).unwrap();
+        let held = [at(135.0), at(315.0)].map(|p| {
+            let point = doc.add_point(p);
+            doc.add_constraint(Constraint::PointOnCurve { point, curve: arc })
+                .unwrap();
+            point
+        });
+        (doc, arc, c, held)
+    };
+    let (mut doc, arc, _, held) = build();
+    let (report, _) = drag_points(&mut doc, &held, v(0.0, -18.0), &[arc], false);
+    assert!(
+        !report.converged,
+        "it finished without the fold steps: {report:?}"
+    );
+    let (mut doc, arc, c, held) = build();
+    let (report, off) = drag_points(&mut doc, &held, v(0.0, -18.0), &[arc], true);
+    assert!(report.converged, "{report:?}");
+    assert!(off == 0.0, "the dragged points landed {off} off");
+    let r = crate::radius_of(&doc, arc).unwrap();
+    assert!((r - 8.0).abs() <= 8.0 * FOLD_MET, "radius {r}");
+    // (Midway between the points to what a radius met that closely allows at its least:
+    // √(2·r·its tolerance).)
+    let centre = doc.point(c).unwrap().distance(v(8.0, -18.0));
+    assert!(
+        centre <= (2.0 * 8.0 * 8.0 * FOLD_MET).sqrt(),
+        "centre {centre} off"
+    );
+    assert!(unmet(&doc, 1e-9).is_empty());
+}
+
+/// #283 (g14's shape): a point held on a line at its tangent end, moved with the arc's centre
+/// so that it stays exactly a radius from it. The tangent line through it then touches only
+/// there, and the line's end must sit on it: a double root, and the move landed off. With the
+/// fold steps it lands.
+#[test]
+fn a_move_held_at_a_tangent_end_lands_with_the_fold_steps() {
+    let d = |deg: f64| DVec2::from_angle(deg.to_radians());
+    let build = || {
+        let mut doc = Document::new();
+        let c = doc.add_point(v(0.0, 0.0));
+        let s = doc.add_point(d(200.0) * 8.0);
+        let e = doc.add_point(d(330.0) * 8.0);
+        let arc = doc.add_arc(c, s, e).unwrap();
+        let far = doc.add_point(d(330.0) * 8.0 + d(60.0) * 10.0);
+        let line = doc.add_line(e, far).unwrap();
+        doc.add_constraint(Constraint::Tangent { a: line, b: arc })
+            .unwrap();
+        let p = doc.add_point(d(330.0) * 8.0);
+        doc.add_constraint(Constraint::PointOnCurve {
+            point: p,
+            curve: line,
+        })
+        .unwrap();
+        assert!(solved(&mut doc).converged);
+        (doc, arc, [c, p])
+    };
+    let delta = v(0.0, 12.725262082906049);
+    let (mut doc, arc, dragged) = build();
+    let (report, off) = drag_points(&mut doc, &dragged, delta, &[arc], false);
+    assert!(
+        !(report.converged && off == 0.0),
+        "it landed without the fold steps: {report:?}"
+    );
+    let (mut doc, arc, dragged) = build();
+    let (report, off) = drag_points(&mut doc, &dragged, delta, &[arc], true);
+    assert!(report.converged, "{report:?}");
+    assert!(off == 0.0, "the dragged points landed {off} off");
+    assert!(unmet(&doc, 1e-9).is_empty());
+}
+
+/// The rows' fold alone (move_lands 17's case, nothing kept): a line's midpoint dragged with
+/// an arc ending at the line's end, another dragged line kept as long as that one, and a
+/// point held on both lines where they meet. Moved, the solve converges with the dragged
+/// heavy, but the landing pass (the dragged pinned) has a double root, halves its way in
+/// until the minimum change outweighs what is left, and is refused 0.002 off. With the fold
+/// steps the rows' minimum change comes down as they close, and it lands.
+#[test]
+fn a_landing_at_a_double_root_of_the_rows_lands_with_the_fold_steps() {
+    let build = || {
+        let mut doc = Document::new();
+        let p = [
+            v(0.0, 0.0),
+            v(15.000000000000004, -25.980762113533157),
+            v(-7.4999999999999964, 12.99038105676658),
+            v(8.0, 0.0),
+            v(2.3431457505076203, 5.656854249492381),
+            v(-3.7499999999999982, 6.49519052838329),
+            v(-17.892135623730947, 20.63732615211424),
+            v(3.750000000000001, -6.495190528383289),
+            v(16.74038105676658, 1.00480947161671),
+            v(8.0, 0.0),
+            v(2.3431457505076203, 5.656854249492381),
+            v(16.74038105676658, -18.99519052838329),
+        ]
+        .map(|q| doc.add_point(q));
+        let l0 = doc.add_line(p[0], p[1]).unwrap();
+        let l1 = doc.add_line(p[0], p[2]).unwrap();
+        doc.add_arc(p[3], p[4], p[0]).unwrap();
+        doc.add_line(p[5], p[6]).unwrap();
+        let l4 = doc.add_line(p[7], p[8]).unwrap();
+        doc.add_arc(p[9], p[10], p[0]).unwrap();
+        doc.add_line(p[8], p[11]).unwrap();
+        for c in [
+            Constraint::Midpoint {
+                point: p[5],
+                line: l1,
+            },
+            Constraint::PointOnCurve {
+                point: p[7],
+                curve: l0,
+            },
+            Constraint::Equal { a: l1, b: l4 },
+            Constraint::PointOnCurve {
+                point: p[7],
+                curve: l1,
+            },
+        ] {
+            doc.add_constraint(c).unwrap();
+        }
+        assert!(solved(&mut doc).converged);
+        let dragged = [5, 6, 9, 10, 0, 8, 11].map(|i| p[i]);
+        (doc, dragged)
+    };
+    let delta = v(0.0, -14.516466897443614);
+    let (mut doc, dragged) = build();
+    let (report, off) = drag_points(&mut doc, &dragged, delta, &[], false);
+    assert!(
+        report.converged && off > 1e-4,
+        "{report:?}, landed {off} off"
+    );
+    let (mut doc, dragged) = build();
+    let (report, off) = drag_points(&mut doc, &dragged, delta, &[], true);
+    assert!(report.converged, "{report:?}");
+    assert!(off == 0.0, "the dragged points landed {off} off");
+    assert!(unmet(&doc, 1e-9).is_empty());
+}
+
+/// The user's rule for a drag the kept radii can't follow ("stop, as now"): e13's two arcs
+/// sharing an end, the first's centre fixed, the second's dragged until the centres are
+/// farther apart than the radii add up to. Meeting the relations takes both radii growing;
+/// with the fold steps the solve isn't finished there (a kept radius isn't met), and it
+/// leaves everything as it found it.
+#[test]
+fn a_fold_solve_that_would_grow_a_radius_is_unfinished_and_changes_nothing() {
+    let mut doc = Document::new();
+    let p = [
+        v(0.0, 0.0),
+        v(8.0, 0.0),
+        v(2.3431457505076203, -5.65685424949238),
+        v(-9.656854249492381, -5.65685424949238),
+        v(-1.1715728752538102, -14.142135623730951),
+    ]
+    .map(|q| doc.add_point(q));
+    let first = doc.add_arc(p[1], p[0], p[2]).unwrap();
+    let second = doc.add_arc(p[3], p[4], p[2]).unwrap();
+    doc.add_constraint(Constraint::Fix {
+        point: p[1],
+        at: v(8.0, 0.0),
+    })
+    .unwrap();
+    doc.set_point(
+        p[3],
+        v(-9.656854249492381, -5.65685424949238 - 8.147331698170428),
+    )
+    .unwrap();
+    let found: Vec<DVec2> = p.iter().map(|&q| doc.point(q).unwrap()).collect();
+    let report = solve(
+        &mut doc,
+        &SolveOptions {
+            dragged: Param::point(p[3]).to_vec(),
+            radii: HashMap::from([(first, 8.0), (second, 12.0)]),
+            fold: true,
+            ..Default::default()
+        },
+    );
+    assert!(!report.converged, "{report:?}");
+    let now: Vec<DVec2> = p.iter().map(|&q| doc.point(q).unwrap()).collect();
+    assert_eq!(now, found);
+}

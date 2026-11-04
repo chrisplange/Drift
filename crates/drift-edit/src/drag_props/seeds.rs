@@ -594,12 +594,12 @@ fn g_move_lands_off_with_a_touching_tangency_in_one_step() {
     explained(moves_land(&plan, &pick, offset, 1)).unwrap();
 }
 
-/// O: a dragged end held where a line is at its nearest to a dragged point (the other end of
-/// a line kept equal to one it crosses): a fold, where the solve stalls short of the target and
-/// the line it is held on can't be carried to it either. (`move_lands_exactly_heavy`, seed 17,
-/// shrunk on main; the seed passes since #282's carry.)
+/// O (fixed, #282's fold steps): a dragged end held where a line is at its nearest to a
+/// dragged point (the other end of a line kept equal to one it crosses): a double root, where
+/// the landing pass stalled 0.002 short of the target and the line it is held on can't be
+/// carried to it either. Tried with the fold steps, it lands. (`move_lands_exactly_heavy`,
+/// seed 17, shrunk on main; the seed passes since #282's carry.)
 #[test]
-#[ignore = "fold: the solve stalls at a fold of the relations (coordinator draft O); lands 0.002 off"]
 fn o_move_lands_off_at_a_fold() {
     let plan = Plan {
         ops: vec![
@@ -659,11 +659,12 @@ fn o_move_lands_off_at_a_fold() {
     explained(moves_land(&plan, &pick, offset, steps)).unwrap();
 }
 
-/// O: two arcs of equal radius sharing ends with a third, none of whose points a relation holds
-/// on a curve: no curve to carry, and the kept radii stall the solve at a fold.
+/// O (fixed, #282's fold steps): two arcs of equal radius sharing ends with a third, none of
+/// whose points a relation holds on a curve: no curve to carry, and a kept radius the minimum
+/// change all but rules out (it closed a thousandth of itself a step) kept the rows from
+/// holding until the solve's cap. Tried with the fold steps, the move goes.
 /// (`free_move_is_accepted_heavy`, seed 18, shrunk on main.)
 #[test]
-#[ignore = "#282: a free move is refused (fold, coordinator draft O)"]
 fn o_free_move_refused_at_a_fold() {
     let plan = Plan {
         ops: vec![
@@ -768,4 +769,57 @@ fn e_result_depends_on_size_at_a_fold() {
         shift: DVec2::new(0.0, 231.67316288164798),
     };
     explained(invariant(&plan, &pick, offset, steps, t)).unwrap();
+}
+
+/// O (fixed, #282's fold steps): an arc with a line tangent at its start and a line and a
+/// point held on it: the move's solve converged by halving to a double root of its rows, then
+/// stalled there against the minimum change, a hair from holding, until its cap. Tried with
+/// the fold steps, the move goes. (`free_move_is_accepted_heavy`, seed 20, shrunk on main.)
+#[test]
+fn o_free_move_refused_at_a_double_root() {
+    let plan = Plan {
+        ops: vec![
+            Op::Dup {
+                from: 0,
+                angle: 10,
+                len: 0,
+            },
+            Op::Arc {
+                from: 21,
+                angle: 9,
+                radius: 0,
+                sweep: 0,
+                ccw: false,
+            },
+            Op::Dup {
+                from: 5,
+                angle: 19,
+                len: 1,
+            },
+            Op::Tangent {
+                arc: 0,
+                end: false,
+                forward: true,
+                len: 2,
+            },
+            Op::OnLine {
+                line: 29,
+                at: 0,
+                angle: 22,
+                len: 1,
+            },
+            Op::OnArc {
+                arc: 0,
+                at: 18,
+                angle: 0,
+                len: 0,
+            },
+        ],
+        extras: (0..48).map(|i| i == 16 || i == 19).collect(),
+        fix: None,
+        length: None,
+    };
+    let pick = Pick::Curves(2255998535123590272);
+    let offset = DVec2::new(0.0, 3.5165293026948543);
+    explained(free_moves_go(&plan, &pick, offset, 1)).unwrap();
 }

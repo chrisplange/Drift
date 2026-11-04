@@ -1916,8 +1916,8 @@ pub(crate) const OTHER_KEYS: &[(&str, &[(&str, &str)])] = &[
         &[
             (
                 "Click / drag",
-                "Select, or box-select (right: window, left: crossing); Shift adds, Ctrl \
-                 toggles",
+                "Select, or box-select (right: window, left: crossing); Shift adds (the last \
+                 picked is active), Ctrl toggles",
             ),
             (
                 "Tab",

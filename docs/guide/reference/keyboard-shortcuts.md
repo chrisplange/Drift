@@ -156,7 +156,7 @@ With no key (use the Annotate menu or the command palette): **Section mark**, **
 
 | Key | Does |
 |---|---|
-| Click / drag | Select, or box-select (right: window, left: crossing); Shift adds, Ctrl toggles |
+| Click / drag | Select, or box-select (right: window, left: crossing); Shift adds (the last picked is active), Ctrl toggles |
 | Tab | Highlight the chain under the pointer (click to pick it); with nothing under the pointer, widen the selection to whole chains |
 | Click near a line's middle | Pick its midpoint |
 | Arrow keys | Nudge one grid step; Shift+arrow, ten |

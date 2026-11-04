@@ -1009,13 +1009,17 @@ impl DriftApp {
                 .drawing
                 .editor
                 .add_constraints(option.label, constraints),
-            // Only the relations that aren't there yet (some may already hold).
+            // Only the relations that aren't there yet (some may already hold). The one picked
+            // last stays where it can, and the others conform to it (#333).
             _ => match self.drawing.editor.missing_relations(option).as_slice() {
                 [] if drift_edit::editor::Editor::is_fix_option(option) => Err(
                     drift_edit::editor::EditError::FullyDefined(self.drawing.editor.fixed_name()),
                 ),
                 [] => Err(drift_edit::editor::EditError::Redundant),
-                missing => self.drawing.editor.add_constraints(option.label, missing),
+                missing => self
+                    .drawing
+                    .editor
+                    .add_picked_constraints(option.label, missing),
             },
         };
         match added {
@@ -1042,12 +1046,24 @@ impl DriftApp {
                 continue;
             }
             theme::section(ui, heading);
+            // Which of what is picked stays (#333).
+            let hint = (!is_dimension)
+                .then(|| self.drawing.editor.active_hint())
+                .flatten();
+            if let Some(hint) = hint {
+                ui.label(egui::RichText::new(hint).small().weak());
+            }
             let mut chosen = None;
+            let ed = &self.drawing.editor;
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
                 for option in &options {
                     let chip = egui::Button::new(option.label).corner_radius(12.0);
-                    if ui.add(chip).clicked() {
+                    let mut response = ui.add(chip);
+                    if !is_dimension && let Some(role) = ed.relation_role(option.label) {
+                        response = response.on_hover_text(role);
+                    }
+                    if response.clicked() {
                         chosen = Some(option.clone());
                     }
                 }

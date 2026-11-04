@@ -10,6 +10,26 @@ impl Editor {
         label: &str,
         constraints: &[Constraint],
     ) -> Result<Vec<ConstraintId>, EditError> {
+        self.add_constraints_keeping(label, constraints, None)
+    }
+
+    /// [`add_constraints`](Self::add_constraints) for relations and dimensions the user adds
+    /// between what they picked: the [active](Self::active) element (the last picked) stays
+    /// where it can, and the others conform to it (#333).
+    pub fn add_picked_constraints(
+        &mut self,
+        label: &str,
+        constraints: &[Constraint],
+    ) -> Result<Vec<ConstraintId>, EditError> {
+        self.add_constraints_keeping(label, constraints, self.active())
+    }
+
+    fn add_constraints_keeping(
+        &mut self,
+        label: &str,
+        constraints: &[Constraint],
+        keep: Option<EntityId>,
+    ) -> Result<Vec<ConstraintId>, EditError> {
         // A wall's faces hold relations that can be lowered onto its centreline; its
         // corners follow its joins.
         if let Some(why) = constraints.iter().find_map(|c| self.refused_on_walls(c)) {
@@ -34,7 +54,7 @@ impl Editor {
             }
             self.settle_fillet(c);
         }
-        self.check_new_constraints(label, &ids, &before, &degenerate_before)?;
+        self.check_new_constraints(label, &ids, &before, &degenerate_before, keep)?;
         Ok(ids)
     }
 
@@ -171,23 +191,132 @@ impl Editor {
     }
 
     /// Solve after constraints `ids` were made active in the open transaction, and commit it,
-    /// or roll it back if they conflict, collapse geometry or add nothing new.
+    /// or roll it back if they conflict, collapse geometry or add nothing new. `keep`: the
+    /// active element, which stays where it can (see [`kept_entity`](Self::kept_entity)).
     pub(super) fn check_new_constraints(
         &mut self,
         label: &str,
         ids: &[ConstraintId],
         before: &SolveReport,
         degenerate_before: &[EntityId],
+        keep: Option<EntityId>,
     ) -> Result<(), EditError> {
-        // The geometry the new constraints name takes up the change. The rest of the sketch
-        // moves only where it has to, and its lines keep their directions and its arcs their
-        // sizes where they can: a relation reshapes what it relates instead of spreading the
-        // change thinly over everything.
         let named: HashSet<EntityId> = ids
             .iter()
             .filter_map(|id| self.doc.constraint(*id))
             .flat_map(|c| c.entities())
             .collect();
+        let keep = self.kept_entity(keep, ids, &named, before);
+        // The active element stays exactly where it is when the relations can be met that
+        // way; otherwise they are solved exactly as without it, from the geometry as it was.
+        let mut kept = false;
+        if let Some(k) = keep {
+            let saved = self.doc.clone();
+            let held = self.doc.defining_points([k]);
+            let at = |doc: &Document| -> Vec<Option<DVec2>> {
+                held.iter().map(|p| doc.point(*p).ok()).collect()
+            };
+            let start = at(&self.doc);
+            let report = self.solve_new_constraints(ids, named.clone(), keep);
+            // Kept only where it landed exactly (`==`, no tolerance): the solver's landing
+            // goes on only from groups already exactly on their targets, solves again with
+            // them pinned (written back as they were), and puts the weighted values back
+            // where that fails; so the active element's points are either exactly where they
+            // were or didn't land at all. A tolerance would let a near miss through: the
+            // weighted result, which can push the rest of the sketch aside to spare the
+            // active element. (A point of it that is fully defined isn't among the targets,
+            // and doesn't move either.)
+            let landed = !self.new_conflicts(&report)
+                && !self.unfinished(&report)
+                && !self.new_degeneracy(degenerate_before)
+                && at(&self.doc) == start;
+            kept = landed;
+            if !kept {
+                self.put_geometry_back(&saved);
+            }
+        }
+        // Where it was kept, this is the same solve again from where that one landed, and
+        // expected to take no step at all: the relations are met, and every preference is
+        // measured from where the geometry already is. Its analysis is what the checks below
+        // read (the keeping solve's own, with the active element pinned as it landed, would
+        // count too little left free). If it ever did take a step, its result is today's
+        // solve from a met state, and stands. (A point merged with two or more others, by
+        // Coincident or level or plumb points, can end one unit of rounding off: this solve
+        // and the commit's rebuild it from the mean of its members, as every commit does
+        // today.)
+        let report = self.solve_new_constraints(ids, named, None);
+        self.relation_kept = Some((kept, report.iterations));
+        let error = if self.new_conflicts(&report) {
+            Some(EditError::Conflict)
+        } else if self.new_degeneracy(degenerate_before) {
+            Some(EditError::Degenerate)
+        } else if ids.iter().all(|id| report.redundant.contains(id))
+            || report.dof == before.dof
+            || (report.dependent_equations > before.dependent_equations
+                && !self.only_relations(ids))
+        {
+            Some(EditError::Redundant)
+        } else {
+            None
+        };
+        if let Some(error) = error {
+            self.doc.rollback();
+            self.sync();
+            return Err(error);
+        }
+        self.commit(label);
+        Ok(())
+    }
+
+    /// Put every point and circle radius back where it is in `saved` (a copy of this document
+    /// taken earlier in the open transaction), as edits in the transaction: what a solve
+    /// writes (the document stays this one, so the caches that follow its changes go on
+    /// following them).
+    fn put_geometry_back(&mut self, saved: &Document) {
+        for (id, e) in saved.iter() {
+            match e.kind {
+                EntityKind::Point(at) => {
+                    if self.doc.point(id).is_ok_and(|p| p != at) {
+                        let _ = self.doc.set_point(id, at);
+                    }
+                }
+                EntityKind::Circle { radius, .. } => {
+                    if let Some(EntityKind::Circle { radius: now, .. }) =
+                        self.doc.get(id).map(|e| e.kind)
+                        && now != radius
+                    {
+                        let _ = self.doc.set_radius(id, radius);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// The solve after new constraints `ids`, naming `named`, were added (see
+    /// [`check_new_constraints`](Self::check_new_constraints)). `keep`: the active element
+    /// they keep, if any: it is carried (the rank a drag carries geometry at), so the solve
+    /// lands it again exactly where it was if it can, and the others named take up the
+    /// change. Its points are all carried, so a point it shares with another named entity (an
+    /// L's corner) stays too, and that one turns about it. This solve is then only a try
+    /// (see `check_new_constraints`: kept if it landed, else solved again with no `keep`),
+    /// and doesn't analyse. With no `keep`, this is the solve as it always was.
+    fn solve_new_constraints(
+        &mut self,
+        ids: &[ConstraintId],
+        named: HashSet<EntityId>,
+        keep: Option<EntityId>,
+    ) -> SolveReport {
+        // The geometry the new constraints name takes up the change. The rest of the sketch
+        // moves only where it has to, and its lines keep their directions and its arcs their
+        // sizes where they can: a relation reshapes what it relates instead of spreading the
+        // change thinly over everything. (The active element is one of the rest here, and
+        // carried: the solve lands it again where it was if it can, and the others named take
+        // up the change.)
+        let mut named = named;
+        if let Some(k) = keep {
+            named.remove(&k);
+        }
         let mut directions = HashMap::new();
         let mut radii = HashMap::new();
         for (id, e) in self.doc.iter().filter(|(id, _)| !named.contains(id)) {
@@ -209,7 +338,6 @@ impl Editor {
         }
         // (Relations on walls' faces take up the change on the centrelines they lower to.)
         let lowering = self.lowering();
-        let mut named = named;
         if let Some(l) = &lowering {
             for id in ids {
                 for e in
@@ -223,37 +351,43 @@ impl Editor {
             }
         }
         let focus = self.params_of(named);
-        let report = drift_solver::solve(
+        let carried = keep.map_or_else(Vec::new, |k| self.params_of([k].into()));
+        drift_solver::solve(
             &mut self.doc,
             &SolveOptions {
-                analyze: true,
+                analyze: keep.is_none(),
                 focus,
+                carried,
                 directions,
                 radii,
                 lowering,
                 ..Default::default()
             },
-        );
-        let error = if self.new_conflicts(&report) {
-            Some(EditError::Conflict)
-        } else if self.new_degeneracy(degenerate_before) {
-            Some(EditError::Degenerate)
-        } else if ids.iter().all(|id| report.redundant.contains(id))
-            || report.dof == before.dof
-            || (report.dependent_equations > before.dependent_equations
-                && !self.only_relations(ids))
-        {
-            Some(EditError::Redundant)
-        } else {
-            None
+        )
+    }
+
+    /// The active element `keep` as new constraints `ids` keep it: only when they name it and
+    /// something else they name can still move. With nothing else free, keeping it can't
+    /// land, so the try is skipped: the result is today's either way. Not through walls'
+    /// faces, whose relations are lowered onto centrelines (they keep today's even split).
+    fn kept_entity(
+        &self,
+        keep: Option<EntityId>,
+        ids: &[ConstraintId],
+        named: &HashSet<EntityId>,
+        before: &SolveReport,
+    ) -> Option<EntityId> {
+        let keep = keep.filter(|k| named.contains(k))?;
+        let lowered = self
+            .lowering()
+            .is_some_and(|l| ids.iter().any(|id| l.of.contains_key(id)));
+        let free = |e: &EntityId| {
+            !matches!(
+                before.definitions.get(e),
+                Some(drift_solver::Definition::Full)
+            )
         };
-        if let Some(error) = error {
-            self.doc.rollback();
-            self.sync();
-            return Err(error);
-        }
-        self.commit(label);
-        Ok(())
+        (!lowered && named.iter().any(|e| *e != keep && free(e))).then_some(keep)
     }
 
     /// The solver parameters of entities: their defining points' coordinates and, for
@@ -290,6 +424,8 @@ impl Editor {
 
     /// Add a dimension with its label placed at `placement` (offset from its anchor), as one
     /// undoable step.
+    /// It goes through [`add_constraints`](Self::add_constraints), with no active element: a
+    /// dimension is added at the geometry's current measurement, so adding it moves nothing.
     pub fn add_dimension(
         &mut self,
         constraint: Constraint,
@@ -389,7 +525,7 @@ impl Editor {
             self.doc.rollback();
             return Err(EditError::Invalid(e.to_string()));
         }
-        self.check_new_constraints(label, &[id], &before, &degenerate_before)
+        self.check_new_constraints(label, &[id], &before, &degenerate_before, None)
     }
 
     /// Move a dimension's label (inside an open transaction while dragging).

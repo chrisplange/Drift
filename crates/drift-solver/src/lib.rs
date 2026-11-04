@@ -1039,13 +1039,31 @@ fn evaluate(
     values: &[f64],
     col_of: &HashMap<usize, usize>,
 ) -> (Vec<f64>, Vec<Vec<(usize, f64)>>) {
+    evaluate_with_own(sys, rows, values, col_of).0
+}
+
+/// Rows' residuals and their gradients over a component's columns, as [`evaluate`] gives
+/// them.
+type Evaluated = (Vec<f64>, Vec<Vec<(usize, f64)>>);
+
+/// [`evaluate`], with each row's gradient over its own parameters taken one by one, before
+/// substitution merges them or a solve pins them (its length): what [`row_scales`] measures
+/// the row's gradient over the unknowns against.
+fn evaluate_with_own(
+    sys: &System,
+    rows: &[usize],
+    values: &[f64],
+    col_of: &HashMap<usize, usize>,
+) -> (Evaluated, Vec<f64>) {
     let val = |p: usize| values[sys.group_of[p]];
     let mut residuals = Vec::with_capacity(rows.len());
     let mut jacobian = Vec::with_capacity(rows.len());
+    let mut own = Vec::with_capacity(rows.len());
     let mut grad = Vec::new();
     for &r in rows {
         grad.clear();
         residuals.push(sys.rows[r].equation.eval(&val, &mut grad));
+        own.push(grad.iter().map(|(_, g)| g * g).sum::<f64>().sqrt());
         let mut row: Vec<(usize, f64)> = Vec::with_capacity(grad.len());
         for &(p, g) in &grad {
             if let Some(&c) = col_of.get(&sys.group_of[p]) {
@@ -1057,18 +1075,32 @@ fn evaluate(
         }
         jacobian.push(row);
     }
-    (residuals, jacobian)
+    ((residuals, jacobian), own)
 }
 
 /// A row whose gradient is this small next to the largest is left unscaled by
 /// [`scaled_rows`]: it is round-off (an angle between lines whose directions substitution
 /// has pinned, say), and scaled up to a unit gradient its residual, round-off too, would
-/// be an equation of its own.
+/// be an equation of its own. The same share of a row's own gradient over its parameters
+/// is what [`row_scales`] leaves out of the step altogether.
 const NEGLIGIBLE_ROW: f64 = 1e-9;
 
 /// Per row, the factor that scales its gradient to unit length (one, for a row with next
 /// to no gradient: it has nothing to say about the step).
-fn row_scales(jac: &[Vec<(usize, f64)>]) -> Vec<f64> {
+///
+/// Zero for a row that `holds` with no gradient left over the unknowns, next to its own
+/// over its parameters (`own`, see [`evaluate_with_own`]): substitution or pinning took
+/// every way it had to move. A line held vertical and square to a level one, with only its
+/// free end left to move, slides along itself, which no angle, no point on it and no
+/// tangency feels. What is left of such a row's gradient is round-off, and of its residual
+/// too; scaled up to a unit gradient it would be an equation of its own, which a step as
+/// far as the drawing is across meets as well as any other (#277). Measured against the
+/// largest row of its component instead it may be as large as any: where every row is such
+/// a row, as in a landing pass with the dragged pinned. A row like it that doesn't hold
+/// keeps its scale: its residual is real, and leaving it out stops drags that go. Left out
+/// of the step, a row still counts for whether the solve has converged, which reads the
+/// rows unscaled.
+fn row_scales(jac: &[Vec<(usize, f64)>], own: &[f64], holds: impl Fn(usize) -> bool) -> Vec<f64> {
     let norms: Vec<f64> = jac
         .iter()
         .map(|row| row.iter().map(|(_, g)| g * g).sum::<f64>().sqrt())
@@ -1076,8 +1108,12 @@ fn row_scales(jac: &[Vec<(usize, f64)>]) -> Vec<f64> {
     let largest = norms.iter().copied().fold(0.0, f64::max);
     norms
         .into_iter()
-        .map(|norm| {
-            if norm > NEGLIGIBLE_ROW * largest {
+        .zip(own)
+        .enumerate()
+        .map(|(k, (norm, own))| {
+            if norm <= NEGLIGIBLE_ROW * own && holds(k) {
+                0.0
+            } else if norm > NEGLIGIBLE_ROW * largest {
                 1.0 / norm
             } else {
                 1.0
@@ -1147,7 +1183,7 @@ fn newton(
             .all(|(f, r)| f.abs() <= row_tolerance(sys, *r, values, tol))
     };
 
-    let (mut res, mut jac) = evaluate(sys, &comp.rows, values, &col_of);
+    let ((mut res, mut jac), mut own) = evaluate_with_own(sys, &comp.rows, values, &col_of);
     // Normal matrix N = JᵀJ over the unknowns. Its sparsity is fixed for the component (two
     // unknowns interact when an equation uses both), so build the bandwidth-reduced structure
     // once. Working over unknowns rather than equations keeps a widely shared unknown a single
@@ -1288,7 +1324,9 @@ fn newton(
         // unknown of a dragged part among them), and the same drag would come out
         // differently on the same sketch at another size (#94). Scaled, every row counts as
         // the distance it is off by.
-        let row_scale = row_scales(&jac);
+        let row_scale = row_scales(&jac, &own, |k| {
+            res[k].abs() <= row_tolerance(sys, comp.rows[k], values, tol)
+        });
         let (scaled_jac, scaled_res) = scaled_rows(&jac, &res, &row_scale);
         normal.clear();
         let mut rhs = vec![Dd::default(); n];
@@ -1456,7 +1494,8 @@ fn newton(
         for (c, g) in comp.unknowns.iter().enumerate() {
             trial[*g] += delta[c];
         }
-        let (trial_res, trial_jac) = evaluate(sys, &comp.rows, &trial, &col_of);
+        let ((trial_res, trial_jac), trial_own) =
+            evaluate_with_own(sys, &comp.rows, &trial, &col_of);
         // (Judged in the step's own scaling of the rows.)
         let before = scaled_norm2(&res, &row_scale);
         let after = scaled_norm2(&trial_res, &row_scale);
@@ -1489,6 +1528,7 @@ fn newton(
             values.copy_from_slice(&trial);
             res = trial_res;
             jac = trial_jac;
+            own = trial_own;
             // Then the preferences' step, which the relations don't feel to first order:
             // what it leaves them off by (second order) the next step mends. Judged with
             // the relations' step it would be refused whenever that is more than the rows
@@ -1507,7 +1547,8 @@ fn newton(
                 for (c, g) in comp.unknowns.iter().enumerate() {
                     trial[*g] += fold_delta[c];
                 }
-                let (trial_res, trial_jac) = evaluate(sys, &comp.rows, &trial, &col_of);
+                let ((trial_res, trial_jac), trial_own) =
+                    evaluate_with_own(sys, &comp.rows, &trial, &col_of);
                 let after = scaled_norm2(&trial_res, &row_scale);
                 if !(after < before
                     || after.sqrt() <= before.sqrt() + SECOND_ORDER * moved
@@ -1518,6 +1559,7 @@ fn newton(
                 values.copy_from_slice(&trial);
                 res = trial_res;
                 jac = trial_jac;
+                own = trial_own;
                 settled = moved.max(rows_moved) <= still;
                 last_moved = last_moved.max(moved);
                 true
@@ -1531,7 +1573,8 @@ fn newton(
                     for (c, g) in comp.unknowns.iter().enumerate() {
                         trial[*g] += soft_delta[c];
                     }
-                    let (trial_res, trial_jac) = evaluate(sys, &comp.rows, &trial, &col_of);
+                    let ((trial_res, trial_jac), trial_own) =
+                        evaluate_with_own(sys, &comp.rows, &trial, &col_of);
                     // Or what it leaves them off by is second order, a fraction of the step
                     // (it went along a curved relation, which the next step mends). Judged
                     // only against the tolerance, a step along a curved relation that already
@@ -1546,6 +1589,7 @@ fn newton(
                         values.copy_from_slice(&trial);
                         res = trial_res;
                         jac = trial_jac;
+                        own = trial_own;
                         break;
                     }
                     soft_delta.iter_mut().for_each(|d| *d *= 0.5);

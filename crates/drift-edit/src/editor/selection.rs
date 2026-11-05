@@ -492,13 +492,81 @@ impl Editor {
             let walls = self.walls_for_picks(faces);
             self.selection.extend(walls);
         }
-        let extra: Vec<EntityId> = self
-            .selection
-            .iter()
-            .flat_map(|id| self.pick_set(*id))
-            .collect();
+        let extra = self.pick_sets(self.selection.iter().copied());
         self.selection.extend(extra);
         self.sync_group_fills();
+    }
+
+    /// What picking each of `ids` selects, together: [`pick_set`](Self::pick_set) of each,
+    /// with each group, wall, opening and offset gathered once however many of its parts
+    /// are among them (#317: a pick of a big group went members × members).
+    pub(crate) fn pick_sets(&self, ids: impl IntoIterator<Item = EntityId>) -> BTreeSet<EntityId> {
+        let ids: Vec<EntityId> = ids.into_iter().collect();
+        // (A map of every grouped member pays only when looking each id up in every group
+        // would cost more: many ids and many groups. A click in a drawing of many groups
+        // looks in each.)
+        let (groups, members) = self
+            .doc
+            .groups()
+            .fold((0, 0), |(n, m), (_, g)| (n + 1, m + g.members.len()));
+        let index = (ids.len() * groups > members.max(64)).then(|| self.doc.group_index());
+        let group_of = |id: EntityId| match &index {
+            Some(index) => index.get(&id).copied(),
+            None => self.doc.group_of(id),
+        };
+        // (Whether each one gave anything: if not, its part falls through to the next
+        // check, as in `pick_set`.)
+        let mut openings = HashMap::new();
+        let mut walls = HashMap::new();
+        let mut offsets = HashMap::new();
+        let mut groups = HashSet::new();
+        let mut out = BTreeSet::new();
+        let gather = |set: BTreeSet<EntityId>, out: &mut BTreeSet<EntityId>| {
+            let any = !set.is_empty();
+            out.extend(set);
+            any
+        };
+        for id in ids {
+            if let Some(o) = self.opening_of(id)
+                && *openings
+                    .entry(o)
+                    .or_insert_with(|| gather(self.opening_pick_set(o), &mut out))
+            {
+                continue;
+            }
+            if self.doc.has_walls()
+                && self.wall_owners().by_wall(id)
+                && let Some(w) = self.wall_of(id)
+                && *walls
+                    .entry(w)
+                    .or_insert_with(|| gather(self.wall_pick_set(w), &mut out))
+            {
+                continue;
+            }
+            if let Some(x) = self.offset_of(id)
+                && *offsets
+                    .entry(x)
+                    .or_insert_with(|| gather(self.offset_pick_set(x), &mut out))
+            {
+                continue;
+            }
+            out.insert(id);
+            // With a filter on, a group gives only what the filter lets through.
+            if let Some(g) = group_of(id)
+                && self.open_group != Some(g)
+                && groups.insert(g)
+                && let Some(group) = self.doc.group(g)
+            {
+                out.extend(
+                    group
+                        .members
+                        .iter()
+                        .copied()
+                        .filter(|e| self.prefs.pick_filter.allows(&self.doc, *e)),
+                );
+            }
+        }
+        out
     }
 
     /// The group (not the open one) a shape's fill goes with: the one its whole outline is

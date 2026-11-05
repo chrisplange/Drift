@@ -146,6 +146,9 @@ pub struct Editor {
     /// [`scoped_areas`](Editor::scoped_areas)).
     pub(crate) scoped_regions_found: usize,
     pub(crate) uncrossed_found: std::cell::Cell<usize>,
+    /// How many times a fill's last shape was looked inside, for an area to follow it (see
+    /// [`fill_shapes`](Editor::fill_shapes)).
+    pub(crate) fill_near_points: std::cell::Cell<usize>,
     pub(crate) wall_fills_found: std::cell::Cell<usize>,
     pub history: History,
     pub selection: BTreeSet<EntityId>,
@@ -183,9 +186,8 @@ pub struct Editor {
     scrubbing: Option<(VariableId, String)>,
     /// Closed regions of the solid curves, and what they were found from.
     pub(crate) regions: Option<(RegionsKey, Regions)>,
-    /// The picked region as a move inside an open group found it, and the move's offset
-    /// then (see [`region`](Editor::region)).
-    pub(crate) region_moving: Option<(drift_geom::regions::Region, DVec2)>,
+    /// The picked region as a move found it (see [`region`](Editor::region)).
+    pub(crate) region_moving: Option<regions::RegionMoving>,
     /// The areas among the open group's curves alone, while one is open (see
     /// [`scoped_areas`](Editor::scoped_areas)): (group, its scope, key, areas, the entity
     /// of each curve index).

@@ -505,6 +505,17 @@ fn perf_group_edit_pdf() {
     let t = Instant::now();
     let g = ed.make_group().expect("grouped");
     println!("group: {:.0} ms", ms(t));
+    // What Group left picked, to the file `DRIFT_DIGEST` names (to check against another
+    // build).
+    if let Ok(path) = std::env::var("DRIFT_DIGEST") {
+        let digest = format!(
+            "members {:?}\nselection {:?}\nfills {:?}\n",
+            ed.doc.group(g).map(|g| &g.members),
+            ed.selection,
+            ed.selected_fills
+        );
+        std::fs::write(path, digest).unwrap();
+    }
     let t = Instant::now();
     ed.open_group = Some(g);
     ed.selection.clear();
@@ -1653,4 +1664,173 @@ fn perf_region_move_in_open_group() {
     assert!(ed.region().is_some());
     println!("({} curves)", r.curves);
     frames(&mut ed, "(b) the whole PDF in an open group, region move");
+    // (c) #321: the same area picked with nothing open, the drawing's own areas.
+    ed.open_group = None;
+    ed.selection.clear();
+    ed.selected_region = Some(at);
+    assert!(ed.region().is_some());
+    frames(&mut ed, "(c) the whole PDF, nothing open, region move");
+    // The same move landed: the picked area, every fill's shape and the selection, to the
+    // file `DRIFT_DIGEST` names (to check against another build).
+    if let Ok(path) = std::env::var("DRIFT_DIGEST") {
+        let r = ed.region().expect("a picked region");
+        let ids = ed.region_curves(&r);
+        ed.selection = ids.iter().copied().collect();
+        ed.doc.begin();
+        let mut offset = DVec2::ZERO;
+        for _ in 0..12 {
+            let step = v(0.5, 0.25);
+            if ed.drag(&ids, step, &[]) {
+                offset += step;
+                ed.region_motion = Some(RegionMotion::Move(offset));
+            }
+            ed.sync();
+            ed.region();
+        }
+        assert!(ed.commit("Move"));
+        ed.region_motion = None;
+        ed.settle_areas();
+        let landed = ed.region();
+        let mut digest = format!(
+            "moved {offset}\narea {landed:?}\nselection {:?}\n",
+            ed.selection
+        );
+        for (id, s) in ed.fill_shapes().iter() {
+            digest += &format!(
+                "{id:?} {:?} {:?} {} {}\n",
+                s.region, s.curves, s.lost, s.crossed
+            );
+        }
+        std::fs::write(path, digest).unwrap();
+    }
+}
+
+/// #317: grouping a big pick (10,000 loose lines, and the same as 100 groups of 100), and
+/// picking the group again, scale with the pick, not its square.
+#[test]
+#[ignore = "torture test: run with --release --ignored --nocapture"]
+fn perf_group_large_pick() {
+    let lines = |n: usize| {
+        let mut doc = Document::new();
+        for k in 0..n {
+            let (x, y) = ((k % 100) as f64 * 3.0, (k / 100) as f64 * 3.0);
+            let a = doc.add_point(v(x, y));
+            let b = doc.add_point(v(x + 2.0, y + 1.0));
+            doc.add_line(a, b).unwrap();
+        }
+        let mut ed = Editor::new(doc);
+        ed.select_all();
+        ed
+    };
+    println!();
+    let mut ed = lines(10_000);
+    let t = Instant::now();
+    let g = ed.make_group().expect("grouped");
+    let group_ms = t.elapsed().as_secs_f64() * 1e3;
+    report("group 10,000 lines", once(group_ms));
+    assert_eq!(ed.doc.group(g).unwrap().members.len(), 10_000);
+    ed.selection = ed.selection.iter().copied().take(1).collect();
+    let t = Instant::now();
+    ed.expand_groups();
+    let expand_ms = t.elapsed().as_secs_f64() * 1e3;
+    report("pick a 10,000-line group whole", once(expand_ms));
+    assert_eq!(ed.selection.len(), 10_000);
+    // 100 groups of 100, all picked, grouped into one.
+    let mut ed = lines(10_000);
+    let all: Vec<EntityId> = ed.selection.iter().copied().collect();
+    for chunk in all.chunks(100) {
+        ed.selection = chunk.iter().copied().collect();
+        ed.make_group().expect("grouped");
+    }
+    ed.select_all();
+    let t = Instant::now();
+    ed.expand_groups();
+    let many_ms = t.elapsed().as_secs_f64() * 1e3;
+    report("pick 100 groups of 100 whole", once(many_ms));
+    let t = Instant::now();
+    ed.make_group().expect("grouped");
+    let regroup_ms = t.elapsed().as_secs_f64() * 1e3;
+    report("group 100 groups of 100 into one", once(regroup_ms));
+    assert_eq!(ed.doc.groups().count(), 1);
+    // A click in a drawing of 1,000 groups of 50 lines: the group it picks, widened.
+    let mut ed = lines(50_000);
+    let all: Vec<EntityId> = ed.selection.iter().copied().collect();
+    for chunk in all.chunks(50) {
+        ed.doc
+            .add_group(drift_core::Group {
+                name: String::new(),
+                members: chunk.iter().copied().collect(),
+            })
+            .unwrap();
+    }
+    let clicked = all[25_025];
+    report(
+        "click one of 1,000 groups of 50, widened",
+        time(20, |_| {
+            ed.selection = ed.pick_set(clicked);
+            ed.expand_groups();
+            assert_eq!(ed.selection.len(), 50);
+        }),
+    );
+    // (Linear work on 10,000 lines takes milliseconds; the square of it, seconds.)
+    for (what, ms) in [
+        ("group", group_ms),
+        ("expand", expand_ms),
+        ("expand many", many_ms),
+        ("regroup", regroup_ms),
+    ] {
+        assert!(ms < 250.0, "{what} took {ms:.0} ms");
+    }
+}
+
+/// #253: the Inspector's relation and dimension offers, asked every frame while things are
+/// picked, for `n` picked loose lines: they grow with the pick, not its square (12 s a frame
+/// for 66,844 lines before).
+#[test]
+#[ignore = "torture test: run with --release --ignored --nocapture"]
+fn perf_relation_options_large_pick() {
+    println!();
+    let mut at_40k = 0.0;
+    for n in [2_500usize, 5_000, 10_000, 20_000, 40_000, 66_844] {
+        let mut doc = Document::new();
+        for k in 0..n {
+            let (x, y) = ((k % 300) as f64 * 3.0, (k / 300) as f64 * 3.0);
+            let a = doc.add_point(v(x, y));
+            let b = doc.add_point(v(x + 2.0, y + 1.0));
+            doc.add_line(a, b).unwrap();
+        }
+        let mut ed = Editor::new(doc);
+        ed.selection = ed
+            .doc
+            .iter()
+            .filter(|(_, e)| !e.kind.is_point())
+            .map(|(id, _)| id)
+            .collect();
+        let t = Instant::now();
+        let r = ed.relation_options();
+        let rel = t.elapsed().as_secs_f64() * 1e3;
+        let t = Instant::now();
+        let d = ed.dimension_options();
+        let dim = t.elapsed().as_secs_f64() * 1e3;
+        // (What was offered, every relation of every offer, as one number: to check it
+        // against another build.)
+        let offered = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            format!("{r:?}").hash(&mut h);
+            h.finish()
+        };
+        println!(
+            "{n:>6} lines: relation_options {rel:>9.1} ms ({} offers, {offered:016x}), dimension_options {dim:>7.2} ms ({})",
+            r.len(),
+            d.len()
+        );
+        if n == 40_000 {
+            at_40k = rel;
+        }
+    }
+    assert!(
+        at_40k < 100.0,
+        "relation offers for 40,000 lines took {at_40k:.0} ms"
+    );
 }

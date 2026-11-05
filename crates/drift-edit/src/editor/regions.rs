@@ -39,7 +39,6 @@ impl Editor {
         let (Some(scope), Some(g)) = (self.edit_scope(), self.edit_group()) else {
             // (Nothing open: let go of the last open group's areas.)
             self.scoped_regions = None;
-            self.region_moving = None;
             let regions = self.regions();
             return (regions, self.region_ids.clone());
         };
@@ -156,18 +155,38 @@ impl Editor {
             return None;
         };
         let seed = self.region_motion.map_or(seed, |m| m.apply(seed));
-        // Being moved inside a group or block open for editing: the region as the move
-        // found it, moved along (the open group's areas are found on the spot, not by the
-        // areas worker, so not every frame); found afresh when the move lands.
+        // Being moved: the region as the move found it, moved along, while its curves move
+        // with it unchanged (the drawing's areas aren't found again every frame, #321; an
+        // open group's are found on the spot, not by the areas worker); found afresh when
+        // the move lands, or as soon as a curve of its outline turns or bends.
         let moving = match self.region_motion {
-            Some(RegionMotion::Move(d)) if self.edit_scope().is_some() => Some(d),
+            Some(RegionMotion::Move(d)) => Some(d),
             _ => {
                 self.region_moving = None;
                 None
             }
         };
-        if let (Some(d), Some((region, from))) = (moving, &self.region_moving) {
-            return Some(region.moved(d - *from));
+        if let (Some(d), Some(m)) = (moving, &self.region_moving) {
+            let by = d - m.from;
+            // (Only within the move that found it: an earlier move's area, kept past its
+            // end, is never carried into another.)
+            let this_move = self.doc.in_transaction() && self.doc.transaction_serial() == m.serial;
+            // Every picked curve of its outline moved by just the move's offset, at least
+            // one of them; one that isn't picked may stay where it is (a long line the area
+            // is only part of, say: the area follows the picked ones, as the move draws it).
+            let mut moved = false;
+            let follows = this_move
+                && m.curves.iter().all(|(id, was)| {
+                    self.doc.shape(*id).is_some_and(|now| {
+                        let picked = self.selection.contains(id);
+                        let carried = moved_by(was, &now, by);
+                        moved |= picked && carried;
+                        carried || (!picked && now == *was)
+                    })
+                });
+            if follows && moved {
+                return Some(m.region.moved(by));
+            }
         }
         let (regions, ids) = self.scoped_areas();
         // (One whose outline is hidden isn't picked while it can't be seen.)
@@ -181,7 +200,16 @@ impl Editor {
                 self.region_outline = Some(outline);
             }
             if let Some(d) = moving {
-                self.region_moving = Some((found.clone(), d));
+                let curves = outline_of(found, &ids)
+                    .into_iter()
+                    .filter_map(|id| Some((id, self.doc.shape(id)?)))
+                    .collect();
+                self.region_moving = Some(RegionMoving {
+                    region: found.clone(),
+                    from: d,
+                    curves,
+                    serial: self.doc.transaction_serial(),
+                });
             }
             return Some(found.clone());
         }
@@ -245,6 +273,76 @@ impl Editor {
     /// assistant is picking).
     pub fn regions_need_fill(&self) -> bool {
         self.doc.rules().regions_need_fill && !self.prefs.pick_any_area
+    }
+}
+
+/// The picked region as a move found it (see [`Editor::region`]).
+pub(crate) struct RegionMoving {
+    region: Region,
+    /// The move's offset when it was found.
+    from: DVec2,
+    /// Its outline's curves as they were then.
+    curves: Vec<(EntityId, Shape)>,
+    /// The transaction of the move that found it.
+    serial: u64,
+}
+
+/// Whether `now` is `was` moved by `by` (to rounding), turned or reshaped in no way.
+fn moved_by(was: &Shape, now: &Shape, by: DVec2) -> bool {
+    let near = |a: DVec2, b: DVec2| {
+        let e = a + by - b;
+        e.x.abs().max(e.y.abs()) <= 1e-9 * (1.0 + a.x.abs().max(a.y.abs()) + by.length())
+    };
+    let same = |a: f64, b: f64| (a - b).abs() <= 1e-12 * (1.0 + a.abs());
+    match (*was, *now) {
+        (Shape::Point(a), Shape::Point(b)) => near(a, b),
+        (Shape::Line { a, b }, Shape::Line { a: c, b: d }) => near(a, c) && near(b, d),
+        (
+            Shape::Circle { center, radius },
+            Shape::Circle {
+                center: c,
+                radius: r,
+            },
+        ) => near(center, c) && same(radius, r),
+        (
+            Shape::Arc {
+                center,
+                radius,
+                start,
+                sweep,
+            },
+            Shape::Arc {
+                center: c,
+                radius: r,
+                start: s,
+                sweep: w,
+            },
+        ) => near(center, c) && same(radius, r) && same(start, s) && same(sweep, w),
+        (
+            Shape::Ellipse {
+                center,
+                major,
+                minor,
+                start,
+                sweep,
+            },
+            Shape::Ellipse {
+                center: c,
+                major: m,
+                minor: n,
+                start: s,
+                sweep: w,
+            },
+        ) => {
+            near(center, c)
+                && same(major.x, m.x)
+                && same(major.y, m.y)
+                && same(minor, n)
+                && same(start, s)
+                && same(sweep, w)
+        }
+        (Shape::Bezier { p }, Shape::Bezier { p: q }) => (0..4).all(|k| near(p[k], q[k])),
+        _ => false,
     }
 }
 

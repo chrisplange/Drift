@@ -400,10 +400,11 @@ impl<'a> Areas<'a> {
     /// point inside its last shape, so it follows a shape moving off the area it was in),
     /// else the one around its seed; the last two only if they share a boundary curve with
     /// it.
-    fn find(&self, fill: &Fill, near: Option<DVec2>) -> Option<&'a Region> {
+    /// (`near` is found only if it's needed: #286, it can take a grid of point tests.)
+    fn find(&self, fill: &Fill, near: impl FnOnce() -> Option<DVec2>) -> Option<&'a Region> {
         self.exact(fill)
             .or_else(|| self.successor(fill))
-            .or_else(|| near.and_then(|p| self.sharing_at(p, fill)))
+            .or_else(|| near().and_then(|p| self.sharing_at(p, fill)))
             .or_else(|| self.sharing_at(fill.seed, fill))
     }
 
@@ -668,10 +669,12 @@ impl Editor {
             } else {
                 None
             };
-            let near = self
-                .last_fill_shapes
-                .get(&id)
-                .map(|s| crate::editor::interior_point(&s.region, s.region.centroid));
+            let near = || {
+                self.fill_near_points.set(self.fill_near_points.get() + 1);
+                self.last_fill_shapes
+                    .get(&id)
+                    .map(|s| crate::editor::interior_point(&s.region, s.region.centroid))
+            };
             let found = uncrossed.or_else(|| {
                 areas.find(&fill, near).map(|r| FillShape {
                     curves: curves_of(&fill, r, &ids),

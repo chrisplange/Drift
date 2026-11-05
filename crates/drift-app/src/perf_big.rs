@@ -183,6 +183,24 @@ fn perf_big() {
             frames += 1;
         }
         let settled = ms(t);
+        // Every fill's shape once its fills followed, to the folder `DRIFT_DIGEST_DIR` names
+        // (to check against another build).
+        if let Ok(dir) = std::env::var("DRIFT_DIGEST_DIR") {
+            let ed = &mut h.state_mut().drawing.editor;
+            let mut digest = String::new();
+            for (id, s) in ed.fill_shapes().iter() {
+                digest += &format!(
+                    "{id:?} {:?} {:?} {} {}\n",
+                    s.region, s.curves, s.lost, s.crossed
+                );
+            }
+            let file = label.replace(' ', "_").replace(['(', ')'], "");
+            std::fs::write(
+                std::path::Path::new(&dir).join(format!("{file}.txt")),
+                digest,
+            )
+            .unwrap();
+        }
         println!(
             "{label:<34} edit {e:>6.1} ms, next frame {next:>6.1} ms, fills followed \
              {settled:>6.1} ms later ({frames} frames)"
@@ -411,7 +429,9 @@ fn perf_big_drag() {
             }
             assert!(!h.state().any_dialog_open(), "a window is open");
             h.state_mut().drawing.editor.selection = ids.iter().copied().collect();
+            let t = Instant::now();
             h.step();
+            println!("  picked frame {:.1} ms", ms(t));
             h.step();
             let at = h.state().drawing.view.canvas_rect.center();
             let press = |h: &mut Harness<'_, crate::DriftApp>, pos: Pos2, pressed: bool| {

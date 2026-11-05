@@ -41,6 +41,13 @@ pub struct Row {
     pub equation: Equation,
     /// The constraint the equation came from; `None` for internal equations (arc radius).
     pub source: Option<ConstraintId>,
+    /// For an internal equation (no `source`), the entity whose own geometry it is: an arc
+    /// (its end on the circle through its start), a line (its midpoint), an ellipse (its
+    /// axes square), an elliptical arc (its end on its ellipse), or for a relation that comes
+    /// with the geometry (a lowering's extra: a wall's end on the wall it meets) the entity
+    /// of its first parameter. Stable from solve to solve, so what a solve leaves broken
+    /// can be compared with what was broken before ([`crate::SolveReport::broken`]).
+    pub owner: Option<EntityId>,
 }
 
 pub struct System {
@@ -543,19 +550,23 @@ impl System {
                     length => rows.push(Row {
                         equation: Equation::LengthValue { length, value: r },
                         source: Some(cid),
+                        owner: None,
                     }),
                 },
                 Constraint::Parallel { a, b } => rows.push(Row {
                     equation: Equation::angle(line(a), line(b), 0.0),
                     source: Some(cid),
+                    owner: None,
                 }),
                 Constraint::Perpendicular { a, b } => rows.push(Row {
                     equation: Equation::angle(line(a), line(b), std::f64::consts::FRAC_PI_2),
                     source: Some(cid),
+                    owner: None,
                 }),
                 Constraint::Angle { a, b, degrees } => rows.push(Row {
                     equation: Equation::angle(line(a), line(b), degrees.to_radians()),
                     source: Some(cid),
+                    owner: None,
                 }),
                 Constraint::Equal { a, b } => rows.push(Row {
                     equation: Equation::EqualLength {
@@ -563,6 +574,7 @@ impl System {
                         b: length(b),
                     },
                     source: Some(cid),
+                    owner: None,
                 }),
                 Constraint::Distance { a, b, value } => rows.push(Row {
                     equation: Equation::LengthValue {
@@ -570,6 +582,7 @@ impl System {
                         value,
                     },
                     source: Some(cid),
+                    owner: None,
                 }),
                 Constraint::Radius { curve, value } => rows.push(Row {
                     equation: Equation::LengthValue {
@@ -577,6 +590,7 @@ impl System {
                         value,
                     },
                     source: Some(cid),
+                    owner: None,
                 }),
                 Constraint::Concentric { a, b } | Constraint::Coradial { a, b } => {
                     let (ca, cb) = (center(a), center(b));
@@ -589,6 +603,7 @@ impl System {
                                 b: radius(b),
                             },
                             source: Some(cid),
+                            owner: None,
                         });
                     }
                 }
@@ -604,6 +619,7 @@ impl System {
                             std::f64::consts::PI,
                         ),
                         source: Some(cid),
+                        owner: None,
                     });
                 }
                 Constraint::PointOnCurve { point: p, curve } => {
@@ -647,6 +663,7 @@ impl System {
                     rows.push(Row {
                         equation,
                         source: Some(cid),
+                        owner: None,
                     });
                 }
                 Constraint::Symmetric { a, b, axis } => {
@@ -658,6 +675,7 @@ impl System {
                             axis: ax,
                         },
                         source: Some(cid),
+                        owner: None,
                     });
                     rows.push(Row {
                         equation: Equation::SymmetricMidpoint {
@@ -666,6 +684,7 @@ impl System {
                             axis: ax,
                         },
                         source: Some(cid),
+                        owner: None,
                     });
                 }
                 Constraint::Tangent { a, b }
@@ -747,6 +766,7 @@ impl System {
                         rows.push(Row {
                             equation,
                             source: Some(cid),
+                            owner: None,
                         });
                     }
                 }
@@ -863,6 +883,7 @@ impl System {
                         rows.push(Row {
                             equation,
                             source: Some(cid),
+                            owner: None,
                         });
                     }
                 }
@@ -873,6 +894,7 @@ impl System {
                         rows.push(Row {
                             equation: Equation::Midpoint { p, a, b },
                             source: Some(cid),
+                            owner: None,
                         });
                     }
                 }
@@ -882,6 +904,7 @@ impl System {
                         rows.push(Row {
                             equation: Equation::Midpoint { p, a, b },
                             source: Some(cid),
+                            owner: None,
                         });
                     }
                 }
@@ -891,6 +914,7 @@ impl System {
                         b: Length::Points([x(c), y(c), x(d), y(d)]),
                     },
                     source: Some(cid),
+                    owner: None,
                 }),
                 // On both curves: the rows an On curve relation gives for each.
                 Constraint::Corner { point: p, a, b } => {
@@ -913,6 +937,7 @@ impl System {
                         rows.push(Row {
                             equation,
                             source: Some(cid),
+                            owner: None,
                         });
                     }
                 }
@@ -922,6 +947,7 @@ impl System {
                         value: value / 2.0,
                     },
                     source: Some(cid),
+                    owner: None,
                 }),
                 Constraint::HorizontalDistance { a, b, value }
                 | Constraint::VerticalDistance { a, b, value } => {
@@ -939,6 +965,7 @@ impl System {
                             value,
                         },
                         source: Some(cid),
+                        owner: None,
                     });
                 }
                 Constraint::PointLineDistance {
@@ -959,6 +986,7 @@ impl System {
                             value,
                         },
                         source: Some(cid),
+                        owner: None,
                     });
                 }
             }
@@ -1014,6 +1042,7 @@ impl System {
                             value: 0.0,
                         },
                         source: Some(cid),
+                        owner: None,
                     });
                     added += 1;
                 }
@@ -1040,12 +1069,21 @@ impl System {
                     value: offset,
                 },
                 source: Some(cid),
+                owner: None,
             });
         }
-        // (The geometry's own relations report as no one's.)
+        // (The geometry's own relations report as no one's: each is owned instead by the
+        // entity of its first parameter, a wall end's point.)
         for row in &mut rows {
             if row.source == Some(EXTRA) {
                 row.source = None;
+                row.owner = row.equation.params().first().map(|&i| match params[i] {
+                    Param::X(id)
+                    | Param::Y(id)
+                    | Param::Radius(id)
+                    | Param::MidX(id)
+                    | Param::MidY(id) => id,
+                });
             }
         }
         conflicts.retain(|c| *c != EXTRA);
@@ -1060,13 +1098,14 @@ impl System {
                 rows.push(Row {
                     equation: Equation::Midpoint { p, a, b },
                     source: None,
+                    owner: Some(l),
                 });
             }
         }
 
         // Ellipses keep their minor axis perpendicular to the major one, and elliptical arcs
         // their ends on the ellipse.
-        for &(_, entity) in &in_scope {
+        for &(id, entity) in &in_scope {
             let (c, m, n, ends) = match entity.kind {
                 EntityKind::Ellipse {
                     center,
@@ -1090,6 +1129,7 @@ impl System {
                     std::f64::consts::FRAC_PI_2,
                 ),
                 source: None,
+                owner: Some(id),
             });
             for end in ends.into_iter().flatten() {
                 rows.push(Row {
@@ -1100,6 +1140,7 @@ impl System {
                         minor: pn,
                     },
                     source: None,
+                    owner: Some(id),
                 });
             }
         }
@@ -1122,6 +1163,7 @@ impl System {
                         b: Length::Points([x(center), y(center), x(start), y(start)]),
                     },
                     source: None,
+                    owner: Some(id),
                 });
             }
         }

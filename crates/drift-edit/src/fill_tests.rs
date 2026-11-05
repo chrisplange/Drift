@@ -2696,3 +2696,169 @@ fn fills_found_by_their_curves_look_inside_no_last_shape() {
         assert!(!shape.lost && !shape.crossed);
     }
 }
+
+/// Two area fills far apart, a solid L and a hatched square with an arc-cornered hole, and
+/// a loose line: what [`crate::fills::fill_graphics`] meshes. Returns the fills, the L's
+/// curves, the square's curves and the line's end points.
+fn meshed_fills(ed: &mut Editor) -> ([FillId; 2], Vec<EntityId>, Vec<EntityId>, [EntityId; 2]) {
+    let (_, l) = polygon(
+        ed,
+        &[
+            v(0.0, 0.0),
+            v(30.0, 0.0),
+            v(30.0, 10.0),
+            v(10.0, 10.0),
+            v(10.0, 30.0),
+            v(0.0, 30.0),
+        ],
+    );
+    let (_, mut square) = polygon(
+        ed,
+        &[v(100.0, 0.0), v(140.0, 0.0), v(140.0, 40.0), v(100.0, 40.0)],
+    );
+    ed.doc.begin();
+    let c = ed.doc.add_point(v(120.0, 20.0));
+    square.push(ed.doc.add_circle(c, 6.0).unwrap());
+    let (p, q) = (
+        ed.doc.add_point(v(500.0, 0.0)),
+        ed.doc.add_point(v(520.0, 0.0)),
+    );
+    ed.doc.add_line(p, q).unwrap();
+    assert!(ed.commit("Shapes"));
+    let solid = area_fill_at(ed, v(5.0, 5.0));
+    let mut fill = ed.doc.fill(solid).unwrap().clone();
+    fill.kind = drift_core::FillKind::Solid;
+    ed.doc.begin();
+    ed.doc.set_fill(solid, fill);
+    assert!(ed.commit("Solid"));
+    let hatch = area_fill_at(ed, v(102.0, 2.0));
+    assert!(matches!(
+        ed.doc.fill(hatch).unwrap().kind,
+        drift_core::FillKind::Hatch(_)
+    ));
+    ed.settle_areas();
+    ([solid, hatch], l, square, [p, q])
+}
+
+/// Each fill's mesh this frame, drawn far out (a hatch as its tint), by fill.
+fn fill_meshes(
+    ed: &mut Editor,
+    cache: &mut crate::fills::MeshCache,
+) -> std::collections::BTreeMap<FillId, drift_core::FillMesh> {
+    let patterns = crate::fills::PatternLibrary::default();
+    let view = drift_core::Bounds {
+        min: v(-1000.0, -1000.0),
+        max: v(1000.0, 1000.0),
+    };
+    crate::fills::fill_graphics(ed, cache, &patterns, view, 0.01, false)
+        .groups
+        .into_iter()
+        .filter_map(|g| match g.fill {
+            crate::stack::FillRef::Fill(id) => Some((id, g.meshes.into_iter().next()?)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The fill's area tessellated now.
+fn tessellated(ed: &mut Editor, id: FillId) -> (Vec<DVec2>, Vec<u32>) {
+    let region = ed.fill_shapes()[&id].region.clone();
+    crate::fills::tessellate(&region, drift_core::tolerance::FLATTEN_MM).unwrap()
+}
+
+#[test]
+fn a_fills_mesh_is_kept_while_its_area_is_the_same() {
+    let mut ed = Editor::new(Document::new());
+    let (fills, l, _, [p, _]) = meshed_fills(&mut ed);
+    let mut cache = crate::fills::MeshCache::default();
+    let meshes = fill_meshes(&mut ed, &mut cache);
+    assert_eq!(meshes.len(), 2);
+    assert_eq!(cache.made(), 2);
+    // An edit away from both (the document changed, their areas didn't): kept.
+    ed.doc.begin();
+    ed.doc.set_point(p, v(500.0, 5.0)).unwrap();
+    assert!(ed.commit("Move"));
+    ed.settle_areas();
+    let meshes = fill_meshes(&mut ed, &mut cache);
+    assert_eq!(
+        cache.made(),
+        2,
+        "tessellated again though its area is the same"
+    );
+    for id in fills {
+        let (vertices, indices) = tessellated(&mut ed, id);
+        assert_eq!(
+            (&meshes[&id].vertices, &meshes[&id].indices),
+            (&vertices, &indices)
+        );
+    }
+    // A restyle (another colour): the same mesh, in the new colour.
+    let mut fill = ed.doc.fill(fills[0]).unwrap().clone();
+    fill.color = Some(drift_core::Rgb([10, 20, 30]));
+    ed.doc.begin();
+    ed.doc.set_fill(fills[0], fill);
+    assert!(ed.commit("Colour"));
+    let meshes = fill_meshes(&mut ed, &mut cache);
+    assert_eq!(cache.made(), 2);
+    assert_eq!(meshes[&fills[0]].color[..3], [10, 20, 30]);
+    // The L reshaped: its mesh is made again, the square's kept.
+    let corner = ed.doc.defining_points([l[1]]).into_iter().next().unwrap();
+    let at = ed.doc.point(corner).unwrap();
+    ed.doc.begin();
+    ed.doc.set_point(corner, at + v(5.0, 0.0)).unwrap();
+    assert!(ed.commit("Move"));
+    ed.settle_areas();
+    let meshes = fill_meshes(&mut ed, &mut cache);
+    assert_eq!(cache.made(), 3);
+    for id in fills {
+        let (vertices, indices) = tessellated(&mut ed, id);
+        assert_eq!(
+            (&meshes[&id].vertices, &meshes[&id].indices),
+            (&vertices, &indices)
+        );
+    }
+}
+
+#[test]
+fn a_moving_fills_mesh_moves_with_it_and_is_made_afresh_where_it_lands() {
+    let mut ed = Editor::new(Document::new());
+    let (fills, l, square, _) = meshed_fills(&mut ed);
+    let mut cache = crate::fills::MeshCache::default();
+    fill_meshes(&mut ed, &mut cache);
+    let made = cache.made();
+    // Both outlines dragged as one, frame by frame.
+    let ids: Vec<EntityId> = l.iter().chain(&square).copied().collect();
+    let dragged: Vec<drift_solver::Param> = ed
+        .doc
+        .defining_points(ids.iter().copied())
+        .iter()
+        .copied()
+        .flat_map(drift_solver::Param::point)
+        .collect();
+    ed.doc.begin();
+    for k in 1..=8 {
+        assert!(ed.drag(&ids, v(3.7, -1.3 * k as f64), &dragged));
+        let meshes = fill_meshes(&mut ed, &mut cache);
+        assert_eq!(cache.made(), made, "frame {k}: tessellated again mid-move");
+        for id in fills {
+            let (vertices, indices) = tessellated(&mut ed, id);
+            let mesh = &meshes[&id];
+            assert_eq!(mesh.indices, indices, "frame {k}");
+            assert_eq!(mesh.vertices.len(), vertices.len());
+            for (a, b) in mesh.vertices.iter().zip(&vertices) {
+                assert!(a.distance(*b) <= 1e-9, "frame {k}: {a} vs {b}");
+            }
+        }
+    }
+    assert!(ed.commit("Move"));
+    ed.settle_areas();
+    let meshes = fill_meshes(&mut ed, &mut cache);
+    assert_eq!(cache.made(), made + 2, "made afresh where it landed");
+    for id in fills {
+        let (vertices, indices) = tessellated(&mut ed, id);
+        assert_eq!(
+            (&meshes[&id].vertices, &meshes[&id].indices),
+            (&vertices, &indices)
+        );
+    }
+}

@@ -209,7 +209,7 @@ impl Editor {
 
     /// Curvature combs for the picked curves: spikes along the normal, as long as the
     /// curvature (scaled so the longest is `reach` world units), and the line joining their
-    /// tips.
+    /// tips. None with more than [`MAX_COMBED_CURVES`] Béziers picked.
     pub fn curvature_combs(&self, reach: f64, color: [u8; 3]) -> Vec<SketchItem> {
         let curves: Vec<[DVec2; 4]> = self
             .selection
@@ -218,8 +218,9 @@ impl Editor {
                 Shape::Bezier { p } => Some(p),
                 _ => None,
             })
+            .take(MAX_COMBED_CURVES + 1)
             .collect();
-        if curves.is_empty() {
+        if curves.is_empty() || curves.len() > MAX_COMBED_CURVES {
             return Vec::new();
         }
         const SAMPLES: usize = 40;
@@ -264,6 +265,11 @@ impl Editor {
         items
     }
 }
+
+/// Curvature combs are drawn for up to this many picked Béziers. Past it (a whole imported
+/// drawing picked, say) the combs would cover the drawing, unreadable, and drawing them
+/// slowed every frame.
+pub const MAX_COMBED_CURVES: usize = 50;
 
 #[cfg(test)]
 mod tests {
@@ -328,6 +334,47 @@ mod tests {
         // A comb for the picked curve.
         ed.selection = [c1].into();
         assert_eq!(ed.curvature_combs(5.0, [0, 0, 0]).len(), 41 + 40);
+    }
+
+    #[test]
+    fn combs_show_for_up_to_fifty_picked_beziers() {
+        let mut ed = Editor::default();
+        ed.doc.begin();
+        let mut beziers = Vec::new();
+        for k in 0..=MAX_COMBED_CURVES {
+            let x = k as f64 * 10.0;
+            let [a, c1, c2, b] = [(0.0, 0.0), (2.0, 5.0), (5.0, -5.0), (8.0, 0.0)]
+                .map(|(dx, y)| ed.doc.add_point(v(x + dx, y)));
+            beziers.push(ed.doc.add_bezier(a, c1, c2, b).unwrap());
+        }
+        // Lines picked too don't count.
+        let lines: Vec<EntityId> = (0..10)
+            .map(|k| {
+                let a = ed.doc.add_point(v(k as f64, 50.0));
+                let b = ed.doc.add_point(v(k as f64, 60.0));
+                ed.doc.add_line(a, b).unwrap()
+            })
+            .collect();
+        ed.commit("Curves");
+        let per_curve = 41 + 40;
+        ed.selection = beziers[..MAX_COMBED_CURVES]
+            .iter()
+            .chain(&lines)
+            .copied()
+            .collect();
+        assert_eq!(
+            ed.curvature_combs(5.0, [0, 0, 0]).len(),
+            MAX_COMBED_CURVES * per_curve,
+            "50 picked"
+        );
+        ed.selection = beziers.iter().copied().collect();
+        assert!(ed.curvature_combs(5.0, [0, 0, 0]).is_empty(), "51 picked");
+        // Back to 50: the combs are back.
+        ed.selection.remove(&beziers[0]);
+        assert_eq!(
+            ed.curvature_combs(5.0, [0, 0, 0]).len(),
+            MAX_COMBED_CURVES * per_curve
+        );
     }
 
     /// As a drawing program does it: dragging one handle of a smooth anchor swings the other

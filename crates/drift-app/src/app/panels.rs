@@ -5,6 +5,153 @@ use crate::commands::{self, Category};
 use crate::icons::{self, Glyph};
 use crate::*;
 
+/// What the Inspector shows for the picks that depends only on what is picked and on the
+/// drawing's make-up ([`Document::structure`](drift_core::Document::structure): entities
+/// added, removed, rewired or restyled, relations, dimensions, variables, layers and fills),
+/// not on where anything is: the relations offered, the picked curves' kinds and layers,
+/// and the relations and dimensions on them. With tens of thousands of curves picked,
+/// finding them again every frame took most of a frame (#253).
+#[derive(Default)]
+pub(crate) struct PickMemo {
+    key: Option<PickKey>,
+    relations: Option<Vec<&'static str>>,
+    constraints: Option<Vec<drift_core::ConstraintId>>,
+    summary: Option<String>,
+    curve_layers: Option<CurveLayers>,
+    /// How many times it was emptied (tests).
+    made: usize,
+}
+
+/// What a [`PickMemo`] was made for.
+struct PickKey {
+    lineage: u64,
+    structure: u64,
+    selection: std::collections::BTreeSet<drift_core::EntityId>,
+    midpoints: std::collections::BTreeSet<drift_core::EntityId>,
+}
+
+/// The layer of the first picked curve (not a wall's), and whether the picked curves are on
+/// more than one layer.
+type CurveLayers = Option<(drift_core::LayerId, bool)>;
+
+impl PickMemo {
+    /// Itself for `ed`'s picks and make-up: emptied if either changed. (Compared where they
+    /// are: copying tens of thousands of picks every frame would cost what it saves.)
+    fn for_picks(&mut self, ed: &Editor) -> &mut Self {
+        let current = self.key.as_ref().is_some_and(|k| {
+            k.lineage == ed.doc.lineage()
+                && k.structure == ed.doc.structure()
+                && k.selection == ed.selection
+                && k.midpoints == ed.selected_midpoints
+        });
+        if !current {
+            *self = Self {
+                made: self.made + 1,
+                key: Some(PickKey {
+                    lineage: ed.doc.lineage(),
+                    structure: ed.doc.structure(),
+                    selection: ed.selection.clone(),
+                    midpoints: ed.selected_midpoints.clone(),
+                }),
+                ..Default::default()
+            };
+        }
+        self
+    }
+
+    /// The relations offered for the picks, by name (see [`Editor::relation_options`]; what
+    /// one adds is found when it is clicked).
+    pub(crate) fn relations(&mut self, ed: &Editor) -> Vec<&'static str> {
+        let labels = self
+            .for_picks(ed)
+            .relations
+            .get_or_insert_with(|| relation_labels(ed))
+            .clone();
+        debug_assert_eq!(labels, relation_labels(ed), "the relations offered, kept");
+        labels
+    }
+
+    /// The relations and dimensions on the picks (all of them with nothing picked), in the
+    /// drawing's order.
+    pub(crate) fn constraints(&mut self, ed: &Editor) -> Vec<drift_core::ConstraintId> {
+        let ids = self
+            .for_picks(ed)
+            .constraints
+            .get_or_insert_with(|| picked_constraints(ed))
+            .clone();
+        debug_assert_eq!(ids, picked_constraints(ed), "the picks' relations, kept");
+        ids
+    }
+
+    /// How many of each kind are picked, as the title's line says it.
+    pub(crate) fn summary(&mut self, ed: &Editor) -> String {
+        let text = self
+            .for_picks(ed)
+            .summary
+            .get_or_insert_with(|| picked_summary(ed))
+            .clone();
+        debug_assert_eq!(text, picked_summary(ed), "the picks' summary, kept");
+        text
+    }
+
+    /// See [`CurveLayers`].
+    pub(crate) fn curve_layers(&mut self, ed: &Editor) -> CurveLayers {
+        let layers = *self
+            .for_picks(ed)
+            .curve_layers
+            .get_or_insert_with(|| picked_curve_layers(ed));
+        debug_assert_eq!(layers, picked_curve_layers(ed), "the picks' layers, kept");
+        layers
+    }
+}
+
+pub(crate) fn relation_labels(ed: &Editor) -> Vec<&'static str> {
+    ed.relation_options().iter().map(|o| o.label).collect()
+}
+
+pub(crate) fn picked_constraints(ed: &Editor) -> Vec<drift_core::ConstraintId> {
+    if ed.selection.is_empty() && ed.selected_midpoints.is_empty() {
+        ed.doc.constraints().map(|(id, _)| id).collect()
+    } else {
+        // Constraints on the selection's points too: a line's length is a distance between
+        // its end points.
+        let mut relevant = ed.doc.defining_points(ed.selection.iter().copied());
+        relevant.extend(ed.selection.iter().copied());
+        relevant.extend(ed.selected_midpoints.iter().copied());
+        ed.doc
+            .constraints()
+            .filter(|(_, c)| c.entities().any(|e| relevant.contains(&e)))
+            .map(|(id, _)| id)
+            .collect()
+    }
+}
+
+pub(crate) fn picked_summary(ed: &Editor) -> String {
+    let mut counts = std::collections::BTreeMap::new();
+    for id in &ed.selection {
+        if let Some(e) = ed.doc.get(*id) {
+            *counts.entry(e.kind.type_name()).or_insert(0) += 1;
+        }
+    }
+    let summary: Vec<String> = counts.iter().map(|(name, n)| plural(*n, name)).collect();
+    summary.join(" · ")
+}
+
+pub(crate) fn picked_curve_layers(ed: &Editor) -> CurveLayers {
+    let walls = ed.selected_walls();
+    let wall_curves: std::collections::BTreeSet<drift_core::EntityId> =
+        walls.iter().flat_map(|w| ed.wall_curves(*w)).collect();
+    let mut layers = ed
+        .selection
+        .iter()
+        .filter(|id| !wall_curves.contains(*id))
+        .filter_map(|id| ed.doc.get(*id))
+        .filter(|e| !e.kind.is_point())
+        .map(|e| e.layer);
+    let first = layers.next()?;
+    Some((first, layers.any(|l| l != first)))
+}
+
 /// A shortcut as the platform writes it: ⌘ / ⇧ on macOS, Ctrl / Shift elsewhere.
 pub(crate) fn shortcut(key: &str, shift: bool) -> String {
     commands::cmd_text(key, shift, cfg!(target_os = "macos"))
@@ -610,18 +757,10 @@ impl DriftApp {
     /// moves all of it there in one undo step. A wall counts by its own layer. Nothing with
     /// a layer picked (dimensions, notes, points): no row.
     pub(crate) fn inspector_layer_row(&mut self, ui: &mut egui::Ui) {
+        let curves = self.drawing.pick_memo.curve_layers(&self.drawing.editor);
         let ed = &self.drawing.editor;
         let walls = ed.selected_walls();
-        let wall_curves: std::collections::BTreeSet<drift_core::EntityId> =
-            walls.iter().flat_map(|w| ed.wall_curves(*w)).collect();
-        let curves = ed
-            .selection
-            .iter()
-            .filter(|id| !wall_curves.contains(*id))
-            .filter_map(|id| ed.doc.get(*id))
-            .filter(|e| !e.kind.is_point())
-            .map(|e| e.layer);
-        let on: Vec<drift_core::LayerId> = curves
+        let others: Vec<drift_core::LayerId> = std::iter::empty()
             .chain(
                 walls
                     .iter()
@@ -647,10 +786,16 @@ impl DriftApp {
                     .map(|t| t.layer),
             )
             .collect();
-        let Some(&first) = on.first() else {
-            return;
+        // The picked curves' layers first, then the others'.
+        let (first, mixed) = match curves {
+            Some((first, mixed)) => (first, mixed || others.iter().any(|l| *l != first)),
+            None => {
+                let Some(&first) = others.first() else {
+                    return;
+                };
+                (first, others.iter().any(|l| *l != first))
+            }
         };
-        let mixed = on.iter().any(|l| *l != first);
         let text = if mixed {
             "Mixed".to_owned()
         } else {
@@ -874,19 +1019,13 @@ impl DriftApp {
                 property_rows(ui, &shape, ed.doc.units());
             }
             many => {
-                let mut counts = std::collections::BTreeMap::new();
-                for id in many {
-                    if let Some(e) = ed.doc.get(*id) {
-                        *counts.entry(e.kind.type_name()).or_insert(0) += 1;
-                    }
-                }
-                let summary: Vec<String> =
-                    counts.iter().map(|(name, n)| plural(*n, name)).collect();
+                let n = many.len();
+                let summary = self.drawing.pick_memo.summary(&self.drawing.editor);
                 title(
                     ui,
                     Some(ToolKind::Select),
-                    &format!("{} selected", many.len()),
-                    &summary.join(" · "),
+                    &format!("{n} selected"),
+                    &summary,
                 );
                 self.inspector_layer_row(ui);
             }
@@ -1035,7 +1174,17 @@ impl DriftApp {
 
     /// Relations and dimensions that fit the selection, as chips.
     pub(crate) fn constraint_buttons(&mut self, ui: &mut egui::Ui) {
-        let relations = self.drawing.editor.relation_options();
+        // (By name: what one adds is found when it is clicked.)
+        let relations: Vec<drift_edit::editor::ConstraintOption> = self
+            .drawing
+            .pick_memo
+            .relations(&self.drawing.editor)
+            .into_iter()
+            .map(|label| drift_edit::editor::ConstraintOption {
+                label,
+                constraints: Vec::new(),
+            })
+            .collect();
         let dimensions = self.drawing.editor.dimension_options();
         let now = ui.input(|i| i.time);
         let pins = dimensions.clone();
@@ -1065,7 +1214,15 @@ impl DriftApp {
                         response = response.on_hover_text(role);
                     }
                     if response.clicked() {
-                        chosen = Some(option.clone());
+                        // (A relation offered by name: what it adds is found now, and
+                        // nothing if it is no longer offered.)
+                        chosen = if is_dimension {
+                            Some(option.clone())
+                        } else {
+                            ed.relation_options()
+                                .into_iter()
+                                .find(|o| o.label == option.label)
+                        };
                     }
                 }
             });
@@ -1106,22 +1263,12 @@ impl DriftApp {
     /// dimension values. Each row: the name (click to select its geometry), the value, a
     /// "reference" toggle for dimensions, and a delete button that shows on hover.
     pub(crate) fn constraint_list(&mut self, ui: &mut egui::Ui) {
+        let ids = self.drawing.pick_memo.constraints(&self.drawing.editor);
         let ed = &self.drawing.editor;
-        let constraints: Vec<(ConstraintId, Constraint)> =
-            if ed.selection.is_empty() && ed.selected_midpoints.is_empty() {
-                ed.doc.constraints().map(|(id, c)| (id, *c)).collect()
-            } else {
-                // Include constraints on the selection's points: a line's length is a distance
-                // between its end points.
-                let mut relevant = ed.doc.defining_points(ed.selection.iter().copied());
-                relevant.extend(ed.selection.iter().copied());
-                relevant.extend(ed.selected_midpoints.iter().copied());
-                ed.doc
-                    .constraints()
-                    .filter(|(_, c)| c.entities().any(|e| relevant.contains(&e)))
-                    .map(|(id, c)| (id, *c))
-                    .collect()
-            };
+        let constraints: Vec<(ConstraintId, Constraint)> = ids
+            .into_iter()
+            .filter_map(|id| ed.doc.constraint(id).map(|c| (id, *c)))
+            .collect();
         if constraints.is_empty() {
             return;
         }
@@ -1698,5 +1845,185 @@ impl DriftApp {
                 });
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod pick_memo_tests {
+    use super::*;
+    use drift_core::{Constraint, DVec2, Document, EntityId, LineKind};
+
+    /// The memo's answers are what finding them afresh gives.
+    fn check(memo: &mut PickMemo, ed: &Editor, step: usize, what: &str) {
+        assert_eq!(memo.relations(ed), relation_labels(ed), "{step}: {what}");
+        assert_eq!(
+            memo.constraints(ed),
+            picked_constraints(ed),
+            "{step}: {what}"
+        );
+        assert_eq!(memo.summary(ed), picked_summary(ed), "{step}: {what}");
+        assert_eq!(
+            memo.curve_layers(ed),
+            picked_curve_layers(ed),
+            "{step}: {what}"
+        );
+    }
+
+    #[test]
+    fn the_inspectors_kept_answers_are_found_afresh_ones() {
+        // Rectangles with a length dimension driven by a variable, a hatch, a circle and
+        // loose lines on two layers. Random picks, moves (and frames of one, carrying the
+        // hatch), relations added, a variable and a dimension edited, restyles, layer
+        // changes, undo and redo: after each, the memo answers as finding afresh does.
+        let mut doc = Document::new();
+        let mut lines: Vec<EntityId> = Vec::new();
+        for k in 0..3 {
+            let x = k as f64 * 40.0;
+            let p = [(0.0, 0.0), (30.0, 0.0), (30.0, 20.0), (0.0, 20.0)]
+                .map(|(a, b)| doc.add_point(DVec2::new(x + a, b)));
+            for i in 0..4 {
+                lines.push(doc.add_line(p[i], p[(i + 1) % 4]).unwrap());
+            }
+        }
+        let c = doc.add_point(DVec2::new(200.0, 0.0));
+        let circle = doc.add_circle(c, 8.0).unwrap();
+        for k in 0..6 {
+            let a = doc.add_point(DVec2::new(k as f64 * 7.0, 60.0));
+            let b = doc.add_point(DVec2::new(k as f64 * 7.0 + 5.0, 70.0));
+            lines.push(doc.add_line(a, b).unwrap());
+        }
+        let mut ed = Editor::new(doc);
+        ed.sync();
+        let other = ed.add_layer("Other");
+        ed.add_fill_at(DVec2::new(5.0, 5.0)).unwrap();
+        ed.settle_areas();
+        let width = ed
+            .add_variable("W", "30", drift_core::units::Kind::Length)
+            .unwrap();
+        let (a, b) = match ed.doc.get(lines[0]).unwrap().kind {
+            drift_core::EntityKind::Line { a, b } => (a, b),
+            _ => unreachable!(),
+        };
+        let dim = ed
+            .add_dimension(Constraint::Distance { a, b, value: 30.0 }, None)
+            .unwrap();
+        ed.set_dimension_text(dim, "W").unwrap();
+        let mut seed: u64 = 0x1234_5678_9abc_def1;
+        let mut rnd = move |n: usize| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n as u64) as usize
+        };
+        let all: Vec<EntityId> = ed.doc.iter().map(|(id, _)| id).collect();
+        let hatch = ed.doc.fills().next().map(|(id, _)| id).unwrap();
+        let mut kept_through_moves = 0;
+        let mut memo = PickMemo::default();
+        check(&mut memo, &ed, 0, "at the start");
+        for step in 1..300 {
+            let what = match rnd(12) {
+                0..=2 => "picks",
+                3 => "a move",
+                4 => "frames of a move",
+                5 => "a relation added",
+                6 => "the variable",
+                7 => "the dimension",
+                8 => "a restyle",
+                9 => "a layer",
+                10 => "undo",
+                _ => "redo",
+            };
+            match what {
+                "picks" => {
+                    let n = rnd(8);
+                    let mut picks = std::collections::BTreeSet::new();
+                    for _ in 0..n {
+                        picks.insert(all[rnd(all.len())]);
+                    }
+                    if rnd(4) == 0 {
+                        picks.insert(circle);
+                    }
+                    ed.selection = picks;
+                    ed.selected_midpoints = if rnd(5) == 0 {
+                        [lines[rnd(lines.len())]].into()
+                    } else {
+                        Default::default()
+                    };
+                }
+                "a move" => {
+                    let _ = ed.nudge(DVec2::new(rnd(5) as f64, 1.0));
+                }
+                "frames of a move" => {
+                    // The hatched rectangle, or the loose lines.
+                    let hatched = rnd(2) == 0;
+                    let ids: Vec<EntityId> = if hatched {
+                        lines[..4].to_vec()
+                    } else {
+                        lines[12..].to_vec()
+                    };
+                    let _ = hatch;
+                    let dragged: Vec<drift_solver::Param> = ed
+                        .doc
+                        .defining_points(ids.iter().copied())
+                        .iter()
+                        .copied()
+                        .flat_map(drift_solver::Param::point)
+                        .collect();
+                    ed.doc.begin();
+                    check(&mut memo, &ed, step, "a move begun");
+                    let made = memo.made;
+                    for k in 1..4 {
+                        ed.drag(&ids, DVec2::new(k as f64, 0.5), &dragged);
+                        check(&mut memo, &ed, step, "a frame of a move");
+                    }
+                    // (Kept through the move, unless a hatch carried along changed fills.)
+                    if !hatched {
+                        assert_eq!(memo.made, made, "{step}: found again mid-move");
+                        kept_through_moves += 1;
+                    }
+                    ed.commit("Move");
+                }
+                "a relation added" => {
+                    let (a, b) = (lines[rnd(lines.len())], lines[rnd(lines.len())]);
+                    if a != b {
+                        let _ = ed.add_constraints("Parallel", &[Constraint::Parallel { a, b }]);
+                    }
+                }
+                "the variable" => {
+                    let _ = ed.set_variable(width, &format!("{}", 25 + rnd(10)));
+                }
+                "the dimension" => {
+                    let _ = ed.set_dimension_text(dim, &format!("{}", 26 + rnd(8)));
+                }
+                "a restyle" => {
+                    let id = lines[rnd(lines.len())];
+                    ed.doc.begin();
+                    ed.doc.set_style(
+                        id,
+                        if rnd(2) == 0 {
+                            LineKind::Construction
+                        } else {
+                            LineKind::Solid
+                        },
+                    );
+                    ed.commit("Style");
+                }
+                "a layer" => {
+                    let id = lines[rnd(lines.len())];
+                    ed.doc.begin();
+                    let _ = ed.doc.set_entity_layer(id, other);
+                    ed.commit("Layer");
+                }
+                "undo" => {
+                    ed.undo();
+                }
+                _ => {
+                    ed.redo();
+                }
+            }
+            ed.settle_areas();
+            check(&mut memo, &ed, step, what);
+        }
+        assert!(kept_through_moves > 5);
     }
 }

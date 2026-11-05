@@ -92,10 +92,20 @@ jobs:
             exit 1
           fi
       # The installer shows LICENSE.md for the user to accept: never ship one still marked as
-      # a draft for legal review.
+      # a draft for legal review. Exception: the user let Beta 1.6 ship with the draft
+      # (2026-11-04). The list names tags one by one, matched exactly; any other tag is still
+      # refused.
       - name: Check the licence agreement is final
+        env:
+          DRAFT_LICENCE_ALLOWED_TAGS: "v0.1.0-beta.1.6"
         run: |
           if grep -qw DRAFT LICENSE.md; then
+            for allowed in $DRAFT_LICENCE_ALLOWED_TAGS; do
+              if [ "$GITHUB_REF_NAME" = "$allowed" ]; then
+                echo "::warning::LICENSE.md is still marked DRAFT; $GITHUB_REF_NAME is allowed to ship it (user decision 2026-11-04)"
+                exit 0
+              fi
+            done
             echo "LICENSE.md is still marked DRAFT: finish its legal review before releasing" >&2
             exit 1
           fi

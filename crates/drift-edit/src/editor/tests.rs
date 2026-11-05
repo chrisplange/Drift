@@ -1059,3 +1059,164 @@ mod from_the_app {
         assert_eq!(ed.doc.rules(), drift_core::DrawingRules::default());
     }
 }
+
+/// #253: `joining` as a forest of indices gives exactly what relabelling every item on each
+/// merge gave (kept here as it was), on random drawings with chains of relations already
+/// there, several kinds of them, relations reaching outside the pick, and repeated ids.
+#[cfg(test)]
+mod joining_matches_the_old_way {
+    use std::collections::HashMap;
+
+    use drift_core::{Constraint, DVec2, Document};
+
+    use super::*;
+
+    /// `Editor::joining` as it was before #253's fix.
+    fn old_joining(
+        doc: &Document,
+        items: &[EntityId],
+        related: fn(&Constraint) -> Option<(EntityId, EntityId)>,
+        make: impl Fn(EntityId, EntityId) -> Constraint,
+    ) -> Vec<Constraint> {
+        let mut group: HashMap<EntityId, usize> =
+            items.iter().enumerate().map(|(i, id)| (*id, i)).collect();
+        fn merge(group: &mut HashMap<EntityId, usize>, a: usize, b: usize) {
+            for g in group.values_mut() {
+                if *g == b {
+                    *g = a;
+                }
+            }
+        }
+        let kind = std::mem::discriminant(&make(items[0], items[1]));
+        let mut out = Vec::new();
+        for (_, c) in doc.constraints() {
+            if let Some((a, b)) = related(c)
+                && let (Some(&ga), Some(&gb)) = (group.get(&a), group.get(&b))
+            {
+                if std::mem::discriminant(c) == kind {
+                    out.push(*c);
+                }
+                if ga != gb {
+                    merge(&mut group, ga, gb);
+                }
+            }
+        }
+        let first = items[0];
+        for id in &items[1..] {
+            let (g0, g) = (group[&first], group[id]);
+            if g0 != g {
+                out.push(make(first, *id));
+                merge(&mut group, g0, g);
+            }
+        }
+        out
+    }
+
+    struct Rnd(u64);
+    impl Rnd {
+        fn below(&mut self, n: usize) -> usize {
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((self.0 >> 33) as usize) % n
+        }
+    }
+
+    /// A drawing of `n` loose lines with random relations among them and their points:
+    /// chains (each to the one before), and pairs anywhere.
+    fn drawing(rnd: &mut Rnd, n: usize) -> (Editor, Vec<EntityId>, Vec<EntityId>) {
+        let mut doc = Document::new();
+        let mut lines = Vec::new();
+        let mut points = Vec::new();
+        for k in 0..n {
+            let x = k as f64 * 3.0;
+            let a = doc.add_point(DVec2::new(x, 0.0));
+            let b = doc.add_point(DVec2::new(x + 1.0, 2.0));
+            points.extend([a, b]);
+            lines.push(doc.add_line(a, b).unwrap());
+        }
+        for _ in 0..(n / 2 + rnd.below(n + 1)) {
+            let (i, j) = if rnd.below(3) == 0 && n > 1 {
+                let i = 1 + rnd.below(n - 1);
+                (i, i - 1)
+            } else {
+                (rnd.below(n), rnd.below(n))
+            };
+            if i == j {
+                continue;
+            }
+            let (la, lb) = (lines[i], lines[j]);
+            let (pa, pb) = (points[2 * i + rnd.below(2)], points[2 * j + rnd.below(2)]);
+            let c = match rnd.below(6) {
+                0 => Constraint::Parallel { a: la, b: lb },
+                1 => Constraint::Collinear { a: la, b: lb },
+                2 => Constraint::Equal { a: la, b: lb },
+                3 => Constraint::Coincident { a: pa, b: pb },
+                4 => Constraint::HorizontalPoints { a: pa, b: pb },
+                _ => Constraint::VerticalPoints { a: pa, b: pb },
+            };
+            let _ = doc.add_constraint(c);
+        }
+        (Editor::new(doc), lines, points)
+    }
+
+    /// Up to `max` of `all` (some repeated), at least two.
+    fn pick(rnd: &mut Rnd, all: &[EntityId], max: usize) -> Vec<EntityId> {
+        let n = 2 + rnd.below(max.min(all.len()).max(2) - 1);
+        (0..n).map(|_| all[rnd.below(all.len())]).collect()
+    }
+
+    type Pair = fn(&Constraint) -> Option<(EntityId, EntityId)>;
+    type Make = fn(EntityId, EntityId) -> Constraint;
+
+    #[test]
+    fn on_random_drawings() {
+        let mut rnd = Rnd(7);
+        let mut compared = 0;
+        let mut joined_some = 0;
+        for round in 0..300 {
+            let n = 2 + rnd.below(if round % 10 == 0 { 120 } else { 16 });
+            let (ed, lines, points) = drawing(&mut rnd, n);
+            for _ in 0..4 {
+                let lines_pick = pick(&mut rnd, &lines, n);
+                let points_pick = pick(&mut rnd, &points, 2 * n);
+                let line_kinds: [(Pair, Make); 2] = [
+                    (Editor::parallel_pair, |a, b| Constraint::Parallel { a, b }),
+                    (Editor::collinear_pair, |a, b| Constraint::Collinear {
+                        a,
+                        b,
+                    }),
+                ];
+                let point_kinds: [(Pair, Make); 3] = [
+                    (Editor::coincident_pair, |a, b| Constraint::Coincident {
+                        a,
+                        b,
+                    }),
+                    (Editor::horizontal_pair, |a, b| {
+                        Constraint::HorizontalPoints { a, b }
+                    }),
+                    (Editor::vertical_pair, |a, b| Constraint::VerticalPoints {
+                        a,
+                        b,
+                    }),
+                ];
+                for (items, kinds) in [
+                    (&lines_pick, &line_kinds[..]),
+                    (&points_pick, &point_kinds[..]),
+                ] {
+                    for (related, make) in kinds {
+                        let new = ed.joining(items, *related, make);
+                        let old = old_joining(&ed.doc, items, *related, make);
+                        assert_eq!(new, old, "round {round}, items {items:?}");
+                        compared += 1;
+                        joined_some += usize::from(new.len() < items.len() - 1);
+                    }
+                }
+            }
+        }
+        assert_eq!(compared, 300 * 4 * 5);
+        // (Relations already there tied some picks together: not only the plain case.)
+        assert!(joined_some > 500, "{joined_some}");
+    }
+}

@@ -2642,3 +2642,57 @@ fn a_wall_poche_is_not_found_again_dragging_something_else() {
     assert!(moved.region.area > at_rest.region.area);
     assert!(ed.commit("Move"));
 }
+
+/// #286: after an edit and its undo, a fill whose area is found by its curves doesn't look
+/// for a point inside its last shape (for an L-shaped area, whose centre is outside it, that
+/// was a grid of point tests for every fill, every time the fills were found).
+#[test]
+fn fills_found_by_their_curves_look_inside_no_last_shape() {
+    let mut ed = Editor::new(Document::new());
+    ed.doc.begin();
+    let corners = [
+        (0.0, 0.0),
+        (30.0, 0.0),
+        (30.0, 10.0),
+        (10.0, 10.0),
+        (10.0, 30.0),
+        (0.0, 30.0),
+    ]
+    .map(|(x, y)| ed.doc.add_point(v(x, y)));
+    for i in 0..6 {
+        ed.doc.add_line(corners[i], corners[(i + 1) % 6]).unwrap();
+    }
+    let (p, q) = (
+        ed.doc.add_point(v(500.0, 0.0)),
+        ed.doc.add_point(v(520.0, 0.0)),
+    );
+    ed.doc.add_line(p, q).unwrap();
+    assert!(ed.commit("Shapes"));
+    let f = area_fill_at(&mut ed, v(5.0, 5.0));
+    let first = ed.fill_shapes()[&f].clone();
+    assert!(close(first.region.area, 500.0));
+    // (Its centre is outside it: finding a point inside takes the grid.)
+    assert!(!first.region.contains(first.region.centroid));
+    let looked = ed.fill_near_points.get();
+    ed.doc.begin();
+    ed.doc.set_point(p, v(500.0, 5.0)).unwrap();
+    assert!(ed.commit("Move"));
+    ed.settle_areas();
+    let moved = ed.fill_shapes()[&f].clone();
+    assert!(ed.undo());
+    ed.settle_areas();
+    let undone = ed.fill_shapes()[&f].clone();
+    assert_eq!(
+        ed.fill_near_points.get(),
+        looked,
+        "looked inside its last shape"
+    );
+    // The same as found afresh.
+    ed.forget_fill_shapes();
+    let fresh = ed.fill_shapes()[&f].clone();
+    for shape in [&first, &moved, &undone] {
+        assert_eq!(format!("{:?}", shape.region), format!("{:?}", fresh.region));
+        assert_eq!(shape.curves, fresh.curves);
+        assert!(!shape.lost && !shape.crossed);
+    }
+}

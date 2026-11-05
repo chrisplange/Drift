@@ -221,36 +221,43 @@ impl Editor {
         related: fn(&Constraint) -> Option<(EntityId, EntityId)>,
         make: impl Fn(EntityId, EntityId) -> Constraint,
     ) -> Vec<Constraint> {
-        // Which group each item is in, merged along the relations already there.
-        let mut group: std::collections::HashMap<EntityId, usize> =
+        // Which group each item is in, merged along the relations already there: a forest
+        // over the items' indices (relabelling every item on each merge made a big pick
+        // n², #253: 12 s a frame for 66k picked lines).
+        let index: std::collections::HashMap<EntityId, usize> =
             items.iter().enumerate().map(|(i, id)| (*id, i)).collect();
-        fn merge(group: &mut std::collections::HashMap<EntityId, usize>, a: usize, b: usize) {
-            for g in group.values_mut() {
-                if *g == b {
-                    *g = a;
-                }
+        let mut parent: Vec<usize> = (0..items.len()).collect();
+        fn root(parent: &mut [usize], mut i: usize) -> usize {
+            while parent[i] != i {
+                parent[i] = parent[parent[i]];
+                i = parent[i];
             }
+            i
         }
         let kind = std::mem::discriminant(&make(items[0], items[1]));
         let mut out = Vec::new();
         for (_, c) in self.doc.constraints() {
             if let Some((a, b)) = related(c)
-                && let (Some(&ga), Some(&gb)) = (group.get(&a), group.get(&b))
+                && let (Some(&ia), Some(&ib)) = (index.get(&a), index.get(&b))
             {
                 if std::mem::discriminant(c) == kind {
                     out.push(*c);
                 }
+                let (ga, gb) = (root(&mut parent, ia), root(&mut parent, ib));
                 if ga != gb {
-                    merge(&mut group, ga, gb);
+                    parent[gb] = ga;
                 }
             }
         }
         let first = items[0];
         for id in &items[1..] {
-            let (g0, g) = (group[&first], group[id]);
+            let (g0, g) = (
+                root(&mut parent, index[&first]),
+                root(&mut parent, index[id]),
+            );
             if g0 != g {
                 out.push(make(first, *id));
-                merge(&mut group, g0, g);
+                parent[g] = g0;
             }
         }
         out

@@ -19,6 +19,18 @@ impl Document {
             .map(|(id, _)| *id)
     }
 
+    /// The group of every grouped entity, as [`group_of`](Self::group_of) finds it: for
+    /// looking up many entities at once.
+    pub fn group_index(&self) -> std::collections::HashMap<EntityId, GroupId> {
+        let mut index = std::collections::HashMap::new();
+        for (id, g) in &self.groups {
+            for e in &g.members {
+                index.entry(*e).or_insert(*id);
+            }
+        }
+        index
+    }
+
     /// Take `members` out of any group they are in (dropping groups left empty).
     pub(super) fn ungroup_members(&mut self, members: &BTreeSet<EntityId>) {
         let touched: Vec<GroupId> = self

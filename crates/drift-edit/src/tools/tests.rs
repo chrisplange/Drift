@@ -3647,6 +3647,204 @@ fn moving_a_region_in_a_block_edit_finds_its_areas_once() {
     assert!(ed.scoped_regions.is_none(), "kept after the edit ended");
 }
 
+/// A 20 × 10 rectangle with a line across it at x = 10, and its left half picked (#321).
+fn halved_rectangle() -> (Editor, drift_geom::regions::Region, Vec<EntityId>) {
+    let mut doc = Document::new();
+    let p =
+        [(0.0, 0.0), (20.0, 0.0), (20.0, 10.0), (0.0, 10.0)].map(|(x, y)| doc.add_point(v(x, y)));
+    for i in 0..4 {
+        doc.add_line(p[i], p[(i + 1) % 4]).unwrap();
+    }
+    let (a, b) = (doc.add_point(v(10.0, 0.0)), doc.add_point(v(10.0, 10.0)));
+    doc.add_line(a, b).unwrap();
+    let mut ed = Editor::new(doc);
+    ed.selected_region = Some(v(5.0, 5.0));
+    let r = ed.region().expect("the left half");
+    let ids = ed.region_curves(&r);
+    ed.selection = ids.iter().copied().collect();
+    (ed, r, ids)
+}
+
+#[test]
+fn moving_a_region_finds_the_drawings_areas_once() {
+    let (mut ed, r, ids) = halved_rectangle();
+    let found = ed.regions_found;
+    ed.doc.begin();
+    let mut offset = DVec2::ZERO;
+    for _ in 0..12 {
+        let step = v(0.5, 0.25);
+        assert!(ed.drag(&ids, step, &[]));
+        offset += step;
+        ed.region_motion = Some(crate::editor::RegionMotion::Move(offset));
+        ed.sync();
+        // The area moves along with its outline: as found afresh where it is now.
+        let now = ed.region().expect("still picked");
+        assert!((now.area - r.area).abs() < 1e-9);
+        assert!(now.centroid.distance(r.centroid + offset) < 1e-9);
+    }
+    assert!(
+        ed.regions_found - found <= 1,
+        "found {} times in 12 frames",
+        ed.regions_found - found
+    );
+    // Landed: found afresh where it is now.
+    ed.commit("Move");
+    ed.region_motion = None;
+    ed.selected_region = Some(v(5.0, 5.0) + offset);
+    let landed = ed.region().expect("found again");
+    assert!(landed.centroid.distance(r.centroid + offset) < 1e-9);
+    assert!(ed.region_moving.is_none());
+}
+
+#[test]
+fn moving_a_region_along_a_long_line_it_sits_on_finds_the_areas_once() {
+    // A 20 × 10 area whose bottom is part of a line 200 long: the line isn't one of the
+    // area's picked curves, so it stays while its other three sides slide along it.
+    let mut doc = Document::new();
+    let line = |doc: &mut Document, a: DVec2, b: DVec2| {
+        let (a, b) = (doc.add_point(a), doc.add_point(b));
+        doc.add_line(a, b).unwrap()
+    };
+    let bottom = line(&mut doc, v(0.0, 0.0), v(200.0, 0.0));
+    line(&mut doc, v(0.0, 0.0), v(0.0, 10.0));
+    line(&mut doc, v(20.0, 0.0), v(20.0, 10.0));
+    line(&mut doc, v(0.0, 10.0), v(20.0, 10.0));
+    let mut ed = Editor::new(doc);
+    ed.selected_region = Some(v(5.0, 5.0));
+    let r = ed.region().expect("the area");
+    let ids = ed.region_curves(&r);
+    assert_eq!(ids.len(), 3);
+    assert!(!ids.contains(&bottom));
+    ed.selection = ids.iter().copied().collect();
+    let found = ed.regions_found;
+    ed.doc.begin();
+    let mut offset = DVec2::ZERO;
+    for _ in 0..12 {
+        let step = v(0.5, 0.0);
+        assert!(ed.drag(&ids, step, &[]));
+        offset += step;
+        ed.region_motion = Some(crate::editor::RegionMotion::Move(offset));
+        ed.sync();
+        let now = ed.region().expect("still picked");
+        assert!((now.area - r.area).abs() < 1e-9);
+        assert!(now.centroid.distance(r.centroid + offset) < 1e-9);
+    }
+    assert!(
+        ed.regions_found - found <= 1,
+        "found {} times in 12 frames",
+        ed.regions_found - found
+    );
+    ed.doc.rollback();
+    ed.region_motion = None;
+    ed.sync();
+}
+
+/// The smallest area around `p` as the drawing's areas are found now.
+fn fresh_area_at(ed: &mut Editor, p: DVec2) -> drift_geom::regions::Region {
+    ed.regions()
+        .iter()
+        .filter(|r| r.contains(p))
+        .min_by(|a, b| a.area.total_cmp(&b.area))
+        .cloned()
+        .expect("an area")
+}
+
+#[test]
+fn an_earlier_moves_area_is_not_carried_into_the_next() {
+    let (mut ed, a, _) = halved_rectangle();
+    // The left half, found as a move of it began (nothing moved yet), and the move let go
+    // of with no frame after it.
+    ed.region_motion = Some(crate::editor::RegionMotion::Move(DVec2::ZERO));
+    assert!(ed.region().is_some());
+    assert!(ed.region_moving.is_some());
+    ed.region_motion = None;
+    // The right half picked and moved: it shares the line across and the top and bottom
+    // with the left one, which stays where it was.
+    ed.selected_region = Some(v(15.0, 5.0));
+    let b = ed.visible_region_at(v(15.0, 5.0)).expect("the right half");
+    assert!(b.centroid.distance(a.centroid) > 5.0);
+    let ids = ed.region_curves(&b);
+    ed.selection = ids.iter().copied().collect();
+    ed.doc.begin();
+    let step = v(0.5, 0.0);
+    assert!(ed.drag(&ids, step, &[]));
+    ed.region_motion = Some(crate::editor::RegionMotion::Move(step));
+    ed.sync();
+    let now = ed.region().expect("still picked");
+    let fresh = fresh_area_at(&mut ed, v(15.0, 5.0) + step);
+    assert!(
+        now.centroid.distance(fresh.centroid) < 1e-9,
+        "{:?}, found afresh {:?}",
+        now.centroid,
+        fresh.centroid
+    );
+    assert!((now.area - fresh.area).abs() < 1e-9);
+    ed.doc.rollback();
+    ed.region_motion = None;
+    ed.sync();
+}
+
+#[test]
+fn an_area_whose_outline_did_not_move_is_not_moved() {
+    let (mut ed, r, ids) = halved_rectangle();
+    ed.doc.begin();
+    let step = v(0.5, 0.25);
+    assert!(ed.drag(&ids, step, &[]));
+    ed.region_motion = Some(crate::editor::RegionMotion::Move(step));
+    ed.sync();
+    assert!(ed.region().is_some());
+    // The pick let go mid-move, and the move's offset grows while nothing moves.
+    ed.selection.clear();
+    ed.region_motion = Some(crate::editor::RegionMotion::Move(step * 4.0));
+    let now = ed.region().expect("still picked");
+    // Where its curves are: moved by the one step.
+    assert!(
+        now.centroid.distance(r.centroid + step) < 1e-9,
+        "{:?}",
+        now.centroid
+    );
+    ed.doc.rollback();
+    ed.region_motion = None;
+    ed.sync();
+}
+
+#[test]
+fn a_region_whose_outline_bends_mid_move_is_found_again() {
+    let (mut ed, r, ids) = halved_rectangle();
+    // Only the line across moves: the outline stretches, so the area as found at the start
+    // can't be carried along.
+    let across = *ids
+        .iter()
+        .find(|id| matches!(ed.doc.shape(**id), Some(Shape::Line { a, b }) if a.x == 10.0 && b.x == 10.0))
+        .unwrap();
+    ed.doc.begin();
+    let mut offset = DVec2::ZERO;
+    for k in 0..6 {
+        let step = v(1.0, 0.0);
+        assert!(ed.drag(&[across], step, &[]));
+        offset += step;
+        ed.region_motion = Some(crate::editor::RegionMotion::Move(offset));
+        ed.sync();
+        let now = ed.region().expect("still picked");
+        // As big as the left part is now, as a fresh look finds it.
+        let fresh = ed
+            .regions()
+            .iter()
+            .filter(|f| f.contains(v(5.0, 5.0)))
+            .min_by(|a, b| a.area.total_cmp(&b.area))
+            .cloned()
+            .unwrap();
+        assert!((now.area - fresh.area).abs() < 1e-9, "frame {k}");
+        assert!(
+            (now.area - r.area - 10.0 * offset.x).abs() < 1e-9,
+            "frame {k}"
+        );
+    }
+    ed.doc.rollback();
+    ed.region_motion = None;
+    ed.sync();
+}
+
 #[test]
 fn editing_a_block_snaps_only_to_the_block() {
     let (mut ed, copy, _, _, _) = block_edit_fixture();
@@ -7482,4 +7680,132 @@ fn a_typed_drag_distance_released_over_a_point_does_not_join() {
     let to = ptr(&ed, &sel, v(10.3, 0.2));
     sel.handle(Input::DragEnd(to, Modifiers::default()), &mut ed);
     assert_eq!(points(&ed.doc), 3, "joined");
+}
+
+/// #317: picking many things at once widens them as picking each alone would: walls, an
+/// opening, an offset and groups (one of them open), with and without a pick filter.
+#[test]
+fn pick_sets_are_what_each_pick_set_gives_together() {
+    use drift_core::{LayerId, LineKind, Offset, Opening, Path, Side, Wall};
+    let mut doc = Document::new();
+    // Walls along three runs of a 2 × 1 grid of 4 m rooms, with a door in the first.
+    let grid: Vec<Vec<EntityId>> = (0..3)
+        .map(|i| {
+            (0..2)
+                .map(|j| doc.add_point(v(f64::from(i) * 4000.0, f64::from(j) * 4000.0)))
+                .collect()
+        })
+        .collect();
+    let mut first_wall = None;
+    for run in [
+        vec![grid[0][0], grid[1][0], grid[2][0]],
+        vec![grid[0][1], grid[1][1], grid[2][1]],
+        vec![grid[1][0], grid[1][1]],
+    ] {
+        let curves: Vec<EntityId> = run
+            .windows(2)
+            .map(|w| {
+                let l = doc.add_line(w[0], w[1]).unwrap();
+                doc.set_style(l, LineKind::Construction);
+                l
+            })
+            .collect();
+        let path = doc
+            .add_path(Path {
+                curves,
+                closed: false,
+            })
+            .unwrap();
+        let w = doc
+            .add_wall(Wall::new(path, 200.0, LayerId::DEFAULT))
+            .unwrap();
+        first_wall.get_or_insert(w);
+    }
+    let mut o = Opening::new(first_wall.unwrap(), 0, 970.0);
+    o.leaf = 900.0;
+    doc.add_opening(o).unwrap();
+    // An offset rectangle, and loose lines.
+    let ps = [(10e3, 0.0), (10.06e3, 0.0), (10.06e3, 40.0), (10e3, 40.0)]
+        .map(|(x, y)| doc.add_point(v(x, y)));
+    let rect: Vec<EntityId> = (0..4)
+        .map(|k| doc.add_line(ps[k], ps[(k + 1) % 4]).unwrap())
+        .collect();
+    doc.add_offset(Offset::new(rect, Side::Right, 3.0)).unwrap();
+    let loose: Vec<EntityId> = (0..12)
+        .map(|k| {
+            let a = doc.add_point(v(20e3 + f64::from(k) * 10.0, 0.0));
+            let b = doc.add_point(v(20e3 + f64::from(k) * 10.0, 5.0));
+            doc.add_line(a, b).unwrap()
+        })
+        .collect();
+    let mut ed = Editor::new(doc);
+    ed.sync();
+    // Groups: three of loose lines (with a standalone point in one), one holding a wall's
+    // centreline and the offset's source.
+    let lone = ed.doc.add_point(v(21e3, 50.0));
+    let mut groups = Vec::new();
+    for members in [
+        loose[0..4]
+            .iter()
+            .copied()
+            .chain([lone])
+            .collect::<BTreeSet<_>>(),
+        loose[4..8].iter().copied().collect(),
+        loose[8..12].iter().copied().collect(),
+    ] {
+        ed.selection = members;
+        groups.push(ed.make_group().unwrap());
+    }
+    let everything: Vec<EntityId> = ed.doc.iter().map(|(id, _)| id).collect();
+    let mut seed = 11u64;
+    let mut rnd = move || {
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (seed >> 33) as usize
+    };
+    let mut cases = 0;
+    for open in [None, Some(groups[1])] {
+        for filter in [
+            crate::editor::PickFilter::ALL,
+            crate::editor::PickFilter::only(crate::editor::PickKind::Edges),
+        ] {
+            ed.open_group = open;
+            ed.prefs.pick_filter = filter;
+            for _ in 0..60 {
+                let n = 1 + rnd() % 20;
+                let ids: Vec<EntityId> = (0..n)
+                    .map(|_| everything[rnd() % everything.len()])
+                    .collect();
+                let each: BTreeSet<EntityId> = ids.iter().flat_map(|id| ed.pick_set(*id)).collect();
+                assert_eq!(ed.pick_sets(ids.iter().copied()), each, "{ids:?}");
+                cases += 1;
+            }
+        }
+    }
+    assert_eq!(cases, 240);
+    // Many groups (an index of their members is used past a few): the same.
+    let more: Vec<EntityId> = (0..40)
+        .map(|k| {
+            let a = ed.doc.add_point(v(30e3 + f64::from(k) * 10.0, 0.0));
+            let b = ed.doc.add_point(v(30e3 + f64::from(k) * 10.0, 5.0));
+            ed.doc.add_line(a, b).unwrap()
+        })
+        .collect();
+    ed.open_group = None;
+    ed.prefs.pick_filter = crate::editor::PickFilter::ALL;
+    for pair in more.chunks(2) {
+        ed.selection = pair.iter().copied().collect();
+        ed.make_group().unwrap();
+    }
+    assert!(ed.doc.groups().count() > 8);
+    let everything: Vec<EntityId> = ed.doc.iter().map(|(id, _)| id).collect();
+    for _ in 0..60 {
+        let n = 1 + rnd() % 30;
+        let ids: Vec<EntityId> = (0..n)
+            .map(|_| everything[rnd() % everything.len()])
+            .collect();
+        let each: BTreeSet<EntityId> = ids.iter().flat_map(|id| ed.pick_set(*id)).collect();
+        assert_eq!(ed.pick_sets(ids.iter().copied()), each, "{ids:?}");
+    }
 }

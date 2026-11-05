@@ -161,6 +161,31 @@ pub struct SolveReport {
     /// [`conflicts`](Self::conflicts), so a report that names only conflicts already known
     /// may still have left geometry broken.
     pub unsourced_failure: bool,
+    /// Entities whose own geometry is in a part of the system that failed (an arc whose end
+    /// keeps to the circle through its start, a line with a midpoint, an ellipse, an
+    /// elliptical arc, a wall end on the wall it meets: the owners of the rows no relation
+    /// owns, see `Row::owner`), whether or not each is off by more than its tolerance. Any
+    /// solve of a failed part may share its misfit with them: a least-squares compromise
+    /// between relations that conflict leaves an arc in the same part off its circle.
+    ///
+    /// Read from an analysis of the drawing before an edit, these are what that edit isn't
+    /// blamed for breaking: geometry in a part that already fails is never counted as newly
+    /// broken, even if the edit breaks it further, as a conflict already there isn't. Sorted.
+    pub exposed: Vec<EntityId>,
+    /// Of [`exposed`](Self::exposed), the entities whose own geometry is broken: a row of
+    /// theirs isn't within its tolerance (the test a part's convergence uses, so a residual
+    /// that isn't a number counts) at the values the solve wrote. A failed part always names
+    /// a conflict or a broken entity. Sorted.
+    ///
+    /// For showing what is off, not for deciding whether an edit stands: in a failed part a
+    /// solve stops at its iteration cap rather than at the compromise, so how far such a row
+    /// is left off is where it stopped (anywhere from round-off to thousands of times its
+    /// tolerance). The editor judges edits by [`exposed`](Self::exposed) alone.
+    pub broken: Vec<EntityId>,
+    /// Nothing was written: a value wasn't a number, or a solve with the fold steps didn't
+    /// finish and put the geometry back. [`broken`](Self::broken) and
+    /// [`exposed`](Self::exposed) are then empty: what they would describe was never written.
+    pub unwritten: bool,
     /// Constraints already implied by others (found during substitution).
     pub redundant: Vec<ConstraintId>,
     /// Equations that are linearly dependent on others (redundant but consistent).
@@ -340,12 +365,18 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
             }
             report.converged = false;
             report.unsourced_failure = true;
+            report.unwritten = true;
         }
     }
     // A result that isn't a number (a degenerate configuration the equations divide by) is
     // never written: the drawing stays as it was and the solve counts as failed.
-    if !write_back(doc, &sys) {
+    if !report.unwritten && !write_back(doc, &sys) {
         report.converged = false;
+        report.unwritten = true;
+    }
+    if report.unwritten {
+        report.broken.clear();
+        report.exposed.clear();
     }
     report
 }
@@ -1920,6 +1951,34 @@ fn unsourced(sys: &System, rows: &[usize]) -> bool {
     rows.iter().all(|&r| sys.rows[r].source.is_none())
 }
 
+/// The entities whose own geometry is in the failed `rows` ([`SolveReport::exposed`]), and
+/// of them those with a row not within its tolerance at `values` ([`SolveReport::broken`]),
+/// added to `exposed` and `broken`. Judged row by row, with the test convergence uses
+/// (`<=`), negated: a residual that isn't a number is broken.
+pub(crate) fn exposed_and_broken(
+    sys: &System,
+    rows: &[usize],
+    values: &[f64],
+    tol: &Tolerances,
+    exposed: &mut Vec<EntityId>,
+    broken: &mut Vec<EntityId>,
+) {
+    for &r in rows {
+        let Some(owner) = sys.rows[r].owner else {
+            continue;
+        };
+        exposed.push(owner);
+        let res = sys.rows[r]
+            .equation
+            .eval(&|p| values[sys.group_of[p]], &mut Vec::new());
+        // (False for a residual that isn't a number: then it is broken.)
+        let met = res.abs() <= row_tolerance(sys, r, values, tol);
+        if !met {
+            broken.push(owner);
+        }
+    }
+}
+
 fn run(sys: &mut System, options: &SolveOptions, iterate: bool) -> SolveReport {
     let tol = &options.tolerances;
     let mut report = SolveReport {
@@ -1984,6 +2043,18 @@ fn run(sys: &mut System, options: &SolveOptions, iterate: bool) -> SolveReport {
         }
     }
     report.conflicts.sort();
+    exposed_and_broken(
+        sys,
+        &failed_rows,
+        &values,
+        tol,
+        &mut report.exposed,
+        &mut report.broken,
+    );
+    for list in [&mut report.exposed, &mut report.broken] {
+        list.sort_unstable();
+        list.dedup();
+    }
     report.converged = failed_rows.is_empty() && sys.conflicts.is_empty();
 
     if options.analyze {

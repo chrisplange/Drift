@@ -25,7 +25,8 @@ pub struct AnalysisCache {
     locked: BTreeSet<LayerId>,
     parts: HashMap<EntityId, Part>,
     report: SolveReport,
-    /// Parts that didn't converge, and parts with conflicts or redundant relations.
+    /// Parts that didn't converge, and parts with conflicts, redundant relations or exposed
+    /// geometry.
     unconverged: usize,
     problems: BTreeSet<EntityId>,
     misses: usize,
@@ -63,7 +64,7 @@ impl AnalysisCache {
         r.dof = Some(r.dof.unwrap_or(0) + p.dof);
         r.dependent_equations += p.dependent;
         self.unconverged += usize::from(!p.converged);
-        if !p.conflicts.is_empty() || !p.redundant.is_empty() {
+        if !p.conflicts.is_empty() || !p.redundant.is_empty() || !p.exposed.is_empty() {
             self.problems.insert(rep);
         }
         self.parts.insert(rep, p);
@@ -92,6 +93,9 @@ struct Part {
     dependent: usize,
     conflicts: Vec<ConstraintId>,
     redundant: Vec<ConstraintId>,
+    /// See [`SolveReport::exposed`] and [`SolveReport::broken`].
+    exposed: Vec<EntityId>,
+    broken: Vec<EntityId>,
     definitions: Vec<(EntityId, Definition)>,
 }
 
@@ -301,10 +305,18 @@ fn finish<'a>(
         problems.iter().flat_map(|p| p.conflicts.clone()).collect();
     let mut redundant: Vec<ConstraintId> =
         problems.iter().flat_map(|p| p.redundant.clone()).collect();
+    let mut exposed: Vec<EntityId> = problems.iter().flat_map(|p| p.exposed.clone()).collect();
+    let mut broken: Vec<EntityId> = problems.iter().flat_map(|p| p.broken.clone()).collect();
     conflicts.sort();
     redundant.sort();
+    exposed.sort_unstable();
+    exposed.dedup();
+    broken.sort_unstable();
+    broken.dedup();
     cache.report.conflicts = conflicts;
     cache.report.redundant = redundant;
+    cache.report.exposed = exposed;
+    cache.report.broken = broken;
     cache.report.converged = cache.unconverged == 0;
     cache.at = Some((doc.lineage(), doc.revision()));
     cache.reps = ids
@@ -392,6 +404,16 @@ fn analyze_parts(
             {
                 p.conflicts.push(cid);
             }
+            let Part {
+                exposed, broken, ..
+            } = p;
+            crate::exposed_and_broken(sys, &[r], &values, tol, exposed, broken);
+        }
+    }
+    for p in parts.values_mut() {
+        for list in [&mut p.exposed, &mut p.broken] {
+            list.sort_unstable();
+            list.dedup();
         }
     }
     for &c in &sys.conflicts {
@@ -597,8 +619,77 @@ mod tests {
         prop_assert_eq!(a.dependent_equations, b.dependent_equations);
         prop_assert_eq!(&a.conflicts, &b.conflicts);
         prop_assert_eq!(&a.redundant, &b.redundant);
+        prop_assert_eq!(&a.exposed, &b.exposed);
+        prop_assert_eq!(&a.broken, &b.broken);
         prop_assert_eq!(&a.definitions, &b.definitions);
         Ok(())
+    }
+
+    /// What a failed part leaves exposed and broken (#342) comes out of the cache as out of
+    /// a whole analysis: a part failing on a conflict next to an arc, a part failing on an
+    /// arc's own row alone, after an edit in another part (both kept from the cache), and
+    /// after the broken arc is deleted.
+    #[test]
+    fn cached_exposed_and_broken_are_the_full_analysis() {
+        let v = DVec2::new;
+        let mut doc = Document::new();
+        let mut cache = AnalysisCache::default();
+        // A point held 10 from two fixed points 30 apart (a conflict), and an arc centred on
+        // it with its end off its circle.
+        let a = doc.add_point(v(0.0, 0.0));
+        let f = doc.add_point(v(30.0, 0.0));
+        let b = doc.add_point(v(15.0, 0.0));
+        for (point, at) in [(a, v(0.0, 0.0)), (f, v(30.0, 0.0))] {
+            doc.add_constraint(Constraint::Fix { point, at }).unwrap();
+        }
+        doc.add_constraint(Constraint::Distance { a, b, value: 10.0 })
+            .unwrap();
+        doc.add_constraint(Constraint::Distance {
+            a: b,
+            b: f,
+            value: 10.0,
+        })
+        .unwrap();
+        let s = doc.add_point(v(20.0, 0.0));
+        let e = doc.add_point(v(15.0, 6.0));
+        let mixed = doc.add_arc(b, s, e).unwrap();
+        // (`add_arc` puts the end on the circle.)
+        doc.set_point(e, v(15.0, 6.0)).unwrap();
+        // An arc whose end fixes hold off its circle.
+        let c = doc.add_point(v(100.0, 0.0));
+        let s2 = doc.add_point(v(110.0, 0.0));
+        let e2 = doc.add_point(v(100.0, 10.0));
+        let alone = doc.add_arc(c, s2, e2).unwrap();
+        doc.set_point(e2, v(100.0, 12.0)).unwrap();
+        for (point, at) in [
+            (c, v(100.0, 0.0)),
+            (s2, v(110.0, 0.0)),
+            (e2, v(100.0, 12.0)),
+        ] {
+            doc.add_constraint(Constraint::Fix { point, at }).unwrap();
+        }
+        let check = |doc: &Document, cache: &mut AnalysisCache| {
+            let cached = analyze_cached(doc, None, cache).clone();
+            let whole = crate::analyze(doc);
+            assert_eq!(cached.exposed, whole.exposed);
+            assert_eq!(cached.broken, whole.broken);
+            cached
+        };
+        let r = check(&doc, &mut cache);
+        assert_eq!(r.exposed, vec![mixed, alone]);
+        assert_eq!(r.broken, vec![mixed, alone]);
+        // An edit in a part of its own: both failing parts kept from the cache.
+        let p = doc.add_point(v(500.0, 0.0));
+        let q = doc.add_point(v(510.0, 0.0));
+        doc.add_line(p, q).unwrap();
+        let r = check(&doc, &mut cache);
+        assert_eq!(cache.last_misses(), 1);
+        assert_eq!(r.broken, vec![mixed, alone]);
+        // The lone arc deleted.
+        doc.delete([alone]);
+        let r = check(&doc, &mut cache);
+        assert_eq!(r.exposed, vec![mixed]);
+        assert_eq!(r.broken, vec![mixed]);
     }
 
     proptest! {

@@ -2,7 +2,7 @@ schema_version = "1.0.0"
 
 id = "drift_profiles"
 # Kept in step with Drift's version (Cargo.toml) by scripts/package-blender-addon.py.
-version = "0.1.0-beta.1.5"
+version = "0.1.0-beta.1.6"
 name = "Drift Profiles"
 tagline = "Sweep and lathe profiles drawn in Drift, updated as Drift saves"
 maintainer = "Christopher Lange"

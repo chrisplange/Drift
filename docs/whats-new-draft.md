@@ -58,7 +58,8 @@ back.
   dragged points are held on.
 - **A typed distance in a mouse drag.** Dragging a selection shows how far it has moved; type a
   distance and press Enter to move it exactly.
-- **Big drawings draw, drag and edit much faster.**
+- **Big drawings draw, drag and edit much faster.** Curvature combs are drawn only while 50 or
+  fewer Béziers are picked; with thousands picked they covered the drawing.
 - **Picking you can predict.** Hovering lights only what a click picks: geometry on a locked
   layer no longer lights up, and a click on a locked line goes through to what's beneath.
   Groups pick whole whatever the pick filter says. An arc's or circle's centre shows, and can
@@ -321,6 +322,7 @@ User-facing
 - #339 Block name spaces, notice levels, Pattern takes texts and notes, centres only with their curve (Fixes #336, #312, #327, #259)
 - #340 Drag: an arc crushed or closed by a step counts as turned (Refs #280)
 - #341 Big drawings: Group, undo frames, area moves and the Inspector's offers stay quick (#317, #286, #321)
+- #356 Big drawings: fill meshes, moved fills, sketch items and the Inspector keep up with a move; combs up to 50 Béziers (Refs #253)
 
 Internal / not for the notes
 - #121 #122 packaging (Inno Setup 7, test build versions)
@@ -331,4 +333,5 @@ Internal / not for the notes
 - #213 cull and module split; #251 #257 #292 #302 #304 #308 core refactors R1–R3
 - #226 GPU gate for UI tests; #276 green baseline and perf budgets
 - #237 #272 CI and website workflow
+- #355 guide refresh for Beta 1.6; #357 drift-solver rustdoc and drag pins re-traced (no user-visible change)
 -->

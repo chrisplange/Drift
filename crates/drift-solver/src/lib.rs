@@ -2159,7 +2159,7 @@ pub fn free_directions(doc: &Document) -> HashMap<EntityId, Freedom> {
     free_directions_with(doc, None)
 }
 
-/// [`free_directions`], reading relations through `lowering`.
+/// `free_directions`, reading relations through `lowering`.
 pub fn free_directions_with(
     doc: &Document,
     lowering: Option<&Lowering>,

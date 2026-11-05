@@ -202,7 +202,7 @@ fn touching_end(
 }
 
 /// Where each tangency of a set of relations touched at a curve's end (see
-/// [`touching_end`]), found once on the geometry where they held: what a drag's every step
+/// `touching_end`), found once on the geometry where they held: what a drag's every step
 /// lowers its tangencies by ([`crate::SolveOptions::touching`]), so a step whose translated
 /// geometry happens to touch elsewhere (or nowhere) keeps the form the drag began with, and
 /// the solve and a later look at the result read the tangency alike.

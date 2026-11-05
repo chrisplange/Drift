@@ -1220,3 +1220,86 @@ mod joining_matches_the_old_way {
         assert!(joined_some > 500, "{joined_some}");
     }
 }
+
+mod circle_drag {
+    use drift_core::{Constraint, DVec2};
+    use drift_solver::Param;
+
+    use super::*;
+
+    fn v(x: f64, y: f64) -> DVec2 {
+        DVec2::new(x, y)
+    }
+
+    /// A point on a circle whose centre is fixed, dragged across the centre in 20 frames, at
+    /// several sizes and places: every frame that goes meets every relation and leaves the
+    /// circle a radius above zero, every frame that doesn't leaves the drawing as the last one
+    /// did, and nothing slides (the centre stays where it is fixed). The frame that would put
+    /// the point on the centre is refused (a circle crushed to a point counts as turned,
+    /// #280); further on, past the centre, the drag goes on with the point on the far side.
+    /// (A guard: the drag must never leave a circle without a radius, whatever stops it.)
+    #[test]
+    fn a_point_dragged_across_its_circles_centre_never_leaves_it_without_a_radius() {
+        for (scale, at) in [
+            (1.0, DVec2::ZERO),
+            (10.0, DVec2::ZERO),
+            (0.1, DVec2::ZERO),
+            (1.0, v(1e5, 1e5)),
+        ] {
+            let mut ed = Editor::default();
+            ed.doc.begin();
+            let center = ed.doc.add_point(at);
+            let circle = ed.doc.add_circle(center, 5.0 * scale).unwrap();
+            let p = ed.doc.add_point(at + v(5.0, 0.0) * scale);
+            ed.doc
+                .add_constraint(Constraint::PointOnCurve {
+                    point: p,
+                    curve: circle,
+                })
+                .unwrap();
+            ed.doc
+                .add_constraint(Constraint::Fix { point: center, at })
+                .unwrap();
+            assert!(ed.commit("Sketch"));
+            ed.doc.begin();
+            let dragged = Param::point(p).to_vec();
+            let mut refused = Vec::new();
+            let mut applied = DVec2::ZERO;
+            for k in 1..=20 {
+                let target = v(-10.0, 0.0) * scale * (f64::from(k) / 20.0);
+                let before = (ed.doc.point(p).unwrap(), ed.doc.get(circle).unwrap().kind);
+                if ed.drag(&[p], target - applied, &dragged) {
+                    applied = target;
+                    assert!(
+                        drift_solver::unmet(&ed.doc, 1e-8).is_empty(),
+                        "{scale}× about {at}, frame {k}: a relation unmet"
+                    );
+                } else {
+                    refused.push(k);
+                    assert_eq!(
+                        (ed.doc.point(p).unwrap(), ed.doc.get(circle).unwrap().kind),
+                        before,
+                        "{scale}× about {at}, frame {k}: a refused frame moved something"
+                    );
+                }
+                let EntityKind::Circle { radius, .. } = ed.doc.get(circle).unwrap().kind else {
+                    unreachable!()
+                };
+                assert!(
+                    radius > 0.0,
+                    "{scale}× about {at}, frame {k}: radius {radius}"
+                );
+                assert_eq!(
+                    ed.doc.point(center).unwrap(),
+                    at,
+                    "{scale}× about {at}: slid"
+                );
+            }
+            ed.commit("Move");
+            assert!(
+                refused.contains(&10),
+                "{scale}× about {at}: refused {refused:?}"
+            );
+        }
+    }
+}

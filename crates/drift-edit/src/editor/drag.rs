@@ -44,6 +44,33 @@ const NO_WAY_ROUND: f64 = drift_core::tolerance::FLATTEN_MM;
 /// where the smallest step turns, the curves it turns are taken to be pushed along).
 const MAX_SPLITS: u32 = 6;
 
+/// How much faster than the pointer a drag that can't land may change the radius of an arc or
+/// circle it doesn't move (see [`Editor::breaks_held_shape`]). Where the dragged points can't
+/// all reach their targets, the solve lets them fall short only at a heavy cost, and takes up the
+/// rest wherever moving other geometry is cheapest: a centre sliding out along its radius grows
+/// the round many times faster than the pointer moves (#278: 8 to 52.6 for a drag of 0.08), a
+/// free point sliding along its line towards a pivot shortens the line as fast (15 to 3.1 for a
+/// drag of 0.06). A drag keeps the radii it can't follow, and doesn't crush the lines it doesn't
+/// move, and stops instead ("Stop, as now"). Change slower than this is left as it was; a drag
+/// that lands is never judged.
+const SHAPE_HOLD: f64 = 10.0;
+
+/// How much faster than the pointer a drag that can't land may shorten a line it doesn't move
+/// (see [`Editor::breaks_held_shape`]): a hundredfold, where a radius is held to
+/// [`SHAPE_HOLD`]. A line's length changes with the drag far more often than a round's radius,
+/// through levers that are the geometry's own (a crank of arm `d` swinging a line `D` long
+/// from a fixed point shortens it `D / d` times as fast as the pointer moves), and a drag of
+/// those goes both ways up to this advantage. The escape it stops is faster still (#278: the
+/// pin's line, 200 times the pointer), and a hundredfold is what `small_drag_is_continuous`
+/// allows a small drag to move anything.
+const LINE_HOLD: f64 = 100.0;
+
+/// A line a drag doesn't move, shortened to this share of its length as the drag began, has
+/// none left: crushed, as an arc is at the same share of its radius (`drift_solver`'s
+/// `COLLAPSED_RADIUS`, F1). A drag that can't land stops short of it (see
+/// [`Editor::breaks_held_shape`]).
+const COLLAPSED_LINE: f64 = 1e-6;
+
 /// Whether a relation holds geometry where it is, so that the part it is in can't be moved
 /// whole. Every other relation is between the part's own geometry (or a size: a fixed
 /// radius), and moving it all along keeps it.
@@ -185,6 +212,17 @@ struct DragPart {
     holding: Vec<EntityId>,
     /// A move of curves in a part nothing pins (see [`DragFrame::unpinned`]).
     unpinned: bool,
+    /// Its dragged points that a drag can move, where the drag found them, and which of
+    /// their coordinates it can move (x, y): a fixed coordinate never reaches a target, and
+    /// says nothing of whether the drag landed (see [`Editor::breaks_held_shape`]).
+    free_dragged: Vec<(EntityId, DVec2, [bool; 2])>,
+    /// Its arcs and circles that the drag doesn't move (none of their points is dragged, or
+    /// coincident with a dragged point, where the drag can move it), and their radii as the
+    /// drag found them (see [`Editor::breaks_held_shape`]).
+    held_radii: Vec<(EntityId, f64)>,
+    /// Its lines that the drag doesn't move (neither end), and where each one's ends were as
+    /// the drag found them (see [`Editor::breaks_held_shape`]).
+    held_lines: Vec<(EntityId, DVec2, DVec2)>,
 }
 
 /// The parts of a drag that go exactly where they are moved ([`DragPart::moves_whole`]), as
@@ -385,7 +423,8 @@ impl Editor {
             };
             // (Every frame tries one solve first, even where the last one wandered: skipping
             // it would make where the drag is depend on the way there.)
-            ok = self.drag_from_start(&mut frame, to, &part.start);
+            ok = self.drag_from_start(&mut frame, to, &part.start)
+                && !self.breaks_held_shape(part, to);
             self.drag_solves += 2 * DRAG_SOLVES - frame.solves_left - frame.fold_solves_left;
             pushed |= frame.pushed;
             if !ok {
@@ -488,6 +527,9 @@ impl Editor {
                 touching: Rc::default(),
                 holding: Vec::new(),
                 unpinned: false,
+                free_dragged: Vec::new(),
+                held_radii: Vec::new(),
+                held_lines: Vec::new(),
             })
             .collect();
         for id in &reasons {
@@ -576,6 +618,9 @@ impl Editor {
             part.moves_whole = !part.needs_solve
                 && !self.stretches_hanging_line(&part.ids, &part.dragged_set, &part.start);
         }
+        for part in out.iter_mut().filter(|p| p.needs_solve) {
+            self.find_held_shapes(part);
+        }
         // (Only parts that solve can fail to land; the rest pay nothing for it.)
         if curves && out.iter().any(|p| p.needs_solve) {
             // What walls, openings and offsets made, the walls' centrelines, and the offsets'
@@ -624,6 +669,192 @@ impl Editor {
             }
         }
         out
+    }
+
+    /// `part`'s [`free_dragged`](DragPart::free_dragged),
+    /// [`held_radii`](DragPart::held_radii) and [`held_lines`](DragPart::held_lines), from its
+    /// relations as the drag begins (driven ones hold nothing). A coordinate is fixed by `Fix`,
+    /// `FixX` or `FixY`, by being locked, or by coinciding with a point so fixed, through any
+    /// chain of `Coincident`s; a curve is moved by the drag where one of its points is dragged,
+    /// or coincides with a dragged point, and the drag can move it, or where its radius itself
+    /// is dragged.
+    ///
+    /// Not held, so never judged: what walls and offsets make (they are made again from their
+    /// sources after the drag moves), and a line no longer than [`NO_WAY_ROUND`], which has no
+    /// way round to keep.
+    fn find_held_shapes(&self, part: &mut DragPart) {
+        let locked = self.doc.locked_entities();
+        let mut fixed: HashMap<EntityId, [bool; 2]> = HashMap::new();
+        for id in part.scope.iter().filter(|id| locked.contains(id)) {
+            if let Some(e) = self.doc.get(*id) {
+                for p in e.kind.points() {
+                    fixed.insert(p, [true, true]);
+                }
+            }
+        }
+        let mut coincident = Vec::new();
+        for (_, c) in part
+            .constraints
+            .iter()
+            .filter(|&&(id, _)| !self.doc.is_driven(id))
+        {
+            match *c {
+                Constraint::Fix { point, .. } => {
+                    fixed.insert(point, [true, true]);
+                }
+                Constraint::FixX { point, .. } => fixed.entry(point).or_default()[0] = true,
+                Constraint::FixY { point, .. } => fixed.entry(point).or_default()[1] = true,
+                Constraint::Coincident { a, b } => coincident.push((a, b)),
+                _ => {}
+            }
+        }
+        // (Coincident points share their coordinates: what fixes one fixes all it is joined to.)
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for &(a, b) in &coincident {
+                let fa = fixed.get(&a).copied().unwrap_or_default();
+                let fb = fixed.get(&b).copied().unwrap_or_default();
+                let joined = [fa[0] || fb[0], fa[1] || fb[1]];
+                for p in [a, b] {
+                    let f = fixed.entry(p).or_default();
+                    if *f != joined {
+                        *f = joined;
+                        changed = true;
+                    }
+                }
+            }
+        }
+        let mut moved: HashSet<EntityId> = HashSet::new();
+        for &(id, p) in &part.start.points {
+            if !part.dragged_set.contains(&Param::X(id)) {
+                continue;
+            }
+            let f = fixed.get(&id).copied().unwrap_or_default();
+            if !(f[0] && f[1]) {
+                part.free_dragged.push((id, p, [!f[0], !f[1]]));
+                moved.insert(id);
+            }
+        }
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for &(a, b) in &coincident {
+                if moved.contains(&a) != moved.contains(&b) {
+                    moved.insert(a);
+                    moved.insert(b);
+                    changed = true;
+                }
+            }
+        }
+        let made: HashSet<EntityId> = if self.doc.has_walls() || self.doc.has_offsets() {
+            self.doc.wall_owners().of.into_keys().collect()
+        } else {
+            HashSet::new()
+        };
+        let unheld = |id: EntityId, points: &[EntityId]| {
+            made.contains(&id) || points.iter().any(|p| moved.contains(p))
+        };
+        let mut held: Vec<(EntityId, f64)> = Vec::new();
+        let mut lines: Vec<(EntityId, DVec2, DVec2)> = Vec::new();
+        for &id in part.scope.iter() {
+            let (points, radius) = match self.doc.get(id).map(|e| e.kind) {
+                Some(EntityKind::Arc { center, start, end }) => {
+                    (vec![center, start, end], part.start.radii.get(&id).copied())
+                }
+                Some(EntityKind::Circle { center, .. }) => (
+                    vec![center],
+                    part.start
+                        .circles
+                        .binary_search_by_key(&id, |&(c, _)| c)
+                        .ok()
+                        .map(|i| part.start.circles[i].1),
+                ),
+                Some(EntityKind::Line { a, b }) => {
+                    if !unheld(id, &[a, b])
+                        && let (Ok(pa), Ok(pb)) = (self.doc.point(a), self.doc.point(b))
+                        && pa.distance(pb) > NO_WAY_ROUND
+                    {
+                        lines.push((id, pa, pb));
+                    }
+                    continue;
+                }
+                _ => continue,
+            };
+            if let Some(r) = radius
+                && !unheld(id, &points)
+                && !part.dragged_set.contains(&Param::Radius(id))
+            {
+                held.push((id, r));
+            }
+        }
+        held.sort_unstable_by_key(|&(id, _)| id);
+        lines.sort_unstable_by_key(|&(id, ..)| id);
+        part.held_radii = held;
+        part.held_lines = lines;
+    }
+
+    /// Whether `part`, moved by `offset` from where the drag found it, didn't land and broke a
+    /// shape the drag doesn't move: changed the radius of a held arc or circle by more than
+    /// [`SHAPE_HOLD`] times the offset, shortened a held line by more than half [`LINE_HOLD`]
+    /// times the offset while moving an end of it more than that times it, or left a held line
+    /// at [`COLLAPSED_LINE`] of its length. A frame [`drag`](Self::drag) refuses, so the drag
+    /// stops at the last shape that went. Judged on the frame's result against the drag's start
+    /// and the frame's offset from it, not step by step: how the frame's own steps were split
+    /// doesn't enter.
+    ///
+    /// Landed: every coordinate of a dragged point that the drag can move is at its target, to
+    /// within a billionth of the offset, or a few ulps of the coordinates where those are
+    /// coarser (both what a solve that lands leaves; neither near any misfit that matters).
+    fn breaks_held_shape(&self, part: &DragPart, offset: DVec2) -> bool {
+        if part.held_radii.is_empty() && part.held_lines.is_empty() {
+            return false;
+        }
+        let mut coords = offset.length();
+        let mut miss = 0.0f64;
+        for &(id, start, [free_x, free_y]) in &part.free_dragged {
+            let to = start + offset;
+            coords = coords.max(to.abs().max_element());
+            if let Ok(at) = self.doc.point(id) {
+                let off = at - to;
+                let off = DVec2::new(
+                    if free_x { off.x } else { 0.0 },
+                    if free_y { off.y } else { 0.0 },
+                );
+                miss = miss.max(off.length());
+            }
+        }
+        let landed = miss <= (1e-9 * offset.length()).max(64.0 * f64::EPSILON * coords);
+        if landed {
+            return false;
+        }
+        let most = SHAPE_HOLD * offset.length();
+        let radius_broken = part.held_radii.iter().any(|&(id, was)| {
+            let now = match self.doc.get(id).map(|e| e.kind) {
+                Some(EntityKind::Circle { radius, .. }) => Some(radius),
+                Some(EntityKind::Arc { .. }) => drift_solver::radius_of(&self.doc, id),
+                _ => None,
+            };
+            now.is_some_and(|r| (r - was).abs() > most)
+        });
+        radius_broken
+            || part.held_lines.iter().any(|&(id, a0, b0)| {
+                let Some(EntityKind::Line { a, b }) = self.doc.get(id).map(|e| e.kind) else {
+                    return false;
+                };
+                let (Ok(pa), Ok(pb)) = (self.doc.point(a), self.doc.point(b)) else {
+                    return false;
+                };
+                let (was, now) = (a0.distance(b0), pa.distance(pb));
+                // (Judged by how far its ends went, which is at least how much it shortened: a
+                // frame let go never moves a point of a line it shortens fast more than the
+                // threshold. The half only tells a line sliding along itself from one that
+                // swings by a lever's own geometry, not a second limit: a line that shortens by
+                // less while an end swings farther goes, as it always did.)
+                let flung = pa.distance(a0).max(pb.distance(b0)) > LINE_HOLD * offset.length();
+                (was - now > LINE_HOLD / 2.0 * offset.length() && flung)
+                    || now <= COLLAPSED_LINE * was
+            })
     }
 
     /// The parts of `parts` that go exactly where they are moved, as one move.
@@ -1218,5 +1449,133 @@ impl Editor {
                 let _ = self.doc.set_point(other, to);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod held_radii_tests {
+    use drift_core::{Constraint, DVec2};
+    use drift_solver::Param;
+
+    use super::Editor;
+
+    /// What [`Editor::breaks_held_shape`] judges: an arc whose end is a separate point joined
+    /// by `Coincident` to the dragged point is moved by the drag, not held; an arc tied to the
+    /// drag only through relations is held; a dragged point's coordinate fixed by `FixX` is
+    /// one the drag can't move.
+    #[test]
+    fn what_the_drag_moves_and_what_it_holds() {
+        let mut ed = Editor::default();
+        ed.doc.begin();
+        let c = ed.doc.add_point(DVec2::new(0.0, 0.0));
+        let s = ed.doc.add_point(DVec2::new(10.0, 0.0));
+        let e = ed.doc.add_point(DVec2::new(0.0, 10.0));
+        let moved = ed.doc.add_arc(c, s, e).unwrap();
+        let c2 = ed.doc.add_point(DVec2::new(30.0, 0.0));
+        let s2 = ed.doc.add_point(DVec2::new(35.0, 0.0));
+        let e2 = ed.doc.add_point(DVec2::new(30.0, 5.0));
+        let held = ed.doc.add_arc(c2, s2, e2).unwrap();
+        let q = ed.doc.add_point(DVec2::new(0.0, 10.0));
+        for r in [
+            Constraint::Coincident { a: e, b: q },
+            Constraint::Fix {
+                point: s,
+                at: DVec2::new(10.0, 0.0),
+            },
+            Constraint::Equal { a: moved, b: held },
+            Constraint::FixX { point: q, x: 0.0 },
+        ] {
+            ed.doc.add_constraint(r).unwrap();
+        }
+        assert!(ed.commit("Sketch"));
+        ed.doc.begin();
+        ed.drag(&[q], DVec2::new(0.0, 0.5), &Param::point(q));
+        let session = ed.drag_session.as_ref().unwrap();
+        let part = session.parts.iter().find(|p| p.scope.contains(&q)).unwrap();
+        let held_ids: Vec<_> = part.held_radii.iter().map(|&(id, _)| id).collect();
+        assert_eq!(held_ids, vec![held]);
+        assert_eq!(
+            part.free_dragged
+                .iter()
+                .map(|&(id, _, free)| (id, free))
+                .collect::<Vec<_>>(),
+            vec![(q, [false, true])]
+        );
+    }
+
+    /// Through a chain of two `Coincident`s: an arc whose end is joined to the dragged point by
+    /// way of a third point is moved by the drag; a dragged point joined by way of a third
+    /// point to a fixed one can't be moved at all (it has no free coordinate).
+    #[test]
+    fn coincident_chains_carry_what_moves_and_what_is_fixed() {
+        let mut ed = Editor::default();
+        ed.doc.begin();
+        let c = ed.doc.add_point(DVec2::new(0.0, 0.0));
+        let s = ed.doc.add_point(DVec2::new(10.0, 0.0));
+        let e = ed.doc.add_point(DVec2::new(0.0, 10.0));
+        let arc = ed.doc.add_arc(c, s, e).unwrap();
+        let m = ed.doc.add_point(DVec2::new(0.0, 10.0));
+        let q = ed.doc.add_point(DVec2::new(0.0, 10.0));
+        let f = ed.doc.add_point(DVec2::new(20.0, 0.0));
+        let g = ed.doc.add_point(DVec2::new(20.0, 0.0));
+        let pinned = ed.doc.add_point(DVec2::new(20.0, 0.0));
+        let line = ed.doc.add_line(q, pinned).unwrap();
+        for r in [
+            Constraint::Coincident { a: e, b: m },
+            Constraint::Coincident { a: m, b: q },
+            Constraint::Coincident { a: f, b: g },
+            Constraint::Coincident { a: g, b: pinned },
+            Constraint::Fix {
+                point: f,
+                at: DVec2::new(20.0, 0.0),
+            },
+            Constraint::Fix {
+                point: s,
+                at: DVec2::new(10.0, 0.0),
+            },
+        ] {
+            ed.doc.add_constraint(r).unwrap();
+        }
+        assert!(ed.commit("Sketch"));
+        ed.doc.begin();
+        let dragged: Vec<Param> = [q, pinned].into_iter().flat_map(Param::point).collect();
+        ed.drag(&[line], DVec2::new(0.0, 0.5), &dragged);
+        let session = ed.drag_session.as_ref().unwrap();
+        let part = session.parts.iter().find(|p| p.scope.contains(&q)).unwrap();
+        assert!(part.held_radii.iter().all(|&(id, _)| id != arc));
+        assert_eq!(
+            part.free_dragged
+                .iter()
+                .map(|&(id, ..)| id)
+                .collect::<Vec<_>>(),
+            vec![q]
+        );
+    }
+
+    /// A circle whose radius is itself dragged is moved by the drag, not held.
+    #[test]
+    fn a_dragged_radius_is_moved_not_held() {
+        let mut ed = Editor::default();
+        ed.doc.begin();
+        let c = ed.doc.add_point(DVec2::ZERO);
+        let circle = ed.doc.add_circle(c, 5.0).unwrap();
+        let p = ed.doc.add_point(DVec2::new(5.0, 0.0));
+        ed.doc
+            .add_constraint(Constraint::PointOnCurve {
+                point: p,
+                curve: circle,
+            })
+            .unwrap();
+        assert!(ed.commit("Sketch"));
+        ed.doc.begin();
+        let dragged = [Param::X(p), Param::Y(p), Param::Radius(circle)];
+        ed.drag(&[p], DVec2::new(0.5, 0.0), &dragged);
+        let session = ed.drag_session.as_ref().unwrap();
+        let part = session
+            .parts
+            .iter()
+            .find(|p| p.scope.contains(&circle))
+            .unwrap();
+        assert!(part.held_radii.is_empty());
     }
 }

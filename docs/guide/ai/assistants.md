@@ -24,8 +24,9 @@ for degrees of freedom, conflicts, open ends and room areas, then fix what's wro
 | The macOS disk image | `/Applications/Drift.app/Contents/MacOS/drift-mcp` |
 
 Replace `you` with your user name, and the folder with yours if you installed somewhere
-else. Drift shows the path in **Edit → Preferences → Updates & Labs**, under **Labs**,
-and **Copy Claude Desktop config** there copies a ready-made config for Claude Desktop. You don't run the server yourself: the assistant starts it. It needs no GPU (its
+else. Drift shows the path in **Edit → Preferences… → Updates & Labs**, under **Labs**,
+and **Copy Claude Desktop config** there copies a ready-made config for Claude Desktop. The
+config it copies lets the server use files in your Documents folder only. You don't run the server yourself: the assistant starts it. It needs no GPU (its
 pictures are drawn on the CPU), and updating Drift updates it too. To check it's there,
 run it from a terminal with `--version`.
 
@@ -105,7 +106,7 @@ whether it connected.
 
 ## Working live in Drift
 
-1. In Drift, open **Edit → Preferences → Updates & Labs** and tick **Let AI assistants edit the
+1. In Drift, open **Edit → Preferences… → Updates & Labs** and tick **Let AI assistants edit the
    open drawing**. The status bar shows **AI link on**.
 2. Ask the assistant to work on your drawing. When it connects, the status bar shows
    **Assistant connected**.
@@ -140,26 +141,28 @@ away from your open drawings altogether, start it with `--no-link`. If it's star
 | `new_drawing`, `open_drawing`, `save_drawing`, `drawing_info` | Files and an overview: units, scale, layers, variables, degrees of freedom. |
 | `list_entities`, `list_constraints`, `measure` | Reading the drawing: ids, coordinates, lengths, relations, dimensions. |
 | `add_geometry` | Points, lines, polylines, rectangles, regular polygons, circles, arcs, ellipses and Bézier curves. Shapes that share a point are joined. |
-| `add_relations` | Horizontal, vertical, parallel, perpendicular, equal, tangent, concentric, collinear, coincident, symmetric, midpoint, point on curve and fix. |
+| `add_relations` | Horizontal, vertical, parallel, perpendicular, equal, tangent, concentric, coradial, collinear, coincident, symmetric, midpoint, point on curve and fix. |
 | `add_dimensions`, `set_dimension`, `set_variables`, `remove_constraints` | Driving (or reference) dimensions, with values such as `3600`, `"3.6 m"`, `"12'6\""` or expressions of variables like `"W/2"`. |
-| `move_point`, `transform`, `offset`, `trim_extend_split`, `fillet_chamfer`, `delete`, `set_construction` | Editing: move, rotate, scale, mirror, arrays, offset, trim, extend, split, fillets and chamfers. |
+| `move_point`, `transform`, `offset`, `trim_extend_split`, `fillet_chamfer`, `delete`, `set_construction` | Editing: move, rotate, scale, mirror, arrays; offsets that follow their source; trim (also one shape by another), extend, split; fillets and chamfers, on several corners at once. |
 | `layers`, `add_fill`, `add_text` | Layers, solid fills and hatches, and text. |
 | `import_file` | DWG, DXF, SVG, PDF or Illustrator, as geometry or as an underlay to trace, at a scale such as `"1:50"`. |
 | `render`, `analyze` | Checking: a picture of the drawing, and its degrees of freedom, conflicts, open ends and closed areas. |
-| `export` | PDF or SVG of the sheets, DXF of model space, or a PNG. |
+| `export` | PDF or SVG of the sheets, DWG or DXF (AutoCAD 2018, or R12 for laser cutters) of model space, or a PNG. |
 | `run_script` | A [Drift script](script.md): rooms, walls, doors, grids, arrays, relations and dimensions written by name, in one call. |
 | `undo`, `redo`, `batch` | Every change the assistant makes is one undo step, and all or nothing: a call that fails changes nothing. `batch` makes several calls one step. |
 | `drift_link` | Which drawing the tools work on: the one open in Drift, or the server's own. |
 
 The renders mark up the drawing for the assistant. Curves are coloured by how well they are
 defined: black when fully defined, blue when they can still move, red when constraints
-conflict. Relations show as small green tags (H, V, //, L for perpendicular, = and so on), and
-every curve is labelled with its id (`e12`). The assistant can then match what it sees to
+conflict. Relations show as small green tags (H, V, //, L for perpendicular, =, CNR for a fillet's or
+chamfer's corner, G1 for smooth and so on), and every curve is labelled with its id (`e12`). The assistant can then match what it sees to
 what it lists.
 
 Coordinates are millimetres with y up, whatever the drawing's display units. Angles are in
-degrees, counter-clockwise. The exception is Drift script (below): a plain number there is in the
-drawing's display unit, as when you type it into Drift.
+degrees, counter-clockwise. The exception is a value written as text, and Drift script (below): a
+plain number there is in the drawing's display unit, as when you type it into Drift, also
+when it's added to a length (`"W/2 + 100"` adds 100 inches in a feet-and-inches drawing). A
+value given as a plain JSON number is always millimetres.
 
 ## Drift scripts
 
@@ -176,6 +179,10 @@ The whole script is one undo step, and all or nothing. The geometry has names (`
 `d1.start`) instead of ids, so the assistant makes fewer mistakes. If a line is wrong, the
 error says which line, how Drift read it, and how to fix it, and nothing changes. You can
 write scripts yourself too: ask the assistant to run one, or to show you the script it used.
+
+Script walls are drawn as face lines with dimensions, and doors as gaps with jambs, not the
+walls and doors of the Wall and Door / window tools. To make them Drift walls, pick them and
+choose **Build → Walls from lines** ([Walls](../tutorials/14-walls.md)).
 
 ## Example prompts
 

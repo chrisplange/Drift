@@ -93,6 +93,7 @@ says in the status bar what it just did.
 | **Relations** | Alt+R | No: shown again at each start |
 | **Curvature combs** | | Yes |
 | **View crops** | Shift+Alt+B | Yes |
+| **Wall centrelines** (every wall's centreline, not only a picked or hovered wall's; command palette) | | Yes |
 | **Free directions** (Parameters) | | No: hidden again at each start |
 | **Option ghosts** (each option's eye, Parameters) | | No: hidden again at each start |
 
@@ -146,5 +147,6 @@ in the file (file version 38 or older) opens with the ones new drawings start wi
 at first are the values you had set in Preferences. The status bar says so as it opens;
 save it to keep them in the file.
 
-The tool bars' **Fill** switch (fill closed shapes as they are drawn) is remembered as you
-last left it.
+The tool bars' **Fill** switch (fill closed shapes as they are drawn), the **Wall** tool's
+thickness, justification and poché, and **Walls from lines**' **Lines used** are remembered as
+you last left them.

@@ -39,16 +39,18 @@ window stays 600 from the corner.
 | `3600`, `36` | a plain number: in the drawing's unit |
 | `30°`, `30 deg` | an angle |
 | `W`, `W/2 + 100`, `1.25 * W`, `(W - 2*T) / 3` | expressions of variables |
+| `W^2`, `sqrt(A)`, `min(W, 4 m)`, `hypot(a, b)` | powers and functions: `sqrt`, `abs`, `min`, `max`, `hypot`, `round`, `floor`, `ceil`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2` |
 
 A plain number is in the drawing's unit, as when you type it into Drift: millimetres in a
 metric drawing, inches in a feet-and-inches drawing (`door d1 36 in bed.south` is a 36"
 door there). The same goes for a plain number added to or taken from a length: `W/2 + 6`
-adds 6 inches in a feet-and-inches drawing. Multiply and divide by plain numbers as usual.
+adds 6 inches in a feet-and-inches drawing. So does a plain number beside a length in `min`, `max`, `hypot` and `atan2`. Multiply
+and divide by plain numbers as usual.
 Write the units whenever a script might run in a drawing with other units: a script written
 for millimetres, run in a feet-and-inches drawing, comes out 25.4 times bigger. Every result
 says which unit plain numbers were read in (`plain_numbers_in`).
 
-A door or window under 300 mm wide still runs, but the result warns about it, since it is
+A door, window or opening under 300 mm wide still runs, but the result warns about it, since it is
 most likely a unit slip.
 
 A size you write in a statement (`4200 x 3600`, `r 225`, `= 3.6 m`) becomes a driving
@@ -77,11 +79,11 @@ room bed W x D at 0,0 walls 200 fixed
 room bath 2400 x D right of bed walls 200
 ```
 
-`W x D` is the inside size. `at` is where the inside lower-left corner goes, and `fixed`
-pins it there. `walls T` (or `walls T outside`) draws walls of thickness `T` outside the
-outline. Write
-`walls T inside` for walls inside the outline, or `walls T centre` for walls centred on it
-(the outline is then drawn as a centre line).
+`W x D` is the size of the room's outline, which is its inside size with the default `walls T`
+(or `walls T outside`): walls of thickness `T` outside the outline. `at` is where the
+outline's lower-left corner goes, and `fixed` pins it there. Write `walls T inside` for walls
+inside the outline (the room inside is then `W − 2T` by `D − 2T`), or `walls T centre`
+for walls centred on it (the outline is then drawn as a centre line).
 
 `right of`, `left of`, `above` and `below` place a room against another one. The two rooms
 share the wall between them: no second wall is drawn, and the new room is lined up with the
@@ -104,6 +106,9 @@ nearer jamb `X` from a corner or a line, such as a grid line. Doors and windows 
 jambs for now: no swing arcs or glazing lines yet.
 
 Walls drawn with `wall` stand alone. Their ends aren't joined to other walls.
+
+Walls drawn with `wall` or `room … walls` are pairs of face lines, not the Wall tool's walls
+([Walls](../tutorials/14-walls.md)); **Build → Walls from lines** turns them into walls.
 
 ### Grids and arrays
 
@@ -140,10 +145,20 @@ construction line axis from 0,0 to 0,10 m  # `construction` before any of these
 ### Relations
 
 ```
-parallel a b          perpendicular a b       equal a b c        collinear a b
-tangent a c           concentric c1 c2        coincident p q
-horizontal l          vertical l              horizontal p q     (two points level)
-symmetric p q about axis     midpoint p of l     on p c     fix p at 0,0
+parallel a b
+perpendicular a b
+equal a b c
+collinear a b
+tangent a c
+concentric c1 c2
+coincident p q
+horizontal l
+vertical l
+horizontal p q          # two points level
+symmetric p q about axis
+midpoint p of l
+on p c
+fix p at 0,0
 ```
 
 A relation that's already true is skipped, and the result says so.
@@ -154,7 +169,8 @@ A relation that's already true is skipped, and the result says so.
 dim bed.south = 3.6 m
 dim bed.sw to hall.se = 8 m horizontal     # or vertical; aligned without either
 dim p to grid.A = 1200                     # a point to a line
-dim r col = 225          dim d col = 450
+dim r col = 225
+dim d col = 450
 dim angle w1.left w2.left = 90°
 dim bed.north ref                          # shows the size; doesn't drive it
 ```

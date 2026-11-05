@@ -36,7 +36,8 @@ PDF underlays read the vector drawing: lines, curves, rectangles and filled shap
 their outlines), and its pictures unless you turn off **Bring in images as pictures**. Its
 text shows where the page has it, at its size and angle, drawn as the outlines of its letters
 in the PDF's own font (or Drift's, where the PDF doesn't carry its font). It's there to read,
-not to edit or snap to. A scanned PDF comes in as its picture.
+not to edit or snap to. A scanned PDF comes in as its picture. DWG, DXF and SVG underlays show
+their text too, block text included, set in Drift's own font.
 
 ### 2. Check or correct its scale
 
@@ -92,11 +93,16 @@ included.
    what lies far off, and **Check sketch…** looks for gaps (see
    [Checking a sketch](12-sketch-checker.md)).
 
+   ![The import report: two kinds of object left out, and a line drawn twice that came in once](../images/import-report.png)
+
 What comes in:
 
 - Lines, arcs, circles, ellipses, polylines (with arcs) and splines, as Drift curves.
-  Touching ends share points, so outlines stay connected and can be constrained.
-- Layers, with their colours, line weights, line types and on / off, locked and plot
+  Touching ends share points, so outlines stay connected and can be constrained, and an end that stops a hair short of another
+  curve is put on it. A curve drawn twice on a layer comes in once, and lines on a layer that
+  overlap along each other are trimmed to meet. The report counts each of these.
+- Layers, with their colours, line weights (the nearest of AutoCAD's standard weights, so
+  0.30 mm stays 0.30 mm), line types and on / off, locked and plot
   settings.
 - Text and paragraph text, as sketch text.
 - Hatches, as live fills, at their real size.
@@ -109,7 +115,8 @@ What comes in:
 - Blocks and their inserts, as Drift blocks and copies, mirrored ones included (nested,
   arrayed and unevenly scaled ones are expanded into curves).
   - Parts drawn "by block" take each copy's colour, line type and weight. A block placed in
-    several colours becomes one block per colour.
+    several colours becomes one block per colour. Lines inside a block on a layer of their
+    own keep that layer's look; those on layer 0 or "by block" follow each copy.
   - A dynamic block's copies are named after the dynamic block, not `*U12`.
   - If the drawing already has a block of the same name, it's used only when it's the same.
     Otherwise the new block gets a name of its own, such as **Door (2)**.
@@ -122,9 +129,10 @@ What comes in:
 What doesn't (yet): associative dimensions, what's drawn directly on a layout (title blocks,
 notes), MLEADER, TOLERANCE, images, 3D solids, tables, and binary DXF.
 
-DWG files (AutoCAD R14 to 2018) come in the same way: choose **File → Import…** and pick a
+DWG files (saved in the AutoCAD 2000 to 2018 formats) come in the same way: choose **File → Import…** and pick a
 `.dwg`, or drop it on the window. Drift reads it as it reads DXF, with the same report. A
-damaged file is read as far as it can be, and the report says so.
+damaged file is read as far as it can be, and the report says so. One that can't be read at
+all is refused with a message saying why, and the drawing is left as it was.
 
 Drift's DWG and DXF export is described in
 [Sheets and output](10-sheets-and-output.md#about-dwg-and-dxf).
@@ -198,11 +206,15 @@ the drawing open now as it is.
 What comes in:
 
 - Paths and shapes, as lines, arcs, circles and Béziers. Curves that are pieces of a circle
-  come back as true arcs and circles. Touching ends share points.
-- Strokes: colour, line weight and dashes (as the nearest Drift line type).
+  come back as true arcs and circles. Touching ends share points, and an end that stops a hair short of another
+  curve is put on it. A curve drawn twice on a layer comes in once, and lines on a layer that
+  overlap along each other are trimmed to meet. The report counts each of these.
+- Strokes: colour, line weight (the nearest of AutoCAD's standard weights, so 0.30 mm stays
+  0.30 mm) and dashes (as the nearest Drift line type).
 - Fills, as live solid fills in their colour, holes and all.
 - Layers: Illustrator's and Inkscape's layers, and a PDF's layers, hidden, locked or
-  non-printing as the file has them. Anything outside a layer goes on a layer named after
+  non-printing as the file has them. A PDF's or Illustrator file's layers come in the order
+  the page draws them, the last on top. Anything outside a layer goes on a layer named after
   the file.
 - Text, as sketch text, with dimension fractions put back together (`28 1/2"`). PDF text in
   a font that doesn't say what its characters are (rare) is counted in the report.

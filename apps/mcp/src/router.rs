@@ -11,8 +11,8 @@ use serde_json::{Value, json};
 pub const LINK_TOOL: &str = "drift_link";
 
 pub fn link_tool_description() -> &'static str {
-    "The live link to Drift. When the user has turned on Preferences → General → \"Let AI \
-     assistants edit the open drawing\" in Drift, every tool works on the drawing open in that \
+    "The live link to Drift. When the user has turned on Preferences → Updates & Labs → \
+     \"Let AI assistants edit the open drawing\" in Drift, every tool works on the drawing open in that \
      window and the user sees each change as it happens; otherwise tools work on a drawing of \
      this server's own (open and save files to share it). action: status (which drawing the \
      tools are working on), connect (to the Drift window used last), or disconnect (work on \
@@ -116,8 +116,8 @@ impl Router {
                 match self.try_connect() {
                     None => ok(self.status()),
                     Some(e) => error(format!(
-                        "{e}. Ask the user to turn on Preferences → General → \"Let AI assistants \
-                         edit the open drawing\" in Drift."
+                        "{e}. Ask the user to turn on Preferences → Updates & Labs → \"Let AI \
+                         assistants edit the open drawing\" in Drift."
                     )),
                 }
             }

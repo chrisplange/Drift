@@ -97,8 +97,9 @@ It pairs lines that are parallel, a wall's thickness apart (2″ to 18″, 50 mm
 the same layer, wherever they run side by side: they needn't be the same length, and a face
 broken where another wall tees in is matched by its unbroken partner. Each wall is made at
 the thickness it measures, snapped to the nearest of the Wall tool's presets when it's
-within ⅛″ (3 mm), and otherwise rounded to 1⁄16″ (1 mm in a metric drawing). Walls meet where their centrelines
-cross, so L, T and X joins come out clean, and walls that meet two at a corner become one run.
+within 3 mm (about ⅛″; for walls under 100 mm, within 3% of the thickness), and otherwise
+rounded to 1⁄16″ (1 mm in a metric drawing). Walls meet where their centrelines cross, so L,
+T and X joins come out clean, and walls that meet two at a corner become one run.
 Concentric arcs become curved walls.
 
 At a door or window, both faces stop and the wall stops with them: the walls end at the
@@ -121,16 +122,17 @@ The lines that became walls are **Removed** by default: the walls' faces lie whe
 and **Undo** brings them back (the whole command is one step). In the Inspector's **Lines
 used** list you can choose **Kept** (left over the walls) or **Moved to a hidden layer**
 ("Wall lines") instead; changing it does the command again that way, and Drift remembers the
-choice. It also tidies walls an older Drift script drew as lines, centrelines included.
+choice. It also turns walls a Drift script drew (as face lines, centrelines included) into walls.
 
 ## 6. Change a wall
 
 Click a wall (a face, its fill or its centreline). The **Inspector** shows:
 
+- **Layer**, straight under the title.
 - **Thickness:** type a value, pick a preset, or type a variable's name (for example
   `t_ext`). A thickness from a variable follows it: change the variable in the **Parameters**
   tab and every wall that uses it is re-thickened.
-- **Justify**, **Poché** (on or off, solid or a hatch) and **Layer**.
+- **Justify** and **Poché** (on or off, solid or a hatch).
 - **Joins:** whether it joins walls it crosses, and at each end whether it joins at all.
   With two walls picked, **Join** meets their nearest ends (an L where their centrelines
   cross, or a T where one points at the other); **Unjoin** caps the ends where the picked
@@ -141,10 +143,15 @@ Click a wall (a face, its fill or its centreline). The **Inspector** shows:
   to type a new thickness (or a variable's name); it prints like any other dimension.
 - **Explode** turns the wall into plain lines, arcs and a fill.
 
+![A room of walls picked by its poché, with a wall teed onto it and a door: the wall's Inspector](../images/walls.png)
+
 Dragging a picked wall's centreline points moves its corners (and the walls joined there).
 Drag a free end into another wall and it joins as you go; drag it out and it lets go.
 Fillet a centreline corner to round the wall. Trim, Extend, Split, Fillet and Chamfer refuse a
 wall's faces: work on its centreline, or Explode it.
+
+Copy and Paste, Shift+D, Mirror and the patterns copy a wall with its room's floor fill. A
+mirrored wall is justified to its other face, so its faces mirror truly.
 
 ## 7. Dimension to the faces
 
@@ -186,5 +193,4 @@ Things to know:
 
 ## What's next
 
-[Doors and windows](15-openings.md) cut into walls. Room tags with live areas are coming in
-the next batches.
+[Doors and windows](15-openings.md) cut into walls.

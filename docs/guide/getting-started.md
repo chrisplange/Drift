@@ -38,18 +38,17 @@ import it into the one that's open.)
 
 ### Linux
 
-There is no Linux version yet. Use Drift in the browser.
+There's no native Linux build. You can try the demo in a browser instead.
 
-### In the browser
+### Try the demo in a browser
 
-Open <https://drift-website-c9y.pages.dev/app/>. It's the same program, and may be a little
-ahead of the installers. It uses WebGPU where the browser has
-it, and WebGL2 otherwise.
+Open <https://drift-website-c9y.pages.dev/app/>. It uses WebGPU where the browser has it, and
+WebGL2 otherwise.
 
-In the browser:
-
-- **Save** downloads the file, and **Open** asks you to pick one.
-- Your sketch is kept in the browser's storage between visits.
+- The demo draws and imports like Drift does.
+- It can't save, export or print: those commands say **Not in the demo** and link to the
+  downloads.
+- The drawing isn't kept: it's gone when you close the tab.
 - Fonts installed on your computer aren't available. Use **Add a font file…** in a font
   menu instead.
 
@@ -83,7 +82,6 @@ app. A download that fails either check is never run.
 - **macOS:** Drift replaces itself in the folder it's in (usually Applications). If it
   can't write there, it says so and you update by hand from the disk image. Updates
   downloaded this way don't trigger the Gatekeeper warning again.
-- **The browser:** the browser version is always the latest.
 
 If the check fails (no connection, or GitHub is busy), the status bar says so briefly and
 nothing else happens.
@@ -147,8 +145,9 @@ The window has six parts:
    the middle, and on the right: drawing aids (snap to grid, perpendicular and tangent
    snap, angle snap, auto relations), display toggles (grid, origin axes, thin lines and
    others), the units menu, the sketch's status, and the zoom. A chip appears when
-   relations or dimensions are switched off (click it to show them again), or when curves
-   lie on top of each other.
+   relations or dimensions are switched off (click it to show them again), when dimensions
+   or notes are hidden on the canvas (click it to show them faded), or when curves lie on top
+   of each other or a block copy sits exactly on another.
 
 Click the bore (the large circle) with the **Select** tool. The **Inspector** shows its
 radius, diameter and centre as fields you can type into, its appearance, and the relations
@@ -164,6 +163,7 @@ By default curves are coloured by how well they are defined, as in SolidWorks:
 | White (black in the light theme) | Fully defined. |
 | Red | Over-defined or conflicting. |
 | Orange | Picked. |
+| Brighter amber (deeper orange in the light theme), heavier | The active element: the one picked last, which stays put when you add a relation. |
 
 The status bar says the same in words: **Fully defined**, **N DOF free** or **N conflicting**.
 Shift+C switches to each curve's own and its layer's colours, for a drawing that looks like
@@ -209,7 +209,7 @@ through the list and Esc closes it. Commands you've used recently come first. Au
 command names and aliases work too (MOVE, RO, TR, OFFSET…); what can't run yet, such as
 **Rotate** with nothing picked, is dimmed and says why.
 
-Every command is also in the menus: **Draw**, **Modify** and **Annotate** have the tools,
+Every command is also in the menus: **Draw**, **Build**, **Modify** and **Annotate** have the tools,
 **Move**, **Rotate**, **Scale** and the patterns, each with its key.
 
 ![The Draw menu: every drawing tool, with its key](images/menu-draw.png)
@@ -228,7 +228,8 @@ The essentials:
 - Each tool has a letter: L line, R rectangle, C circle, A arc, D dimension, T trim, and so
   on. Pressing C, A, U or F again cycles through related tools.
 - Esc cancels what you're doing. Pressed again, it returns to the **Select** tool. With a
-  dialog open, Esc closes it.
+  dialog open, Esc closes it. While a block or group is open for editing, Esc finishes
+  editing. Esc while moving a copy just made with Shift+D or Paste removes the copy.
 - Enter or a right-click finishes a polyline. With the **Select** tool and nothing in
   progress, Enter or Space repeats the last command or tool.
 - Ctrl+Z undoes and Ctrl+Y (or Ctrl+Shift+Z) redoes. Every edit can be undone, and a drag
@@ -258,6 +259,8 @@ fit, the grid and snap switches, and the command palette.
   [Files and compatibility](reference/files.md#session-and-autosave)).
 - Exporting a PDF, SVG or DXF never replaces your `.drift` file. Ctrl+S always writes the
   sketch.
+- Saving while a block is open for editing writes the drawing as if you'd finished editing
+  it, and you keep editing.
 
 > **Compatibility.** Older files always open in newer builds. A file saved by a newer build
 > usually opens too: what this build doesn't know is kept, and Drift asks before a save
@@ -266,8 +269,8 @@ fit, the grid and snap switches, and the command palette.
 
 ## If something goes wrong
 
-- **Help → Report a problem…** copies a report (the version, renderer, system and the end of
-  Drift's log) to paste into an email or message. **Help → Show logs folder** shows the logs.
+- **Help → Report a problem…** opens a report (the version, renderer, system and the end of
+  Drift's log) with **Copy report** and **Email…**, to paste into an email or message. **Help → Show logs folder** shows the logs.
 - A save never leaves a half-written file: if it fails, the file on disk is unchanged. The
   version a save replaces is kept beside it as `<name>.drift.bak`.
 - If reading an imported file hits a bug in Drift, the import is cancelled and the drawing is

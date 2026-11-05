@@ -60,8 +60,7 @@ profiles*, and `Trim.drift-profiles.json` appears beside it.
 Only marked blocks are written. If you unmark them all and save, Drift deletes the profiles
 file.
 
-**File → Export → Blender profiles…** writes the same file anywhere you like. This also works
-in the browser, where Drift can't write beside the drawing.
+**File → Export → Blender profiles…** writes the same file anywhere you like.
 
 ## 3. Install the add-on
 
@@ -136,3 +135,7 @@ If you delete a block, or unmark it, the Blender object stays. The Drift tab lis
 - The add-on never reads the `.drift` file itself, only the profiles file.
 - Each Blender object remembers its file's full path. If you move the drawing, import the
   profiles again from the new place.
+
+## Next
+
+[Walls](14-walls.md): walls with real faces, corners and poché, drawn along a centreline.

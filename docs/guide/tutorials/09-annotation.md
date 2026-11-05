@@ -9,7 +9,8 @@ annotations on the canvas or leave them off the sheets.
 Time: about 15 minutes.
 
 Open the example (**File → Open example**). The annotation tools are in the **Annotate**
-group of the tool palette, and in the **Annotate** menu.
+group of the tool palette (**Elevation mark** and **Centre mark** are in **Section mark**'s
+flyout: right-click it, or hold it down), and in the **Annotate** menu.
 
 ## 1. A note with a leader
 
@@ -58,22 +59,23 @@ behind the text so it reads over hatches and lines. Double-click a note to edit 
 
 ## 2. A centre mark
 
-1. Click **Centre mark** in the tool palette.
+1. Click **Centre mark** (in the **Section mark** flyout of the tool palette), or choose it
+   from the **Annotate** menu.
 2. Click the bore.
 
 Click another circle, arc or point next, and you get a centre line through both centres.
 Click two lines to get a centre line midway between them. Esc stops.
 
-To mark several circles at once, pick them with **Select** and click **Add centre marks**
-in the **Inspector**.
+To mark several circles at once, pick them with **Select** and click **Add 4 centre marks**
+(the button counts them) in the **Inspector**.
 
 ## 3. Section and elevation marks
 
 1. Click **Section mark**, then click where the cutting line starts and where it ends.
    Press X or Y before the second click to keep it along an axis. Each end gets a flag
    with the next free letter (A, then B…).
-2. Click **Elevation mark**, click where the mark goes, then click towards what it looks
-   at. X and Y keep it to an axis; Alt allows any angle. It gets the next free number.
+2. Choose **Elevation mark** (in the **Section mark** flyout, or the **Annotate** menu),
+   click where the mark goes, then click towards what it looks at. X and Y keep it to an axis; Alt allows any angle. It gets the next free number.
 
 ![A section mark (A) across the plate and an elevation mark (1), with the elevation's Inspector](../images/annotate-marks.png)
 
@@ -178,7 +180,8 @@ the drawing, so a later change to the drawing's style still reaches it.
 ## What you learned
 
 - N places notes (with a leader if you start on geometry); **Centre mark**, **Section mark**
-  and **Elevation mark** are in the **Annotate** group.
+  and **Elevation mark** are in the **Annotate** group (the last two in **Section mark**'s
+  flyout).
 - Double-click a dimension for before / after text and chips like TYP and EQ.
 - Each annotation can be off the canvas or off the sheets; Alt+H shows hidden ones.
 - The drafting style is the drawing's (**File → Drawing settings…**); a picked dimension or

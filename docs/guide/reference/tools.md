@@ -19,7 +19,9 @@ button down, for the others. The place shows the one used last.
 | **Linear pattern** | Circular pattern |
 | **Section mark** | Elevation mark, Centre mark |
 
-Esc cancels the step in progress; pressed again, it returns to **Select**.
+Esc cancels the step in progress; pressed again, it returns to **Select**. While a block or
+group is open for editing, the tools work only on what's inside it; Esc or **Finish editing**
+leaves it.
 
 ## Select
 
@@ -52,7 +54,7 @@ become dimensions when **Auto relations** is on.
 
 ## Build
 
-Walls, doors and windows (and later rooms), and blocks. **Join walls**, **Unjoin walls**
+Walls, doors and windows, and blocks. **Join walls**, **Unjoin walls**
 and **Explode walls** are in the **Build** menu; **Walls from curves** and
 **Walls from lines** (walls found in an imported plan's pairs of face lines) are in the
 **Wall** tool's flyout too.
@@ -62,6 +64,20 @@ and **Explode walls** are in the **Build** menu; **Walls from curves** and
 | **Wall** | W | Click the centreline corner by corner; back in the first corner closes a ring, Enter or Esc ends. Starting or ending anywhere in another wall joins it (in its corner: an L; along it: a T; along the run itself: a T into itself); on another curve, stops against it. The preview shows the join before you click. W again (or A / L mid-run) switches to arcs (the end, then a point it curves through); drag at the next corner to bend the segment; Space flips to the other face; Backspace takes the last segment back. Top bar: **Thickness** (with presets), **Left face** / **Centre** / **Right face**, **Straight** / **Arc**, **Poché**. See [Walls](../tutorials/14-walls.md). Typed: Length, Tab, angle. |
 | **Door / window** | Shift+O | Hover a wall: the door, window or cased opening shows cut into it, centred on the pointer and kept clear of the corners; click to place (the tool stays in hand). Space steps through the four ways it opens (hinge left or right, into the room or out). A picked opening slides along its wall when dragged, and flips by its two arrows. Top bar: the drawing's **size set** (US imperial or generic metric), the **family** and **type** (named by its leaf; the wall is cut to its rough opening), the **Opening** width (any width will do), and the way it opens. See [Doors and windows](../tutorials/15-openings.md). Typed: offset from the nearer corner, Tab, width. |
 | **Place block** | I | Copies of the block picked in the **Blocks** panel follow the pointer; click to place. R turns the next copy 90°, X mirrors it. |
+
+## Modify
+
+| Tool | Key | What it does |
+|---|---|---|
+| **Move** | G | Moves what is picked (dimmed with nothing picked). From the palette it starts where the pointer last was on the canvas; X / Y lock an axis, type dX Tab dY, B picks the base point. Dragging the selection with the mouse shows how far it has moved and takes a typed distance towards the pointer (or along a locked axis). |
+| **Rotate** | R with a selection | Turns what is picked: type an angle, B picks the pivot, R again rotates by reference. |
+| **Trim** | T | Click a piece to remove it, up to the curves that cut it; or drag across pieces to trim several. |
+| **Extend** | E | Click near the end of a line or arc to lengthen it to the next curve. |
+| **Split** | — | Click a curve where it should be cut in two (a circle or ellipse into halves). |
+| **Fillet** | F | Click a corner where two lines or arcs meet (or an existing fillet), move to size it, click to apply; or type the radius. Shift+click several corners, or pick a shape first, and one size rounds them all in one undo step. F again switches to **Chamfer**. |
+| **Chamfer** | F, F | As the fillet, several corners too; type the distance, Tab for a second distance (one corner at a time). |
+| **Offset** | O | Click a curve (its connected chain is taken too), then the side; or type the distance. The result is one offset with one distance that follows its source; drag a piece or type into its dimension to change it; Detach (Inspector) makes plain curves. |
+| **Mirror** | M | Pick geometry or block copies first; then click the line to mirror it about. The copies of curves are held symmetric; block copies are placed mirrored. |
 
 ## Annotate
 
@@ -73,20 +89,6 @@ and **Explode walls** are in the **Build** menu; **Walls from curves** and
 | **Section mark** | — | Two clicks for the cutting line, with a lettered flag at each end. X / Y keep it to an axis. |
 | **Elevation mark** | — | Click where it goes, then towards what it looks at. X / Y keep it to an axis; Alt allows any angle. |
 | **View** | — | Drag a rectangle, or click two corners: a view of the model with that crop, at the last view's scale, to place on sheets. It's picked, with its grips, to name and reframe. See [Sheets and output](../tutorials/10-sheets-and-output.md#3-draw-a-view-on-the-canvas). |
-
-## Modify
-
-| Tool | Key | What it does |
-|---|---|---|
-| **Move** | G | Moves what is picked (dimmed with nothing picked). From the palette it starts where the pointer last was on the canvas; X / Y lock an axis, type dX Tab dY, B picks the base point. Dragging the selection with the mouse shows how far it has moved and takes a typed distance towards the pointer (or along a locked axis). |
-| **Rotate** | R with a selection | Turns what is picked: type an angle, B picks the pivot, R again rotates by reference. |
-| **Trim** | T | Click a piece to remove it, up to the curves that cut it; or drag across pieces to trim several. |
-| **Extend** | E | Click near the end of a line or arc to lengthen it to the next curve. |
-| **Split** | — | Click a curve where it should be cut in two (a circle or ellipse into halves). |
-| **Fillet** | F | Click a corner where two lines meet (or an existing fillet), move to size it, click to apply; or type the radius. Shift+click several corners, or pick a shape first, and one size rounds them all in one undo step. F again switches to **Chamfer**. |
-| **Chamfer** | F, F | As the fillet, several corners too; type the distance, Tab for a second distance (one corner at a time). |
-| **Offset** | O | Click a curve (its connected chain is taken too), then the side; or type the distance. The result is one offset with one distance that follows its source; drag a piece or type into its dimension to change it; Detach (Inspector) makes plain curves. |
-| **Mirror** | M | Pick geometry first; then click the line to mirror it about. The copies are held symmetric. |
 
 ## Tools started from panels
 
@@ -100,8 +102,12 @@ and **Explode walls** are in the **Build** menu; **Walls from curves** and
 
 Some actions work on the selection instead of being tools: scale (the transform box's
 handles), duplicate (Shift+D), group (Ctrl+G), make block, explode, linear
-and circular patterns (the **Inspector**'s **Pattern** section), arrange (Ctrl+] and
-Ctrl+[), clear relations and dimensions, and check sketch (**Edit → Check sketch…**).
+and circular patterns (the **Inspector**'s **Pattern** section; they repeat picked block copies,
+texts and notes too), arrange (Ctrl+] and Ctrl+[), clear relations and dimensions, check
+sketch (**Edit → Check sketch…**), **Select overlapping curves**, **Join corners** (an area
+fill's corners that touch but aren't one point), **Edit fill** (a shape's fill on its own),
+**Detach offset** (an offset as plain curves that no longer follow), and **Join walls**,
+**Unjoin walls** and **Explode walls**.
 
 Every tool and command is in the **Draw**, **Build**, **Modify** and **Annotate** menus, with its key,
 and in the command palette (Ctrl+K). With the **Select** tool and nothing in progress, Enter

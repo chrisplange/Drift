@@ -53,9 +53,9 @@ It doesn't extend lines that stop well short of where they should meet. Use **Ex
 or **Trim** (T) for those.
 
 Separately, the status bar warns when curves lie on top of each other (the same line drawn
-twice, for example). Click the **N overlapping** pill (or run **Select overlapping curves** from the command
-palette) to pick the ones on top; Delete then
-removes them and leaves those underneath.
+twice, for example), or a block copy sits exactly on another copy of the same block. Click
+the **N overlapping** pill (or run **Select overlapping curves** from the command palette) to
+pick the ones on top; Delete then removes them and leaves those underneath.
 
 ## What you learned
 
@@ -64,5 +64,5 @@ removes them and leaves those underneath.
 
 ## Next
 
-Look things up in the [reference](../README.md#how-the-guide-is-organised), or read
-[Coming from another program](../coming-from.md).
+[Profiles in Blender](13-profiles-in-blender.md): draw profiles in Drift and sweep or lathe
+them in Blender.

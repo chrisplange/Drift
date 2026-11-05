@@ -1,8 +1,8 @@
 # Temporary dimensions
 
-**What you'll do:** draw three walls and set the distance between two of them by typing a
-value, the way Revit's temporary dimensions work. Then keep one of those distances as a real
-dimension.
+**What you'll do:** draw three lines (walls in plan, say) and set the distance between two
+of them by typing a value, the way Revit's temporary dimensions work. Then keep one of those
+distances as a real dimension.
 
 Time: about 5 minutes.
 
@@ -18,7 +18,7 @@ Pick one line, circle or arc with the **Select** tool and dashed dimensions appe
 Sizes a real dimension already shows are left out. Nothing is added to the sketch until you
 ask.
 
-## 1. Draw three walls
+## 1. Draw three lines
 
 1. Press L, click a start point, move the pointer to the right, type `400` and press Enter.
    Press Esc to end the line.
@@ -28,24 +28,24 @@ ask.
 
 The exact distances between the lines don't matter.
 
-## 2. Pick the middle wall
+## 2. Pick the middle line
 
 Click the middle line, away from its middle (clicking right at its middle picks the
 midpoint instead).
 
-![The middle wall picked: its length (400) and the distances to the walls above (150) and below (100), each with a lock](../images/temp-dims.png)
+![The middle line picked: its length (400) and the distances to the lines above (150) and below (100), each with a lock](../images/temp-dims.png)
 
 ## 3. Type a new distance
 
-1. Click the value between the middle wall and the bottom wall.
+1. Click the value between the middle line and the bottom line.
 2. Type `120` and press Enter.
 
-The middle wall moves so it's 120 from the bottom wall. The bottom wall stays where it is:
-the picked geometry is what moves. The distance to the top wall updates.
+The middle line moves so it's 120 from the bottom line. The bottom line stays where it is:
+the picked geometry is what moves. The distance to the top line updates.
 
-![After typing 120: the middle wall has moved up](../images/temp-dims-moved.png)
+![After typing 120: the middle line has moved up](../images/temp-dims-moved.png)
 
-It's one undo step, and nothing is left holding the wall at 120. If the wall's own
+It's one undo step, and nothing is left holding the line at 120. If the line's own
 relations hold it in place, Drift says so and nothing moves.
 
 Typing the line's length changes its length: its end moves and its start stays put. For a
@@ -67,8 +67,8 @@ that instead. The choice is kept as long as the same curve stays picked.
 
 **Edit → Preferences… → Drawing aids → Show temporary dimensions on the picked geometry.**
 
-Temporary dimensions don't yet appear for points, for two picked curves, or between a wall
-and the walls that cross it.
+Temporary dimensions don't yet appear for points, for two picked curves, or between a line
+and the lines that cross it.
 
 ## What you learned
 

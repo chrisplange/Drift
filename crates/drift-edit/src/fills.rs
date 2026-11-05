@@ -755,7 +755,9 @@ impl Editor {
         };
         // (A shape's area also changes with what is drawn or moved inside it: kept only when
         // nothing near it changed.)
-        let boxes = self.touched_boxes();
+        // (Found only if a shape's own curves are untouched: a drag of everything touches
+        // every curve.)
+        let boxes = std::cell::OnceCell::new();
         cache
             .shapes
             .iter()
@@ -801,15 +803,45 @@ impl Editor {
         let touched = self.doc.entities_touched_in_transaction();
         // How far each touched point moved (None: new).
         let mut points: HashMap<EntityId, Option<DVec2>> = HashMap::new();
+        // Whether everything touched moved as one (`common`, to well within rounding): every
+        // touched point by it, every touched curve unchanged with all its points touched.
+        // Then nothing touched moved otherwise.
+        let mut common: Option<DVec2> = None;
+        let mut as_one = true;
+        let mut moved_points = 0;
         for &e in &touched {
             if let Ok(now) = self.doc.point(e) {
                 let was = match self.doc.entity_before_transaction(e).map(|e| e.kind) {
                     Some(drift_core::EntityKind::Point(p)) => Some(p),
                     _ => None,
                 };
-                points.insert(e, was.map(|was| now - was));
+                let d = was.map(|was| now - was);
+                points.insert(e, d);
+                moved_points += 1;
+                match (d, common) {
+                    (None, _) => as_one = false,
+                    (Some(d), None) => common = Some(d),
+                    (Some(d), Some(c)) => {
+                        as_one &= d.distance(c)
+                            <= 0.25 * drift_core::tolerance::same(c.abs().max_element())
+                    }
+                }
+            } else if as_one {
+                as_one = self.doc.get(e).is_some_and(|entity| {
+                    self.doc.entity_before_transaction(e).map(|b| b.kind) == Some(entity.kind)
+                        && entity
+                            .kind
+                            .points()
+                            .all(|p| self.doc.touched_in_transaction(p))
+                });
             }
         }
+        let common = common.filter(|c| as_one && *c != DVec2::ZERO);
+        #[cfg(test)]
+        let common = common.filter(|_| !tests::GENERAL_ONLY.get());
+        // ...and moved every point of the drawing: everything anywhere moved with any fill.
+        let everything = common.is_some()
+            && moved_points == self.doc.iter().filter(|(_, e)| e.kind.is_point()).count();
         // How far an entity moved as one: its points all by the same offset, nothing else of
         // it changed (None: reshaped or new).
         let close = |a: DVec2, b: DVec2, size: f64| {
@@ -914,24 +946,29 @@ impl Editor {
             // Everything there now moved with it (but points on no curve, which bound no
             // area)...
             let with_it = |b: Bounds| {
-                self.index.query(b).all(|e| {
-                    moved_by(e, size).is_some_and(|d| close(d, offset, size))
-                        || (self.doc.get(e).is_some_and(|e| e.kind.is_point())
-                            && self.index.users_of(e).next().is_none())
-                })
+                everything
+                    || self.index.query(b).all(|e| {
+                        moved_by(e, size).is_some_and(|d| close(d, offset, size))
+                            || (self.doc.get(e).is_some_and(|e| e.kind.is_point())
+                                && self.index.users_of(e).next().is_none())
+                    })
             };
             if !with_it(was) || !with_it(now) {
                 continue;
             }
-            // ...and nothing that moved otherwise was there before.
-            if others
-                .as_ref()
-                .is_none_or(|(o, _)| !close(*o, offset, size))
-            {
-                others = Some((offset, others_for(offset)));
-            }
-            let (_, index) = others.as_ref().expect("found above");
-            if !index.near(&was).is_empty() || !index.near(&now).is_empty() {
+            // ...and nothing that moved otherwise was there before (nothing did, if all moved
+            // as one by its offset).
+            let clear = common.is_some_and(|c| close(c, offset, size)) || {
+                if others
+                    .as_ref()
+                    .is_none_or(|(o, _)| !close(*o, offset, size))
+                {
+                    others = Some((offset, others_for(offset)));
+                }
+                let (_, index) = others.as_ref().expect("found above");
+                index.near(&was).is_empty() && index.near(&now).is_empty()
+            };
+            if !clear {
                 continue;
             }
             kept.insert(
@@ -1038,7 +1075,9 @@ impl Editor {
         // cut one of them open.
         // (A shape the edit left alone, with nothing changed near it, is as last found:
         // only the others are found again, among the drawing's solid curves found once.)
-        let boxes = self.touched_boxes();
+        // (Found only if a shape's own curves are untouched: a drag of everything touches
+        // every curve.)
+        let boxes = std::cell::OnceCell::new();
         let mut shape_solid: Option<Rc<SolidCurves>> = None;
         let mut insides: HashMap<FillId, (Region, Vec<EntityId>, bool)> = HashMap::new();
         for (id, f) in &fills {
@@ -2602,7 +2641,12 @@ impl Editor {
 
     /// Whether the open edit left shape `curves` (sorted) and the area `bounds` round them as
     /// they were (see [`touched_boxes`](Self::touched_boxes)).
-    fn shape_untouched(&self, curves: &[EntityId], bounds: &Bounds, boxes: &[Bounds]) -> bool {
+    fn shape_untouched(
+        &self,
+        curves: &[EntityId],
+        bounds: &Bounds,
+        boxes: &std::cell::OnceCell<Vec<Bounds>>,
+    ) -> bool {
         let pad = drift_core::tolerance::NEAR
             * drift_core::tolerance::scale(bounds.min.abs().max(bounds.max.abs()).max_element());
         let near = Bounds {
@@ -2615,7 +2659,10 @@ impl Editor {
                 .defining_points(curves.iter().copied())
                 .iter()
                 .any(|p| self.doc.touched_in_transaction(*p))
-            && !boxes.iter().any(|b| b.intersects(&near))
+            && !boxes
+                .get_or_init(|| self.touched_boxes())
+                .iter()
+                .any(|b| b.intersects(&near))
     }
 
     /// The area an open shape's outline bounds closed straight across its two open ends:
@@ -2954,26 +3001,122 @@ type Mesh = Rc<(Vec<DVec2>, Vec<u32>)>;
 /// Which fill a tessellation is of: a fill, or a copy's fill.
 use crate::stack::FillRef as MeshKey;
 
-/// Tessellations by fill, kept while the document doesn't change.
+/// Tessellations by fill, each kept with the area it was made from: a fill whose area is
+/// the same reuses it (tessellating is the same work on the same area), however the
+/// document changed round it.
 #[derive(Default)]
 pub struct MeshCache {
-    revision: u64,
-    meshes: HashMap<MeshKey, Mesh>,
+    meshes: HashMap<MeshKey, KeptMesh>,
+    /// Bumped once a frame: meshes of fills gone from the drawing are dropped.
+    frame: u64,
+    /// How many tessellations were made (tests).
+    made: usize,
+}
+
+struct KeptMesh {
+    region: Region,
+    mesh: Mesh,
+    frame: u64,
 }
 
 impl MeshCache {
-    fn get(&mut self, revision: u64, id: MeshKey, region: &Region) -> Mesh {
-        if self.revision != revision {
-            self.revision = revision;
-            self.meshes.clear();
+    /// `id`'s mesh for `region`. While `moving` (a move in progress), an area that is the
+    /// one it was made from moved by one offset takes that mesh moved by the offset (#253):
+    /// the same as tessellating it again to rounding, and tessellated afresh once the move
+    /// lands.
+    fn get(&mut self, id: MeshKey, region: &Region, moving: bool) -> Mesh {
+        let frame = self.frame;
+        if let Some(kept) = self.meshes.get_mut(&id) {
+            kept.frame = frame;
+            if kept.region == *region {
+                return kept.mesh.clone();
+            }
+            if moving && let Some(d) = translation_of(&kept.region, region) {
+                let (vertices, indices) = &*kept.mesh;
+                return Rc::new((vertices.iter().map(|p| *p + d).collect(), indices.clone()));
+            }
         }
-        self.meshes
-            .entry(id)
-            .or_insert_with(|| {
-                Rc::new(tessellate(region, drift_core::tolerance::FLATTEN_MM).unwrap_or_default())
-            })
-            .clone()
+        let mesh: Mesh =
+            Rc::new(tessellate(region, drift_core::tolerance::FLATTEN_MM).unwrap_or_default());
+        self.made += 1;
+        self.meshes.insert(
+            id,
+            KeptMesh {
+                region: region.clone(),
+                mesh: mesh.clone(),
+                frame,
+            },
+        );
+        mesh
     }
+
+    /// How many tessellations were made.
+    pub fn made(&self) -> usize {
+        self.made
+    }
+
+    /// Begin a frame's lookups.
+    fn begin(&mut self) {
+        self.frame += 1;
+    }
+
+    /// `id` is still in the drawing (drawn this frame or not: hidden or out of view).
+    fn keep(&mut self, id: MeshKey) {
+        if let Some(kept) = self.meshes.get_mut(&id) {
+            kept.frame = self.frame;
+        }
+    }
+
+    /// End a frame's lookups: meshes of fills no longer in the drawing go.
+    fn end(&mut self) {
+        let frame = self.frame;
+        self.meshes.retain(|_, kept| kept.frame == frame);
+    }
+}
+
+/// The offset `now` is `was` moved by, if it is exactly that: the same edges (lines, and
+/// arcs of the same radius and angles) with every point moved by one offset, to rounding.
+fn translation_of(was: &Region, now: &Region) -> Option<DVec2> {
+    use drift_geom::regions::{Edge, Loop};
+    fn start(e: &Edge) -> DVec2 {
+        match *e {
+            Edge::Line { a, .. } => a,
+            Edge::Arc { center, .. } => center,
+        }
+    }
+    let d = start(was.outer.edges.first()?) - start(now.outer.edges.first()?);
+    let d = -d;
+    let near = |a: DVec2, b: DVec2| {
+        a.distance(b) <= 1e-9 * a.abs().max_element().max(b.abs().max_element()).max(1.0)
+    };
+    let same = |a: &Loop, b: &Loop| {
+        a.edges.len() == b.edges.len()
+            && a.edges.iter().zip(&b.edges).all(|(x, y)| match (*x, *y) {
+                (Edge::Line { a: a0, b: b0 }, Edge::Line { a: a1, b: b1 }) => {
+                    near(a0 + d, a1) && near(b0 + d, b1)
+                }
+                (
+                    Edge::Arc {
+                        center: c0,
+                        radius: r0,
+                        start: s0,
+                        sweep: w0,
+                    },
+                    Edge::Arc {
+                        center: c1,
+                        radius: r1,
+                        start: s1,
+                        sweep: w1,
+                    },
+                ) => near(c0 + d, c1) && r0 == r1 && s0 == s1 && w0 == w1,
+                _ => false,
+            })
+    };
+    (d.is_finite()
+        && was.holes.len() == now.holes.len()
+        && same(&was.outer, &now.outer)
+        && was.holes.iter().zip(&now.holes).all(|(a, b)| same(a, b)))
+    .then_some(d)
 }
 
 /// What the canvas draws for one fill: its triangles (a solid fill, a hatch's background,
@@ -3039,7 +3182,8 @@ pub fn fill_graphics(
     let copies = ed.copy_fills();
     let order = ed.fills_in_order();
     let ed = &*ed;
-    let revision = ed.doc.revision();
+    let moving = ed.doc.in_transaction();
+    cache.begin();
     let draft_scale = ed.doc.draft_style().scale;
     // The sketch's fills, then copies' fills over them.
     let fills = order
@@ -3057,6 +3201,7 @@ pub fn fill_graphics(
                 .map(|c| (MeshKey::Copy(c.instance, c.index), &c.fill, &c.region)),
         );
     for (id, fill, region) in fills {
+        cache.keep(id);
         let layer = ed.doc.layer(fill.layer);
         if layer.is_some_and(|l| !l.visible) {
             continue;
@@ -3073,7 +3218,7 @@ pub fn fill_graphics(
         };
         let own = fill.color.or(layer.and_then(|l| l.fill_colour()));
         let mut tint = |color: Rgb, alpha: f64, group: &mut FillGroup| {
-            let mesh = cache.get(revision, id, region);
+            let mesh = cache.get(id, region, moving);
             let [r, g, b] = color.0;
             group.meshes.push(FillMesh {
                 vertices: mesh.0.clone(),
@@ -3132,6 +3277,7 @@ pub fn fill_graphics(
         }
         out.groups.push(group);
     }
+    cache.end();
     out
 }
 
@@ -3151,6 +3297,157 @@ pub fn region_bounds(region: &Region) -> Bounds {
 mod tests {
     use super::*;
     use drift_core::Document;
+
+    thread_local! {
+        /// Moved fills found the general way only (the drawing never taken as moving as one).
+        pub(super) static GENERAL_ONLY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+
+    /// The moved fills' shapes and the fills with none, as `moved_fill_shapes` finds them.
+    fn moved_shapes(ed: &Editor, general: bool) -> (String, BTreeSet<FillId>) {
+        GENERAL_ONLY.set(general);
+        let fills: Vec<(FillId, Fill)> = ed.doc.fills().map(|(id, f)| (id, f.clone())).collect();
+        let mut kept = ed.kept_fill_shapes();
+        let none = ed.moved_fill_shapes(&fills, &mut kept);
+        GENERAL_ONLY.set(false);
+        (format!("{kept:?}"), none)
+    }
+
+    #[test]
+    fn fills_moved_as_one_are_found_as_the_general_way_finds_them() {
+        // A grid of filled squares (some sharing sides), loose points on no curve, and a
+        // far line. Each round, inside one move: everything moved as one, some squares
+        // moved and the rest left, one part stopping while the others go on, a curve
+        // reshaped, and a point added. Every frame, the shapes kept are the general way's.
+        let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
+        let mut rnd = move |n: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % n
+        };
+        let mut as_one = 0;
+        for round in 0..24 {
+            let mut doc = Document::new();
+            let mut squares: Vec<Vec<EntityId>> = Vec::new();
+            for i in 0..4 {
+                for j in 0..3 {
+                    // (Columns of squares side by side, touching or apart.)
+                    let (x, y) = (i as f64 * (20.0 + rnd(2) as f64 * 10.0), j as f64 * 20.0);
+                    let p = [(0.0, 0.0), (20.0, 0.0), (20.0, 20.0), (0.0, 20.0)]
+                        .map(|(a, b)| doc.add_point(DVec2::new(x + a, y + b)));
+                    let mut ids: Vec<EntityId> = p.to_vec();
+                    for k in 0..4 {
+                        ids.push(doc.add_line(p[k], p[(k + 1) % 4]).unwrap());
+                    }
+                    squares.push(ids);
+                }
+            }
+            for k in 0..3 {
+                doc.add_point(DVec2::new(-50.0 + k as f64, 90.0));
+            }
+            let (a, b) = (
+                doc.add_point(DVec2::new(400.0, 0.0)),
+                doc.add_point(DVec2::new(420.0, 0.0)),
+            );
+            doc.add_line(a, b).unwrap();
+            let mut ed = Editor::new(doc);
+            ed.sync();
+            // Area fills (as imports bring them), not shapes' fills.
+            let regions = ed.regions();
+            let region_ids = ed.region_ids();
+            ed.doc.begin();
+            for (k, sq) in squares.iter().enumerate() {
+                if k % 3 != 2 {
+                    let at = ed.doc.point(sq[0]).unwrap() + DVec2::splat(5.0);
+                    let r = region_at(&regions, at).expect("an area");
+                    let mut boundary: Vec<EntityId> = r
+                        .outer
+                        .curves()
+                        .into_iter()
+                        .map(|i| region_ids[i])
+                        .collect();
+                    boundary.sort_unstable();
+                    boundary.dedup();
+                    ed.doc.add_fill(Fill::new(boundary, at, FillKind::Solid));
+                }
+            }
+            assert!(ed.commit_import("Fills"));
+            ed.settle_areas();
+            ed.fill_shapes();
+            let start: Vec<(EntityId, DVec2)> = ed
+                .doc
+                .iter()
+                .filter_map(|(id, e)| match e.kind {
+                    drift_core::EntityKind::Point(p) => Some((id, p)),
+                    _ => None,
+                })
+                .collect();
+            let part: BTreeSet<EntityId> = squares
+                .iter()
+                .enumerate()
+                .filter(|(k, _)| (round + k) % 4 != 0)
+                .flat_map(|(_, s)| s.iter().copied())
+                .collect();
+            ed.doc.begin();
+            ed.fill_shapes();
+            let kind = round % 6;
+            let step = DVec2::new(1.5 + rnd(5) as f64 * 0.7, -0.4 * rnd(4) as f64);
+            for frame in 1..=6 {
+                let to = step * frame as f64;
+                for &(id, p) in &start {
+                    let d = match kind {
+                        // Everything as one (an all-curves move).
+                        0 | 1 => to,
+                        // Some squares; the rest stay.
+                        2 => {
+                            if part.contains(&id) {
+                                to
+                            } else {
+                                DVec2::ZERO
+                            }
+                        }
+                        // One part stops after frame 3 (the stop rule).
+                        3 => {
+                            if part.contains(&id) {
+                                to
+                            } else {
+                                step * frame.min(3) as f64
+                            }
+                        }
+                        // Everything, but one point a little off (not as one).
+                        _ => {
+                            to + if id == start[5].0 {
+                                DVec2::new(0.0, 1e-3)
+                            } else {
+                                DVec2::ZERO
+                            }
+                        }
+                    };
+                    // (Points left where they were aren't touched.)
+                    if d != DVec2::ZERO {
+                        ed.doc.set_point(id, p + d).unwrap();
+                    }
+                }
+                if kind == 5 && frame == 4 {
+                    ed.doc.add_point(DVec2::new(-80.0, -80.0));
+                }
+                ed.sync();
+                // (The first frame's keeps the shapes as the move found them.)
+                ed.fill_shapes();
+                assert!(ed.fill_shapes_at_begin.is_some());
+                let general = moved_shapes(&ed, true);
+                let fast = moved_shapes(&ed, false);
+                assert_eq!(fast, general, "round {round} (kind {kind}), frame {frame}");
+                if kind <= 1 {
+                    assert!(general.0.matches("FillShape").count() >= 8, "{}", general.0);
+                    as_one += 1;
+                }
+            }
+            ed.doc.rollback();
+        }
+        assert!(as_one > 0);
+    }
 
     fn plate() -> (Editor, Vec<EntityId>) {
         let mut doc = Document::new();

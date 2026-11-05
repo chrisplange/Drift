@@ -12,13 +12,13 @@ Everywhere: the command palette (Ctrl+K) finds any command by name, and ? lists 
 | Temporary dimensions on a picked wall | The same: pick one line and dashed dimensions appear. Click a value to type a new one; the lock makes it permanent; drag the far end's square to measure to something else. [Temporary dimensions](tutorials/05-temporary-dimensions.md). |
 | Tab to cycle and pick chains | Tab highlights the chain of connected curves under the pointer; click picks it. |
 | Thin lines (TL) | Shift+Alt+W, or the status bar. |
-| Families | Blocks, with a library of US doors, windows, cabinets, fixtures and furniture, named "Family – Type". [Blocks](tutorials/07-blocks.md). No parametric blocks yet: each size is its own block. |
+| Families | Blocks, with a library of US doors, windows, cabinets, fixtures and furniture, named "Family – Type". [Blocks](tutorials/07-blocks.md). No parametric blocks yet: each size is its own block. Doors and windows hosted in walls have their own tool, **Door / window** (Shift+O), with US or metric families and types ([Doors and windows](tutorials/15-openings.md)). |
 | Sheets, views, view titles, scales | Views are drawn on the canvas with the **View** tool (a named crop at a scale) and dragged onto sheets from the **Views** list. Reframe a view's crop and every sheet it's on follows. Unlike Revit, a view can go on several sheets. Each placed view has a title and a number. Architectural and engineering scales are there. [Sheets and output](tutorials/10-sheets-and-output.md). |
 | Crop region, Crop Region Visible | A view's crop shows on the canvas with its name, with grips to reframe it. **View → View crops** (Shift+Alt+B) shows or hides them all, a view's **Crop** switch just that one. Crops are rectangles, not rotated, and never print. No separate annotation crop yet: dimensions and notes are cut at the crop. |
 | Hide in view / hide on sheet | Each dimension and note can be off the canvas and / or off sheets. Not per view yet. |
 | Drafting vs model patterns | The same distinction for hatches. |
 | Dimension text: below, prefix / suffix, replace with text (EQ) | **Under line**, **Prefix** / **Suffix**, **Show instead**, and chips for TYP, EQ, VIF and others. |
-| Section and elevation marks | **Section mark** and **Elevation mark**, with the sheet number in the flag. They don't create views. |
+| Section and elevation marks | **Section mark** and **Elevation mark**, with the sheet number in the flag. Right-click a mark → **Make view** makes a view of what it looks at, linked to the mark. Drift is 2D, so the view is a crop of the plan, not a cut. |
 | Constraints (padlocks, EQ) | Full sketch relations and driving dimensions, as in SolidWorks (below). |
 
 What's different: Drift is 2D only. Walls are drawn as 2D walls with joins, doors and windows
@@ -37,10 +37,10 @@ What's different: Drift is 2D only. Walls are drawn as 2D walls with joins, door
 | Blocks, INSERT, BEDIT, BASE, EXPLODE | **Make** block (then click its base point), **Place block** (I), double-click a copy to edit in place, **Set base point**, **Explode**. **Make block from group** and **Explode to group** turn groups and blocks into each other. Blocks go to and from DXF. |
 | BHATCH, pick points | **Fill / hatch** (H): click inside an area. Hatches are associative. `.pat` files import. |
 | Paper space layouts and viewports | Sheets and views. A DXF's layouts come in as sheets. |
-| MOVE, ROTATE with base point | G and R with the selection, B to pick the base point or pivot; type values. |
+| MOVE, ROTATE with base point | G and R with the selection, B to pick the base point or pivot; type values. Or drag the selection and type a distance: it moves that far towards the pointer. |
 | COPY | Shift+D, or Ctrl+C / Ctrl+V. |
 | PEDIT join / OVERKILL | **Edit → Check sketch…** joins gaps; the status bar finds overlapping curves. |
-| DWG | **File → Import…** reads DWG (R14 to 2018) as DXF is read; **File → Open…** opens one as a new drawing. **File → Export → DWG / DXF…** writes DWG or DXF for AutoCAD 2018 and later (or DXF R12). |
+| DWG | **File → Import…** reads DWG (the AutoCAD 2000 to 2018 formats) as DXF is read; **File → Open…** opens one as a new drawing. **File → Export → DWG / DXF…** writes DWG or DXF for AutoCAD 2018 and later (or DXF R12). |
 
 What's different: geometry in Drift can carry constraints. With **Auto relations** on, a
 line drawn nearly level becomes exactly horizontal and stays that way. Turn **Auto
@@ -61,7 +61,7 @@ Drift's sketcher is modelled on the SolidWorks sketch.
 | Equations / global variables | **Parameters → Variables**, with sliders. Link a dimension by typing a variable's name into it. |
 | Configurations | **Options** (values or the whole sketch), with ghosts. |
 | Construction geometry (For construction) | Alt+C. |
-| Sketch fillet / chamfer | F (F again for chamfer). Size on the canvas by moving the pointer, or type it. |
+| Sketch fillet / chamfer | F (F again for chamfer). Click a corner, or Shift+click several (or pick a shape first), then size on the canvas by moving the pointer, or type it: one size for all, one undo step. |
 | Convert entities, offset, mirror, patterns | Offset (O), Mirror (M), linear and circular patterns in the **Inspector**. |
 | Repair sketch | **Edit → Check sketch…** |
 | Drawings | Sheets with views, title blocks (modern, ISO 7200, ASME Y14.1, border only, or blank paper) and ISO or ASME dimension styles. |

@@ -180,8 +180,9 @@ dimension, render and analyse Drift drawings: see [Drawing with AI assistants](d
   entities solve in milliseconds.
 - **Undo and redo** for every edit, with drags recorded as a single step.
 - **Files:** native `.drift` JSON with one entity per line, so files diff cleanly in git. Saving
-  and loading round-trips numbers exactly. Open/save dialogs on desktop; open and download in
-  the browser. The session is restored automatically after a restart or a closed tab.
+  and loading round-trips numbers exactly. Open/save dialogs on desktop, and the session is
+  restored automatically after a restart. The browser demo opens and imports files but can't
+  save, export or print, and doesn't keep the drawing when you close the tab.
 - **Precise GPU canvas:** analytic lines, arcs and circles that stay crisp at any zoom, exact far
   from the origin, with an adaptive grid. It uses no CPU when idle.
 - **Live readouts:** cursor coordinates, the length, angle or radius of what you're drawing, and

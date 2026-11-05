@@ -30,7 +30,7 @@ thickness and the cut and the symbol follow.
 
 ## 1. Place a door
 
-1. Press **Shift+O** for the **Door / window** tool (on the tool rail under **Build**, in
+1. Press **Shift+O** for the **Door / window** tool (in the tool palette under **Build**, in
    the **Build** menu, or type `DOOR` in the command palette).
 2. In the top bar, pick **Door – Single Swing** and a type, for example `3′0″ × 6′8″`.
 3. Hover a wall. The cut and the door show where it would go, centred on the pointer and kept
@@ -71,10 +71,14 @@ The **Inspector** shows the same and more:
 
 - **Offset** and **Width**: type a length or a variable's name (a width from a variable
   follows it). The width grows about the opening's middle; the leaf keeps its frame.
+- **Height** and **Leaf** (read only): the type's height, and the leaf width when it differs
+  from the opening.
 - **Opens**: the four ways round; **Flip hinge**, **Flip side**, **Centre** and **Delete**.
 - **Size set**: which sizes this drawing uses (also on the tool's bar).
 
 **Delete** removes the opening and the wall closes up behind it.
+
+![A door picked: the arrows to flip it, and its Offset, Width, Height, Leaf and Opens in the Inspector](../images/opening.png)
 
 ## When the wall changes
 
@@ -90,9 +94,7 @@ If a change leaves an opening where it can't be cut (across a corner, or with an
 teed into it), the wall is drawn whole there and a notice says which opening doesn't fit.
 Slide it clear and it cuts again.
 
-## What's next
+## Next
 
-Room tags with live areas (openings are closed at the face of the wall, so a door doesn't
-change a room's area), national size sets (Germany's DIN 18101 and the UK's BS 4787),
-dragging an opening onto another wall, and your own blocks as door and window symbols are
-coming in the next batches.
+Annotate the plan: [Annotation](09-annotation.md), then put it on paper with
+[Sheets and output](10-sheets-and-output.md).

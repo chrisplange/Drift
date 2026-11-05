@@ -434,7 +434,7 @@ Two filled shapes trimmed into one outline keep one fill, the top one's.",
         },
         ToolSpec {
             name: "export",
-            description: "Export to a file: pdf (every sheet; with no sheets, one A3 sheet with the drawing fitted), svg (one sheet, `sheet` number from 1), dwg or dxf (model space at full size, AutoCAD 2018: layers, blocks, fills and hatches), dxf-r12 (the same as DXF R12, lines and arcs only, for laser cutters and old software) or png (as render).",
+            description: "Export to a file: pdf (every sheet; with no sheets, one A3 sheet with the drawing fitted), svg (one sheet, `sheet` number from 1), dwg or dxf (model space at full size, AutoCAD 2018: layers, blocks, fills and hatches), dxf-r12 (the same as DXF R12: lines, circles, arcs and polylines, curves as fine polylines, fills as solid triangles, hatches as lines, and text; layers and blocks but no line weights; for laser cutters and old software) or png (as render).",
             schema: object(
                 json!({
                     "path": { "type": "string" },

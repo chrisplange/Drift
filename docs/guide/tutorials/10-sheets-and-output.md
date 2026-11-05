@@ -3,7 +3,7 @@
 **What you'll make:** an A3 sheet of the example plate with a title block, a 2:1 detail of
 the bore drawn as a view on the canvas and placed on the sheet, and a PDF of it.
 
-![An A3 sheet of the plate with the modern title block, and the Sheets panel](../images/sheet.png)
+![An A3 sheet of the plate with the modern title block, and the sheet's settings in the Inspector](../images/sheet.png)
 
 Time: about 20 minutes.
 
@@ -36,7 +36,7 @@ The tabs over the canvas are the model and each sheet: click one to show it. On 
 scroll to zoom, drag with the middle or right button to pan, and press Shift+F to fit the
 sheet. The rail holds what you can do on paper: **Select**, **Add view** and **Back to
 model**. Esc, or the **Model** tab, returns to the model; picking a drawing tool (from the
-**Draw**, **Modify** or **Annotate** menu, or the command palette) takes you back to the model with it.
+**Draw**, **Build**, **Modify** or **Annotate** menu, or the command palette) takes you back to the model with it.
 
 Sheets are in the order of their tabs, which is the order they print in. To change it,
 drag a tab (or a row of the **Sheets** list) to where it should go. Right-click a tab or
@@ -93,7 +93,7 @@ sheet, opens with it as the project's.
 ## 3. Draw a view on the canvas
 
 1. Click the **Model** tab (or press Esc) to go back to the model.
-2. Pick the **View** tool (**Annotate → View**, or under **Annotate** in the toolbar).
+2. Pick the **View** tool (**Annotate → View**, or under **Annotate** in the tool palette).
 3. Drag a rectangle round the bore, or click two opposite corners.
 
 The new view is called **View 2**, at the scale of the last view made. Its crop shows as a
@@ -135,8 +135,8 @@ and the sheets it's on (or **not placed**).
   one to pick it in the model.
 - **Delete view** deletes it. If it's on sheets, Drift asks first, and deleting takes it
   off them all. Marks that pointed at it are unlinked in the same step. Undo brings it all
-  back. With a view's crop picked on the canvas, the Delete key, **Edit → Delete view…** and
-  the right-click menu's **Delete view…** do the same.
+  back. With a view's crop picked on the canvas, the Delete key, the right-click menu's
+  **Delete view…** and **Delete view…** in the command palette do the same.
 - On a sheet, right-click a view for **Remove from sheet** (it stays in the model, for
   placing again) and **Delete view…**.
 
@@ -235,7 +235,7 @@ From the **Sheets** panel's **Output** section, or **File → Export** (and **Fi
 | **DWG / DXF…** | The model at full size (not the sheets), in the drawing's units, for CAD. A dialog asks which format: **DWG** or **DXF** for AutoCAD 2018 and later (the default), or **DXF R12** for laser cutters, CNC and older software. See [About DWG and DXF](#about-dwg-and-dxf). |
 | **Model as SVG…** | The model at 1 : 1 in millimetres, with no paper, title block or border: the page fits the drawing with 5 mm all round. A named group per layer, and outlines as single joined paths, ready for Illustrator, Affinity, Inkscape, laser software or Blender. |
 | **Model as PDF…** | The same, as a one-page PDF at true size. |
-| **Print…** (Ctrl+P) | Asks which sheets as **PDF…** does, writes the PDF and opens it in your system's PDF viewer (a new tab in the browser), to print from there. |
+| **Print…** (Ctrl+P) | Asks which sheets as **PDF…** does, writes the PDF and opens it in your system's PDF viewer, to print from there. |
 
 Exporting never replaces your `.drift` file.
 
@@ -288,6 +288,10 @@ What goes on paper:
   layer.
 - Curves whose stroke is **None** are left out; their fills print.
 - Underlays, and the pictures that came in with them, are left out.
+- Each view holds only what its frame shows: what lies outside is left out, and what crosses
+  the edge is cut there (arcs stay arcs, hatches keep their pattern). Releasing the clipping
+  mask in Illustrator shows nothing extra.
+- A block open for editing prints and exports as if you'd finished editing it.
 
 ### About DWG and DXF
 
@@ -308,6 +312,8 @@ DWG and DXF for AutoCAD 2018 keep the drawing as a drawing:
   a hatch with its pattern (each line family written into the file, so every program draws
   it as Drift does), scale and angle, over its background colour if it has one.
 - Blocks are blocks, with their fills and hatches inside; a mirrored copy stays mirrored.
+  Parts drawn in their layer's look go out "by block", so each copy takes its own layer's
+  colour and weight.
 - Text keeps every character as it is, in a text style per font (Drift's own fonts as Arial
   and Courier New, a system font by its name).
 - Dimensions and notes go out as the lines, arrows and text they are drawn with, on a layer
@@ -321,6 +327,9 @@ DXF R12 has no ellipses, splines or hatches:
 - Text keeps its accents and symbols (é, ½, m², “quotes”) as the escapes CAD programs read.
 - Colours are the nearest of AutoCAD's, and line weights are left out.
 - Blocks go out as blocks (BLOCK and INSERT).
+- Layer and block names are written as R12 names: capital letters, digits, `_`, `-` and `$`,
+  with any other character as `_`, at most 31 long. Two that come out the same, such as
+  "Walls new" and "walls_new", stay apart as `WALLS_NEW` and `WALLS_NEW_2`.
 
 To bring DWG and DXF in, see [Underlays and DXF import](11-underlays-and-dxf.md). A
 drawing's layouts come in as sheets, and each of their viewports as a view.

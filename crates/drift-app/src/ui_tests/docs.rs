@@ -3,8 +3,10 @@
 //! a change to the interface, regenerate them with
 //!
 //! ```text
-//! cargo test -p drift-app docs_screenshots -- --ignored
+//! cargo test -p drift-app --release docs_screenshots -- --ignored
 //! ```
+//!
+//! (A release build, so the debug-only commands, such as Ordinate, stay out of the shots.)
 
 use super::*;
 use drift_core::{Constraint as C, EntityId, Kind};
@@ -100,6 +102,10 @@ fn docs_screenshots() {
     pick_filters();
     shapes();
     importing();
+    walls_and_openings();
+    offsets();
+    block_copy();
+    arrange_menu();
 }
 
 /// The topmost widget with this label: a menu in the menu bar, not a tool or heading of the
@@ -301,6 +307,8 @@ fn constraints() {
     h.hover_at(at);
     h.run();
     h.state_mut().drawing.editor.selection = [a, b].into();
+    // The lower line picked last: the active one, which stays put (#333).
+    h.state_mut().drawing.editor.set_active(Some(a));
     h.run();
     h.key_down(Key::Q);
     h.run();
@@ -1044,4 +1052,164 @@ fn importing() {
     h.state_mut().begin_import("plan.pdf", bytes, None, 0.0);
     h.run();
     shot("import-dialog.png", &mut h);
+
+    // The report of an import that left things out and tidied others: a DXF with a line
+    // drawn twice and two entities Drift doesn't read.
+    let mut h = harness().unwrap();
+    let mut pairs: Vec<(u32, &str)> = vec![(0, "SECTION"), (2, "ENTITIES")];
+    for (x0, y0, x1, y1) in [
+        ("0", "0", "4000", "0"),
+        ("4000", "0", "4000", "3000"),
+        ("4000", "3000", "0", "3000"),
+        ("0", "3000", "0", "0"),
+        ("0", "0", "4000", "0"),
+    ] {
+        pairs.extend([
+            (0, "LINE"),
+            (8, "WALLS"),
+            (10, x0),
+            (20, y0),
+            (11, x1),
+            (21, y1),
+        ]);
+    }
+    pairs.extend([(0, "3DSOLID"), (8, "0"), (0, "MLEADER"), (8, "0")]);
+    pairs.extend([(0, "ENDSEC"), (0, "EOF")]);
+    let text: String = pairs
+        .iter()
+        .map(|(c, v)| format!("{c:>3}\n{v}\n"))
+        .collect();
+    h.state_mut().import_now("plan.dxf", text.into_bytes(), 0.0);
+    h.run_steps(3);
+    shot("import-report.png", &mut h);
+}
+
+fn walls_and_openings() {
+    // A 12' × 10' room drawn with the Wall tool, a wall teed onto it, and a door; the wall
+    // picked, then the door.
+    use drift_edit::library::INCH;
+    let mut h = harness().unwrap();
+    h.state_mut().grid_snap = false;
+    {
+        let ed = &mut h.state_mut().drawing.editor;
+        ed.set_units(drift_core::Units::architectural());
+        ed.prefs.wall_thickness = 6.0 * INCH;
+        ed.prefs.wall_justify = drift_core::Justify::Centre;
+        ed.prefs.wall_arc = false;
+    }
+    let (w, d) = (144.0 * INCH, 120.0 * INCH);
+    h.state_mut().drawing.view.fit_target = Some(drift_core::Bounds {
+        min: DVec2::new(-30.0 * INCH, -30.0 * INCH),
+        max: DVec2::new(w + 90.0 * INCH, d + 30.0 * INCH),
+    });
+    h.run();
+    h.run();
+    h.key_press(Key::W);
+    h.run();
+    for p in [
+        DVec2::ZERO,
+        DVec2::new(w, 0.0),
+        DVec2::new(w, d),
+        DVec2::new(0.0, d),
+        DVec2::ZERO,
+    ] {
+        click_world(&mut h, p);
+    }
+    h.key_press(Key::Escape);
+    h.run();
+    h.key_press(Key::Escape);
+    h.run();
+    // A wall teed onto the right side, out to the right.
+    h.key_press(Key::W);
+    h.run();
+    click_world(&mut h, DVec2::new(w + 3.0 * INCH, d / 2.0));
+    click_world(&mut h, DVec2::new(w + 72.0 * INCH, d / 2.0));
+    h.key_press(Key::Escape);
+    h.run();
+    h.key_press(Key::Escape);
+    h.run();
+    // A 3'0" door in the bottom wall.
+    h.key_press_modifiers(EguiModifiers::SHIFT, Key::O);
+    h.run();
+    h.state_mut()
+        .drawing
+        .editor
+        .set_opening_family("door.single");
+    click_world(&mut h, DVec2::new(w / 2.0, 1.0));
+    h.key_press(Key::Escape);
+    h.run();
+    h.key_press(Key::Escape);
+    h.run();
+    // The room picked by its poché: the wall's Inspector.
+    click_world(&mut h, DVec2::new(w / 3.0, d - 2.0 * INCH));
+    shot("walls.png", &mut h);
+    h.key_press(Key::Escape);
+    h.run();
+    // The door picked by its leaf: its dimensions, flip arrows and Inspector.
+    click_world(&mut h, DVec2::new(w / 2.0 - 18.0 * INCH, -18.0 * INCH));
+    shot("opening.png", &mut h);
+}
+
+fn offsets() {
+    // A plate offset 4 mm inside: one offset that follows, picked.
+    let mut h = harness().unwrap();
+    h.state_mut().grid_snap = false;
+    rectangle(&mut h, DVec2::ZERO, DVec2::new(80.0, 50.0), true);
+    h.state_mut().drawing.view.fit_target = Some(drift_core::Bounds {
+        min: DVec2::new(-20.0, -20.0),
+        max: DVec2::new(100.0, 70.0),
+    });
+    h.run();
+    h.run();
+    h.key_press(Key::O);
+    h.run();
+    click_world(&mut h, DVec2::new(40.0, 0.0));
+    h.hover_at(screen(&h, DVec2::new(40.0, 6.0)));
+    h.run();
+    type_text(&mut h, "4");
+    h.key_press(Key::Enter);
+    h.run();
+    h.key_press(Key::Escape);
+    h.run();
+    h.key_press(Key::S);
+    h.run();
+    click_world(&mut h, DVec2::new(20.0, 4.0));
+    shot("offset.png", &mut h);
+}
+
+fn block_copy() {
+    // A library chair placed twice; one copy picked: its Inspector.
+    use drift_edit::library;
+    let mut h = harness().unwrap();
+    h.state_mut().grid_snap = false;
+    {
+        let ed = &mut h.state_mut().drawing.editor;
+        ed.set_units(drift_core::Units::architectural());
+        let id = ed.library_block(library::entry("Chair – Desk").expect("chair"));
+        ed.place_instance(id, DVec2::ZERO, 0.0, false);
+        ed.place_instance(id, DVec2::new(900.0, 0.0), 0.0, false);
+        ed.selected_instances.clear();
+    }
+    h.state_mut().drawing.view.fit_target = Some(drift_core::Bounds {
+        min: DVec2::new(-700.0, -700.0),
+        max: DVec2::new(1600.0, 700.0),
+    });
+    h.run();
+    h.run();
+    click_world(&mut h, DVec2::ZERO);
+    h.state_mut().show_panel(Panel::Inspector);
+    h.run();
+    shot("block-copy.png", &mut h);
+}
+
+fn arrange_menu() {
+    // Modify → Arrange, open over the example.
+    let mut h = harness().unwrap();
+    open_example(&mut h);
+    topmost(&h, "Modify").click();
+    h.run();
+    h.get_by_label_contains("Arrange").hover();
+    h.run();
+    h.run();
+    shot("menu-arrange.png", &mut h);
 }

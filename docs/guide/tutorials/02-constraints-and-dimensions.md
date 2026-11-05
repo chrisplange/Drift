@@ -14,7 +14,8 @@ A sketch in Drift is held in shape by two kinds of constraint:
 
 - **Relations** say how geometry relates: horizontal, vertical, parallel, perpendicular,
   tangent, equal, coincident, concentric, collinear, coradial, midpoint, on curve,
-  symmetric, and fix.
+  symmetric, fix, and corner (kept by a fillet or chamfer, see
+  [Editing](04-editing.md#fillet-and-chamfer)).
 - **Dimensions** give sizes: lengths, distances, radii, diameters and angles.
 
 Each point or curve can move in a number of ways, its **degrees of freedom** (DOF). Each
@@ -22,8 +23,10 @@ constraint takes some away. When none are left, the sketch is **fully defined**.
 solves the constraints continuously: drag something and everything connected follows,
 keeping every constraint true. Arcs you aren't dragging by an end keep their size where
 they can, so dragging a fillet's centre carries its lines and any concentric round along. A
-drag that would turn an arc inside out, or put a tangent curve on the other side of its
-line, stops short instead.
+drag that would turn an arc inside out, crush it to a point or close it into a full circle,
+or put a tangent curve on the other side of its line, stops at the last shape that works
+instead; an arc never grows to follow. Moving curves whose points are held on another curve
+carries that curve along when nothing holds it and the move can't be made otherwise.
 
 You don't have to fully define a sketch. Under-defined geometry is fine for exploring; it
 just means some things can still move.
@@ -203,8 +206,8 @@ For a row of dimensions, set the Dimension tool's mode in the top bar:
 - **Single** (default): one dimension at a time. After a horizontal or vertical dimension,
   Shift+click more points to continue the row.
 - **Chain**: after the first dimension, each point or line you click adds the next
-  dimension along the row. A line counts from its nearer end; walls can be clicked anywhere
-  along them, and the chain runs from wall to wall.
+  dimension along the row. A line counts from its nearer end; parallel lines (such as wall
+  faces) can be clicked anywhere along them, and the chain runs from line to line.
 - **Baseline**: each dimension is measured from the same base, each a step further out.
 - **Overall** (with **Chain**): when the row ends, an overall dimension is added outside it,
   as a reference.

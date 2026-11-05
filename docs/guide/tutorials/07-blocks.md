@@ -78,10 +78,14 @@ room.
 ## 4. Change a copy
 
 Pick a copy with the **Select** tool: click its lines or anywhere inside its outline. It
-moves, turns and copies like anything else (drag, G, R, Shift+D, Delete).
+moves, turns, mirrors and copies like anything else (drag, G, R, M, Shift+D, Delete), and
+**Pattern** makes copies of it in a row or round a centre. Esc while moving a copy just made
+with Shift+D or Paste removes it. Copies stacked exactly on another copy of the same block
+count as overlapping: the status bar's **N overlapping** chip picks the extras, to delete.
 
 The **Inspector** shows the copy, laid out as it shows a group:
 
+- **Layer**, straight under the title.
 - **Name:** the block's name, which every copy shares.
 - **Definition:** pick another block to replace this one with it; it says how many copies
   the block has.
@@ -90,12 +94,14 @@ The **Inspector** shows the copy, laid out as it shows a group:
 - **Blender profile** (see [Profiles in Blender](13-profiles-in-blender.md)).
 - **Placement:** **X**, **Y**, **Angle** (with 0, 90, 180 and 270 buttons), **Scale** and
   **Mirror**.
-- **Layer.**
+- **Pattern:** linear or circular copies of the copy (see [Patterns](04-editing.md#patterns)).
 - **Set base point**, **Select all copies** and **Delete**.
 
+![A block copy picked: its Layer, Name, Definition, Placement and Pattern in the Inspector](../images/block-copy.png)
+
 A click picks a copy while the top bar's **Blocks** pick filter is on (see
-[Pick filters](04-editing.md#pick-filters)). Turn it off and a click picks a line inside a
-copy instead.
+[Pick filters](04-editing.md#pick-filters)). Turn it off and clicks pass over copies, to the
+lines or fills beneath them.
 
 Tools snap to copies: to the corners, side middles and centre of each copy's box, its
 insertion point, and the ends, middles and centres of its own curves.
@@ -137,13 +143,17 @@ or the axis a profile turns about. Exporting a block uses its base point as its 
    above.
 3. Press Esc, or click **Finish editing** at the top of the **Inspector**.
 
-Every copy updates. A block holds curves and fills: offsets, walls and block copies you
-make while editing go in as plain curves, and a text stays in the drawing. Relations and
-dimensions don't go into a block; Drift says how many were left out. Undo and Redo step
-back into the edit. Saving while you edit saves the block as it stands, and you keep
-editing.
+While you edit, tools keep to the block: clicks, boxes, Select all, snaps, Fill and Trim reach
+only its curves, and a click outside doesn't end the edit. Make block, Group and Ungroup
+wait until you finish.
 
-Right-click a block in the **Blocks** panel to rename it, select its copies or delete it.
+Every copy updates. A block holds curves and fills: offsets, walls, openings and block
+copies you make while editing go in as plain curves, and a text stays in the drawing.
+Relations, dimensions and notes don't go into a block; Drift says how many were left out.
+Undo and Redo step back into the edit. Saving (and autosave), printing and export while you
+edit treat the block as finished, and you keep editing.
+
+Right-click a block in the **Blocks** panel to rename it (or pick a copy and press F2), select its copies or delete it.
 Deleting a block deletes its copies.
 
 ## Groups and blocks
@@ -166,8 +176,8 @@ whole group, picked or being edited.
 
 ## Blocks and other programs
 
-DXF export writes blocks and their copies as BLOCK and INSERT entities, and DXF import reads
-them back as blocks. See [Underlays and DXF import](11-underlays-and-dxf.md).
+DWG and DXF export write blocks and their copies as BLOCK and INSERT entities, and DWG and
+DXF import read them back as blocks. See [Underlays and DXF import](11-underlays-and-dxf.md).
 
 ## What you learned
 

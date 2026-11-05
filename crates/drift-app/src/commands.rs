@@ -1934,8 +1934,9 @@ pub(crate) const OTHER_KEYS: &[(&str, &[(&str, &str)])] = &[
             ),
             (
                 "Esc",
-                "Cancel the operation, or clear the selection; with a dialog or window open, \
-                 close it (and nothing else)",
+                "Cancel the operation (a copy just made with Shift+D or Paste is removed), \
+                 finish editing a block or group, or clear the selection; with a dialog or \
+                 window open, close it (and nothing else)",
             ),
             (
                 "Right-click",
@@ -1975,11 +1976,20 @@ pub(crate) const OTHER_KEYS: &[(&str, &[(&str, &str)])] = &[
         &[
             ("V", "Add a view, by its region in the model"),
             ("Shift+F", "Fit the sheet"),
+            ("Shift/Ctrl+click, drag a box", "Pick several views"),
+            ("Ctrl+A", "Pick every view on the sheet"),
+            (
+                "Arrow keys",
+                "Nudge the picked views 1 mm of paper; Shift+arrow, 10",
+            ),
             (
                 "Delete or Backspace",
-                "Take the picked view off the sheet (it stays in the drawing)",
+                "Take the picked views off the sheet (they stay in the drawing)",
             ),
-            ("Esc", "Back to the model"),
+            (
+                "Esc",
+                "Let go of several picked views, then back to the model",
+            ),
         ],
     ),
 ];

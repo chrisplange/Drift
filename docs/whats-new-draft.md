@@ -55,7 +55,9 @@ back.
 - **Drags that hold together.** A drag no longer crushes an arc to a point, closes it into a
   full circle or leaves its end off its circle: it stops at the last shape that works. When the
   solver can't finish a step, the drag tries a smaller one, or carries along the curve the
-  dragged points are held on.
+  dragged points are held on. A drag that can't land no longer flings the radius of an arc or
+  circle you aren't moving, or shortens a line you aren't moving while swinging its end far
+  past the pointer: it stops at the last shape that went.
 - **A typed distance in a mouse drag.** Dragging a selection shows how far it has moved; type a
   distance and press Enter to move it exactly.
 - **Big drawings draw, drag and edit much faster.** Curvature combs are drawn only while 50 or
@@ -113,6 +115,13 @@ back.
 - **Closing a shape keeps its direction.** Ending a line on a snapped point keeps the Horizontal
   or Vertical it was drawn with. **Fix** on a partly defined shape pins only what's still free.
 - Trim, Extend and Split no longer drop a dimension on the end they cut away.
+- **An edit that would leave geometry broken is undone.** If solving an edit would leave an
+  arc's end off its circle, a line's midpoint off the line, an ellipse's axes skewed or a wall
+  end off the wall it meets, the edit is undone with "… undone: it conflicts with existing
+  constraints". Before, it was kept with the geometry broken. Where part of a drawing already
+  conflicts, an edit that creates an arc, an ellipse or a midpoint there (drawing an arc, a
+  fillet, a split or a mirror) is undone the same way: clear the conflict first. A relation
+  that would collapse a curve is refused as degenerate.
 - **Expressions:** a plain number added to a length is in the drawing's unit, so `W + 2` in a
   feet-and-inches drawing adds 2 inches. It's stored as `W + 2 in`, so changing units later
   never changes the value.
@@ -323,6 +332,8 @@ User-facing
 - #340 Drag: an arc crushed or closed by a step counts as turned (Refs #280)
 - #341 Big drawings: Group, undo frames, area moves and the Inspector's offers stay quick (#317, #286, #321)
 - #356 Big drawings: fill meshes, moved fills, sketch items and the Inspector keep up with a move; combs up to 50 Béziers (Refs #253)
+- #360 Refuse an edit whose solve leaves geometry broken (Fixes #342)
+- #361 A drag that can't land keeps the radii and lines it doesn't move (Fixes #278)
 
 Internal / not for the notes
 - #121 #122 packaging (Inno Setup 7, test build versions)

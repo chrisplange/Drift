@@ -442,10 +442,15 @@ fn g_move_lands_off() {
     explained(r).unwrap();
 }
 
-/// H: equal arcs and points on curves: a hanging line goes from 10 to 6 long.
-/// (`move_keeps_untouched_lengths_heavy`, seed 1.)
+/// H (#284): equal arcs and points on curves: a hanging line goes from 10 to 6 long. Line 2's
+/// kept length holds line 1's too (`Equal(1, 2)`), and line 1's free end would have to slide
+/// round the dragged arc's circle to where it is 10 from the dragged point, near the least
+/// distance there is: a kept length at a fold of its own. The preference's step closes next
+/// to nothing each iteration (1e-7 of the 4 left), and `SETTLE_PATIENCE` ends the solve at
+/// iteration 13 with the line at 6. The same at any size. (`move_keeps_untouched_lengths_heavy`,
+/// seed 1, shrunk on e002052.)
 #[test]
-#[ignore = "#284: an untouched hanging line is stretched"]
+#[ignore = "#284: an untouched hanging line is stretched (a kept length stalled at a fold)"]
 fn h_untouched_line_stretched() {
     let plan = Plan {
         ops: vec![
@@ -501,6 +506,62 @@ fn h_untouched_line_stretched() {
     let steps = 1;
     let r = no_unforced_stretch(&plan, &pick, offset, steps);
     explained(r).unwrap();
+}
+
+/// H (#284): the same sketch with both lines level (`move_keeps_untouched_lengths_heavy`
+/// seed 1's own shrunk case on a561c30): the move turns a curve even in its smallest step,
+/// so the turned curves are carried along, and in that carried solve line 2's kept length
+/// crawls (1e-7 a step) until `SETTLE_PATIENCE` ends it at iteration 12, the line at 6.
+#[test]
+#[ignore = "#284: an untouched hanging line is stretched (a kept length stalled at a fold)"]
+fn h_untouched_line_stretched_level() {
+    let plan = Plan {
+        ops: vec![
+            Op::Arc {
+                from: 0,
+                angle: 0,
+                radius: 0,
+                sweep: 0,
+                ccw: false,
+            },
+            Op::OnArc {
+                arc: 0,
+                at: 0,
+                angle: 12,
+                len: 0,
+            },
+            Op::Mid {
+                line: 0,
+                angle: 0,
+                len: 0,
+            },
+            Op::Arc {
+                from: 7,
+                angle: 0,
+                radius: 0,
+                sweep: 0,
+                ccw: false,
+            },
+            Op::Arc {
+                from: 0,
+                angle: 0,
+                radius: 2,
+                sweep: 0,
+                ccw: false,
+            },
+            Op::Step {
+                from: 26,
+                angle: 1,
+                len: 1,
+            },
+        ],
+        extras: (0..48).map(|i| [0, 1, 3].contains(&i)).collect(),
+        fix: None,
+        length: None,
+    };
+    let pick = Pick::Curves(13767121785659795704);
+    let offset = DVec2::new(16.377975070732383, 2.966956818320761);
+    explained(no_unforced_stretch(&plan, &pick, offset, 1)).unwrap();
 }
 
 /// G (fixed, #283): a move of an arc, a line and a line's midpoint coincident with the arc's
@@ -723,12 +784,14 @@ fn o_free_move_refused_at_a_fold() {
     explained(free_moves_go(&plan, &pick, offset, steps)).unwrap();
 }
 
-/// E (#280 A2): two dragged points held on an arc a diameter apart (f3's shape): at one size
-/// the stalled solve reads as finished within the coordinates' tolerance and is kept
-/// reshaped, at the other it is carried whole; 0.02 apart. On main the same shape was refused
-/// at one size only. The tolerance goes with where the drawing is (round-off), so a solve
-/// that closes slowly at a fold holds at one place and not at another: what A2 stands for
-/// (also similarity 3, 6, 16, 17, 18 and 20 after #280's A1). For PR 5 with draft O.
+/// E (#280 A2): two dragged points held on an arc a diameter apart (f3's shape), so the arc's
+/// centre has no first-order way to move: a kept radius at a fold. The solve's rows and the
+/// kept radius both close like 1/k. At the move's last step, the 1× solve reaches the
+/// iteration cap with its rows at 1.02 times the tolerance (unfinished, so the arc is carried
+/// whole); at ¼ size far out the rows hold within the coordinates' looser tolerance and
+/// `SETTLE_PATIENCE` ends the solve at iteration 13 (kept reshaped); 0.02 apart. The
+/// tolerance goes with where the drawing is (round-off), so a solve that closes slowly holds
+/// at one place and not at another (also similarity 6, 16, 17 and 18). See #280.
 /// (`drag_is_invariant_under_similarity_heavy`, seed 20, shrunk with #282's carry.)
 #[test]
 #[ignore = "#280 A2: a stalled solve reads as finished at one size only (a fold)"]
@@ -1404,7 +1467,8 @@ fn e_result_depends_on_size_patience_and_landing() {
 /// size far out: in the same step, after the same decisions, one size's solve crushes the
 /// arc (its radius 3e-9 of the sketch: turned, so halved) and the other's leaves it whole;
 /// the two drags end 1e-4 apart. Not a threshold (the arc is whole or gone), but two
-/// solutions the solve picks between by round-off, as A2's stalls do.
+/// solutions the solve picks between by round-off (rows with a double root: a tangent line
+/// through a point at the circle's own radius). See #280.
 /// (`drag_is_invariant_under_similarity_heavy`, seed 11, after #280's A1.)
 #[test]
 #[ignore = "#280 A2: one size's solve crushes an arc, the other's keeps it"]
@@ -1463,6 +1527,107 @@ fn e_result_depends_on_size_crushed_at_one_size() {
         t,
     ))
     .unwrap();
+}
+
+/// E (#280): an arc, a line tangent to it and one parallel to that, a point fixed, a line
+/// moved at ¼ size turned 232°: the step is halved for turning the arc; at depth 5 one half's
+/// solve converges at ¼ size but stops unfinished at 1× (the coordinates' tolerance again),
+/// and from there the two take different halvings and carries. See #280.
+/// (`drag_is_invariant_under_similarity_heavy`, seed 3's own shrunk case on a561c30.)
+#[test]
+#[ignore = "#280 A2: a step's solve finishes at one size only"]
+fn e_result_depends_on_size_tangent_and_parallel() {
+    let plan = Plan {
+        ops: vec![
+            Op::Arc {
+                from: 0,
+                angle: 2,
+                radius: 1,
+                sweep: 0,
+                ccw: false,
+            },
+            Op::Tangent {
+                arc: 0,
+                end: true,
+                forward: false,
+                len: 0,
+            },
+            Op::Step {
+                from: 13,
+                angle: 20,
+                len: 0,
+            },
+        ],
+        extras: (0..48).map(|i| i == 0).collect(),
+        fix: Some(2),
+        length: None,
+    };
+    let t = Similarity {
+        scale: 0.25,
+        turn: 232.08152175323588,
+        shift: DVec2::ZERO,
+    };
+    let offset = DVec2::new(15.457267808482761, -17.270854180887095);
+    explained(invariant(
+        &plan,
+        &Pick::Curves(9929081795026096183),
+        offset,
+        1,
+        t,
+    ))
+    .unwrap();
+}
+
+/// A guard (passes): a point on an arc and a length, dragged in four steps at ¼ size far out.
+/// Widening the solver's strict fold try to every frame left with a kept shape off (tried for
+/// #280 and #284, not kept) made the two sizes refuse different numbers of frames here.
+/// (`drag_is_invariant_under_similarity_heavy`, seed 2, shrunk with that try.)
+#[test]
+fn e_result_depends_on_size_guard_for_a_wider_fold_try() {
+    let plan = Plan {
+        ops: vec![
+            Op::Arc {
+                from: 0,
+                angle: 10,
+                radius: 0,
+                sweep: 0,
+                ccw: true,
+            },
+            Op::Step {
+                from: 1,
+                angle: 17,
+                len: 0,
+            },
+            Op::OnArc {
+                arc: 0,
+                at: 1,
+                angle: 21,
+                len: 1,
+            },
+            Op::Dup {
+                from: 2,
+                angle: 10,
+                len: 0,
+            },
+            Op::Arc {
+                from: 49,
+                angle: 17,
+                radius: 2,
+                sweep: 3,
+                ccw: false,
+            },
+        ],
+        extras: (0..48).map(|i| [0, 1, 8, 9].contains(&i)).collect(),
+        fix: None,
+        length: Some(11),
+    };
+    let t = Similarity {
+        scale: 0.25,
+        turn: 0.0,
+        shift: DVec2::new(0.0, -304.79968618558775),
+    };
+    let offset = DVec2::new(-12.812079005553306, -10.973312729997488);
+    explained(invariant(&plan, &Pick::Point(14), offset, 4, t)).unwrap();
 }
 
 /// #280 A1: four tangencies, a midpoint, equal and perpendicular lines, a fixed point and a

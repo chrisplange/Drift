@@ -24,7 +24,9 @@ With the **Select** tool (S, or Esc from any tool):
 | Pick everything (that the pick filter lets through) | Ctrl+A. |
 | Clear the selection | Esc, or click empty canvas. |
 
-Clicking inside a fill or hatch picks it. Clicking inside an empty outline picks nothing, so
+Clicking inside a fill or hatch picks it; inside a filled shape it picks the shape with its
+fill, and a double-click (or **Edit fill** on the right-click menu) picks the fill alone.
+Clicking inside an empty outline picks nothing, so
 a box selection can start there. (To pick a closed area and measure it instead, turn off
 **File → Drawing settings… → Closed areas and fills → Pick an area only where it is
 filled or hatched**; it is saved with the drawing.
@@ -48,7 +50,7 @@ AutoCAD, Rhino or Vectorworks:
 
 - **Alt-click** or **double-click** a toggle to pick only that kind.
 - **All** turns every toggle back on.
-- While a filter is on, the **Select** tool in the toolbar has an orange dot; hover over it
+- While a filter is on, the **Select** tool in the tool palette has an orange dot; hover over it
   to see what is picked.
 
 ![Select picking edges only: a box takes just the curves inside it, and the Select tool shows the orange dot](../images/pick-filters.png)
@@ -84,7 +86,8 @@ and shows where the annotations appear. What you do then acts on all of it:
 
 ### Chains with Tab
 
-Hover over a curve and press Tab. The whole chain it belongs to (curves joined end to end)
+Hover over a curve and press Tab. The whole chain it belongs to (curves on the same layer joined end
+to end)
 is highlighted, as in Revit. Click to pick the chain; Shift+click adds it, Ctrl+click takes
 it away. Press Tab again to go back to the single curve.
 
@@ -170,7 +173,7 @@ plate's holes) can't be turned. Without a selection, R is the Rectangle tool.
 
 ## Scale with the transform handles
 
-Pick two or more curves, one closed curve (a circle or an ellipse), or a picked area with
+Pick two or more curves, one closed curve (a circle, an ellipse or a closed pen curve), or a picked area with
 the **Select** tool. A box with handles appears round them. One open curve (a line or an
 arc) has no box: drag its own grips instead.
 
@@ -205,7 +208,9 @@ One picked circle:
 
 ## Trim, extend and split
 
-- **Trim** (T): click a piece of a curve to remove it, up to the curves that cross it. Or
+- **Trim** (T): click a piece of a curve to remove it, up to the curves that cross it. Pick
+  curves first, then press T (or E for Extend): only those curves cut (or are reached); with
+  nothing picked, every curve counts. Or
   drag across several pieces: the drag leaves a trail and trims everything it crosses.
   A whole circle or ellipse must be crossed in two places to trim a piece of it. Hovering
   one crossed only once rings the one crossing; use Delete to remove it all.
@@ -248,7 +253,8 @@ Dimensions and relations survive a fillet or chamfer. If anything is measured to
 two lines would meet, held there by a **Corner** relation. The dimension keeps measuring to
 it, so the shape still follows its dimensions and variables. A midpoint or an equal length on
 a side that was cut short still measures the side from corner to corner. A fully defined
-sketch stays fully defined after a fillet, since the fillet's radius is dimensioned. A
+sketch stays fully defined after a fillet, since (with **Auto relations** on) the fillet's
+radius is dimensioned. A
 chamfer adds two freedoms, its two cut lengths, until you dimension them.
 
 A fillet or chamfer that's already there can be resized: click it with the same tool, or
@@ -274,16 +280,20 @@ sharp corner back, right-click it and choose **Remove fillet** or **Remove chamf
   keep their look and no longer follow. Copying, duplicating, mirroring or patterning an
   offset together with its source gives an offset that follows the copy; an offset copied
   without its source gives plain curves.
+
+  ![An offset picked: its pieces follow the rectangle, and the Inspector shows its Distance and Detach](../images/offset.png)
+
 - **Mirror** (M): pick the geometry first with **Select**, press M, and click the line to
-  mirror about. The copies are held symmetric to the originals.
+  mirror about. The copies are held symmetric to the originals. Picked block copies get a
+  mirrored copy on the far side, in the same undo step.
 
 A group copied whole, by Mirror, Copy and Paste, Shift+D or a pattern, gives a new group of
 the copies, named after it ("Panel" → "Panel 2"). Part of a group copies as loose objects.
 
 ## Patterns
 
-Pick geometry, then open **Pattern** in the **Inspector** (or choose **Modify → Linear
-pattern…** or **Circular pattern…**):
+Pick geometry, then open **Pattern** in the **Inspector** (or click **Linear pattern** in the
+tool palette, or choose **Modify → Linear pattern…** or **Circular pattern…**):
 
 - **Linear:** a **Count** and a spacing (**Spacing X**, **Y**), then **Make linear pattern**.
 - **Circular:** a **Count**, an **Angle** and a centre (**Centre X**, **Y**), then
@@ -298,7 +308,10 @@ the geometry are copied at every step too. The fields take expressions.
   **Actions** menu.)
 - Clicking any member picks the whole group, and moves and turns take it together.
 - Double-click a group to edit inside it: members pick one by one, and anything you draw
-  joins the group. Esc, or a click outside, leaves it.
+  joins the group, and tools (trim, box picks, Select all) see only what's in it; snapping
+  still sees the whole drawing.
+  A click outside does nothing; press Esc, or **Finish editing** in the **Inspector**, to
+  leave.
 - The **Inspector** shows a picked group's name (rename it there), member count,
   **Edit in place**, **Ungroup** and **Make block** (see
   [Groups and blocks](07-blocks.md#groups-and-blocks): a group is one thing; a block is a
@@ -315,10 +328,11 @@ the geometry are copied at every step too. The fields take expressions.
 - G moves and R rotates, with X / Y locks, typed values and B for the base point or pivot.
   R again rotates by reference.
 - The transform box scales and stretches; Alt scales the dimensions with it.
-- T, E, F, O and M trim, extend, fillet, offset and mirror; Split and patterns are in the
-  **Modify** menu, the palette and the **Inspector**.
+- T, E, F, O and M trim, extend, fillet, offset and mirror; Split is in the Trim flyout and the
+  **Modify** menu; patterns are on the tool palette, in the **Modify** menu and the
+  **Inspector**.
 
 ## Next
 
-[Temporary dimensions](05-temporary-dimensions.md): set distances between walls the way
+[Temporary dimensions](05-temporary-dimensions.md): set distances between lines the way
 Revit does.

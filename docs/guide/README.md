@@ -5,7 +5,7 @@ shape with relations (horizontal, tangent, equal…) and dimensions, as in a Sol
 Change a dimension and the drawing follows. The same drawing then goes onto sheets with a
 title block and out as PDF, SVG or DXF.
 
-It runs on Windows and macOS, and in the browser.
+It runs on Windows and macOS, with a browser demo.
 
 This guide is for **0.1.0-beta.1.5**. It is written for architects, designers and engineers
 who already know a CAD or drawing program (Revit, AutoCAD, SolidWorks, Illustrator,

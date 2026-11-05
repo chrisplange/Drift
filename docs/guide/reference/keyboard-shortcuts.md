@@ -163,7 +163,7 @@ With no key (use the Annotate menu or the command palette): **Section mark**, **
 | Q | Relations pie: hold and flick, or tap and click |
 | Double-click text | Type into it in place |
 | Enter or Space | With nothing in hand: the last command or tool again |
-| Esc | Cancel the operation, or clear the selection; with a dialog or window open, close it (and nothing else) |
+| Esc | Cancel the operation (a copy just made with Shift+D or Paste is removed), finish editing a block or group, or clear the selection; with a dialog or window open, close it (and nothing else) |
 | Right-click | In a drawing tool, finish (as Enter does); in Select, the canvas menu; in a move or rotate, cancel |
 
 ## Dimensions
@@ -189,8 +189,11 @@ With no key (use the Annotate menu or the command palette): **Section mark**, **
 |---|---|
 | V | Add a view, by its region in the model |
 | Shift+F | Fit the sheet |
-| Delete or Backspace | Take the picked view off the sheet (it stays in the drawing) |
-| Esc | Back to the model |
+| Shift/Ctrl+click, drag a box | Pick several views |
+| Ctrl+A | Pick every view on the sheet |
+| Arrow keys | Nudge the picked views 1 mm of paper; Shift+arrow, 10 |
+| Delete or Backspace | Take the picked views off the sheet (they stay in the drawing) |
+| Esc | Let go of several picked views, then back to the model |
 
 <!-- END commands -->
 

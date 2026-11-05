@@ -52,7 +52,7 @@ You can type any unit, whatever the display units:
 | `1'6"`, `1'-6"`, `1'-6 1/2"` | feet and inches |
 | `6-1/2"`, `3/8"` | fractions of an inch |
 | `35 1/2` | a mixed number in the display unit |
-| `W + 60`, `spacing - 10` | bare numbers added to or taken from a length are in the display unit too |
+| `W + 60`, `spacing - 10` | bare numbers added to or taken from a length are in the display unit too, and are stored with it (`W + 60 mm`); in a product a bare number is just a factor (`W * 2`) |
 | `30deg`, `30°`, `pi/4 rad` | angles (bare numbers are degrees) |
 | `100mm + 2in` | mixed units in an expression |
 
@@ -76,8 +76,8 @@ Dimension text height, arrow size and the like are set in paper millimetres in
 **File → Drawing settings… → Drafting**, whatever the drawing's units. **Dual units** adds the value in a
 second unit, in brackets.
 
-## DXF
+## DXF and DWG
 
-DXF files are written in the drawing's display units (inches for both fraction formats),
+DWG and DXF files are written in the drawing's display units (inches for both fraction formats),
 so lengths read the same in other programs. Imported DXF files use the units they declare;
 a file that doesn't say is read in the display unit.

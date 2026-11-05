@@ -87,8 +87,11 @@ a look before it goes in.
 
 1. Set the version, for example `0.1.0-beta.1.5`, in `Cargo.toml`
    (`[workspace.package] version`), `README.md`, `docs/guide/README.md` and the example in
-   `.github/ISSUE_TEMPLATE/bug.yml`, and run `cargo update -w` for `Cargo.lock`. Merge it to
-   `main`. The CI checks must pass, including **Third-party notices** (see above).
+   `.github/ISSUE_TEMPLATE/bug.yml`, and run `cargo update -w` for `Cargo.lock`. Run
+   `python scripts/package-blender-addon.py` to stamp the same version into
+   `integrations/blender/drift_profiles/blender_manifest.toml` (CI's Blender check fails until
+   it matches). Merge it to `main`. The CI checks must pass, including **Third-party notices**
+   (see above).
 2. Tag `main` and push: `git tag v0.1.0-beta.1.5 origin/main`, then
    `git push origin v0.1.0-beta.1.5`.
 3. The **Package** workflow builds the Windows installer and zip and the macOS disk image.

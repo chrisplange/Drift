@@ -74,7 +74,7 @@ it down in the next tutorial.
 4. Press Esc to go back to the **Select** tool.
 
 Pressing C again, while the Circle tool is active, switches to the Ellipse tool, and again
-to Partial ellipse. A works the same way for arcs (centre, 3-point, tangent), F for fillet
+to Partial ellipse. A works the same way for arcs (3-point, tangent, centre), F for fillet
 and chamfer, and U for the three kinds of slot.
 
 ## Snapping and inference

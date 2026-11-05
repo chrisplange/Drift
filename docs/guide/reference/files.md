@@ -11,25 +11,29 @@ order. So:
 - Solved positions are stored, so a file opens without re-solving.
 
 Everything the drawing needs travels inside the file: layers, views, sheets, blocks, fills,
-imported hatch patterns, underlays, title-block logos, and the fonts the drawing uses
+walls with their doors and windows, offsets, imported hatch patterns, underlays (with their
+text), title-block logos, and the fonts the drawing uses
 (where the font's licence allows embedding, and under 12 MB). A font that can't be kept is
 used from the computer it's on, and Drift says so. The drawing's options (see
 [Options](../tutorials/03-parameters.md#4-save-options)) are saved in it too.
 
 ## Versions
 
-The file records a format `version` (this build writes 42) and a `reader`: the oldest
+The file records a format `version` (this build writes 44) and a `reader`: the oldest
 version of Drift that can read it. Drift opens a file when its `reader` (in a file from
 before version 42, its `version`) isn't above its own version. Otherwise it says the file is
 newer than it supports and leaves it untouched.
 
-From version 42 on, new features don't raise `reader`, so a file from a newer Drift usually
-opens. What this build doesn't know is kept, and written back when you save. If an edit
+From version 42 on, most new features don't raise `reader`, so a file from a newer Drift
+usually opens. A new kind of relation does: versions 43 and 44 raised it, so a version 42
+build can't open a 43 or 44 file. What this build doesn't know is kept, and written back when you save. If an edit
 means some of it would be lost (you deleted the thing it belonged to, say), saving first
 asks **Save NAME?** with **Cancel** or **Save anyway**. To keep the original as it was, use
 **Save As**.
 
-Version 42 added `reader`. Version 41 keeps the drawing's options, whole-sketch ones
+Version 44 added the relations a fillet or chamfer uses to keep what was measured to its
+corner and along its sides, and version 43 a Fix on a point's x or y alone; both raised
+`reader`. Version 42 added `reader`. Version 41 keeps the drawing's options, whole-sketch ones
 included; version 40 added where lines and pictures stack among a layer's fills (see
 [What draws over what](../tutorials/06-fills-and-hatches.md#what-draws-over-what)),
 version 39 added the drawing's own rules for closed areas and fills (see
@@ -41,7 +45,8 @@ with each of its sheets' views made a view of its own.
 
 - **Older files always open** in newer builds. They're upgraded as they load.
 - **Newer files open** from version 42 on, unless the newer Drift made a breaking change
-  (and raised `reader`). Builds before 42 refuse any file newer than their own version, so
+  (and raised `reader`), as 43 and 44 did: a 42 build refuses a 43 or 44 file, and a 43 build
+  a 44 file. Builds before 42 refuse any file newer than their own version, so
   a version 42 file doesn't open in them.
 
 Check your build in **Help → About Drift**.
@@ -57,7 +62,7 @@ session, if one was left with unsaved changes, so you get those changes rather t
 as last saved. If other windows left drawings with unsaved changes (after a crash, say), or
 sessions that can't be read, a **Drawings left open** window offers **Open them** (each in a
 window of its own), **Later** (asks again next time) or **Delete them** (asks once to be
-sure). In the browser the session is kept in the browser's storage for the site.
+sure). The browser demo can't save files, and keeps nothing between visits.
 
 To install an update, close your other Drift windows first: the installer can't close them,
 so with another window open Drift says so instead of starting it.
@@ -105,15 +110,16 @@ session, so the next start is fresh.
 
 | | Format | Notes |
 |---|---|---|
-| Import | DXF (ASCII), DWG | As geometry or an underlay, at a drawing scale or calibrated: **File → Import…**. DWG is read for AutoCAD R14 to 2018 and comes in the same way as DXF. See [Underlays and DXF import](../tutorials/11-underlays-and-dxf.md). Binary DXF isn't read. |
+| Import | DXF (ASCII), DWG | As geometry or an underlay, at a drawing scale or calibrated: **File → Import…**. DWG files saved in the AutoCAD 2000 to 2018 formats are read, and come in the same way as DXF. A DWG the reader can't
+handle gives an error and leaves the drawing as it was. See [Underlays and DXF import](../tutorials/11-underlays-and-dxf.md). Binary DXF isn't read. |
 | Import | SVG, PDF, Illustrator (`.ai`) | As geometry or an underlay, at a drawing scale (found from its dimensions where it can be) or calibrated: **File → Import…**. See [Part 3](../tutorials/11-underlays-and-dxf.md#part-3-import-svg-pdf-and-illustrator-artwork). A PDF's vector drawing comes in as curves; a scanned PDF, which has none, comes in as its picture (an underlay). |
 | Import | `.pat` | Hatch patterns: **Parameters → Hatch patterns → Import .pat…**. |
 | Import | `.ttf`, `.otf` | Fonts: **Add a font file…** in any font menu. |
 | Import | SVG | A title-block logo: pick bare paper on a sheet, then **Logo → Choose SVG…** in its **Inspector**. |
-| Export | PDF | Every sheet, true scale; with no sheets, the drawing fitted to A3. |
-| Export | SVG | The current sheet, true scale: a named group per layer (Inkscape layers; Illustrator groups, which **Release to Layers** turns into layers) and joined paths. |
+| Export | PDF | Every sheet, true scale; with no sheets, the drawing fitted to A3. Each view holds only what shows through its window. |
+| Export | SVG | The current sheet, true scale: a named group per layer (Inkscape layers; Illustrator groups, which **Release to Layers** turns into layers) and joined paths. Each view holds only what shows through its window. |
 | Export | DWG, DXF (AutoCAD 2018) | The model at full size: true curves, layers in true colour with line types and weights, blocks, fills and hatches (with their patterns), text in any script. **File → Export → DWG / DXF…**. See [About DWG and DXF](../tutorials/10-sheets-and-output.md#about-dwg-and-dxf). |
-| Export | DXF (R12) | The same dialog: the model at full size as lines, arcs and polylines only, with layers, line types and blocks, for laser cutters, CNC and older software. |
+| Export | DXF (R12) | The same dialog: the model at full size in R12's own entities (lines, circles, arcs and polylines; curves as fine polylines, fills as solid triangles, hatches as lines; text), with layers, line types and blocks but no line weights, for laser cutters, CNC and older software. |
 | Export | SVG, PDF (model) | The model, or the selection, at 1 : 1 on a page fitted to it with a 5 mm margin: no sheet, title block or border. A named group per layer and joined paths (SVG). Points, construction and hidden or non-printing layers are left out; **Dimensions and notes** includes them. **File → Export → Model as SVG… / Model as PDF…**. |
 | Export | Blender profiles (`.drift-profiles.json`) | The blocks marked as **Blender profile**, for the Drift Profiles add-on: **File → Export → Blender profiles…**. Saving writes them beside the drawing too. See below. |
 
@@ -150,6 +156,7 @@ half a file.
 ## The clipboard
 
 Ctrl+C copies the selection as a small Drift document on the system clipboard (curves with
-their relations and dimensions, fills, block copies with their blocks, text), so you can
+their relations and dimensions, fills, notes, block copies with their blocks, text, groups
+copied whole, walls, and offsets whose source is copied too), so you can
 paste between Drift windows. Layers and blocks are matched by name. Plain text pasted into
 Drift becomes sketch text.

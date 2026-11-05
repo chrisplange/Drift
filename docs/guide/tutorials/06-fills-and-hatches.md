@@ -66,8 +66,8 @@ inside it, and it stays whole through splits, fillets and chamfers of its sides.
 picks it with its outline, and Shift+D, Delete and moves take it whole.
 
 Anything else is an **area fill**: rooms sharing a wall, lines that cross or run on past their
-corners. The **Inspector** says which you have: **Shape**, or **Area fill** with the reason
-("Not a shape: its lines also bound another fill"), and so does the status line when the
+corners. The **Inspector** says which you have: **Shape** (or **Circle**, **Ellipse**), or **Area
+fill** / **Area hatch** with the reason ("Not a shape: 1 line shared with other fills"), and so does the status line when the
 pointer is over a fill. When the only thing in the way is corners drawn up to each other but
 not joined (imported drawings often have them), the Inspector offers **Join corners** (also
 in the **Modify** menu and the command palette), which makes it a shape. Opening a drawing
@@ -100,6 +100,7 @@ shapes' lines is picked on its own.
 A picked shape shows in the **Inspector** as one object, whether you picked it by its fill
 or by its whole outline (a group of it, say):
 
+- **Layer**, straight under the title (the outline and the fill move together).
 - **Stroke:** **Line** or **None**. With a line: its **Colour**, **Weight** and **Line
   type**, each "By layer" unless set. **None** hides the outline: it isn't drawn or
   printed (it shows dashed only while picked or hovered), but it still bounds the fill,
@@ -109,15 +110,14 @@ or by its whole outline (a group of it, say):
   alignment** below), **Size** (**Drafting** or **Model**), the
   **Lines** colour and **Weight**, and a **Background** colour. **None** removes the fill
   and leaves the shape, picked by its outline.
-- **Layer** (the outline and the fill move together), **Arrange** (see
-  [What draws over what](#what-draws-over-what)), **Area** and **Perimeter**, and
-  **Delete** (the whole shape).
+- **Arrange** (see [What draws over what](#what-draws-over-what)), **Size** (**Area** and
+  **Perimeter**), and **Delete** (the whole shape).
 
 ![A filled rectangle picked as one shape: Stroke set to None, a solid Fill](../images/shape-stroke-fill.png)
 
 A fill of an area among several shapes' lines (a room among walls, say) is a fill of its
-own: its **Inspector** shows its **Style** (as **Fill** above, without **None**), **Layer**,
-**Arrange**, **Area**, **Perimeter** and **Centroid**, and **Delete**.
+own: its **Inspector** shows its **Layer** first, then its **Style** (as **Fill** above,
+without **None**), **Arrange**, **Area**, **Perimeter** and **Centroid**, and **Delete**.
 
 When the picked curves include whole filled shapes and more (a group of a shape and other
 lines), the curves' **Inspector** has a **Fill** section for those shapes too.
@@ -155,7 +155,7 @@ in **Style** for the hatch of an area among several shapes' lines):
 
 To work on the pattern alone, **Alt-click** or **double-click** inside the shape: that picks
 its fill without its outline, so the transform box is out of the way. Or right-click the
-picked shape and choose **Edit fill** (also in the **Edit** menu and the command palette).
+picked shape and choose **Edit fill** (also in the command palette).
 While a filled shape is picked, the status bar reminds you how, until you have done it a
 few times. In a group,
 double-click once to go into the group (the shape is picked), and again for its fill. (A
@@ -205,6 +205,8 @@ Arrange**, or the **Inspector** (**To front**, **Forward**, **Backward**, **To b
 | **Bring forward** | Ctrl+] | over the next thing above it that it overlaps |
 | **Send backward** | Ctrl+[ | under the next thing beneath it that it overlaps |
 | **Send to back** | Ctrl+Shift+[ | under everything on its layer |
+
+![Modify → Arrange, with the four commands and their keys](../images/menu-arrange.png)
 
 Lines that outline no fill can be arranged the same way, so a line can go under a fill
 that covers it. Each command is one undo step, and the order is saved with the drawing.

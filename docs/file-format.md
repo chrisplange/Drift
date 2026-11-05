@@ -225,7 +225,7 @@ read these files, pass over the addition, and keep it when they save.
 **A newer `reader`.** `migrate` refuses a file whose `reader` (or, without one, its
 `version`) is above `FORMAT_VERSION`, and `version` 0 or anything that isn't a number, before
 reading anything else, with `LoadError::UnsupportedVersion`: *"file version 45 is newer than
-this version of Drift supports (43); please update Drift"* (the message names the file's
+this version of Drift supports (44); please update Drift"* (the message names the file's
 `version`). When the user opens such a file (File → Open, a drop, a recent file), the app
 shows *"Could not open NAME: …"* in the status bar and keeps the drawing it had. The file isn't
 touched, so nothing is lost. The same goes for the AI link (`agent/files.rs`) and for pasting

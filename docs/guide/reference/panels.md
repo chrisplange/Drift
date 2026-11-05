@@ -35,20 +35,29 @@ have no layer, and an opening follows its wall.
 | One curve or point | Its **Geometry** as fields: a line's **Length**, **Angle**, **Start** and **End**; a circle's or arc's **Radius**, **Diameter** and **Center**; a point's **Position**. Typing a size sets the dimension that drives it, or adds one (shown as **dim**). Typing a position or angle moves the geometry as far as its relations allow. Fields apply when you press Enter or Tab, or click elsewhere; Esc puts the old value back. |
 | Curves | **Appearance** (**Geometry** / **Construction** / **Centre line**, **Colour**, **Weight**, **Line type**, each "By layer" unless set; **Line type → None** for no stroke), a **Fill** section when whole filled shapes are among them, **Arrange**, **Add relation** and **Add dimension** buttons for what fits, **Pin measurement**, **Pattern** (block copies picked with them are patterned too), the **Relations & dimensions** on the selection (each with **×**; **Clear relations** and **Clear dimensions**), and **Delete selection**. |
 | Circles | **Add centre mark** (or **Add N centre marks**). |
-| A dimension | **Driven (reference)**, its **Text** (**Prefix**, **Suffix**, chips, **Under line**, **Show instead**), and **Show** (**On the canvas**, **On sheets, in print and export**, and **In views** once the drawing has views). |
+| A dimension | **Driven (reference)**, its **Text** (**Prefix**, **Suffix**, chips, **Under line**, **Show instead**), and **Show** (**On the canvas**, **On sheets, in print and export**, and **In views** once the drawing has views), and **Drafting style** (its own settings over the drawing's). **Reset extension lines** appears once they've been dragged. |
 | A note or mark | Its text or label, leader, sheet and direction, and **Show**. |
 | A filled shape (its fill, or its whole outline) | One object: **Stroke** (**Line** or **None**; **Colour**, **Weight**, **Line type**), **Fill** (**None**, **Solid** or **Hatch**, and the style; a hatch's **Pattern alignment**: origin, angle, **Align to edge…**, **Reset**), **Arrange**, **Area** and **Perimeter**, and **Delete**. See [Fills and hatches](../tutorials/06-fills-and-hatches.md#4-edit-a-fill). |
-| An area fill or hatch | Its **Style** (a hatch's with **Pattern alignment**), **Arrange**, **Area**, **Perimeter** and **Centroid**, and **Delete**. |
+| An area fill or hatch | Under its title, why it isn't a shape ("Not a shape: …"), with **Join corners** when touching corners are the reason. Its **Style** (a hatch's with **Pattern alignment**), **Arrange**, **Area**, **Perimeter** and **Centroid**, and **Delete**. A fill left covering several areas offers **Fit to its seed's area**, **Split into N** and **Keep whole**. |
 | A text | Its words, **Height**, **Angle**, **Font**, **Align**, **Spacing** and **Wrap**, and **Convert to curves**. |
 | Several things, with text or annotations among them | How many of each ("4 lines · 1 dimension · 1 note · 1 text"), and **Show** for the dimensions and annotations, and **Pattern**. Delete, Move, Rotate, Mirror, Pattern and Copy act on all of it. |
 | A block copy | Laid out as a group: the block's **Name**, its **Definition** (another block to put in its place, and how many copies), **Edit in place**, **Explode** and **Explode to group**; then **Blender profile**, **Placement**, **Pattern**, **Set base point**, **Select all copies** and **Delete**. **Blender profile** writes the block to the drawing's profiles file on save (see [Profiles in Blender](../tutorials/13-profiles-in-blender.md)). |
 | A group | Its **Name**, **Members**, **Edit in place**, **Ungroup** and **Make block** (a block named after it, with its fills). A group is one thing; a block is a thing you reuse (see [Groups and blocks](../tutorials/07-blocks.md#groups-and-blocks)). |
+| A wall | **Wall**: **Thickness** (a value or expression, with presets), **Justify**, **Poché** (with its style). **Joins**: **Joins walls it crosses**, **Joins at its start** and **Joins at its end**, **Join** (two walls) and **Unjoin**. For one wall, **Segments** with each length and **Split after**, then **Show thickness** and **Explode**. See [Walls](../tutorials/14-walls.md). |
+| A door or window | Titled by its family and type, in its wall. **Opening**: **Offset** and **Width** (typed), **Height**, **Leaf**, **Opens**; **Flip hinge**, **Flip side**, **Centre** and **Delete** (the wall closes up). Then **Size set**. See [Doors and windows](../tutorials/15-openings.md). |
+| An offset | **Offset**: **Distance** (a value or expression) and **Follows** (how many curves and pieces). **Show distance**, and **Detach** (plain curves that no longer follow the source). |
 | A closed area (with area picking on) | **Area**, **Perimeter**, **Centroid** and **Holes**, and **Fill** / **Hatch** buttons. |
 
 With the **Fill / hatch** tool active, the **Inspector** shows the style for **New fills**
 instead.
 
-While a block is being edited, **Editing block** and **Finish editing** sit at the top.
+While a block is being edited, **Editing block**, **Finish editing** and **Set base point** sit
+at the top. While a group is being edited, its section reads **Editing group**, with
+**Finish editing**.
+
+After **Walls from lines**, the top of the **Inspector** reports what it did ("Made N walls
+from M lines"), lists the lines it skipped or kept with a **Pick** button for each, and
+sets **Lines used** (removed, kept, or moved to a hidden layer).
 
 ## Parameters
 
@@ -73,6 +82,8 @@ Ctrl+L shows or hides it.
   and lock switches. The filled dot and highlighted row mark the **current layer**, where
   new geometry goes. Click anywhere on a row to make that layer current; double-click the
   name to rename it.
+- With more than eight layers, a **Filter layers** field narrows the list ("3 of 40"; × or
+  Esc clears it). A small square on a row means some of the selection is on that layer.
 - The list reads top down as the layers stack: the top layer draws over the ones below it,
   on the canvas and in output. Drag a row up or down to change the order; a line shows
   where it will go. New layers start at the top, and layer **0** starts at the bottom.
@@ -114,7 +125,8 @@ geometry itself (in the **Inspector**, or the top bar's **Stroke** menus).
   it, drag one to reorder, right-click to duplicate, move or delete it), **New sheet**, and
   **Add view** for the sheet shown.
 - **Views:** every view in the drawing and the sheets it's on. Drag one onto the sheet, or
-  use **Place on sheet**, **Zoom to view** or **Delete view**. The picked view's **Show**
+  use **Place on sheet** (or **Place again**), **Zoom to view** or **Delete view**; double-click
+  one to zoom to it. The picked view has **Name** and **Scale** fields, and its **Show**
   switches (**Dimensions**, **Notes**, **Construction**, **Crop**) apply wherever it's
   placed.
 - **Output:** **PDF…**, **SVG…**, **DWG / DXF…** and **Print…**. With several sheets, **PDF…** and

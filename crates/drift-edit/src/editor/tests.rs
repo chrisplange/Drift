@@ -1303,3 +1303,536 @@ mod circle_drag {
         }
     }
 }
+
+/// #342: an edit whose solve leaves geometry broken (rows no relation owns: an arc's end on
+/// the circle through its start, a line's hidden midpoint, an ellipse's axes, a wall end on
+/// the wall it meets) is undone, as one that makes a new conflict is; geometry already in a
+/// failing part doesn't lock the drawing.
+mod broken_geometry {
+    use drift_core::{Constraint, ConstraintId, DVec2, Document};
+    use drift_solver::{Param, SolveReport};
+
+    use super::*;
+
+    fn v(x: f64, y: f64) -> DVec2 {
+        DVec2::new(x, y)
+    }
+
+    fn kinds(ed: &Editor) -> Vec<(EntityId, EntityKind)> {
+        ed.doc.iter().map(|(id, e)| (id, e.kind)).collect()
+    }
+
+    /// A point `b` held 10 from two fixed points 30 apart (a conflict), never solved: (b, the
+    /// two distances).
+    fn conflicting(doc: &mut Document) -> (EntityId, [ConstraintId; 2]) {
+        let a = doc.add_point(v(0.0, 0.0));
+        let f = doc.add_point(v(30.0, 0.0));
+        let b = doc.add_point(v(12.0, 3.0));
+        doc.add_constraint(Constraint::Fix {
+            point: a,
+            at: v(0.0, 0.0),
+        })
+        .unwrap();
+        doc.add_constraint(Constraint::Fix {
+            point: f,
+            at: v(30.0, 0.0),
+        })
+        .unwrap();
+        let d1 = doc
+            .add_constraint(Constraint::Distance { a, b, value: 10.0 })
+            .unwrap();
+        let d2 = doc
+            .add_constraint(Constraint::Distance {
+                a: b,
+                b: f,
+                value: 10.0,
+            })
+            .unwrap();
+        (b, [d1, d2])
+    }
+
+    /// An arc held by fixes with its end off the circle through its start: the commit's solve
+    /// fails on the arc's own row alone, naming no relation. It is undone with the notice
+    /// (on main it was kept, the arc broken).
+    #[test]
+    fn a_commit_that_leaves_an_arc_off_its_circle_is_undone() {
+        let mut ed = Editor::default();
+        ed.doc.begin();
+        let c = ed.doc.add_point(v(0.0, 0.0));
+        let s = ed.doc.add_point(v(10.0, 0.0));
+        let e = ed.doc.add_point(v(0.0, 10.0));
+        ed.doc.add_arc(c, s, e).unwrap();
+        assert!(ed.commit("Arc"));
+        let before = kinds(&ed);
+        ed.doc.begin();
+        ed.doc.set_point(e, v(0.0, 12.0)).unwrap();
+        for (point, at) in [(c, v(0.0, 0.0)), (s, v(10.0, 0.0)), (e, v(0.0, 12.0))] {
+            ed.doc
+                .add_constraint(Constraint::Fix { point, at })
+                .unwrap();
+        }
+        assert!(!ed.commit("Fix"));
+        assert_eq!(
+            ed.out.notice.as_deref(),
+            Some("Fix undone: it conflicts with existing constraints")
+        );
+        assert_eq!(kinds(&ed), before);
+        assert_eq!(ed.doc.constraints().count(), 0);
+    }
+
+    /// The mixed part: an arc drawn on a point of a part that already conflicts. The solve
+    /// names only the old conflicts and puts the arc in their failed part, where it shares
+    /// their misfit: the edit is undone (on main it was kept), even where the arc's own row
+    /// happens to end within its tolerance. And an arc already drawn elsewhere joined to
+    /// that point by a relation: undone (as on main: the relation is a new conflict).
+    #[test]
+    fn an_arc_joined_to_a_part_that_already_conflicts_is_undone() {
+        let mut doc = Document::new();
+        let (b, _) = conflicting(&mut doc);
+        let c = doc.add_point(v(60.0, 0.0));
+        let s = doc.add_point(v(65.0, 0.0));
+        let e = doc.add_point(v(60.0, 5.0));
+        let elsewhere = doc.add_arc(c, s, e).unwrap();
+        let mut ed = Editor::new(doc);
+        assert!(!ed.analysis().conflicts.is_empty());
+        assert!(!ed.analysis().exposed.contains(&elsewhere));
+
+        let before = kinds(&ed);
+        ed.doc.begin();
+        let at = ed.doc.point(b).unwrap();
+        let s = ed.doc.add_point(at + v(5.0, 0.0));
+        let e = ed.doc.add_point(at + v(0.0, 5.0));
+        let arc = ed.doc.add_arc(b, s, e).unwrap();
+        // Solved, the new arc's own row ends within its tolerance: it is refused for being in
+        // the failed part, not for how far the solve left it off.
+        let mut solved = ed.doc.clone();
+        let report = drift_solver::solve(&mut solved, &drift_solver::SolveOptions::default());
+        assert!(report.exposed.contains(&arc) && !report.broken.contains(&arc));
+        assert!(!ed.commit("Arc"));
+        assert_eq!(
+            ed.out.notice.as_deref(),
+            Some("Arc undone: it conflicts with existing constraints")
+        );
+        assert_eq!(kinds(&ed), before);
+
+        ed.doc.begin();
+        ed.doc
+            .add_constraint(Constraint::Coincident { a: c, b })
+            .unwrap();
+        assert!(!ed.commit("Coincident"));
+        assert_eq!(kinds(&ed), before);
+    }
+
+    /// A drawing that already conflicts, never solved, with an arc in the conflicting part
+    /// exactly on its circle: the first solve shares the misfit with the
+    /// arc, but the arc was already in a failing part, so that isn't the edit's doing. An
+    /// unrelated edit is kept, so is a second, and so is a drag in that part. (Judged against
+    /// what was broken before rather than what was exposed, every edit would be refused.)
+    #[test]
+    fn an_old_conflict_next_to_an_arc_does_not_lock_the_drawing() {
+        let mut doc = Document::new();
+        let (b, _) = conflicting(&mut doc);
+        let at = doc.point(b).unwrap();
+        let s = doc.add_point(at + v(5.0, 0.0));
+        let e = doc.add_point(at + v(0.0, 5.0));
+        let arc = doc.add_arc(b, s, e).unwrap();
+        // (Not `Editor::new`, which solves the drawing it opens.)
+        let mut ed = Editor {
+            doc,
+            ..Default::default()
+        };
+        ed.sync();
+        assert_eq!(ed.analysis().exposed, vec![arc]);
+        assert!(
+            ed.analysis().broken.is_empty(),
+            "stored exactly on its circle"
+        );
+
+        for k in 0..2 {
+            ed.doc.begin();
+            let p = ed.doc.add_point(v(100.0 + f64::from(k) * 20.0, 50.0));
+            let q = ed.doc.add_point(v(110.0 + f64::from(k) * 20.0, 50.0));
+            ed.doc.add_line(p, q).unwrap();
+            assert!(ed.commit("Line"), "unrelated edit {k} refused");
+        }
+        ed.doc.begin();
+        assert!(
+            ed.drag(&[s], v(1.0, 1.0), &Param::point(s)),
+            "a drag in the conflicting part refused"
+        );
+        assert!(ed.commit("Move"));
+    }
+
+    /// Both predicates, clause by clause, on reports against a drawing whose analysis has a
+    /// conflict and an exposed arc: a newly exposed entity, or nothing written, refuses an
+    /// edit and a drag step even when every conflict named is an old one; an entity exposed
+    /// before doesn't.
+    #[test]
+    fn each_clause_refuses_alone() {
+        let mut doc = Document::new();
+        let (b, distances) = conflicting(&mut doc);
+        let at = doc.point(b).unwrap();
+        let s = doc.add_point(at + v(5.0, 0.0));
+        let e = doc.add_point(at + v(0.0, 5.0));
+        let old = doc.add_arc(b, s, e).unwrap();
+        let c = doc.add_point(v(60.0, 0.0));
+        let s2 = doc.add_point(v(65.0, 0.0));
+        let e2 = doc.add_point(v(60.0, 5.0));
+        let new = doc.add_arc(c, s2, e2).unwrap();
+        let ed = Editor::new(doc);
+        let report = |exposed: Vec<EntityId>, unwritten: bool| SolveReport {
+            converged: false,
+            conflicts: distances.to_vec(),
+            broken: exposed.clone(),
+            exposed,
+            unwritten,
+            ..Default::default()
+        };
+        // Only what was there before: kept.
+        assert!(!ed.new_conflicts(&report(vec![old], false)));
+        assert!(!ed.unfinished(&report(vec![old], false)));
+        // A newly exposed arc.
+        assert!(ed.new_conflicts(&report(vec![old, new], false)));
+        assert!(ed.unfinished(&report(vec![old, new], false)));
+        // Nothing written.
+        assert!(ed.new_conflicts(&report(vec![], true)));
+        assert!(ed.unfinished(&report(vec![], true)));
+    }
+
+    /// Cases A and B of drag PR 5, through `set_dimension` at several sizes and places: a
+    /// dimension retyped so that a tangency's form, as the sketch was, would need a radius
+    /// below zero. The edit ends consistent with the tangency's form re-chosen, as on main.
+    /// (A guard: #342 must not make them worse; it passes on main too.)
+    #[test]
+    fn a_dimension_past_a_tangency_still_ends_consistent() {
+        for (scale, at) in [
+            (1.0, DVec2::ZERO),
+            (10.0, DVec2::ZERO),
+            (0.1, DVec2::ZERO),
+            (1.0, v(1e5, 1e5)),
+        ] {
+            // A: a circle tangent inside a bigger one, the bigger radius 10 → 5.
+            let mut ed = Editor::default();
+            ed.doc.begin();
+            let c1 = ed.doc.add_point(at);
+            let big = ed.doc.add_circle(c1, 10.0 * scale).unwrap();
+            let c2 = ed.doc.add_point(at + v(7.0, 0.0) * scale);
+            let small = ed.doc.add_circle(c2, 3.0 * scale).unwrap();
+            ed.doc
+                .add_constraint(Constraint::Fix { point: c1, at })
+                .unwrap();
+            ed.doc
+                .add_constraint(Constraint::Fix {
+                    point: c2,
+                    at: at + v(7.0, 0.0) * scale,
+                })
+                .unwrap();
+            ed.doc
+                .add_constraint(Constraint::Tangent { a: big, b: small })
+                .unwrap();
+            let radius = ed
+                .doc
+                .add_constraint(Constraint::Radius {
+                    curve: big,
+                    value: 10.0 * scale,
+                })
+                .unwrap();
+            assert!(ed.commit("Sketch"));
+            assert!(
+                ed.set_dimension(radius, 5.0 * scale).is_ok(),
+                "A {scale}× {at}"
+            );
+            let r = |id| drift_solver::radius_of(&ed.doc, id).unwrap();
+            assert!(
+                (r(big) - 5.0 * scale).abs() <= 1e-9 * scale,
+                "A {scale}× {at}"
+            );
+            assert!(
+                (r(small) - 2.0 * scale).abs() <= 1e-9 * scale,
+                "A {scale}× {at}"
+            );
+            assert!(ed.analysis().conflicts.is_empty(), "A {scale}× {at}");
+
+            // B: a level line tangent to a circle, its height 15 → 8 (2 past the centre).
+            let mut ed = Editor::default();
+            ed.doc.begin();
+            let c = ed.doc.add_point(at);
+            let circle = ed.doc.add_circle(c, 5.0 * scale).unwrap();
+            let q = ed.doc.add_point(at + v(0.0, -10.0) * scale);
+            let a = ed.doc.add_point(at + v(-20.0, 5.0) * scale);
+            let b = ed.doc.add_point(at + v(20.0, 5.0) * scale);
+            let line = ed.doc.add_line(a, b).unwrap();
+            ed.doc
+                .add_constraint(Constraint::Fix { point: c, at })
+                .unwrap();
+            ed.doc
+                .add_constraint(Constraint::Fix {
+                    point: q,
+                    at: at + v(0.0, -10.0) * scale,
+                })
+                .unwrap();
+            ed.doc
+                .add_constraint(Constraint::Horizontal { line })
+                .unwrap();
+            ed.doc
+                .add_constraint(Constraint::Tangent { a: line, b: circle })
+                .unwrap();
+            let height = ed
+                .doc
+                .add_constraint(Constraint::VerticalDistance {
+                    a: q,
+                    b: a,
+                    value: 15.0 * scale,
+                })
+                .unwrap();
+            assert!(ed.commit("Sketch"));
+            assert!(
+                ed.set_dimension(height, 8.0 * scale).is_ok(),
+                "B {scale}× {at}"
+            );
+            let y = ed.doc.point(a).unwrap().y - at.y;
+            assert!(
+                (y + 2.0 * scale).abs() <= 1e-9 * scale.max(1.0),
+                "B {scale}× {at}: {y}"
+            );
+            assert!(
+                (drift_solver::radius_of(&ed.doc, circle).unwrap() - 2.0 * scale).abs()
+                    <= 1e-9 * scale,
+                "B {scale}× {at}"
+            );
+            assert!(ed.analysis().conflicts.is_empty(), "B {scale}× {at}");
+        }
+    }
+}
+
+/// #342 with walls (their relations lowered, the drawing analysed whole): a teed wall's end
+/// is held on the wall it meets by a relation no stored constraint owns (a lowering's extra,
+/// owned by the end's point). Fixing the end off that wall breaks it: the commit is undone.
+/// Only the verdict is new; what walls solve against is unchanged (#313). And an old
+/// conflict next to an arc doesn't lock a drawing with walls either.
+mod broken_geometry_with_walls {
+    use drift_core::{Constraint, DVec2, Document, WallId};
+    use drift_solver::Param;
+
+    use super::*;
+
+    fn v(x: f64, y: f64) -> DVec2 {
+        DVec2::new(x, y)
+    }
+
+    /// A straight wall along `pts`, in the open transaction: (wall, its centreline points).
+    fn wall(doc: &mut Document, a: DVec2, b: DVec2) -> (WallId, [EntityId; 2]) {
+        let (p, q) = (doc.add_point(a), doc.add_point(b));
+        let line = doc.add_line(p, q).unwrap();
+        doc.set_style(line, drift_core::LineKind::Construction);
+        let path = doc
+            .add_path(drift_core::Path {
+                curves: vec![line],
+                closed: false,
+            })
+            .unwrap();
+        let w = doc
+            .add_wall(drift_core::Wall::new(
+                path,
+                200.0,
+                drift_core::LayerId::DEFAULT,
+            ))
+            .unwrap();
+        (w, [p, q])
+    }
+
+    #[test]
+    fn a_teed_wall_end_fixed_off_its_host_is_undone() {
+        let mut ed = Editor::default();
+        ed.doc.begin();
+        let (host, [h0, h1]) = wall(&mut ed.doc, v(0.0, 0.0), v(4000.0, 0.0));
+        let (branch, [b0, _]) = wall(&mut ed.doc, v(2000.0, 600.0), v(2000.0, 3000.0));
+        assert!(ed.commit("Walls"));
+        assert!(ed.join_walls(&[host, branch]));
+        assert_eq!(
+            ed.doc.wall(branch).unwrap().ends[0].tee.map(|t| t.0),
+            Some(host)
+        );
+        // The host held where it is (so its end is held on it), then the branch's end fixed
+        // 300 above its centreline.
+        ed.doc.begin();
+        for p in [h0, h1] {
+            let at = ed.doc.point(p).unwrap();
+            ed.doc
+                .add_constraint(Constraint::Fix { point: p, at })
+                .unwrap();
+        }
+        assert!(ed.commit("Fix host"));
+        let before: Vec<_> = ed.doc.iter().map(|(id, e)| (id, e.kind)).collect();
+        ed.doc.begin();
+        ed.doc
+            .add_constraint(Constraint::Fix {
+                point: b0,
+                at: v(2000.0, 300.0),
+            })
+            .unwrap();
+        assert!(!ed.commit("Fix end"));
+        assert_eq!(
+            ed.out.notice.as_deref(),
+            Some("Fix end undone: it conflicts with existing constraints")
+        );
+        assert_eq!(
+            ed.doc
+                .iter()
+                .map(|(id, e)| (id, e.kind))
+                .collect::<Vec<_>>(),
+            before
+        );
+    }
+
+    #[test]
+    fn an_old_conflict_next_to_an_arc_does_not_lock_a_drawing_with_walls() {
+        let mut doc = Document::new();
+        doc.begin();
+        wall(&mut doc, v(5000.0, 0.0), v(9000.0, 0.0));
+        let a = doc.add_point(v(0.0, 0.0));
+        let f = doc.add_point(v(30.0, 0.0));
+        let b = doc.add_point(v(12.0, 3.0));
+        for (point, at) in [(a, v(0.0, 0.0)), (f, v(30.0, 0.0))] {
+            doc.add_constraint(Constraint::Fix { point, at }).unwrap();
+        }
+        doc.add_constraint(Constraint::Distance { a, b, value: 10.0 })
+            .unwrap();
+        doc.add_constraint(Constraint::Distance {
+            a: b,
+            b: f,
+            value: 10.0,
+        })
+        .unwrap();
+        let s = doc.add_point(v(17.0, 3.0));
+        let e = doc.add_point(v(12.0, 8.0));
+        let arc = doc.add_arc(b, s, e).unwrap();
+        doc.commit("Drawing");
+        let mut ed = Editor {
+            doc,
+            ..Default::default()
+        };
+        ed.sync();
+        assert!(ed.doc.has_walls());
+        assert_eq!(ed.analysis().exposed, vec![arc]);
+        ed.doc.begin();
+        let p = ed.doc.add_point(v(100.0, 50.0));
+        let q = ed.doc.add_point(v(110.0, 50.0));
+        ed.doc.add_line(p, q).unwrap();
+        assert!(ed.commit("Line"), "an unrelated edit refused");
+        ed.doc.begin();
+        assert!(
+            ed.drag(&[s], v(1.0, 1.0), &Param::point(s)),
+            "a drag refused"
+        );
+        assert!(ed.commit("Move"));
+    }
+}
+
+/// #342's census: a relation whose solve stops at the iteration cap short of meeting the
+/// rows of the arcs it moves (named nothing, but newly put them in a failed part). One more
+/// solve from where it stopped meets everything, so the relation is kept, met, with every
+/// arc's end on its circle, as it was on main (where the commit's own solve finished it).
+mod a_stalled_relation {
+    use drift_core::{Constraint, DVec2};
+
+    use super::*;
+
+    fn v(x: f64, y: f64) -> DVec2 {
+        DVec2::new(x, y)
+    }
+
+    /// `points`, the `arcs` (centre, start, end) and `lines` through them at `scale` about
+    /// `at`, committed; then `relation` (given the curves) added.
+    fn kept(
+        points: &[DVec2],
+        arcs: &[[usize; 3]],
+        lines: &[[usize; 2]],
+        relation: impl Fn(&[EntityId], &[EntityId]) -> Constraint,
+    ) {
+        for (scale, at) in [
+            (1.0, DVec2::ZERO),
+            (10.0, DVec2::ZERO),
+            (0.1, DVec2::ZERO),
+            (1.0, v(1e5, 1e5)),
+        ] {
+            let mut ed = Editor::default();
+            ed.doc.begin();
+            let p: Vec<EntityId> = points
+                .iter()
+                .map(|q| ed.doc.add_point(at + *q * scale))
+                .collect();
+            let a: Vec<EntityId> = arcs
+                .iter()
+                .map(|&[c, s, e]| ed.doc.add_arc(p[c], p[s], p[e]).unwrap())
+                .collect();
+            let l: Vec<EntityId> = lines
+                .iter()
+                .map(|&[x, y]| ed.doc.add_line(p[x], p[y]).unwrap())
+                .collect();
+            assert!(ed.commit("Sketch"));
+            let c = relation(&p, &l);
+            assert!(
+                ed.add_constraints("Relation", &[c]).is_ok(),
+                "{scale}× about {at}: refused"
+            );
+            assert!(ed.analysis().conflicts.is_empty() && ed.analysis().converged);
+            assert!(drift_solver::unmet(&ed.doc, 1e-9).is_empty());
+            for &arc in &a {
+                let EntityKind::Arc { center, start, end } = ed.doc.get(arc).unwrap().kind else {
+                    unreachable!()
+                };
+                let pos = |q| ed.doc.point(q).unwrap();
+                let (r0, r1) = (
+                    pos(center).distance(pos(start)),
+                    pos(center).distance(pos(end)),
+                );
+                // (Within the solver's tolerance: 1e-12 of the largest coordinate.)
+                let size = [center, start, end]
+                    .iter()
+                    .map(|&q| pos(q).abs().max_element())
+                    .fold(1.0, f64::max);
+                assert!(
+                    (r0 - r1).abs() <= 2e-12 * size,
+                    "{scale}× about {at}: an arc's ends {r0} and {r1} from its centre"
+                );
+            }
+        }
+    }
+
+    /// Census case 292: a line from an arc's centre made upright.
+    #[test]
+    fn an_upright_line_from_an_arcs_centre_is_kept() {
+        kept(
+            &[
+                v(0.0, 0.0),
+                v(6.92820323027551, 3.9999999999999996),
+                v(4.857650869455343, -3.727406610312547),
+                v(-0.14234913054466158, -12.387660648156933),
+                v(-0.14234913054466158, -20.38766064815693),
+                v(-0.14234913054466306, -28.38766064815693),
+                v(-14.285000205320912, 25.213203435596427),
+            ],
+            &[[1, 0, 2], [4, 3, 5]],
+            &[[2, 3], [1, 6]],
+            |_, l| Constraint::Vertical { line: l[1] },
+        );
+    }
+
+    /// Census case 332: an arc's centre put on another arc's end.
+    #[test]
+    fn an_arcs_centre_put_on_anothers_end_is_kept() {
+        kept(
+            &[
+                v(0.0, 0.0),
+                v(-6.000000000000005, -10.392304845413262),
+                v(-9.10582854123025, 1.198805070055558),
+                v(-25.31851652578137, -15.568685747463679),
+                v(-39.46065214951232, -1.4265501237327278),
+            ],
+            &[[1, 0, 2], [3, 1, 4]],
+            &[],
+            |p, _| Constraint::Coincident { a: p[3], b: p[2] },
+        );
+    }
+}

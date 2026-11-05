@@ -653,6 +653,7 @@ fn offset(max: f64) -> impl Strategy<Value = DVec2> {
 }
 
 /// What a drag did.
+#[derive(Clone)]
 struct Run {
     start: Vec<DVec2>,
     end: Vec<DVec2>,
@@ -996,8 +997,16 @@ fn continuous(plan: &Plan, pick: &Pick, offset: DVec2) -> Result<(), TestCaseErr
         !orientation.turned(&built.ed.doc),
         "a small drag turned an arc or tangency"
     );
+    // A dragged point that starts on a point a line through it must keep running through gives
+    // that line no direction: any drag at all, however small, sets it, and the line swings round
+    // to follow. That is the geometry's own answer, not a jump (#278, seed 1), where the drag
+    // landed exactly and the line does run through that point afterwards. A point is excused as
+    // far as what hangs on the swinging line goes (`SWING_MIRROR` times the line's own reach),
+    // and judged on anything beyond that like any move, as is everything in a drag that isn't a
+    // swing.
+    let swing = forced_swing(&built, &ids, &run, offset);
     for i in 0..run.start.len() {
-        let moved = run.start[i].distance(run.end[i]);
+        let moved = judged_move(&run, i, swing);
         // (A solve rounds: a drag of nothing may still move a point by an ulp or so, as
         // `close` allows. Without that floor a shrunk case ends at a drag of exactly 0, and
         // the failure it stands for is lost.)
@@ -1008,6 +1017,82 @@ fn continuous(plan: &Plan, pick: &Pick, offset: DVec2) -> Result<(), TestCaseErr
         );
     }
     Ok(())
+}
+
+/// How far a point may go on a forced swing's account, as a share of how far the swinging line
+/// went (see [`judged_move`]): a point mirrored through one held on the swing moves up to twice
+/// the swing's reach (#278, seed 1: a line's end mirrored through its midpoint, which hangs on
+/// the swinging line).
+const SWING_MIRROR: f64 = 2.0;
+
+/// How far point `i` moved in `run`, as [`continuous`] judges it: the whole move, or, in a
+/// forced swing whose line went `swing` at most (see [`forced_swing`]), only what it went beyond
+/// [`SWING_MIRROR`] times that: what hangs on the line follows it round, but nothing goes farther
+/// on its account.
+fn judged_move(run: &Run, i: usize, swing: Option<f64>) -> f64 {
+    let moved = run.start[i].distance(run.end[i]);
+    match swing {
+        Some(reach) => (moved - SWING_MIRROR * reach).max(0.0),
+        None => moved,
+    }
+}
+
+/// How far the swinging line went (its ends' largest move), where `run` (the drag of `ids` by
+/// `offset`) is a forced swing (see [`continuous`]): `ids` is one point that starts exactly (to
+/// rounding) on another point, either the other end of a line a relation holds it on
+/// (`OnCurve`) or a fixed point (`Fix`); the drag landed exactly; and afterwards a line the
+/// dragged point ends, or is held on, runs through that other point: the swinging line. (In the
+/// first form that line is the held one, whose end the other point is: the form rests on the
+/// start alone, which is what leaves the line no direction.) Not merely a point on another
+/// point: points often share a place, and the drag of one may still jump; nor a drag that
+/// didn't land.
+fn forced_swing(built: &Built, ids: &[EntityId], run: &Run, offset: DVec2) -> Option<f64> {
+    let [id] = ids else {
+        return None;
+    };
+    let i = built.points.iter().position(|p| p == id)?;
+    let sketch = &built.sketch;
+    let at = sketch.points[i];
+    let on = |j: usize| j != i && sketch.points[j].distance(at) <= 1e-12 * at.length().max(1.0);
+    // The other point: a held line's other end, or a fixed point.
+    let j = sketch.rels.iter().find_map(|r| match *r {
+        Rel::OnCurve(p, c) if p == i => match sketch.curves[c] {
+            Curve::Line(a, b) => [a, b].into_iter().find(|&e| on(e)),
+            Curve::Arc(..) => None,
+        },
+        Rel::Fix(j) if on(j) => Some(j),
+        _ => None,
+    })?;
+    let want = run.start[i] + offset;
+    if !(run.committed && run.applied == offset && close(run.end[i], want, want.length())) {
+        return None;
+    }
+    // The lines the dragged point ends or is held on that run through the other point now, and
+    // the farthest any of their ends went.
+    let through = run.end[j];
+    sketch
+        .curves
+        .iter()
+        .enumerate()
+        .filter_map(|(c, curve)| match *curve {
+            Curve::Line(a, b) if a == i || b == i || sketch.rels.contains(&Rel::OnCurve(i, c)) => {
+                Some((a, b))
+            }
+            _ => None,
+        })
+        .filter(|&(a, b)| {
+            let (pa, pb) = (run.end[a], run.end[b]);
+            let along = pb - pa;
+            along.length() > 0.0
+                && along.perp_dot(through - pa).abs()
+                    <= 1e-9 * along.length() * through.length().max(pa.length()).max(1.0)
+        })
+        .map(|(a, b)| {
+            run.start[a]
+                .distance(run.end[a])
+                .max(run.start[b].distance(run.end[b]))
+        })
+        .reduce(f64::max)
 }
 
 /// Property 6: Moving everything is a pure translation.
@@ -2910,4 +2995,5 @@ fn a_try_with_the_fold_steps_that_fails_leaves_the_frame_as_it_was() {
     assert!(kept > 0 && undone > 0, "{kept} tries kept, {undone} undone");
 }
 
+mod held_shapes;
 mod seeds;

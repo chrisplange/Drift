@@ -1580,6 +1580,12 @@ fn a_fold_solve_that_would_grow_a_radius_is_unfinished_and_changes_nothing() {
         },
     );
     assert!(!report.converged, "{report:?}");
+    // Nothing written, so nothing reported broken or exposed (#342).
+    assert!(report.unwritten, "{report:?}");
+    assert!(
+        report.broken.is_empty() && report.exposed.is_empty(),
+        "{report:?}"
+    );
     let now: Vec<DVec2> = p.iter().map(|&q| doc.point(q).unwrap()).collect();
     assert_eq!(now, found);
 }
@@ -1859,4 +1865,188 @@ fn a_circle_crushed_to_a_point_counts_as_turned() {
         doc.set_radius(circle, 1e-9).unwrap();
         assert_eq!(before.turned_curves(&doc), vec![circle], "about {c}");
     }
+}
+
+/// An arc, its centre fixed, with a radius of 10 and its end held 12 from its centre: the
+/// two relations conflict, and the arc's own row (its end on the circle through its start)
+/// is in the same failed part. The least-squares compromise shares the misfit with it, so
+/// the arc is left broken; the report names the two relations and, since #342, the arc.
+/// The same at any size and place: the same entity broken, by the same share of its size.
+#[test]
+fn a_failed_part_reports_the_geometry_it_leaves_broken() {
+    let mut shares = Vec::new();
+    for (scale, at) in [
+        (1.0, v(0.0, 0.0)),
+        (10.0, v(0.0, 0.0)),
+        (0.1, v(0.0, 0.0)),
+        (1.0, v(1e5, 1e5)),
+    ] {
+        let mut doc = Document::new();
+        let c = doc.add_point(at);
+        let s = doc.add_point(at + v(10.0, 0.0) * scale);
+        let e = doc.add_point(at + v(0.0, 10.0) * scale);
+        let arc = doc.add_arc(c, s, e).unwrap();
+        doc.add_constraint(Constraint::Fix { point: c, at })
+            .unwrap();
+        let radius = doc
+            .add_constraint(Constraint::Radius {
+                curve: arc,
+                value: 10.0 * scale,
+            })
+            .unwrap();
+        let distance = doc
+            .add_constraint(Constraint::Distance {
+                a: c,
+                b: e,
+                value: 12.0 * scale,
+            })
+            .unwrap();
+        let report = solve(&mut doc, &SolveOptions::default());
+        assert!(!report.converged, "{report:?}");
+        assert_eq!(report.conflicts, vec![radius, distance]);
+        assert!(!report.unsourced_failure && !report.unwritten);
+        assert_eq!(report.exposed, vec![arc], "{scale}× at {at}");
+        assert_eq!(report.broken, vec![arc], "{scale}× at {at}");
+        let length = |q: EntityId| (doc.point(q).unwrap() - doc.point(c).unwrap()).length();
+        shares.push((length(e) - length(s)) / (10.0 * scale));
+        // The analysis of what was written says the same.
+        let analysis = analyze(&doc);
+        assert_eq!(analysis.exposed, vec![arc]);
+        assert_eq!(analysis.broken, vec![arc]);
+    }
+    for share in &shares {
+        assert!(
+            (share - shares[0]).abs() <= 1e-9 && shares[0] > 0.05,
+            "the arc's end off its circle by {shares:?} of its radius"
+        );
+    }
+}
+
+/// Judged row by row: an arc in a failed part whose own row is met is exposed, not broken;
+/// an arc in a part that converged is neither. And a failure no relation owns
+/// (#281) names the arc as broken.
+#[test]
+fn only_the_rows_left_off_are_broken() {
+    let mut doc = Document::new();
+    // A point held 10 from two fixed points 30 apart: a conflict. An arc centred on it, its
+    // own ends free: in the same failed part, its row met.
+    let a = doc.add_point(v(0.0, 0.0));
+    let f = doc.add_point(v(30.0, 0.0));
+    let b = doc.add_point(v(12.0, 0.0));
+    for c in [
+        Constraint::Fix {
+            point: a,
+            at: v(0.0, 0.0),
+        },
+        Constraint::Fix {
+            point: f,
+            at: v(30.0, 0.0),
+        },
+        Constraint::Distance { a, b, value: 10.0 },
+        Constraint::Distance {
+            a: b,
+            b: f,
+            value: 10.0,
+        },
+        // (On the line through them: the compromise is reached, not crawled towards.)
+        Constraint::FixY { point: b, y: 0.0 },
+    ] {
+        doc.add_constraint(c).unwrap();
+    }
+    let (s, e) = (doc.add_point(v(17.0, 0.0)), doc.add_point(v(12.0, 5.0)));
+    let joined = doc.add_arc(b, s, e).unwrap();
+    // An arc in a part of its own, with a dimension it can meet.
+    let c = doc.add_point(v(50.0, 0.0));
+    let (s2, e2) = (doc.add_point(v(55.0, 0.0)), doc.add_point(v(50.0, 5.0)));
+    let apart = doc.add_arc(c, s2, e2).unwrap();
+    doc.add_constraint(Constraint::Radius {
+        curve: apart,
+        value: 5.0,
+    })
+    .unwrap();
+    // Analysed as it stands, the arc's row is met: exposed, not broken.
+    let analysis = analyze(&doc);
+    assert!(!analysis.converged, "{analysis:?}");
+    assert_eq!(analysis.exposed, vec![joined]);
+    assert!(analysis.broken.is_empty(), "{analysis:?}");
+    // Solved, it is still exposed, the other arc neither. (How far the arc is left off is
+    // where the compromise's crawl stopped: not asserted.)
+    let report = solve(&mut doc, &SolveOptions::default());
+    assert!(
+        !report.converged && !report.conflicts.is_empty(),
+        "{report:?}"
+    );
+    assert_eq!(report.exposed, vec![joined]);
+    assert!(!report.broken.contains(&apart));
+
+    // An arc's end held off its circle by fixes: only its own row fails.
+    let mut doc = Document::new();
+    let c = doc.add_point(v(0.0, 0.0));
+    let s = doc.add_point(v(10.0, 0.0));
+    let e = doc.add_point(v(0.0, 10.0));
+    let arc = doc.add_arc(c, s, e).unwrap();
+    doc.set_point(e, v(0.0, 12.0)).unwrap();
+    for (point, at) in [(c, v(0.0, 0.0)), (s, v(10.0, 0.0)), (e, v(0.0, 12.0))] {
+        doc.add_constraint(Constraint::Fix { point, at }).unwrap();
+    }
+    let report = solve(&mut doc, &SolveOptions::default());
+    assert!(report.unsourced_failure && report.conflicts.is_empty());
+    assert_eq!(report.broken, vec![arc]);
+    assert_eq!(report.exposed, vec![arc]);
+}
+
+/// The other rows no relation owns have owners too: a line's hidden midpoint (a distance
+/// measured to it that its fixed ends can't give) and an ellipse's axes (held askew).
+#[test]
+fn midpoints_and_ellipses_are_reported_broken_by_their_own_entity() {
+    let mut doc = Document::new();
+    let (a, b) = (doc.add_point(v(0.0, 0.0)), doc.add_point(v(20.0, 0.0)));
+    let line = doc.add_line(a, b).unwrap();
+    let p = doc.add_point(v(10.0, 10.0));
+    for (point, at) in [(a, v(0.0, 0.0)), (b, v(20.0, 0.0)), (p, v(10.0, 10.0))] {
+        doc.add_constraint(Constraint::Fix { point, at }).unwrap();
+    }
+    // The midpoint is 10 from the fixed point, the dimension asks 5.
+    doc.add_constraint(Constraint::Distance {
+        a: line,
+        b: p,
+        value: 5.0,
+    })
+    .unwrap();
+    let report = solve(&mut doc, &SolveOptions::default());
+    assert!(!report.converged, "{report:?}");
+    assert_eq!(report.broken, vec![line], "{report:?}");
+
+    let mut doc = Document::new();
+    let (c, m, n) = (
+        doc.add_point(v(0.0, 0.0)),
+        doc.add_point(v(10.0, 0.0)),
+        doc.add_point(v(0.0, 5.0)),
+    );
+    let ellipse = doc.add_ellipse(c, m, n).unwrap();
+    doc.set_point(n, v(2.0, 5.0)).unwrap();
+    for (point, at) in [(c, v(0.0, 0.0)), (m, v(10.0, 0.0)), (n, v(2.0, 5.0))] {
+        doc.add_constraint(Constraint::Fix { point, at }).unwrap();
+    }
+    let report = solve(&mut doc, &SolveOptions::default());
+    assert!(!report.converged, "{report:?}");
+    assert_eq!(report.broken, vec![ellipse], "{report:?}");
+    assert_eq!(analyze(&doc).broken, vec![ellipse]);
+}
+
+/// A value that isn't a number is never written, and `write_back` says so, which is what
+/// makes a solve report nothing written (`unwritten`) and nothing broken (#342; #215).
+#[test]
+fn a_value_that_isnt_a_number_is_not_written() {
+    let mut doc = Document::new();
+    let c = doc.add_point(v(0.0, 0.0));
+    let s = doc.add_point(v(10.0, 0.0));
+    let e = doc.add_point(v(0.0, 10.0));
+    doc.add_arc(c, s, e).unwrap();
+    let mut sys = System::build(&doc, &[], &Tolerances::default(), None);
+    let k = sys.param_index[&Param::X(s)];
+    let g = sys.group_of[k];
+    sys.groups[g].value = f64::NAN;
+    assert!(!write_back(&mut doc, &sys));
+    assert_eq!(doc.point(s).unwrap(), v(10.0, 0.0));
 }

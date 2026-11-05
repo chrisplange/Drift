@@ -634,7 +634,7 @@ fn auto_relation_onto_point(ed: &mut Editor, relation: Option<GuideKind>, line: 
     };
     // Solved on a copy: a side drawn a hair off level only meets its relation once solved.
     let mut solved = ed.doc.clone();
-    let report = drift_solver::solve(
+    let report = ed.solve_settled_on(
         &mut solved,
         &drift_solver::SolveOptions {
             analyze: true,

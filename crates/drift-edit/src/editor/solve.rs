@@ -3,6 +3,20 @@
 
 use super::*;
 
+/// `options` as a commit's solve takes them: what is held (dragged), where (scope), how
+/// walls' relations are read (lowering) and whether to analyse, without the preferences
+/// (carried, focus, kept directions, lengths and radii).
+fn plain(options: &SolveOptions) -> SolveOptions {
+    SolveOptions {
+        dragged: options.dragged.clone(),
+        analyze: options.analyze,
+        tolerances: options.tolerances,
+        scope: options.scope.clone(),
+        lowering: options.lowering.clone(),
+        ..Default::default()
+    }
+}
+
 impl Editor {
     /// The entities a drag of `ids` can move (cached while the structure is unchanged).
     pub(crate) fn drag_scope(
@@ -54,28 +68,64 @@ impl Editor {
         dragged: &[Param],
         scope: std::rc::Rc<std::collections::HashSet<EntityId>>,
     ) -> SolveReport {
-        let lowering = self.lowering();
-        drift_solver::solve(
-            &mut self.doc,
-            &SolveOptions {
-                dragged: dragged.to_vec(),
-                scope: Some(scope),
-                lowering,
-                ..Default::default()
-            },
-        )
+        let options = SolveOptions {
+            dragged: dragged.to_vec(),
+            scope: Some(scope),
+            lowering: self.lowering(),
+            ..Default::default()
+        };
+        self.solve_settled(&options)
     }
 
     pub(crate) fn solve(&mut self, dragged: &[Param]) -> SolveReport {
-        let lowering = self.lowering();
-        drift_solver::solve(
-            &mut self.doc,
-            &SolveOptions {
-                dragged: dragged.to_vec(),
-                lowering,
-                ..Default::default()
-            },
-        )
+        let options = SolveOptions {
+            dragged: dragged.to_vec(),
+            lowering: self.lowering(),
+            ..Default::default()
+        };
+        self.solve_settled(&options)
+    }
+
+    /// Solve with `options`, and if that would be refused only for geometry it newly exposed
+    /// ([`stalled`](Self::stalled)), once more from where it stopped as a commit solves (the
+    /// same parameters held, scope and lowering, without `options`' preferences: a relation's
+    /// solve keeps the rest's directions and sizes, which can hold it short of meeting every
+    /// row). The report of the second solve is the one returned. For every solve an edit is
+    /// judged by ([`new_conflicts`](Self::new_conflicts)), never a drag's.
+    pub(crate) fn solve_settled(&mut self, options: &SolveOptions) -> SolveReport {
+        let report = drift_solver::solve(&mut self.doc, options);
+        if self.stalled(&report) {
+            drift_solver::solve(&mut self.doc, &plain(options))
+        } else {
+            report
+        }
+    }
+
+    /// [`solve_settled`](Self::solve_settled) on `doc`, a copy of the drawing being tried.
+    pub(crate) fn solve_settled_on(
+        &self,
+        doc: &mut Document,
+        options: &SolveOptions,
+    ) -> SolveReport {
+        let report = drift_solver::solve(doc, options);
+        if self.stalled(&report) {
+            drift_solver::solve(doc, &plain(options))
+        } else {
+            report
+        }
+    }
+
+    /// Whether `report` would be refused only because it put geometry no failing part held
+    /// before into one (see [`new_conflicts`](Self::new_conflicts)): it failed, wrote its
+    /// result, and names no new conflict. Most such solves only ran out of iterations short
+    /// of meeting everything (#342's census: one more solve from where they stopped meets
+    /// every row), as a commit's own solve after an edit's used to finish them; a solve whose
+    /// part really fails fails again.
+    pub(crate) fn stalled(&self, report: &SolveReport) -> bool {
+        !report.converged
+            && !report.unwritten
+            && !self.new_conflict_named(report)
+            && self.newly_failing(report)
     }
 
     /// Relations on walls' faces lowered onto their centrelines, for the solver (None when
@@ -105,28 +155,53 @@ impl Editor {
     }
 
     /// True if `report` has conflicts that weren't there before this edit (a document that was
-    /// already conflicting shouldn't make every later edit fail).
+    /// already conflicting shouldn't make every later edit fail), or left geometry broken that
+    /// wasn't in a failing part before it (an arc's end off its circle, a line's midpoint off
+    /// it: rows no relation owns, #342), or wrote nothing (a value that isn't a number).
+    ///
+    /// Geometry in a part the drawing's analysis already finds failing isn't blamed on the
+    /// edit, even if the edit breaks it further ([`SolveReport::exposed`]): a solve of such a
+    /// part shares its misfit with it whatever the edit did.
     pub(crate) fn new_conflicts(&self, report: &SolveReport) -> bool {
         !report.converged
-            && report
-                .conflicts
-                .iter()
-                .any(|c| !self.analysis().conflicts.contains(c))
+            && (report.unwritten || self.new_conflict_named(report) || self.newly_failing(report))
+    }
+
+    /// Whether `report` names a conflict the drawing didn't have before this edit.
+    fn new_conflict_named(&self, report: &SolveReport) -> bool {
+        report
+            .conflicts
+            .iter()
+            .any(|c| !self.analysis().conflicts.contains(c))
+    }
+
+    /// Whether `report` puts geometry with rows no relation owns (an arc, a midpoint line, an
+    /// ellipse, a wall end) into a failed part that no failing part held before this edit
+    /// ([`SolveReport::exposed`], against the drawing's analysis). No residual is compared:
+    /// in a failed part the solver stops at its iteration cap, not at the compromise, so how
+    /// far such a row is left off is where it stopped, anywhere from round-off to thousands
+    /// of times its tolerance (#342).
+    fn newly_failing(&self, report: &SolveReport) -> bool {
+        let before = &self.analysis().exposed;
+        report
+            .exposed
+            .iter()
+            .any(|e| before.binary_search(e).is_err())
     }
 
     /// True if `report`'s solve didn't finish: it didn't converge, and not only on conflicts
     /// the document already had (which shouldn't stop every later drag, as for
     /// [`new_conflicts`](Self::new_conflicts)). A solve that fails naming nothing, or on rows
     /// no relation owns (an arc's end off its circle), counts too: it left geometry broken
-    /// (#281).
+    /// (#281); so does one that newly breaks such geometry in a part that already conflicted,
+    /// or wrote nothing (#342).
     pub(crate) fn unfinished(&self, report: &SolveReport) -> bool {
         !report.converged
             && (report.unsourced_failure
+                || report.unwritten
                 || report.conflicts.is_empty()
-                || report
-                    .conflicts
-                    .iter()
-                    .any(|c| !self.analysis().conflicts.contains(c)))
+                || self.new_conflict_named(report)
+                || self.newly_failing(report))
     }
 
     /// Solve the constraints, then finish the open transaction and record it for undo. If the

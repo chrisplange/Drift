@@ -239,13 +239,15 @@ fn i_hanging_end_depends_on_size() {
     explained(r).unwrap();
 }
 
-/// C: two tangencies on one arc, a fixed point: a drag of 0.06 moves a point 11.9.
-/// (`small_drag_is_continuous_heavy`, seed 20.)
+/// C (fixed, #278): two tangencies on one arc, a fixed point: a drag of 0.06 moved a point 11.9.
+/// The drag can't land (the arc tangent at both ends is held one way too many), and the solve
+/// took up the misfit by sliding a free point along its line towards the pivot, crushing the
+/// line from 15 to 3.1. The drag now stops, keeping the line. (`small_drag_is_continuous_heavy`,
+/// seed 20.)
 ///
 /// (Seed 20's run passes since #280's A1: the case it first failed on was an arc closed on
 /// itself by round-off. This pin is its own minimal case, a wandering first solve: drag-277.)
 #[test]
-#[ignore = "#278: a small drag through tangent arcs jumps"]
 fn c_small_drag_jumps_through_tangencies() {
     let plan = Plan {
         ops: vec![
@@ -1702,4 +1704,205 @@ fn a_move_past_a_crushed_arc_goes() {
         "refused {} of 1",
         run.refused
     );
+}
+
+/// J (fixed, #278): a drag that can't land took up the misfit by sliding an arc's centre out
+/// along its radius: the radius went from 8 to 52.6 for a drag of 0.078. The drag now stops,
+/// keeping the radius. (`small_drag_is_continuous_heavy`, seed 16.)
+#[test]
+fn j_a_drag_that_cant_land_keeps_a_radius_it_doesnt_move() {
+    let (plan, pick, offset) = super::held_shapes::seed_16();
+    explained(continuous(&plan, &pick, offset)).unwrap();
+}
+
+/// Seed 1's shrunk case (`small_drag_is_continuous_heavy`, #278): the dragged point starts on
+/// the fixed end of the line it is held on, so the line has no direction until the drag gives
+/// it one, and swings round to follow (point 0, on an arc about the line's other end, goes
+/// 3.3 for a drag of 0.015). Forced geometry, not a jump: the drag lands exactly and the line
+/// runs through the fixed end, and the property passes it on that account.
+fn seed_1() -> (Plan, Pick, DVec2) {
+    let mut extras = vec![false; 48];
+    extras[2] = true;
+    (
+        Plan {
+            ops: vec![
+                Op::Step {
+                    from: 0,
+                    angle: 2,
+                    len: 3,
+                },
+                Op::Arc {
+                    from: 0,
+                    angle: 17,
+                    radius: 0,
+                    sweep: 1,
+                    ccw: true,
+                },
+                Op::Step {
+                    from: 62,
+                    angle: 7,
+                    len: 2,
+                },
+                Op::Arc {
+                    from: 2,
+                    angle: 7,
+                    radius: 2,
+                    sweep: 1,
+                    ccw: false,
+                },
+            ],
+            extras,
+            fix: Some(53),
+            length: None,
+        },
+        Pick::Point(12),
+        DVec2::new(0.0, -0.015479710606090684),
+    )
+}
+
+#[test]
+fn k_a_point_on_its_lines_fixed_end_swings_the_line_round() {
+    let (plan, pick, offset) = seed_1();
+    explained(continuous(&plan, &pick, offset)).unwrap();
+    // The swing itself: landed, and the line through the fixed end and the dragged point.
+    let sketch = plan.sketch().unwrap();
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let ids = pick.ids(&built);
+    let run = drag(&mut built, &ids, offset, 1).unwrap();
+    assert!(forced_swing(&built, &ids, &run, offset).is_some());
+}
+
+/// L: seed 1's third shrunk case (`small_drag_is_continuous_heavy`, #278): the dragged point,
+/// the far end of a line square to a tangent of an arc, starts on the arc's fixed centre. The
+/// line must run along the radius, so through the centre, and its direction is free until the
+/// drag gives it one: the arc's end swings round (a point moves 24.4 for a drag of 0.18). The
+/// drag lands exactly, and the line runs through the fixed centre after it: forced geometry, as
+/// in K.
+fn seed_1_third() -> (Plan, Pick, DVec2) {
+    let mut extras = vec![false; 48];
+    extras[2] = true;
+    extras[4] = true;
+    (
+        Plan {
+            ops: vec![
+                Op::Step {
+                    from: 0,
+                    angle: 7,
+                    len: 1,
+                },
+                Op::Mid {
+                    line: 0,
+                    angle: 13,
+                    len: 0,
+                },
+                Op::Step {
+                    from: 62,
+                    angle: 7,
+                    len: 2,
+                },
+                Op::Arc {
+                    from: 2,
+                    angle: 7,
+                    radius: 2,
+                    sweep: 1,
+                    ccw: false,
+                },
+                Op::Step {
+                    from: 0,
+                    angle: 8,
+                    len: 0,
+                },
+            ],
+            extras,
+            fix: Some(53),
+            length: None,
+        },
+        Pick::Point(12),
+        DVec2::new(-0.17943552999752596, 0.0),
+    )
+}
+
+#[test]
+fn l_a_point_on_a_fixed_centre_swings_its_radius_round() {
+    let (plan, pick, offset) = seed_1_third();
+    explained(continuous(&plan, &pick, offset)).unwrap();
+    let sketch = plan.sketch().unwrap();
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let ids = pick.ids(&built);
+    let run = drag(&mut built, &ids, offset, 1).unwrap();
+    assert!(forced_swing(&built, &ids, &run, offset).is_some());
+}
+
+/// The property passes a jump on that account only where the swing is the mechanism: a dragged
+/// point on a fixed point that no line of its runs through is still judged (seed 1's sketch
+/// without the relation that holds the point on its line: it shares a fixed point's place, held
+/// by nothing that joins them), and so is a swing start whose drag didn't land.
+#[test]
+fn k_a_point_merely_on_another_is_still_judged() {
+    let (mut plan, pick, offset) = seed_1();
+    plan.extras[2] = false;
+    let sketch = plan.sketch().unwrap();
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let ids = pick.ids(&built);
+    let i = built.points.iter().position(|p| *p == ids[0]).unwrap();
+    assert!(
+        (0..sketch.points.len()).any(|j| j != i && sketch.points[j] == sketch.points[i]),
+        "the dragged point still shares its place"
+    );
+    let run = drag(&mut built, &ids, offset, 1).unwrap();
+    assert!(forced_swing(&built, &ids, &run, offset).is_none());
+    // Seed 1's own swing, as if it hadn't landed: judged.
+    let (plan, pick, offset) = seed_1();
+    let sketch = plan.sketch().unwrap();
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let ids = pick.ids(&built);
+    let mut run = drag(&mut built, &ids, offset, 1).unwrap();
+    run.applied = offset / 2.0;
+    assert!(forced_swing(&built, &ids, &run, offset).is_none());
+}
+
+/// In a forced swing a point is excused only as far as what hangs on the swinging line goes
+/// (`SWING_MIRROR` times the line's reach): every point of seed 1's real swing passes, judged
+/// with the property's own rounding allowance; a point pushed out to 2.5 times the reach fails,
+/// and so does a jump of a point far from the swing.
+#[test]
+fn k_a_point_that_jumps_beyond_the_swing_is_still_judged() {
+    let (plan, pick, offset) = seed_1();
+    let sketch = plan.sketch().unwrap();
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let ids = pick.ids(&built);
+    let run = drag(&mut built, &ids, offset, 1).unwrap();
+    let reach = forced_swing(&built, &ids, &run, offset).expect("seed 1 swings");
+    let allowed =
+        |run: &Run, k: usize| 100.0 * offset.length() + LANDS * run.start[k].length().max(1.0);
+    for k in 0..run.end.len() {
+        assert!(
+            judged_move(&run, k, Some(reach)) <= allowed(&run, k),
+            "point {k}"
+        );
+    }
+    // Out to 2.5 times the reach, along the way it went.
+    let mut pushed = run.clone();
+    let k = (0..run.end.len())
+        .max_by(|&a, &b| {
+            run.start[a]
+                .distance(run.end[a])
+                .total_cmp(&run.start[b].distance(run.end[b]))
+        })
+        .unwrap();
+    let way = (run.end[k] - run.start[k]).normalize();
+    pushed.end[k] = run.start[k] + way * (2.5 * reach);
+    assert!(judged_move(&pushed, k, Some(reach)) > allowed(&pushed, k));
+    // A point far from the swing jumping: the farthest from the dragged point, moved 50.
+    let i = built.points.iter().position(|p| *p == ids[0]).unwrap();
+    let far = (0..run.end.len())
+        .max_by(|&a, &b| {
+            run.start[a]
+                .distance(run.start[i])
+                .total_cmp(&run.start[b].distance(run.start[i]))
+        })
+        .unwrap();
+    let mut jumped = run.clone();
+    jumped.end[far] += DVec2::new(0.0, 50.0);
+    assert!(judged_move(&jumped, far, Some(reach)) > allowed(&jumped, far));
 }

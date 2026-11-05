@@ -19,9 +19,13 @@ use crate::stack::Stack;
 type Order = (u8, usize, usize);
 
 /// What the lists were made for.
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 struct Key {
     revision: u64,
+    structure: u64,
+    lineage: u64,
+    /// Where each copy of a block was (copies moving don't change the structure).
+    copies: Vec<(InstanceId, drift_core::Instance)>,
     analyzed: Option<u64>,
     status_colors: bool,
     dark: bool,
@@ -53,6 +57,11 @@ pub struct ItemsCache {
     patched: Vec<((usize, usize), SketchItem)>,
     /// The lists' lengths before this frame added to them.
     lengths: Vec<usize>,
+    /// How many times the items of what moved were made again in place (tests).
+    remade: usize,
+    /// The stack the lists are grouped by, as it was when they were made (a stack is made
+    /// again with each revision, most often the same).
+    stack: Option<Stack>,
 }
 
 /// A slot whose entity doesn't show (at rest, or this frame): an item that draws nothing.
@@ -74,31 +83,93 @@ impl ItemsCache {
         dark: bool,
         stack: Option<&Stack>,
     ) -> Vec<SketchItem> {
-        let rest = ed.item_look(status_colors, dark, true);
-        let key = Key {
-            revision: ed.doc.revision(),
-            analyzed: ed.analyzed(),
-            status_colors,
-            dark,
-            stack: stack.map(|s| std::ptr::from_ref(s) as usize),
-            groups: stack.map_or(0, |s| s.groups.len()),
-            selection: ed.selection.clone(),
-            active: ed.active(),
-            selected_instances: ed.selected_instances.clone(),
-            hidden: rest.hidden().clone(),
-            always_endpoints: ed.prefs.always_endpoints,
-            editing: ed.block_edit.map(|e| e.instance),
+        // What the lists are made from, compared where it is (cloned only when the lists are
+        // made again): with tens of thousands of curves picked, copying the picks every
+        // frame cost more than the rest of this.
+        let mut hidden = ed.hidden_handles();
+        hidden.extend(ed.preview_hidden.iter().copied());
+        #[cfg(debug_assertions)]
+        assert_eq!(
+            &hidden,
+            ed.item_look(status_colors, dark, true).hidden(),
+            "the lists' hidden set is the look's"
+        );
+        let stack_at = stack.map(|s| std::ptr::from_ref(s) as usize);
+        let groups = stack.map_or(0, |s| s.groups.len());
+        let editing = ed.block_edit.map(|e| e.instance);
+        // All but the revision and the stack as the lists were made for.
+        let same_but_revision = |k: &Key| {
+            k.analyzed == ed.analyzed()
+                && k.status_colors == status_colors
+                && k.dark == dark
+                && k.groups == groups
+                && k.active == ed.active()
+                && k.always_endpoints == ed.prefs.always_endpoints
+                && k.editing == editing
+                && k.selection == ed.selection
+                && k.selected_instances == ed.selected_instances
+                && k.hidden == hidden
         };
-        if self.key.as_ref() != Some(&key) {
-            self.build(ed, &rest, stack);
-            self.key = Some(key);
+        // (At the same revision the editor hands out the same stack: the one at that
+        // address.)
+        let current = self.key.as_ref().is_some_and(|k| {
+            k.revision == ed.doc.revision() && k.stack == stack_at && same_but_revision(k)
+        });
+        if !current {
+            let rest = ed.item_look(status_colors, dark, true);
+            // Only geometry moved since (a drag): only the items of what moved are made
+            // again, in their places.
+            let moved = self
+                .key
+                .as_ref()
+                .filter(|k| {
+                    k.structure == ed.doc.structure()
+                        && k.lineage == ed.doc.lineage()
+                        && same_but_revision(k)
+                        // A stack made again for this revision that groups as the lists'
+                        // did, judged by what it holds: a new one can come at the old one's
+                        // address.
+                        && stack == self.stack.as_ref()
+                        && ed
+                            .doc
+                            .instances()
+                            .map(|(c, i)| (c, *i))
+                            .eq(k.copies.iter().copied())
+                })
+                .and_then(|k| ed.doc.changes_since(k.lineage, k.revision))
+                .filter(|ch| !ch.layers && ch.entities.len() <= ed.doc.len() / 8);
+            let remade = moved.is_some_and(|ch| self.remake(ed, &rest, stack, &ch.entities));
+            self.remade += usize::from(remade);
+            if !remade {
+                self.build(ed, &rest, stack);
+                self.stack = stack.cloned();
+            }
+            self.key = Some(Key {
+                revision: ed.doc.revision(),
+                structure: ed.doc.structure(),
+                lineage: ed.doc.lineage(),
+                copies: ed.doc.instances().map(|(c, i)| (c, *i)).collect(),
+                analyzed: ed.analyzed(),
+                status_colors,
+                dark,
+                stack: stack_at,
+                groups,
+                selection: ed.selection.clone(),
+                active: ed.active(),
+                selected_instances: ed.selected_instances.clone(),
+                hidden,
+                always_endpoints: ed.prefs.always_endpoints,
+                editing,
+            });
         }
         self.lengths = self.lists.iter().map(Vec::len).collect();
 
         // What hovering changes: hovered, highlighted and snapped-to entities, a chain
         // being previewed, a hovered wall's parts, and all their points (which show
         // when their curve is lit up).
-        let now = ed.item_look(status_colors, dark, false);
+        // (The look with hovering, made only when something is hovered or lit: it copies the
+        // picks.)
+        let mut now = None;
         let mut lit_now: Vec<(Order, SketchItem)> = Vec::new();
         let mut moving: BTreeSet<EntityId> = BTreeSet::new();
         moving.extend(ed.hovered);
@@ -131,7 +202,8 @@ impl ItemsCache {
             let Some(entity) = ed.doc.get(id) else {
                 continue;
             };
-            let item = ed.entity_item(&now, id, entity, &mut None);
+            let look = now.get_or_insert_with(|| ed.item_look(status_colors, dark, false));
+            let item = ed.entity_item(look, id, entity, &mut None);
             let in_list = match item {
                 Some(TaggedItem { item, .. }) if item.emphasis == Emphasis::Normal => item,
                 _ => blank(),
@@ -151,7 +223,8 @@ impl ItemsCache {
             && !ed.selected_instances.contains(&copy)
             && let Some((places, order)) = self.copy_slots.get(&copy)
         {
-            for (k, t) in ed.instance_tagged(&now, copy).into_iter().enumerate() {
+            let look = now.get_or_insert_with(|| ed.item_look(status_colors, dark, false));
+            for (k, t) in ed.instance_tagged(look, copy).into_iter().enumerate() {
                 lit_now.push(((1, *order, k), t.item));
             }
             for &(list, index) in places {
@@ -199,6 +272,65 @@ impl ItemsCache {
         for (list, len) in self.lists.iter_mut().zip(&self.lengths) {
             list.truncate(*len);
         }
+    }
+
+    /// Make again, in their places, the items of `changed` and of the curves on changed
+    /// points: what a [`build`](Self::build) would give when only geometry changed since
+    /// the lists were made. False (the lists then half made) if something would go
+    /// elsewhere: an item that shows or hides, lights up or goes out, or changes list.
+    fn remake(
+        &mut self,
+        ed: &Editor,
+        rest: &crate::editor::ItemLook,
+        stack: Option<&Stack>,
+        changed: &[EntityId],
+    ) -> bool {
+        let groups = stack.map_or(0, |s| s.groups.len());
+        let mut ids: BTreeSet<EntityId> = changed.iter().copied().collect();
+        for &id in changed {
+            ids.extend(ed.index.users_of(id));
+        }
+        let mut layer_of = None;
+        for id in ids {
+            let entity = ed.doc.get(id);
+            let item = entity.and_then(|e| ed.entity_item_any_ends(rest, id, e, &mut layer_of));
+            let Ok(at) = self.slots.binary_search_by_key(&id, |(e, _)| *e) else {
+                if item.is_some() {
+                    return false;
+                }
+                continue;
+            };
+            let (Some(entity), Some(t)) = (entity, item) else {
+                return false;
+            };
+            let (list, index, order) = self.slots[at].1;
+            let list_now = stack
+                .and_then(|s| s.group_of(t.entity, t.layer))
+                .filter(|k| *k < groups)
+                .unwrap_or(groups);
+            let lit = self.lit.binary_search_by_key(&(0, order, 0), |(o, _)| *o);
+            if list_now != list {
+                return false;
+            }
+            if ed.end_hidden(rest, id, entity) {
+                if lit.is_ok() {
+                    return false;
+                }
+                self.lists[list][index] = blank();
+            } else if t.item.emphasis == Emphasis::Normal {
+                if lit.is_ok() {
+                    return false;
+                }
+                self.lists[list][index] = t.item;
+            } else {
+                let Ok(k) = lit else {
+                    return false;
+                };
+                self.lists[list][index] = blank();
+                self.lit[k].1 = t.item;
+            }
+        }
+        true
     }
 
     fn build(&mut self, ed: &Editor, rest: &crate::editor::ItemLook, stack: Option<&Stack>) {
@@ -383,6 +515,248 @@ mod tests {
         ed.doc.commit("Move");
         ed.sync();
         check(&mut ed, &mut cache, "after an edit");
+    }
+
+    #[test]
+    fn items_made_again_where_things_moved_draw_as_a_full_rebuild_does() {
+        // Random steps on the torture sketch with a hidden and a locked layer: points moved
+        // inside a move (some, or many), picks changed mid-move, hovering, a move ended or
+        // undone, a layer shown or hidden. After each, the kept lists draw as a full rebuild.
+        let (doc, _) = crate::test_sketches::torture_sketch();
+        let mut ed = Editor::new(doc);
+        ed.sync();
+        let curves: Vec<EntityId> = ed
+            .doc
+            .iter()
+            .filter(|(_, e)| !e.kind.is_point())
+            .map(|(id, _)| id)
+            .collect();
+        let points: Vec<EntityId> = ed
+            .doc
+            .iter()
+            .filter(|(_, e)| e.kind.is_point())
+            .map(|(id, _)| id)
+            .collect();
+        let hidden = ed.doc.add_layer(drift_core::Layer::new("Hidden"));
+        let locked = ed.doc.add_layer(drift_core::Layer::new("Locked"));
+        ed.doc.begin();
+        for (k, &c) in curves.iter().enumerate() {
+            match k % 7 {
+                1 => ed.doc.set_entity_layer(c, hidden).unwrap(),
+                2 => ed.doc.set_entity_layer(c, locked).unwrap(),
+                _ => {}
+            }
+        }
+        for (id, visible, locked_now) in [(hidden, false, false), (locked, true, true)] {
+            let mut layer = ed.doc.layer(id).unwrap().clone();
+            layer.visible = visible;
+            layer.locked = locked_now;
+            ed.doc.set_layer(id, layer);
+        }
+        ed.doc.commit("Layers");
+        ed.sync();
+        let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut rnd = move |n: usize| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n as u64) as usize
+        };
+        let mut cache = ItemsCache::default();
+        for step in 0..250 {
+            let what = match rnd(20) {
+                0..=9 => "points moved",
+                10 | 11 => "picks changed",
+                12 | 13 => "hovered",
+                14 => "move ended",
+                15 => "move undone",
+                16 => "a layer shown or hidden",
+                _ => "many points moved",
+            };
+            match what {
+                "points moved" | "many points moved" => {
+                    if !ed.doc.in_transaction() {
+                        ed.doc.begin();
+                    }
+                    let n = if what == "points moved" {
+                        1 + rnd(15)
+                    } else {
+                        points.len() / 12
+                    };
+                    let d = DVec2::new(rnd(9) as f64 - 4.0, rnd(9) as f64 - 4.0) * 0.5;
+                    let mut moved = Vec::new();
+                    for _ in 0..n {
+                        let p = points[rnd(points.len())];
+                        if let Ok(at) = ed.doc.point(p) {
+                            ed.doc.set_point(p, at + d).unwrap();
+                            moved.push(p);
+                        }
+                    }
+                    // (As a drag tells the index: the curves on the points too.)
+                    ed.index.update_moved_with_curves(&ed.doc, moved);
+                }
+                "picks changed" => {
+                    let (nc, np) = (rnd(60), rnd(4));
+                    let mut picks = BTreeSet::new();
+                    for _ in 0..nc {
+                        picks.insert(curves[rnd(curves.len())]);
+                    }
+                    for _ in 0..np {
+                        picks.insert(points[rnd(points.len())]);
+                    }
+                    ed.selection = picks;
+                }
+                "hovered" => {
+                    ed.hovered = (rnd(3) > 0).then(|| curves[rnd(curves.len())]);
+                }
+                "move ended" => {
+                    if ed.doc.in_transaction() {
+                        ed.doc.commit("Move");
+                        ed.sync();
+                    }
+                }
+                "move undone" => {
+                    if ed.doc.in_transaction() {
+                        ed.doc.rollback();
+                        ed.sync();
+                    }
+                }
+                _ => {
+                    if ed.doc.in_transaction() {
+                        ed.doc.commit("Move");
+                    }
+                    let mut layer = ed.doc.layer(hidden).unwrap().clone();
+                    layer.visible = !layer.visible;
+                    ed.doc.begin();
+                    ed.doc.set_layer(hidden, layer);
+                    ed.doc.commit("Layer");
+                    ed.sync();
+                }
+            }
+            // (Stacked in every other run of 25 steps: a stack made again each revision.)
+            let stack = ((step / 25) % 2 == 1).then(|| ed.stack());
+            assert!(
+                kept(&mut cache, &ed, stack.as_deref()) == as_before(&ed, stack.as_deref()),
+                "step {step}: {what}"
+            );
+        }
+        assert!(
+            cache.remade > 30,
+            "made again in place {} times",
+            cache.remade
+        );
+    }
+
+    #[test]
+    fn items_regrouped_by_a_stack_made_again_draw_as_a_full_rebuild_does() {
+        // Inside a move only a point moves, but the stack made again for it draws another
+        // curve in another group (a fill's outline found otherwise): the lists follow it.
+        // Three squares, two of them filled: a group for each fill and the layer's top.
+        let mut doc = drift_core::Document::new();
+        for k in 0..3 {
+            let x = k as f64 * 30.0;
+            let p = [(0.0, 0.0), (20.0, 0.0), (20.0, 20.0), (0.0, 20.0)]
+                .map(|(a, b)| doc.add_point(DVec2::new(x + a, b)));
+            for i in 0..4 {
+                doc.add_line(p[i], p[(i + 1) % 4]).unwrap();
+            }
+        }
+        let mut ed = Editor::new(doc);
+        ed.sync();
+        ed.add_fill_at(DVec2::new(5.0, 5.0)).unwrap();
+        ed.add_fill_at(DVec2::new(35.0, 5.0)).unwrap();
+        ed.settle_areas();
+        ed.sync();
+        let mut cache = ItemsCache::default();
+        let stack = ed.stack();
+        assert!(kept(&mut cache, &ed, Some(&stack)) == as_before(&ed, Some(&stack)));
+        let (curve, p) = ed
+            .doc
+            .iter()
+            .find_map(|(id, e)| match e.kind {
+                drift_core::EntityKind::Line { a, .. } => Some((id, a)),
+                _ => None,
+            })
+            .unwrap();
+        ed.doc.begin();
+        let at = ed.doc.point(p).unwrap();
+        ed.doc.set_point(p, at + DVec2::new(0.5, 0.0)).unwrap();
+        ed.index.update_moved_with_curves(&ed.doc, [p]);
+        let mut regrouped = (*ed.stack()).clone();
+        // (A curve that didn't move: only the stack says it draws in another of its groups.)
+        let _ = curve;
+        assert!(regrouped.groups.len() >= 2);
+        let other = ed
+            .doc
+            .iter()
+            .find(|(id, e)| {
+                !e.kind.is_point() && *id != curve && !ed.index.users_of(p).any(|u| u == *id)
+            })
+            .map(|(id, _)| id)
+            .unwrap();
+        let to = usize::from(
+            ed.stack()
+                .group_of(Some(other), ed.doc.get(other).unwrap().layer)
+                == Some(0),
+        );
+        regrouped.curve_group.insert(other, to);
+        assert!(
+            kept(&mut cache, &ed, Some(&regrouped)) == as_before(&ed, Some(&regrouped)),
+            "regrouped"
+        );
+        let same = (*ed.stack()).clone();
+        assert!(
+            kept(&mut cache, &ed, Some(&same)) == as_before(&ed, Some(&same)),
+            "back"
+        );
+    }
+
+    #[test]
+    fn a_stack_made_again_at_the_old_ones_address_is_judged_by_what_it_holds() {
+        // Inside a move a point moves and the stack made again for the new revision comes
+        // at the old one's address (as an allocator can hand it back), grouping an unmoved
+        // curve elsewhere: the lists follow what the stack holds, not where it is.
+        let mut doc = drift_core::Document::new();
+        for k in 0..3 {
+            let x = k as f64 * 30.0;
+            let p = [(0.0, 0.0), (20.0, 0.0), (20.0, 20.0), (0.0, 20.0)]
+                .map(|(a, b)| doc.add_point(DVec2::new(x + a, b)));
+            for i in 0..4 {
+                doc.add_line(p[i], p[(i + 1) % 4]).unwrap();
+            }
+        }
+        let mut ed = Editor::new(doc);
+        ed.sync();
+        ed.add_fill_at(DVec2::new(5.0, 5.0)).unwrap();
+        ed.add_fill_at(DVec2::new(35.0, 5.0)).unwrap();
+        ed.settle_areas();
+        ed.sync();
+        let mut cache = ItemsCache::default();
+        // One stack value, kept at one address throughout.
+        let mut stack = (*ed.stack()).clone();
+        assert!(stack.groups.len() >= 2);
+        assert!(kept(&mut cache, &ed, Some(&stack)) == as_before(&ed, Some(&stack)));
+        let (p, other) = {
+            let mut lines = ed.doc.iter().filter(|(_, e)| !e.kind.is_point());
+            let (first, e) = lines.next().unwrap();
+            let p = e.kind.points().next().unwrap();
+            let other = lines
+                .map(|(id, _)| id)
+                .find(|id| *id != first && !ed.index.users_of(p).any(|u| u == *id))
+                .unwrap();
+            (p, other)
+        };
+        ed.doc.begin();
+        let at = ed.doc.point(p).unwrap();
+        ed.doc.set_point(p, at + DVec2::new(0.5, 0.0)).unwrap();
+        ed.index.update_moved_with_curves(&ed.doc, [p]);
+        let layer = ed.doc.get(other).unwrap().layer;
+        let to = usize::from(stack.group_of(Some(other), layer) == Some(0));
+        stack.curve_group.insert(other, to);
+        assert!(
+            kept(&mut cache, &ed, Some(&stack)) == as_before(&ed, Some(&stack)),
+            "regrouped at the same address"
+        );
     }
 
     #[test]

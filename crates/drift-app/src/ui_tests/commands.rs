@@ -80,7 +80,8 @@ fn every_menu_item_comes_from_the_registry() {
         "Arrange",
         "Dimensions and notes",
         "System",
-        "Dark",
+        "Midnight",
+        "Obsidian",
         "Light",
     ];
     let menus = ["File", "Edit", "View", "Draw", "Modify", "Annotate", "Help"];

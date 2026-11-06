@@ -58,6 +58,25 @@ FONTS = [
     ),
 ]
 
+# Fonts Drift bundles itself (crates/drift-draft/assets/fonts), with their licence files.
+BUNDLED_FONTS_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "crates",
+    "drift-draft",
+    "assets",
+    "fonts",
+)
+BUNDLED_FONTS = [
+    (
+        "Liberation Sans Regular and Bold",
+        "LiberationSans-Regular.ttf",
+        "SIL Open Font License 1.1",
+        "LICENSE-LiberationFonts.txt",
+        "the standard font of dimensions, notes and sheets, on screen and in exported PDFs and "
+        "SVGs. (Liberation Sans is metric-compatible with Arial and Helvetica.)",
+    ),
+]
+
 # Crates ported from other projects whose licences ask for their notices to be kept, though
 # the crates don't carry them: crate name -> (project, its repository, its licence id,
 # the licence file in scripts/upstream).
@@ -248,9 +267,10 @@ def generate():
 
     # Part 1: fonts.
     out.append(heading("1. Fonts"))
-    for name, ttf, licence, licence_file, use in FONTS:
-        ttf_path = os.path.join(fonts_dir, ttf)
-        licence_path = os.path.join(fonts_dir, licence_file)
+    listed = [(f, fonts_dir) for f in FONTS] + [(f, BUNDLED_FONTS_DIR) for f in BUNDLED_FONTS]
+    for (name, ttf, licence, licence_file, use), directory in listed:
+        ttf_path = os.path.join(directory, ttf)
+        licence_path = os.path.join(directory, licence_file)
         for path in (ttf_path, licence_path):
             if not os.path.exists(path):
                 sys.exit(f"{path} is missing: update FONTS in this script")

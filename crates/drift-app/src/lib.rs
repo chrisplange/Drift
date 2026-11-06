@@ -108,6 +108,8 @@ const KEY_PATH: &str = "drift.path";
 const KEY_DIRTY: &str = "drift.dirty";
 /// Recently opened or saved sketches, one path per line, newest first.
 const KEY_RECENT: &str = "drift.recent";
+/// Which dark look (Midnight or Obsidian) is chosen.
+const KEY_DARK_LOOK: &str = "drift.dark_look";
 /// How many recent files are remembered.
 const MAX_RECENT: usize = 10;
 
@@ -840,6 +842,13 @@ impl DriftApp {
         }
         theme::install_fonts(&cc.egui_ctx);
         fonts::reset_screen();
+        if let Some(look) = cc
+            .storage
+            .and_then(|s| s.get_string(KEY_DARK_LOOK))
+            .and_then(|v| theme::DarkLook::parse(&v))
+        {
+            theme::set_dark_look(look);
+        }
         theme::apply(&cc.egui_ctx);
         // Each window autosaves to a session file of its own.
         #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo"), not(test)))]
@@ -1216,6 +1225,7 @@ impl eframe::App for DriftApp {
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         storage.set_string(KEY_VIEW, self.view_prefs());
+        storage.set_string(KEY_DARK_LOOK, theme::dark_look().key().into());
         let recent: Vec<String> = self
             .recent
             .iter()

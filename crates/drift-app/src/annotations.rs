@@ -1751,6 +1751,14 @@ fn finish_layout(
     }
 }
 
+/// The angle an arrowhead's two sides make with each other: a tight 22.5°.
+pub const ARROW_INCLUDED_DEG: f32 = 22.5;
+
+/// Half the width of an arrowhead `len` long (across its base).
+pub fn arrow_half_width(len: f32) -> f32 {
+    len * (ARROW_INCLUDED_DEG.to_radians() / 2.0).tan()
+}
+
 /// An arrowhead (or tick / dot) at `tip`, pointing along `direction`.
 fn arrow(pen: &dyn Pen, tip: Pos2, direction: Vec2, color: Color32, style: &DimStyle) {
     let d = if direction.length() > 1e-6 {
@@ -1760,7 +1768,7 @@ fn arrow(pen: &dyn Pen, tip: Pos2, direction: Vec2, color: Color32, style: &DimS
     };
     let len = style.arrow_len;
     let base = tip - d * len;
-    let n = d.rot90() * (len / 3.0);
+    let n = d.rot90() * arrow_half_width(len);
     match style.arrow {
         ArrowStyle::Closed => {
             pen.polygon(vec![tip, base + n, base - n], color);

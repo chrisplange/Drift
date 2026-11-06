@@ -149,6 +149,14 @@ fn save_png(name: &str, h: &mut Harness<'_, DriftApp>) {
     eprintln!("wrote {}", path.display());
 }
 
+/// The words of every page of an exported PDF (text is set by glyph in the embedded font, so
+/// it is read back the way a viewer's search would).
+pub(crate) fn pdf_words(pdf: &[u8]) -> String {
+    let doc = lopdf::Document::load_mem(pdf).expect("a PDF another reader accepts");
+    let pages: Vec<u32> = doc.get_pages().keys().copied().collect();
+    doc.extract_text(&pages).expect("text extraction")
+}
+
 #[test]
 fn toolbar_switches_tools_and_highlights_immediately() {
     let Some(mut h) = harness() else { return };
@@ -3882,13 +3890,13 @@ fn sheets_preview_and_export() {
     let painter = h.ctx.layer_painter(egui::LayerId::background());
     let pdf = h.state_mut().pdf_bytes(&painter);
     let text = String::from_utf8_lossy(&pdf);
-    assert!(text.starts_with("%PDF-1.4"));
+    assert!(text.starts_with("%PDF-1.6"));
     assert!(
         text.contains("/MediaBox [0 0 1190.551 841.89]"),
         "A3 landscape"
     );
-    assert!(text.contains("(120) Tj"), "dimension text exported");
-    assert!(text.contains("(1:1) Tj"), "scale in the title block");
+    assert!(pdf_words(&pdf).contains("120"), "dimension text exported");
+    assert!(pdf_words(&pdf).contains("1:1"), "scale in the title block");
     std::fs::write(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp/drift_sheet.pdf"),
         &pdf,
@@ -3929,8 +3937,7 @@ fn sheets_preview_and_export() {
     plain.dimensions = false;
     set_placed(&mut h, id, 0, &plain, "Hide dimensions");
     let pdf = h.state_mut().pdf_bytes(&painter);
-    let text = String::from_utf8_lossy(&pdf);
-    assert!(!text.contains("(120) Tj") && text.contains("(1:1) Tj"));
+    assert!(!pdf_words(&pdf).contains("120") && pdf_words(&pdf).contains("1:1"));
     let saved = drift_io::save(&h.state().drawing.editor.doc, &Default::default());
     assert!(saved.contains(r#""dimensions":false"#) && !saved.contains(r#""notes""#));
     let (loaded, _) = drift_io::load(&saved).unwrap();
@@ -5080,10 +5087,10 @@ fn modern_sheet_layout() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp");
     let pdf = h.state_mut().pdf_bytes(&painter);
     let text = String::from_utf8_lossy(&pdf);
-    assert!(text.contains("/BaseFont /Helvetica-Bold"));
-    assert!(text.contains("(Mounting plate) Tj") && text.contains("(DR-0142) Tj"));
+    assert!(text.contains("/BaseFont /LiberationSans-Bold"));
+    assert!(pdf_words(&pdf).contains("Mounting plate") && pdf_words(&pdf).contains("DR-0142"));
     assert!(
-        text.contains("(NORTHLIGHT WORKS) Tj"),
+        pdf_words(&pdf).contains("NORTHLIGHT WORKS"),
         "the company, in tracked capitals"
     );
     std::fs::write(dir.join("drift_sheet_modern.pdf"), &pdf).unwrap();
@@ -5637,10 +5644,10 @@ fn a_sheet_holds_several_views() {
     let painter = h.ctx.layer_painter(egui::LayerId::background());
     let pdf = h.state_mut().pdf_bytes(&painter);
     let text = String::from_utf8_lossy(&pdf);
-    assert!(text.contains("(Detail A) Tj"), "the view's title");
-    assert!(text.contains("(SCALE 2:1) Tj"), "its scale under it");
+    assert!(pdf_words(&pdf).contains("Detail A"), "the view's title");
+    assert!(pdf_words(&pdf).contains("SCALE 2:1"), "its scale under it");
     assert!(
-        text.contains("(As shown) Tj"),
+        pdf_words(&pdf).contains("As shown"),
         "mixed scales in the title block"
     );
     // Each view is seen through its own window.
@@ -5877,9 +5884,8 @@ fn section_and_elevation_marks() {
     assert_eq!(back, marks(&h));
     let painter = h.ctx.layer_painter(egui::LayerId::background());
     let pdf = h.state_mut().pdf_bytes(&painter);
-    let text = String::from_utf8_lossy(&pdf);
     assert!(
-        text.contains("(A-201) Tj") && text.contains("(B) Tj"),
+        pdf_words(&pdf).contains("A-201") && pdf_words(&pdf).contains("B"),
         "marks print"
     );
 }
@@ -6312,8 +6318,18 @@ fn the_drawing_font_is_kept_in_the_drawing_and_used_everywhere() {
             .unwrap(),
         "Ubuntu"
     );
-    // Nothing is set in it yet: the standard look.
-    assert!(h.state().drawing.editor.drawing_font().is_none());
+    // Nothing is set in it yet: the standard look, Liberation Sans.
+    assert!(h.state().drawing.editor.own_drawing_font().is_none());
+    assert_eq!(
+        h.state()
+            .drawing
+            .editor
+            .drawing_font()
+            .unwrap()
+            .regular
+            .family,
+        "Liberation Sans"
+    );
     let painter = h.ctx.layer_painter(egui::LayerId::background());
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
@@ -6321,7 +6337,7 @@ fn the_drawing_font_is_kept_in_the_drawing_and_used_everywhere() {
     h.run();
     h.run();
     let standard = h.state_mut().pdf_bytes(&painter);
-    assert!(String::from_utf8_lossy(&standard).contains("/BaseFont /Helvetica"));
+    assert!(String::from_utf8_lossy(&standard).contains("/BaseFont /LiberationSans"));
 
     // Make it the drawing's font: dimensions, notes and the title block are set in it.
     assert_eq!(
@@ -6354,10 +6370,7 @@ fn the_drawing_font_is_kept_in_the_drawing_and_used_everywhere() {
     let text = String::from_utf8_lossy(&pdf);
     assert!(text.starts_with("%PDF-1.6") && text.contains("/BaseFont /Hack"));
     assert!(text.contains("/Subtype /Type0") && !text.contains("/Helvetica"));
-    assert!(
-        pdf.len() > standard.len() + 50_000,
-        "the font is in the file"
-    );
+    assert!(pdf.len() > 50_000, "the font is in the file");
     std::fs::write(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp/drift_font.pdf"),
         &pdf,
@@ -6388,7 +6401,11 @@ fn the_drawing_font_is_kept_in_the_drawing_and_used_everywhere() {
     elsewhere.doc.begin();
     elsewhere.doc.set_fonts(fonts);
     elsewhere.commit("Font");
-    assert!(elsewhere.drawing_font().is_none());
+    assert!(elsewhere.own_drawing_font().is_none());
+    assert_eq!(
+        elsewhere.drawing_font().unwrap().regular.family,
+        "Liberation Sans"
+    );
     assert_eq!(
         elsewhere.drawing_font_missing().as_deref(),
         Some("No Such Typeface 123")
@@ -6396,15 +6413,19 @@ fn the_drawing_font_is_kept_in_the_drawing_and_used_everywhere() {
 
     // Back to the standard look is one undo step, and one choice.
     h.state_mut().undo();
-    assert!(h.state().drawing.editor.drawing_font().is_none());
+    assert!(h.state().drawing.editor.own_drawing_font().is_none());
     h.state_mut().redo();
     h.state_mut().drawing.editor.set_drawing_font(None);
     h.run();
     h.run();
-    assert_eq!(h.state().screen_font, crate::fonts::ScreenFont::Standard);
+    // The screen shows the standard font, Liberation Sans, under the drawing's family name.
+    assert!(matches!(
+        h.state().screen_font,
+        crate::fonts::ScreenFont::Ready(_)
+    ));
     assert_eq!(
         crate::fonts::drafting_font(12.0, false).family,
-        egui::FontFamily::Proportional
+        egui::FontFamily::Name("drawing".into())
     );
 }
 
@@ -9260,9 +9281,8 @@ fn every_sheet_shares_the_project() {
     assert!(iso.iter().any(|t| t == "Project no."), "{iso:?}");
     let painter = h.ctx.layer_painter(egui::LayerId::background());
     let pdf = h.state_mut().pdf_bytes(&painter);
-    let pdf = String::from_utf8_lossy(&pdf);
     assert!(
-        pdf.contains("(Riverside house) Tj"),
+        pdf_words(&pdf).contains("Riverside house"),
         "the other sheet's title"
     );
     // Saved and read back.

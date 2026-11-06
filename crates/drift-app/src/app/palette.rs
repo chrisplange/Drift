@@ -391,7 +391,7 @@ impl DriftApp {
                 crate::app::start_ui::show_logs_folder();
             }
             Command::Benchmark => self.benchmark = Some(run_benchmark()),
-            Command::Theme(pref) => ctx.set_theme(pref),
+            Command::Theme(look) => crate::theme::set_look(ctx, look),
         }
     }
 

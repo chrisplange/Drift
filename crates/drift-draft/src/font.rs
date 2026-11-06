@@ -160,6 +160,28 @@ pub fn drawing_font() -> Option<Rc<DrawingFont>> {
     CURRENT.with(|c| c.borrow().clone())
 }
 
+/// The standard look's font: Liberation Sans (SIL Open Font License 1.1), bundled with the
+/// app. It is metric-compatible with Arial and Helvetica, so labels keep the widths they
+/// always had. Its licence text is in `assets/fonts/`.
+pub const STANDARD_FAMILY: &str = "Liberation Sans";
+
+thread_local! {
+    static STANDARD: Rc<DrawingFont> = {
+        let face = |bytes: &'static [u8]| {
+            Face::new(Arc::new(bytes.to_vec()), 0).expect("the bundled font is a font")
+        };
+        Rc::new(DrawingFont {
+            regular: face(include_bytes!("../assets/fonts/LiberationSans-Regular.ttf")),
+            bold: Some(face(include_bytes!("../assets/fonts/LiberationSans-Bold.ttf"))),
+        })
+    };
+}
+
+/// The bundled standard font (one copy per thread).
+pub fn standard_font() -> Rc<DrawingFont> {
+    STANDARD.with(Rc::clone)
+}
+
 /// Cap height per em of the font text is set in: the drawing's, else Helvetica's.
 pub fn cap_ratio() -> f64 {
     drawing_font().map_or(crate::page::CAP_HEIGHT, |f| f.regular.cap_ratio())

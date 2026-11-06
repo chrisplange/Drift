@@ -871,7 +871,7 @@ pub fn paint_leader(
     let d = if d.is_finite() { d } else { vec2(1.0, 0.0) };
     let len = style.arrow_len;
     let base = tip - d * len;
-    let n = d.rot90() * (len / 3.0);
+    let n = d.rot90() * crate::annotations::arrow_half_width(len);
     match leader.end {
         LeaderEnd::Arrow => pen.polygon(vec![tip, base + n, base - n], color),
         LeaderEnd::OpenArrow => {

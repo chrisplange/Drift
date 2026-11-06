@@ -74,6 +74,19 @@ fn pdf_string(s: &str) -> Vec<u8> {
     out
 }
 
+/// A PDF text string for `s`: as it is where plain ASCII, else UTF-16 with a byte-order mark.
+fn actual_text(s: &str) -> String {
+    if s.chars().all(|c| matches!(c, ' '..='~')) {
+        return String::from_utf8_lossy(&pdf_string(s)).into_owned();
+    }
+    let mut hex = String::from("<FEFF");
+    for unit in s.encode_utf16() {
+        let _ = write!(hex, "{unit:04X}");
+    }
+    hex.push('>');
+    hex
+}
+
 /// Cubic Bézier segments for an arc (at most 90° each).
 fn arc_path(out: &mut String, center: DVec2, r: f64, start: f64, sweep: f64, move_to: bool) {
     let cubics =
@@ -270,6 +283,9 @@ fn item_ops(
                 hex.push('>');
                 let (c, s_) = (angle.cos(), angle.sin());
                 let lean = if style.italic { ITALIC_SLANT } else { 0.0 };
+                // The words in plain sight too (marked content with its own text), so a tool
+                // that reads the page without the font's glyph map still finds them.
+                let _ = writeln!(out, "/Span << /ActualText {} >> BDC", actual_text(s));
                 let _ = writeln!(
                     out,
                     "BT\n{} {} {} rg\n/F{} {} Tf\n{} Tc\n{} {} {} {} {} Tm",
@@ -286,7 +302,7 @@ fn item_ops(
                     pt(origin)
                 );
                 let _ = writeln!(out, "{hex} Tj");
-                out.push_str("ET\n");
+                out.push_str("ET\nEMC\n");
                 return;
             }
             let size = height / CAP_HEIGHT * PT_PER_MM;
@@ -783,6 +799,9 @@ mod font_tests {
         let words = parsed.extract_text(&[1]).expect("text extraction");
         assert!(words.contains("Mounting plate Ø12"), "{words:?}");
         assert!(words.contains("SHEET 01"), "{words:?}");
+        // And plain in the page, for a reader that doesn't use the glyph map.
+        assert!(text.contains("/ActualText (SHEET 01)"));
+        assert!(text.contains("/ActualText <FEFF"), "Ø is written as UTF-16");
         // Only the glyphs used have widths listed.
         let used: std::collections::BTreeSet<char> = "Mounting plate Ø12SHEET 01".chars().collect();
         let map = parsed

@@ -532,10 +532,11 @@ endstream",
 endstream"
                 .len()..];
     }
-    // Helvetica (no drawing font): capitals 0.718 of the size.
+    // Liberation Sans (no drawing font of its own): its capitals' share of the size.
+    let standard_cap = drift_draft::font::standard_font().regular.cap_ratio();
     let caps: Vec<f64> = sizes
         .iter()
-        .map(|s| s * drift_draft::page::CAP_HEIGHT * 25.4 / 72.0)
+        .map(|s| s * standard_cap * 25.4 / 72.0)
         .collect();
     let at_3_5 = caps.iter().filter(|c| (*c - 3.5).abs() < 0.01).count();
     assert!(at_3_5 >= 6, "caps {caps:?}");

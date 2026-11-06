@@ -389,7 +389,7 @@ pub struct Drawing {
     pub line_type_scale: f64,
     /// Blocks that `Insert` items refer to.
     pub blocks: Vec<BlockDef>,
-    /// The font its text is set in (`None`: the standard look, Helvetica).
+    /// The font its text is set in (`None`: the standard look, Liberation Sans in the app).
     pub font: Option<std::rc::Rc<crate::font::DrawingFont>>,
 }
 

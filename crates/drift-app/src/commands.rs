@@ -120,7 +120,7 @@ pub(crate) enum Command {
     ReportProblem,
     ShowLogs,
     Benchmark,
-    Theme(eframe::egui::ThemePreference),
+    Theme(crate::theme::Look),
 }
 
 /// On/off view settings.
@@ -1466,23 +1466,30 @@ fn table() -> Vec<Spec> {
         )
         .keys(const { &[shift_alt(Key::R)] }),
         Spec::new(
-            "view.theme_dark",
+            "view.theme_midnight",
             C::View,
-            K::Theme(eframe::egui::ThemePreference::Dark),
-            "Dark appearance",
-            "Dark colours",
+            K::Theme(crate::theme::Look::Midnight),
+            "Midnight appearance",
+            "The original dark colours: cool greys with a blue accent",
+        ),
+        Spec::new(
+            "view.theme_obsidian",
+            C::View,
+            K::Theme(crate::theme::Look::Obsidian),
+            "Obsidian appearance",
+            "Dark neutral greys with an orange accent",
         ),
         Spec::new(
             "view.theme_light",
             C::View,
-            K::Theme(eframe::egui::ThemePreference::Light),
+            K::Theme(crate::theme::Look::Light),
             "Light appearance",
             "Light colours",
         ),
         Spec::new(
             "view.theme_system",
             C::View,
-            K::Theme(eframe::egui::ThemePreference::System),
+            K::Theme(crate::theme::Look::System),
             "Appearance follows the system",
             "Dark or light as the system is",
         ),

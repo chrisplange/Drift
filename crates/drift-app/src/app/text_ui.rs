@@ -97,7 +97,7 @@ impl DriftApp {
                         }
                     }
                 } else if ui
-                    .selectable_label(drawing.is_none(), "Standard (Helvetica)")
+                    .selectable_label(drawing.is_none(), "Standard (Liberation Sans)")
                     .clicked()
                 {
                     picked = Some(FontPick::Standard);
@@ -162,7 +162,7 @@ impl DriftApp {
         let drawing = self.drawing.editor.doc.fonts().drawing.clone();
         let shown = drawing
             .clone()
-            .unwrap_or_else(|| "Standard (Helvetica)".to_owned());
+            .unwrap_or_else(|| "Standard (Liberation Sans)".to_owned());
         let mut picked = None;
         theme::row(ui, "Font", |ui| {
             picked = self.font_menu(ui, "drawing_font", &shown, None);

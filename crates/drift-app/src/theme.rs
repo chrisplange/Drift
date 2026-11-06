@@ -6,11 +6,108 @@ use eframe::egui::{
     Vec2, vec2,
 };
 
-/// The accent colour: a calm blue that holds white text in both themes. Used sparingly: the
+/// The two dark looks: Midnight (the original, cool greys with a blue accent) and Obsidian
+/// (neutral greys with an orange accent). The light look is a single one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DarkLook {
+    Midnight,
+    Obsidian,
+}
+
+impl DarkLook {
+    pub fn key(self) -> &'static str {
+        match self {
+            DarkLook::Midnight => "midnight",
+            DarkLook::Obsidian => "obsidian",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        [DarkLook::Midnight, DarkLook::Obsidian]
+            .into_iter()
+            .find(|l| l.key() == s.trim())
+    }
+}
+
+/// True for Obsidian (the default), false for Midnight.
+static OBSIDIAN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Which dark look is in use (it only matters while the appearance is dark).
+pub fn dark_look() -> DarkLook {
+    if OBSIDIAN.load(std::sync::atomic::Ordering::Relaxed) {
+        DarkLook::Obsidian
+    } else {
+        DarkLook::Midnight
+    }
+}
+
+pub fn set_dark_look(look: DarkLook) {
+    OBSIDIAN.store(
+        look == DarkLook::Obsidian,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
+/// What the appearance control offers: follow the system, one of the dark looks, or light.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Look {
+    System,
+    Midnight,
+    Obsidian,
+    Light,
+}
+
+impl Look {
+    pub const ALL: [Look; 4] = [Look::System, Look::Midnight, Look::Obsidian, Look::Light];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Look::System => "System",
+            Look::Midnight => "Midnight",
+            Look::Obsidian => "Obsidian",
+            Look::Light => "Light",
+        }
+    }
+
+    /// The look in force now.
+    pub fn current(ctx: &egui::Context) -> Look {
+        match ctx.options(|o| o.theme_preference) {
+            egui::ThemePreference::System => Look::System,
+            egui::ThemePreference::Light => Look::Light,
+            egui::ThemePreference::Dark => match dark_look() {
+                DarkLook::Midnight => Look::Midnight,
+                DarkLook::Obsidian => Look::Obsidian,
+            },
+        }
+    }
+}
+
+/// Switch the look. Following the system keeps the dark look last chosen for its dark half.
+pub fn set_look(ctx: &egui::Context, look: Look) {
+    match look {
+        Look::System => ctx.set_theme(egui::ThemePreference::System),
+        Look::Light => ctx.set_theme(egui::ThemePreference::Light),
+        Look::Midnight | Look::Obsidian => {
+            set_dark_look(if look == Look::Midnight {
+                DarkLook::Midnight
+            } else {
+                DarkLook::Obsidian
+            });
+            ctx.set_theme(egui::ThemePreference::Dark);
+        }
+    }
+    // The styles are built from the palette: build them again.
+    apply(ctx);
+}
+
+/// The accent colour: blue in Midnight and Light, orange in Obsidian. Used sparingly: the
 /// one primary button, focus, and the icon or text of whatever is current.
 pub fn accent(dark: bool) -> Color32 {
     if dark {
-        Color32::from_rgb(0x3d, 0x8b, 0xfd)
+        match dark_look() {
+            DarkLook::Midnight => Color32::from_rgb(0x3d, 0x8b, 0xfd),
+            DarkLook::Obsidian => Color32::from_rgb(0xff, 0x9d, 0x2a),
+        }
     } else {
         Color32::from_rgb(0x1f, 0x6f, 0xeb)
     }
@@ -49,7 +146,7 @@ pub struct Neutrals {
 
 pub fn neutrals(dark: bool) -> Neutrals {
     let c = |r, g, b| Color32::from_rgb(r, g, b);
-    if dark {
+    if dark && dark_look() == DarkLook::Midnight {
         Neutrals {
             panel: c(0x20, 0x22, 0x26),
             raised: c(0x2a, 0x2d, 0x32),
@@ -63,6 +160,21 @@ pub fn neutrals(dark: bool) -> Neutrals {
             text: c(0xe6, 0xe7, 0xe9),
             secondary: c(0xa3, 0xa7, 0xae),
             tertiary: c(0x6f, 0x74, 0x7c),
+        }
+    } else if dark {
+        Neutrals {
+            panel: c(0x25, 0x25, 0x26),
+            raised: c(0x2f, 0x2f, 0x30),
+            field: c(0x19, 0x19, 0x1a),
+            faint: c(0x2b, 0x2b, 0x2c),
+            control: c(0x34, 0x34, 0x35),
+            hover: c(0x3f, 0x3f, 0x41),
+            pressed: c(0x4a, 0x4a, 0x4c),
+            border: c(0x2c, 0x2c, 0x2e),
+            control_border: c(0x42, 0x42, 0x44),
+            text: c(0xe3, 0xe3, 0xe4),
+            secondary: c(0xa1, 0xa1, 0xa4),
+            tertiary: c(0x70, 0x70, 0x74),
         }
     } else {
         Neutrals {
@@ -759,21 +871,22 @@ pub fn dialog_buttons<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R
 
 /// The primary action: the one accent-filled button in a dialog or panel.
 pub fn primary_button(label: &str, dark: bool) -> egui::Button<'static> {
-    egui::Button::new(egui::RichText::new(label.to_owned()).color(Color32::WHITE))
+    // White on the blue of Midnight and Light; dark on Obsidian's orange.
+    let ink = if !dark || dark_look() == DarkLook::Midnight {
+        Color32::WHITE
+    } else {
+        Color32::from_rgb(0x1c, 0x1c, 0x1c)
+    };
+    egui::Button::new(egui::RichText::new(label.to_owned()).color(ink))
         .fill(accent(dark))
         .stroke(Stroke::NONE)
 }
 
-/// The appearance (follow the system, dark or light), as a segmented control.
+/// The appearance (follow the system, Midnight, Obsidian or Light), as a segmented control.
 pub fn appearance(ui: &mut egui::Ui) {
-    use egui::ThemePreference as P;
-    let current = ui.ctx().options(|o| o.theme_preference);
-    let options = [
-        (P::System, "System"),
-        (P::Dark, "Dark"),
-        (P::Light, "Light"),
-    ];
-    if let Some(pref) = segmented(ui, current, &options) {
-        ui.ctx().set_theme(pref);
+    let current = Look::current(ui.ctx());
+    let options = Look::ALL.map(|l| (l, l.label()));
+    if let Some(look) = segmented(ui, current, &options) {
+        set_look(ui.ctx(), look);
     }
 }

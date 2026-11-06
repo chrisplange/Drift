@@ -33,7 +33,7 @@ pub struct FontSet {
     /// Families kept in the drawing, by family name.
     pub embedded: BTreeMap<String, EmbeddedFont>,
     /// The family that dimensions, notes, view titles and title blocks are set in. `None` is
-    /// the standard look: Helvetica in print.
+    /// the standard look: Liberation Sans.
     pub drawing: Option<String>,
 }
 

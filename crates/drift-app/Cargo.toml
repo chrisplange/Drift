@@ -75,6 +75,7 @@ pollster = "1.0"
 proptest = "1"
 # Reading exported SVG and PDF back in the export tests (both already in the build).
 roxmltree = "0.21.1"
+lopdf = { version = "0.45", default-features = false }
 miniz_oxide = "0.9.1"
 
 # Signs test releases so the updater's verification can be checked (and makes the release

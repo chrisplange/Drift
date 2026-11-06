@@ -148,10 +148,18 @@ impl Editor {
         note
     }
 
-    /// The drawing's font, ready to measure and draw with: from the drawing's own copy, else
-    /// from this computer. `None` for the standard look, or when the font can't be found
-    /// here (the name is kept for where it can).
+    /// The font annotations and sheets are set in, ready to measure and draw with: the
+    /// drawing's own, else the standard look's Liberation Sans (bundled with the app), which
+    /// is also what a drawing falls back to when its font can't be found here.
     pub fn drawing_font(&self) -> Option<Rc<DrawingFont>> {
+        self.own_drawing_font()
+            .or_else(|| Some(drift_draft::font::standard_font()))
+    }
+
+    /// The drawing's own font, from the drawing's copy, else from this computer. `None` for
+    /// the standard look, or when the font can't be found here (the name is kept for where
+    /// it can).
+    pub fn own_drawing_font(&self) -> Option<Rc<DrawingFont>> {
         let family = self.doc.fonts().drawing.clone()?;
         let own = self.doc.fonts().embedded.get(&family);
         // The same family and the same file as last time: the same font.
@@ -187,6 +195,6 @@ impl Editor {
     /// the drawing nor on this computer.
     pub fn drawing_font_missing(&self) -> Option<String> {
         let family = self.doc.fonts().drawing.clone()?;
-        self.drawing_font().is_none().then_some(family)
+        self.own_drawing_font().is_none().then_some(family)
     }
 }

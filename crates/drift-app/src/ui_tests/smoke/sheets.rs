@@ -52,7 +52,7 @@ fn smoke_sheet_with_a_view_title_block_and_export() {
     let painter = painter(&h);
     let pdf = h.state_mut().pdf_bytes(&painter);
     let text = String::from_utf8_lossy(&pdf);
-    assert!(text.starts_with("%PDF-1.4"));
+    assert!(text.starts_with("%PDF-1.6"));
     assert!(
         text.contains("/MediaBox [0 0 1190.551 841.89]"),
         "A3 landscape"

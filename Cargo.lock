@@ -1182,6 +1182,7 @@ dependencies = [
  "egui_kittest",
  "glam",
  "log",
+ "lopdf",
  "lyon_tessellation",
  "minisign",
  "minisign-verify",

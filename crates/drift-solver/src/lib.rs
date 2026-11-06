@@ -478,6 +478,44 @@ pub fn unmet_with(
     out
 }
 
+/// Whether every row of `scope`'s system (its `relations` as lowered, and each curve's own
+/// geometry) holds: a length row within `slack`, relative to the size of the coordinates
+/// involved as [`unmet`] reads it, and an angle row (a sine, already the same at any size and
+/// place) within the solver's own angle tolerance. Only the scope is built and read, so
+/// geometry elsewhere in the drawing, however far off, has no say, and the cost is the scope's.
+pub fn meets_within(
+    doc: &Document,
+    scope: &HashSet<EntityId>,
+    relations: &Relations,
+    lowering: Option<&Lowering>,
+    touching: Option<&TouchingEnds>,
+    slack: f64,
+) -> bool {
+    let tol = Tolerances {
+        length: slack,
+        angle: Tolerances::default().angle,
+    };
+    let sys = System::build_in(
+        doc,
+        &[],
+        &[],
+        &tol,
+        Some(scope),
+        &HashMap::new(),
+        lowering,
+        Some(relations.as_slice()),
+        touching,
+    );
+    let values: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
+    let val = |p: usize| values[sys.group_of[p]];
+    let mut grad = Vec::new();
+    (0..sys.rows.len()).all(|r| {
+        grad.clear();
+        // (False for a residual that isn't a number.)
+        sys.rows[r].equation.eval(&val, &mut grad).abs() <= row_tolerance(&sys, r, &values, &tol)
+    })
+}
+
 /// Evaluate constraints and degrees of freedom without changing the document.
 pub fn analyze(doc: &Document) -> SolveReport {
     analyze_with(doc, None)
@@ -1910,7 +1948,16 @@ fn fold_step(
 /// spread of the coordinates, x and y together, grows as the drawing moves away from the
 /// origin, so the same step would be cut short at one place and not another, and the same
 /// drag land elsewhere: #103.) Infinite for a drawing of one point.
-fn drawing_across(sys: &System, values: &[f64]) -> f64 {
+///
+/// With `circles` (a drag's solve), each circle counts as far as it reaches: its centre's
+/// distance from the middle plus its radius. A circle's radius is a parameter the step moves
+/// like a point, so a drag that changes it by more than the points' own spread (a point on a
+/// circle dragged towards its centre) would otherwise have every step cut short, count as a
+/// solve that wandered, and be taken again in small steps along the pointer's line, which
+/// crosses the centre, where a crushed circle refuses it: the drag stopped for a stretch
+/// past the centre, decided by the cut, not by the geometry. Other solves count points only,
+/// as they always have.
+fn drawing_across(sys: &System, values: &[f64], circles: bool) -> f64 {
     let mut points: BTreeMap<EntityId, [Option<f64>; 2]> = BTreeMap::new();
     for (i, p) in sys.params.iter().enumerate() {
         match *p {
@@ -1924,10 +1971,25 @@ fn drawing_across(sys: &System, values: &[f64]) -> f64 {
         .filter_map(|[x, y]| Some(DVec2::new(x?, y?)))
         .collect();
     let middle = points.iter().sum::<DVec2>() / points.len().max(1) as f64;
-    let size = points
+    let mut size = points
         .iter()
         .map(|p| p.distance(middle))
         .fold(0.0, f64::max);
+    if circles {
+        let value = |p: &Param| sys.param_index.get(p).map(|&i| values[sys.group_of[i]]);
+        for (id, shape) in &sys.entities {
+            if let system::EntityShape::Curve(defining, Some(_)) = shape
+                && let Some(&center) = defining.first()
+                && let (Some(r), Some(x), Some(y)) = (
+                    value(&Param::Radius(*id)),
+                    value(&Param::X(center)),
+                    value(&Param::Y(center)),
+                )
+            {
+                size = size.max(DVec2::new(x, y).distance(middle) + r.abs());
+            }
+        }
+    }
     if size > 0.0 {
         2.0 * size
     } else {
@@ -2002,7 +2064,7 @@ fn run(sys: &mut System, options: &SolveOptions, iterate: bool) -> SolveReport {
             report.dependent_equations += 1;
         }
     }
-    let across = drawing_across(sys, &values);
+    let across = drawing_across(sys, &values, !options.dragged.is_empty());
     for comp in &comps {
         if iterate {
             let outcome = newton(

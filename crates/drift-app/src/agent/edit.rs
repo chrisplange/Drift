@@ -582,8 +582,7 @@ pub(super) fn add_text(s: &mut Session, a: &Value) -> Res {
     let at = args::vec2_at(a, "at")?;
     let height = args::opt_f64(a, "height")?.unwrap_or_else(|| {
         // Readable when printed: the drafting text height on paper, at the drawing's scale.
-        let style = s.editor.doc.draft_style();
-        style.text_height * style.scale
+        s.editor.doc.draft_style().text_world_height()
     });
     let mut t = SketchText::new(text, at, height);
     t.angle = args::opt_f64(a, "angle")?.unwrap_or(0.0);

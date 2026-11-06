@@ -44,6 +44,7 @@ fn main() {
         thin_lines: false,
         show_grid: true,
         show_axes: true,
+        dash_world: None,
     };
     let bounds = items.iter().map(|i| i.shape.bounds()).collect();
     let mut camera = Camera::default();

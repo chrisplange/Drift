@@ -1,3 +1,39 @@
+# What's new since Beta 1.6 (draft)
+
+The next release's notes, as they land (Beta 1.6's are below).
+
+## Annotations at print size
+
+- **The canvas shows dimensions and notes as they print.** Dimensions, notes, leaders and
+  section and elevation marks show at their printed size for the drawing's scale and zoom
+  with the drawing, as in AutoCAD or Vectorworks: at 1:50, 3.5 mm text stands 175 mm high
+  in the model. Zoomed far out, text too small to read shows as a faint bar. **View →
+  Annotations at print size** turns it off for the fixed screen size of before.
+- **Dashes at print length.** Dashed, hidden, centre and phantom lines show their printed
+  dash lengths for the drawing scale on the canvas, never shorter than before.
+- **Text prints at its stated height.** Dimension and note text set 3.5 mm high now prints
+  with capitals 3.5 mm high, as the guide always said (it printed about 2.5 mm). Text on
+  sheets and PDFs is larger than before; no setting changed.
+- **Labels keep their place on paper.** A dimension label you place sits the same distance
+  from its line on every sheet, at any view scale, instead of crowding in on a 1:100 plan or
+  floating off a 2:1 detail. Older drawings' sheets look as they did.
+- **New text follows the drawing scale.** The Text tool, a paste, the AI link and scripts
+  all make text at the drafting text height times the drawing scale, so it prints at that
+  height (at 1:1, 3.5 mm rather than 10 mm). The Text tool's **Height** is a paper height,
+  with what it comes to in the model beside it.
+- **One scale menu** (drift-releases#33) for the drawing scale, views and underlays:
+  architectural scales up to 2" = 1", 1" = 1" (full size) and 6" = 1'-0", engineering and
+  metric scales, and a **Custom** field that takes `1:37`, `5" = 1'-0"` or `2:1`. Imperial
+  drawings write full, half and double size the architectural way.
+- **New views at the drawing scale.** A new sheet's view, and a view made from a section or
+  elevation mark, start at the drawing scale when the drawing fits, so the sheet's hatches
+  and annotations match the canvas.
+- **A hint when the scale doesn't suit.** If a drawing's annotations are too small to read
+  even with the whole drawing in view (a plan left at 1:1), a hint offers **Set drawing
+  scale…**.
+
+<!-- PRs: anno-scale (this PR) -->
+
 # What's new since Beta 1.5 (draft)
 
 A running draft for the next release's notes and the website's What's new. It lives outside

@@ -687,25 +687,43 @@ impl DriftApp {
                 }
             }
             ToolKind::Text => {
+                // A paper height (always mm, as the drafting sizes), at the drawing scale.
                 caption(ui, "Height");
-                let unit = units.length.mm_per_unit();
-                let mut shown = if self.drawing.editor.prefs.text_height > 0.0 {
-                    self.drawing.editor.prefs.text_height
-                } else {
-                    10.0
-                } / unit;
+                let style = self.drawing.editor.doc.draft_style();
+                let set = self.drawing.editor.prefs.text_height;
+                let mut paper = if set > 0.0 { set } else { style.text_height };
                 if ui
                     .add(
-                        egui::DragValue::new(&mut shown)
-                            .speed(0.1)
-                            .range(0.001..=1e6)
+                        egui::DragValue::new(&mut paper)
+                            .speed(0.05)
+                            .range(0.1..=100.0)
                             .max_decimals(3)
-                            .suffix(format!(" {}", units.length.symbol())),
+                            .suffix(" mm"),
                     )
-                    .on_hover_text("Cap height of new text")
+                    .on_hover_text(
+                        "Cap height of new text on paper; in the model it is this at the \
+                         drawing scale",
+                    )
                     .changed()
                 {
-                    self.drawing.editor.prefs.text_height = shown * unit;
+                    self.drawing.editor.prefs.text_height = paper;
+                }
+                let model = self.drawing.editor.new_text_height();
+                ui.label(
+                    egui::RichText::new(format!(
+                        "= {} at {}",
+                        units.format_length(model),
+                        drift_core::sheets::scale_label(style.scale, self.imperial())
+                    ))
+                    .weak(),
+                );
+                if set > 0.0
+                    && ui
+                        .small_button("Default")
+                        .on_hover_text("Back to the drawing's drafting text height")
+                        .clicked()
+                {
+                    self.drawing.editor.prefs.text_height = 0.0;
                 }
             }
             ToolKind::Fill => self.fill_tool_bar(ui),

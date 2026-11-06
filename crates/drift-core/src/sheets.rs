@@ -489,12 +489,12 @@ impl PlacedView {
 }
 
 /// The scale for a title block: the views' scale if they share one, else `As shown` (`-`
-/// with none).
-pub fn scale_text(scales: impl IntoIterator<Item = f64>) -> String {
+/// with none), written for a drawing in feet and inches if `imperial`.
+pub fn scale_text(scales: impl IntoIterator<Item = f64>, imperial: bool) -> String {
     let mut scales = scales.into_iter();
     match scales.next() {
         None => "-".into(),
-        Some(first) if scales.all(|s| s == first) => scale_label(first),
+        Some(first) if scales.all(|s| s == first) => scale_label(first, imperial),
         Some(_) => "As shown".into(),
     }
 }
@@ -561,8 +561,12 @@ pub const PREFERRED_SCALES: [f64; 22] = [
     500.0, 1000.0, 2000.0, 2500.0, 5000.0, 10000.0,
 ];
 
-/// Architectural scales (inches on paper to a foot), as 1 : n and as they are written.
-pub const ARCHITECTURAL_SCALES: [(f64, &str); 12] = [
+/// Architectural scales (inches on paper to a foot, and full size and larger as inches to an
+/// inch), as 1 : n and as they are written, the largest drawing first.
+pub const ARCHITECTURAL_SCALES: [(f64, &str); 15] = [
+    (0.5, "2\" = 1\""),
+    (1.0, "1\" = 1\""),
+    (2.0, "6\" = 1'-0\""),
     (4.0, "3\" = 1'-0\""),
     (8.0, "1-1/2\" = 1'-0\""),
     (12.0, "1\" = 1'-0\""),
@@ -589,10 +593,40 @@ pub const ENGINEERING_SCALES: [(f64, &str); 8] = [
     (2400.0, "1\" = 200'"),
 ];
 
-/// The scales a drawing in feet and inches fits to: full and half size, then the
+/// The smallest and largest n a scale (1 : n) may have.
+pub const SCALE_RANGE: std::ops::RangeInclusive<f64> = 0.001..=100_000.0;
+
+/// One group of the scale list: its name and its scales (1 : n), the largest drawing first.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScaleGroup {
+    pub name: &'static str,
+    pub scales: Vec<f64>,
+}
+
+/// The one scale list, for the drawing scale, views and underlays: the groups for the
+/// drawing's units first (architectural and engineering for feet and inches, else metric).
+pub fn scale_list(imperial: bool) -> Vec<ScaleGroup> {
+    let metric = ScaleGroup {
+        name: "Metric",
+        scales: PREFERRED_SCALES.to_vec(),
+    };
+    let arch = ScaleGroup {
+        name: "Architectural",
+        scales: ARCHITECTURAL_SCALES.iter().map(|(n, _)| *n).collect(),
+    };
+    let eng = ScaleGroup {
+        name: "Engineering",
+        scales: ENGINEERING_SCALES.iter().map(|(n, _)| *n).collect(),
+    };
+    if imperial {
+        vec![arch, eng, metric]
+    } else {
+        vec![metric, arch, eng]
+    }
+}
+
+/// The standard scales, the largest drawing first: metric, or (for imperial drawings) the
 /// architectural and engineering scales.
-/// The standard scales, the largest drawing first: metric, or (for imperial drawings) full
-/// and half size, then the architectural and engineering scales.
 pub fn standard_scales(imperial: bool) -> Vec<f64> {
     if imperial {
         imperial_scales().collect()
@@ -602,9 +636,9 @@ pub fn standard_scales(imperial: bool) -> Vec<f64> {
 }
 
 fn imperial_scales() -> impl Iterator<Item = f64> {
-    [1.0, 2.0]
-        .into_iter()
-        .chain(ARCHITECTURAL_SCALES.iter().map(|(n, _)| *n))
+    ARCHITECTURAL_SCALES
+        .iter()
+        .map(|(n, _)| *n)
         .chain(ENGINEERING_SCALES.iter().map(|(n, _)| *n))
 }
 
@@ -623,26 +657,165 @@ pub fn fit_scale(extent: DVec2, room: DVec2, imperial: bool) -> f64 {
     }
 }
 
-/// A scale as it is written on a drawing: `1:50`, `2:1`, `1/4" = 1'-0"`, `1" = 20'`. (The
-/// architectural and engineering ratios are none of the metric ones, so a scale is always
-/// written the way it was chosen.)
-pub fn scale_label(n: f64) -> String {
-    if let Some((_, label)) = ARCHITECTURAL_SCALES
+/// The scale for a new view of `extent` (world mm) in `room` (paper mm): the drawing scale
+/// `preferred` when the drawing fits at it, so the view prints what the canvas shows, else
+/// the largest standard scale that fits.
+pub fn new_view_scale(extent: DVec2, room: DVec2, imperial: bool, preferred: f64) -> f64 {
+    let fits = preferred.is_finite()
+        && SCALE_RANGE.contains(&preferred)
+        && extent.x / preferred <= room.x
+        && extent.y / preferred <= room.y;
+    if fits {
+        preferred
+    } else {
+        fit_scale(extent, room, imperial)
+    }
+}
+
+/// A scale as it is written on a drawing in its units: `1:50`, `2:1`, `1/4" = 1'-0"`,
+/// `1" = 20'`, `1" = 1"`. A drawing in feet and inches writes full, half and double size
+/// the architectural way, and so any scale that is a whole number of sixteenths of an inch
+/// to the foot, whole inches to the inch, or an inch to a whole ten feet or more.
+pub fn scale_label(n: f64, imperial: bool) -> String {
+    let near = |a: f64, b: f64| (a - b).abs() <= 1e-9 * a.abs().max(1.0);
+    let listed = ENGINEERING_SCALES
         .iter()
-        .chain(&ENGINEERING_SCALES)
-        .find(|(m, _)| (m - n).abs() < 1e-9)
-    {
+        .chain(
+            ARCHITECTURAL_SCALES
+                .iter()
+                .filter(|(m, _)| imperial || *m > 2.0),
+        )
+        .find(|(m, _)| near(*m, n));
+    if let Some((_, label)) = listed {
         return (*label).to_owned();
     }
     let trim = |v: f64| {
         let s = format!("{v:.3}");
         s.trim_end_matches('0').trim_end_matches('.').to_owned()
     };
+    if imperial && n.is_finite() && n > 0.0 {
+        // Inches on paper to an inch, when that's a whole number.
+        let per_inch = 1.0 / n;
+        if per_inch >= 1.0 && near(per_inch, per_inch.round()) {
+            return format!("{}\" = 1\"", per_inch.round());
+        }
+        // Inches on paper to a foot, in sixteenths.
+        let per_foot = 12.0 / n;
+        let sixteenths = per_foot * 16.0;
+        if per_foot < 12.0 && sixteenths >= 1.0 && near(sixteenths, sixteenths.round()) {
+            return format!("{}\" = 1'-0\"", inch_fraction(sixteenths.round() as u64));
+        }
+        // An inch to so many feet.
+        let feet = n / 12.0;
+        if feet >= 10.0 && near(feet, feet.round()) {
+            return format!("1\" = {}'", feet.round());
+        }
+    }
     if n < 1.0 {
         format!("{}:1", trim(1.0 / n))
     } else {
         format!("1:{}", trim(n))
     }
+}
+
+/// `sixteenths` of an inch written as an architect would: `3/8`, `1-1/2`, `5`.
+fn inch_fraction(sixteenths: u64) -> String {
+    let (whole, mut num) = (sixteenths / 16, sixteenths % 16);
+    let mut den = 16;
+    while num > 0 && num % 2 == 0 {
+        num /= 2;
+        den /= 2;
+    }
+    match (whole, num) {
+        (w, 0) => w.to_string(),
+        (0, n) => format!("{n}/{den}"),
+        (w, n) => format!("{w}-{n}/{den}"),
+    }
+}
+
+/// Why a typed scale was refused, in words for the user.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScaleError(pub String);
+
+impl std::fmt::Display for ScaleError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// A typed scale, as n in 1 : n: `1:75`, `2:1`, `75` (1:75), or paper `=` model lengths
+/// (`3/8" = 1'-0"`, `1/2"=1'`, `1/4 = 1'`, `1" = 20'`, `2" = 1"`, `10 mm = 1 m`). A bare
+/// paper length reads in inches when the model length is in feet or inches, else in the
+/// model length's unit.
+pub fn parse_scale(text: &str) -> Result<f64, ScaleError> {
+    use crate::units::{Dim, LengthFormat};
+    let text = text.trim();
+    let bad = || {
+        ScaleError(format!(
+            "Not a scale: {text}. Try 1:50, 2:1 or 1/4\" = 1'-0\""
+        ))
+    };
+    if text.is_empty() {
+        return Err(ScaleError(
+            "Type a scale, such as 1:50 or 1/4\" = 1'-0\"".into(),
+        ));
+    }
+    let number = |s: &str| -> Result<f64, ScaleError> {
+        let q = crate::expr::parse(s.trim())
+            .and_then(|e| e.eval(&|_| None, LengthFormat::Millimetre))
+            .map_err(|_| bad())?;
+        if q.dim.is_none() {
+            Ok(q.value)
+        } else {
+            Err(bad())
+        }
+    };
+    let n = if let Some((a, b)) = text.split_once(':') {
+        number(b)? / number(a)?
+    } else if let Some((paper, model)) = text.split_once('=') {
+        let unit = |s: &str| {
+            let s = s.trim().to_ascii_lowercase();
+            if s.contains('\'') || s.contains('"') || s.ends_with("ft") || s.ends_with("in") {
+                Some(LengthFormat::Inch)
+            } else if s.ends_with("mm") {
+                Some(LengthFormat::Millimetre)
+            } else if s.ends_with("cm") {
+                Some(LengthFormat::Centimetre)
+            } else if s.ends_with('m') {
+                Some(LengthFormat::Metre)
+            } else {
+                None
+            }
+        };
+        // A bare number reads in the other side's unit (inches against feet and inches).
+        let default = unit(model).or_else(|| unit(paper)).unwrap_or_default();
+        let length = |s: &str| -> Result<f64, ScaleError> {
+            let q = crate::expr::parse(s.trim())
+                .and_then(|e| e.eval(&|_| None, default))
+                .map_err(|_| bad())?;
+            if q.dim.is_none() {
+                Ok(q.value * default.mm_per_unit())
+            } else if q.dim == Dim::LENGTH {
+                Ok(q.value)
+            } else {
+                Err(bad())
+            }
+        };
+        length(model)? / length(paper)?
+    } else {
+        number(text)?
+    };
+    if !n.is_finite() || n <= 0.0 {
+        return Err(ScaleError(format!(
+            "A scale has to be more than zero: {text}"
+        )));
+    }
+    if !SCALE_RANGE.contains(&n) {
+        return Err(ScaleError(format!(
+            "Out of range: {text} (from 1000:1 to 1:100000)"
+        )));
+    }
+    Ok(n)
 }
 
 #[cfg(test)]
@@ -689,15 +862,23 @@ mod tests {
         assert_eq!(s.size(), DVec2::new(297.0, 420.0));
         assert!((PaperSize::AnsiB.sides().0 - 431.8).abs() < 1e-9);
         assert_eq!(PaperSize::parse("ANSI-D"), Some(PaperSize::AnsiD));
-        assert_eq!(scale_label(50.0), "1:50");
-        assert_eq!(scale_label(0.5), "2:1");
-        assert_eq!(scale_label(1.0), "1:1");
+        assert_eq!(scale_label(50.0, false), "1:50");
+        assert_eq!(scale_label(0.5, false), "2:1");
+        assert_eq!(scale_label(1.0, false), "1:1");
+        assert_eq!(scale_label(2.0, false), "1:2");
         // Architectural and engineering scales are written their own way.
-        assert_eq!(scale_label(48.0), "1/4\" = 1'-0\"");
-        assert_eq!(scale_label(96.0), "1/8\" = 1'-0\"");
-        assert_eq!(scale_label(240.0), "1\" = 20'");
-        // None of them is a metric scale.
-        for (n, _) in ARCHITECTURAL_SCALES.iter().chain(&ENGINEERING_SCALES) {
+        assert_eq!(scale_label(48.0, false), "1/4\" = 1'-0\"");
+        assert_eq!(scale_label(96.0, true), "1/8\" = 1'-0\"");
+        assert_eq!(scale_label(240.0, false), "1\" = 20'");
+        // In feet and inches, full, half and double size too.
+        assert_eq!(scale_label(1.0, true), "1\" = 1\"");
+        assert_eq!(scale_label(2.0, true), "6\" = 1'-0\"");
+        assert_eq!(scale_label(0.5, true), "2\" = 1\"");
+        // The foot-based scales are none of the metric ones.
+        for (n, _) in ARCHITECTURAL_SCALES.iter().filter(|(n, _)| *n > 2.0) {
+            assert!(!PREFERRED_SCALES.contains(n), "{n}");
+        }
+        for (n, _) in &ENGINEERING_SCALES {
             assert!(!PREFERRED_SCALES.contains(n), "{n}");
         }
         // A 40 ft × 30 ft plan on a 24 × 36 sheet's drawing area fits at 1/4" = 1'-0" in
@@ -718,6 +899,72 @@ mod tests {
                 false
             ),
             50.0
+        );
+    }
+
+    #[test]
+    fn typed_scales() {
+        let ok = |t: &str, n: f64| {
+            let got = parse_scale(t).unwrap_or_else(|e| panic!("{t}: {e}"));
+            assert!((got - n).abs() < 1e-9 * n.max(1.0), "{t}: {got} not {n}");
+        };
+        ok("1:75", 75.0);
+        ok(" 1 : 75 ", 75.0);
+        ok("2:1", 0.5);
+        ok("1:2.5", 2.5);
+        ok("75", 75.0);
+        ok("3/8\" = 1'-0\"", 32.0);
+        ok("1/2\"=1'", 24.0);
+        ok("1/4 = 1'", 48.0);
+        ok("1-1/2\" = 1'", 8.0);
+        ok("5\" = 1'-0\"", 2.4);
+        ok("1\" = 20'", 240.0);
+        ok("1\" = 1\"", 1.0);
+        ok("2\" = 1\"", 0.5);
+        ok("10 mm = 1 m", 100.0);
+        ok("1 = 50", 50.0);
+        for bad in [
+            "", "0:1", "1:0", "-1:50", "1:-50", "abc", "1:x", "0", "1 = 0'", "1:1e9", "1mm:2",
+        ] {
+            assert!(parse_scale(bad).is_err(), "{bad}");
+        }
+        // Every listed scale reads back from its label, in either units.
+        for imperial in [false, true] {
+            for g in scale_list(imperial) {
+                for n in g.scales {
+                    let label = scale_label(n, imperial);
+                    ok(&label, n);
+                }
+            }
+        }
+        // Custom scales are written canonically.
+        assert_eq!(
+            scale_label(parse_scale("1/2\"=1'").unwrap(), true),
+            "1/2\" = 1'-0\""
+        );
+        assert_eq!(scale_label(2.4, true), "5\" = 1'-0\"");
+        assert_eq!(scale_label(37.0, true), "1:37");
+        assert_eq!(scale_label(37.0, false), "1:37");
+        assert_eq!(scale_label(0.25, true), "4\" = 1\"");
+        assert_eq!(scale_label(1800.0, true), "1\" = 150'");
+    }
+
+    #[test]
+    fn new_views_prefer_the_drawing_scale() {
+        let room = DVec2::new(380.0, 230.0);
+        // A 2 m × 1 m part fits at 1:20: kept, though 1:10 fits too.
+        assert_eq!(
+            new_view_scale(DVec2::new(2000.0, 1000.0), room, false, 20.0),
+            20.0
+        );
+        // It doesn't fit at 1:5: the largest standard scale that does.
+        assert_eq!(
+            new_view_scale(DVec2::new(2000.0, 1000.0), room, false, 5.0),
+            10.0
+        );
+        assert_eq!(
+            new_view_scale(DVec2::new(2000.0, 1000.0), room, false, f64::NAN),
+            10.0
         );
     }
 }

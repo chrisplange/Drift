@@ -77,33 +77,126 @@ impl DriftApp {
         })
     }
 
+    /// The canvas as it was last laid out.
+    pub(crate) fn canvas_map(&self) -> ScreenMap {
+        ScreenMap {
+            rect: self.drawing.view.canvas_rect,
+            camera: self.drawing.view.camera,
+        }
+    }
+
+    /// Where dimensions and notes go on the canvas `map`: at print size for the drawing
+    /// scale, or at a fixed size (View → Annotations at Print Size).
+    pub(crate) fn anno_space(&self, map: &ScreenMap) -> annotations::AnnoSpace {
+        annotations::AnnoSpace::canvas(
+            map,
+            self.drawing.editor.doc.draft_style().scale,
+            self.print_annotations,
+        )
+    }
+
+    /// Whether the drawing's dimensions and notes, at print size, would be too small to read
+    /// (under [`annotations::GREEK_PT`]) with the whole drawing in a canvas `size` points big:
+    /// the drawing scale likely doesn't suit it (most often a plan left at the default 1:1).
+    pub(crate) fn scale_too_small(&self, size: egui::Vec2) -> bool {
+        let doc = &self.drawing.editor.doc;
+        let annotated =
+            doc.constraints().any(|(_, c)| c.is_dimension()) || doc.annotations().next().is_some();
+        if !self.print_annotations || !self.show_dimensions || !annotated {
+            return false;
+        }
+        let extent = self.fit_bounds().size().max_element();
+        if !(extent.is_finite() && extent > 0.0) {
+            return false;
+        }
+        let style = doc.draft_style();
+        // Points per world mm with the drawing fitted, then the text's size there.
+        let fit = f64::from(size.x.min(size.y)) / extent;
+        let paper = f64::from(annotations::paper_font(style.text_height));
+        let shown = paper * style.scale * fit / f64::from(annotations::PT_PER_MM);
+        shown < f64::from(annotations::GREEK_PT)
+    }
+
+    /// A hint at the canvas's foot while [`Self::scale_too_small`]: the drawing scale to set,
+    /// and a button to Drawing settings. Closed, it stays closed for this drawing.
+    pub(crate) fn scale_hint(&mut self, ctx: &egui::Context, rect: egui::Rect) {
+        if self.drawing.scale_hint_closed {
+            return;
+        }
+        // Asked again only when what it depends on changes (not as geometry moves).
+        let doc = &self.drawing.editor.doc;
+        let key = [
+            doc.structure(),
+            doc.draft_style().scale.to_bits(),
+            u64::from(self.print_annotations) | u64::from(self.show_dimensions) << 1,
+            u64::from(rect.width().to_bits()),
+            u64::from(rect.height().to_bits()),
+        ];
+        let too_small = match self.drawing.scale_hint_seen {
+            Some((seen, answer)) if seen == key => answer,
+            _ => {
+                let answer = self.scale_too_small(rect.size());
+                self.drawing.scale_hint_seen = Some((key, answer));
+                answer
+            }
+        };
+        if !too_small {
+            return;
+        }
+        let scale = drift_core::sheets::scale_label(
+            self.drawing.editor.doc.draft_style().scale,
+            self.imperial(),
+        );
+        egui::Area::new(egui::Id::new("scale_hint"))
+            .fixed_pos(rect.left_bottom() + egui::vec2(12.0, -48.0))
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(format!(
+                            "Annotations are at print size for {scale}: too small to read here."
+                        ));
+                        if ui
+                            .button("Set drawing scale…")
+                            .on_hover_text("Drawing settings → Drafting → Scale")
+                            .clicked()
+                        {
+                            self.show_drawing_settings = true;
+                            self.drawing.scale_hint_closed = true;
+                        }
+                        if ui
+                            .small_button("×")
+                            .on_hover_text("Don't show this again for this drawing")
+                            .clicked()
+                        {
+                            self.drawing.scale_hint_closed = true;
+                        }
+                    });
+                });
+            });
+    }
+
     pub(crate) fn layout_dimensions(
         &self,
         painter: &egui::Painter,
         map: &ScreenMap,
     ) -> Vec<DimLayout> {
         let doc = &self.drawing.editor.doc;
+        let space = self.anno_space(map);
         let mut out: Vec<DimLayout> = doc
             .constraints()
             .filter(|(id, c)| {
                 c.is_dimension() && self.on_canvas(drift_core::AnnotationRef::Dimension(*id))
             })
             .filter_map(|(id, c)| {
-                annotations::layout_dimension(painter, doc, Some(id), c, doc.placement(id), map)
+                space.layout_dimension(painter, doc, Some(id), c, space.placement(doc, id))
             })
             .collect();
         // A picked opening's width and offset.
         if self.tool.kind() == ToolKind::Select {
             for o in self.drawing.editor.selected_openings() {
                 for (c, at) in self.drawing.editor.opening_dimensions(o) {
-                    out.extend(annotations::layout_dimension(
-                        painter,
-                        doc,
-                        None,
-                        &c,
-                        Some(at),
-                        map,
-                    ));
+                    out.extend(space.layout_dimension(painter, doc, None, &c, Some(at)));
                 }
             }
         }
@@ -112,9 +205,9 @@ impl DriftApp {
         if self.show_dimensions {
             for (q, d) in doc.property_dims() {
                 let layout = if let Some((c, at)) = drift_edit::walls::thickness_dimension(doc, d) {
-                    annotations::layout_dimension(painter, doc, None, &c, Some(at), map)
+                    space.layout_dimension(painter, doc, None, &c, Some(at))
                 } else if let Some(gap) = drift_edit::offsets::distance_dimension(doc, d) {
-                    annotations::layout_gap(painter, doc, &gap, map)
+                    space.layout_gap(painter, doc, &gap)
                 } else {
                     None
                 };
@@ -284,6 +377,7 @@ impl DriftApp {
                 drift_edit::labels::dimension_anchor(&self.drawing.editor.doc, &c)
             {
                 let offset = map.to_world(p) - grab - anchor;
+                let space = self.anno_space(map);
                 // Level with another dimension's line when close (Ctrl places freely).
                 let (offset, guide) = if ui.input(|i| i.modifiers.command) {
                     (offset, None)
@@ -293,7 +387,7 @@ impl DriftApp {
                         id,
                         &c,
                         offset,
-                        map.camera.scale,
+                        &space,
                     )
                 };
                 self.drawing.dim_guide = guide;
@@ -1086,6 +1180,10 @@ impl DriftApp {
                 thin_lines: self.thin_lines,
                 show_grid: self.show_grid,
                 show_axes: self.show_axes,
+                // With annotations at print size, dashes print-length too.
+                dash_world: self
+                    .print_annotations
+                    .then(|| self.drawing.editor.doc.draft_style().scale),
             },
         );
         ui.painter().add(callback);
@@ -1202,7 +1300,7 @@ impl DriftApp {
             let color = ui.visuals().strong_text_color().gamma_multiply(0.9);
             self.crosshair.paint(&painter, at, rect, color);
         }
-        self.paint_notes(&painter, &notes, ui.visuals().dark_mode);
+        self.paint_notes(&painter, &map, &notes, ui.visuals().dark_mode);
         self.paint_note_grips(&painter, &notes, ui.visuals().dark_mode);
         self.paint_groups(&painter, &map, ui.visuals().dark_mode);
         self.paint_free_directions(&painter, &map);
@@ -1237,6 +1335,7 @@ impl DriftApp {
         // The notes as laid out now (a tool may have just placed one).
         let notes = self.layout_notes(&annotation_painter, &map);
         self.note_editor(&ctx, &notes);
+        self.scale_hint(&ctx, rect);
         self.text_editor(ui, &map, &painter);
         self.paint_add_view_prompt(&painter, &map);
         if let (Some(p), Some(pos)) = (self.drawing.view.pointer, pos) {
@@ -1309,6 +1408,7 @@ impl DriftApp {
         dark: bool,
     ) {
         let colors = AnnotationColors::new(dark);
+        let space = self.anno_space(map);
         let dim_colors =
             AnnotationColors::drafting(dark, self.drawing.editor.doc.draft_style().color);
         // A dimension with a colour of its own is drawn in it.
@@ -1350,7 +1450,7 @@ impl DriftApp {
                 let own = colors_of(id);
                 let faded = own.faded();
                 let look = if shown.canvas { &own } else { &faded };
-                annotations::paint_dimension(painter, dim, state(id), look);
+                space.paint_dimension(painter, dim, state(id), look);
                 if self.drawing.selected_constraint == Some(id)
                     && self.tool.kind() == ToolKind::Select
                 {
@@ -1383,16 +1483,10 @@ impl DriftApp {
         if let Some((c, offset)) = self
             .tool
             .pending_dimension(&self.drawing.editor, self.drawing.view.pointer.as_ref())
-            && let Some(dim) = annotations::layout_dimension(
-                painter,
-                &self.drawing.editor.doc,
-                None,
-                &c,
-                Some(offset),
-                map,
-            )
+            && let Some(dim) =
+                space.layout_dimension(painter, &self.drawing.editor.doc, None, &c, Some(offset))
         {
-            annotations::paint_dimension(painter, &dim, AnnotationState::Preview, &colors);
+            space.paint_dimension(painter, &dim, AnnotationState::Preview, &colors);
         }
         // Relation badges are quiet at rest, and at full strength on the picked geometry or
         // under the pointer, so they don't crowd the drawing.

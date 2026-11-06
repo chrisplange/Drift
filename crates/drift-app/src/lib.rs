@@ -6,6 +6,8 @@
 // The assistant tools read and write files, so they aren't in the demo.
 #[cfg(not(feature = "demo"))]
 pub mod agent;
+#[cfg(test)]
+mod anno_scale_tests;
 mod annotations;
 mod app;
 mod canvas;
@@ -242,6 +244,12 @@ struct Drawing {
     /// aren't in the file, so they stay unsaved.
     #[cfg(not(feature = "demo"))]
     saving: Option<(drift_io::Carried, u64)>,
+    /// The hint that the drawing scale leaves its annotations too small to read was closed
+    /// (or acted on): it isn't shown again for this drawing.
+    scale_hint_closed: bool,
+    /// [`DriftApp::scale_too_small`]'s answer and what it was for (the drawing's make-up,
+    /// its scale, the View switches and the canvas size): it walks the whole drawing.
+    scale_hint_seen: Option<([u64; 5], bool)>,
     /// Text being typed into dimension value fields.
     dimension_text: std::collections::HashMap<ConstraintId, String>,
     /// A dimension field to focus next frame (e.g. right after creating the dimension).
@@ -402,6 +410,8 @@ impl Drawing {
         Self {
             editor,
             file,
+            scale_hint_closed: false,
+            scale_hint_seen: None,
             live_profiles: None,
             #[cfg(not(feature = "demo"))]
             lossy_save: None,
@@ -567,6 +577,9 @@ pub struct DriftApp {
     benchmark: Option<Vec<String>>,
     show_dimensions: bool,
     show_relations: bool,
+    /// Dimensions and notes on the canvas at their printed size for the drawing scale (View →
+    /// Annotations at Print Size), or (off) at a fixed size on screen.
+    print_annotations: bool,
     /// The pattern fields in the properties panel.
     patterns: app::patterns::PatternUi,
     /// Draw every curve one pixel wide (Revit's thin lines).
@@ -767,6 +780,7 @@ impl DriftApp {
             show_dimensions: true,
             show_relations: true,
             patterns: Default::default(),
+            print_annotations: true,
             thin_lines: false,
             status_colors: true,
             show_grid: true,

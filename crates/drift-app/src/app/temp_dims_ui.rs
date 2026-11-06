@@ -155,7 +155,10 @@ impl DriftApp {
             let placement = drift_edit::temp_dims::label_spot(&self.drawing.editor, t, out)
                 .zip(drift_edit::labels::dimension_anchor(doc, &c))
                 .map(|(spot, anchor)| spot - anchor);
-            let Some(dim) = annotations::layout_dimension(painter, doc, None, &c, placement, map)
+            // Canvas aids: a fixed size on screen, whatever the drawing scale.
+            let space = annotations::AnnoSpace::screen(map, 1.0);
+            let Some(dim) =
+                annotations::layout_dimension(painter, doc, None, &c, placement, &space)
             else {
                 continue;
             };

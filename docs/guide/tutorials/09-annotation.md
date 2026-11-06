@@ -146,6 +146,30 @@ them and switch them back on. Alt+H again hides them.
 Alt+D hides or shows every dimension and note at once (**View → Dimensions and notes**).
 That's a view setting; it doesn't change the drawing.
 
+## Annotations at print size
+
+On the canvas, dimensions, notes, leaders and section and elevation marks show at the size
+they print at for the drawing's scale (**File → Drawing settings… → Drafting → Scale**). They
+zoom with the drawing, so the canvas shows what a sheet view at that scale prints: at 1:50,
+3.5 mm text stands 175 mm high in the model. Dashed, hidden, centre and phantom lines show
+their printed dash lengths too (never shorter than the usual dashes on screen).
+
+![The example plate zoomed in, its dimensions as big as a 1:1 sheet prints them](../images/annotation-print-size.png)
+
+Zoomed far out, text too small to read shows as a faint bar where it is; its lines and
+arrows stay, and it still picks with a click beside it. Relation symbols, grips and
+temporary dimensions keep one size on screen.
+
+**View → Annotations at print size** turns this off: dimensions and notes then keep one size
+on screen at any zoom. It's a view setting, kept from one session to the next; it changes
+neither the drawing nor what prints.
+
+![The same view with Annotations at print size off: the dimensions one size on screen](../images/annotation-fixed-size.png)
+
+Set the drawing's scale to the scale you'll print it at. When it doesn't suit the drawing (a
+building plan left at 1:1, say), its annotations are too small to read with the whole
+drawing in view, and a hint at the foot of the canvas offers **Set drawing scale…**.
+
 ## The drafting style
 
 The look of dimensions and notes is set for the whole drawing in **File → Drawing
@@ -160,8 +184,15 @@ settings… → Drafting**:
   annotation and title-block text. A font you pick is kept inside the drawing, where its
   licence allows, so it looks the same on another computer and in PDFs.
 
-Sizes are paper sizes: text set 3.5 mm high prints 3.5 mm high, whatever the sheet's
-scale.
+Sizes are paper sizes: text set 3.5 mm high prints with capitals 3.5 mm high, whatever the
+sheet's scale. A label you place keeps its distance from what it measures on paper too: one
+10 mm off its line sits 10 mm off it on a 1:20 detail, a 1:100 plan and a 2:1 enlargement
+alike.
+
+**Scale** is the drawing's scale, picked from the same list as a view's (see
+[Sheet scales](../reference/units.md#sheet-scales)) or typed under **Custom**. The canvas shows
+annotations at print size for it, new text and drafting hatches are sized by it, and a new
+sheet's view starts at it when the drawing fits.
 
 ### One dimension or note in its own style
 

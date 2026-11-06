@@ -1,7 +1,7 @@
 //! Sheets: the Sheets tab, the sheet preview on the canvas, PDF / SVG / DXF export, printing
 //! and DXF import.
 
-use drift_core::sheets::{ARCHITECTURAL_SCALES, ENGINEERING_SCALES, PREFERRED_SCALES, scale_label};
+use drift_core::sheets::scale_label;
 use drift_core::{
     PaperSize, PlacedView, Revision, Sheet, SheetColours, SheetId, TitleBlock, ViewFrame, ViewId,
     Viewport,
@@ -299,8 +299,12 @@ impl DriftApp {
         let Some(mut sheet) = self.drawing.editor.doc.sheet(id).cloned() else {
             return;
         };
-        let (mut view, mut port) =
-            crate::output::sheet_view(self.fit_bounds(), &sheet, self.imperial());
+        let (mut view, mut port) = crate::output::sheet_view(
+            self.fit_bounds(),
+            &sheet,
+            self.imperial(),
+            self.drawing.editor.doc.draft_style().scale,
+        );
         view.name = self.next_view_name();
         self.drawing.editor.doc.begin();
         let added = self.drawing.editor.doc.add_view(view);
@@ -358,8 +362,12 @@ impl DriftApp {
             .collect();
         if sheets.is_empty() {
             let sheet = self.fresh_sheet("Sheet 1");
-            let (view, port) =
-                crate::output::sheet_view(self.fit_bounds(), &sheet, self.imperial());
+            let (view, port) = crate::output::sheet_view(
+                self.fit_bounds(),
+                &sheet,
+                self.imperial(),
+                self.drawing.editor.doc.draft_style().scale,
+            );
             let placed = PlacedView::new(port.view, &view, &port);
             sheets.push((sheet, vec![placed]));
         }
@@ -2126,7 +2134,7 @@ impl DriftApp {
                 (
                     id,
                     v.title().to_owned(),
-                    format!("{} · {on}", scale_label(v.scale)),
+                    format!("{} · {on}", scale_label(v.scale, self.imperial())),
                 )
             })
             .collect();
@@ -2261,41 +2269,10 @@ impl DriftApp {
         }
     }
 
-    /// A scale menu: the scales for the drawing's units first.
+    /// A scale menu: the one scale list, the drawing's units' scales first, and a typed
+    /// custom scale.
     pub(crate) fn scale_menu(&self, ui: &mut egui::Ui, id: &str, scale: &mut f64) {
-        let imperial = self.imperial();
-        egui::ComboBox::from_id_salt(id)
-            .selected_text(scale_label(*scale))
-            .width(90.0)
-            .height(420.0)
-            .show_ui(ui, |ui| {
-                ui.set_min_width(150.0);
-                let metric: Vec<f64> = PREFERRED_SCALES.to_vec();
-                let arch: Vec<f64> = ARCHITECTURAL_SCALES.iter().map(|(n, _)| *n).collect();
-                let eng: Vec<f64> = ENGINEERING_SCALES.iter().map(|(n, _)| *n).collect();
-                let groups = if imperial {
-                    [
-                        ("Architectural", arch),
-                        ("Engineering", eng),
-                        ("Metric", metric),
-                    ]
-                } else {
-                    [
-                        ("Metric", metric),
-                        ("Architectural", arch),
-                        ("Engineering", eng),
-                    ]
-                };
-                for (k, (name, scales)) in groups.into_iter().enumerate() {
-                    if k > 0 {
-                        ui.separator();
-                    }
-                    ui.label(egui::RichText::new(name).small().weak());
-                    for n in scales {
-                        ui.selectable_value(scale, n, scale_label(n));
-                    }
-                }
-            });
+        crate::app::scale_menu::scale_menu(ui, id, scale, self.imperial(), 110.0);
     }
 
     /// The Sheets panel's section for the views on the current sheet, and the picked one's
@@ -2313,7 +2290,12 @@ impl DriftApp {
         let views = self.drawing.editor.doc.placed_views(sheet);
         let picked = self.current_view(sheet);
         for (i, v) in views.iter().enumerate() {
-            let text = format!("{}  {}  ·  {}", i + 1, v.title(), scale_label(v.scale));
+            let text = format!(
+                "{}  {}  ·  {}",
+                i + 1,
+                v.title(),
+                scale_label(v.scale, self.imperial())
+            );
             if theme::list_row(ui, picked == i, &text).clicked() {
                 self.drawing.view.sheet_view = i;
                 self.drawing.picked_view = Some(v.id);

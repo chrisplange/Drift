@@ -107,8 +107,13 @@ impl DriftApp {
     }
 
     /// Where a view's name goes: over its crop's top-left corner.
-    fn crop_label(painter: &egui::Painter, rect: egui::Rect, view: &View) -> egui::Rect {
-        let text = format!("{} · {}", view.title(), scale_label(view.scale));
+    fn crop_label(
+        painter: &egui::Painter,
+        rect: egui::Rect,
+        view: &View,
+        imperial: bool,
+    ) -> egui::Rect {
+        let text = format!("{} · {}", view.title(), scale_label(view.scale, imperial));
         let galley =
             painter.layout_no_wrap(text, egui::FontId::proportional(12.0), egui::Color32::WHITE);
         egui::Rect::from_min_size(
@@ -152,7 +157,7 @@ impl DriftApp {
             .into_iter()
             .find(|(_, v)| {
                 let rect = Self::crop_rect(map, v);
-                on_edge(rect) || Self::crop_label(painter, rect, v).contains(pos)
+                on_edge(rect) || Self::crop_label(painter, rect, v, self.imperial()).contains(pos)
             })
             .map(|(id, _)| (id, CropGrip::Move))
     }
@@ -311,7 +316,7 @@ impl DriftApp {
                 rect.left_top(),
             ];
             crate::overlay::dashed(painter, &corners, egui::Stroke::new(width, c), 8.0, 5.0);
-            let label = Self::crop_label(painter, rect, view);
+            let label = Self::crop_label(painter, rect, view, self.imperial());
             // On a patch of the canvas's colour, to read over hatching.
             let ground = if dark {
                 egui::Color32::from_rgba_unmultiplied(0x1c, 0x1d, 0x21, 225)
@@ -322,7 +327,11 @@ impl DriftApp {
             painter.text(
                 label.min,
                 egui::Align2::LEFT_TOP,
-                format!("{} · {}", view.title(), scale_label(view.scale)),
+                format!(
+                    "{} · {}",
+                    view.title(),
+                    scale_label(view.scale, self.imperial())
+                ),
                 egui::FontId::proportional(12.0),
                 c,
             );

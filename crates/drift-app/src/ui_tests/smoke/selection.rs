@@ -313,6 +313,9 @@ fn handle_drag(h: &mut Harness<'_, DriftApp>, from: Pos2, to: Pos2, mods: EguiMo
 #[test]
 fn smoke_selection_one_circle_has_a_box_and_one_line_none() {
     let Some(mut h) = harness() else { return };
+    // (The radius dimension's label at its fixed screen size, clear of the box's handle; at
+    // print size for 1:1 it would sit on it and take the drag.)
+    h.state_mut().print_annotations = false;
     let v = DVec2::new;
     view(&mut h, v(-40.0, -40.0), v(40.0, 40.0));
     let c = circle(&mut h, DVec2::ZERO, 10.0);

@@ -9,8 +9,9 @@ use drift_core::{
 };
 use eframe::egui::{self, Color32, Pos2, Rect, Stroke, vec2};
 
-use crate::annotations::{AnnotationColors, AnnotationState, DimStyle, PT_PER_MM, Pen};
-use crate::overlay::ScreenMap;
+use crate::annotations::{
+    AnnoSpace, AnnotationColors, AnnotationState, DimStyle, PT_PER_MM, Pen, Sizing, Zoom,
+};
 use drift_edit::labels::{centre, line_ends};
 
 /// Paper millimetres a centre line runs past its circle.
@@ -464,10 +465,13 @@ fn place_note_text(
     center: Pos2,
     style: &NoteStyle,
     font: f32,
+    sizing: Sizing,
 ) -> NoteText {
-    let size = style
-        .height
-        .map_or(font, |h| (h as f32 * PT_PER_MM).clamp(4.0, 200.0));
+    // Its own height is a cap height on paper, as the drafting style's.
+    let size = style.height.map_or(font, |h| match sizing {
+        Sizing::Screen => (h as f32 * PT_PER_MM).clamp(4.0, 200.0),
+        Sizing::Paper => crate::annotations::paper_font(h),
+    });
     let wrap = style
         .wrap
         .map_or(f32::INFINITY, |w| (w as f32 * PT_PER_MM).max(size * 2.0));
@@ -598,14 +602,15 @@ fn leader_to(tip: Pos2, text: &NoteText) -> Vec<Pos2> {
 pub fn layout_annotations(
     painter: &egui::Painter,
     doc: &Document,
-    map: &ScreenMap,
+    space: &AnnoSpace,
 ) -> Vec<NoteLayout> {
+    let map = &space.map;
     let s = |p: DVec2| map.to_screen(p);
     let mut out = Vec::new();
     for (id, a) in doc.annotations() {
         // The drawing's style, with the annotation's own settings in place.
         let style: DraftStyle = doc.draft_style_for(drift_core::AnnotationRef::Annotation(id));
-        let font = DimStyle::of(&style).text;
+        let font = space.style(&style).text;
         let mut layout = NoteLayout {
             id,
             text: None,
@@ -630,7 +635,8 @@ pub fn layout_annotations(
                     continue;
                 };
                 let shown = if text.is_empty() { " " } else { text };
-                let t = place_note_text(painter, shown.to_owned(), s(pos), style, font);
+                let t =
+                    place_note_text(painter, shown.to_owned(), s(pos), style, font, space.sizing);
                 for l in leaders {
                     let Some(tip) = doc.anchor_pos(&l.to) else {
                         continue;
@@ -906,9 +912,71 @@ fn frame_outline(r: Rect, frame: NoteFrame) -> Vec<Pos2> {
     }
 }
 
-/// Font size for drafting text at the document's style (logical points).
-pub fn text_size(doc: &Document) -> f32 {
-    (doc.draft_style().text_height as f32 * PT_PER_MM).clamp(8.0, 40.0)
+/// Font size for drafting text at the document's style (logical points), sized for
+/// `sizing`.
+pub fn text_size(doc: &Document, sizing: Sizing) -> f32 {
+    DimStyle::sized(&doc.draft_style(), sizing).text
+}
+
+impl NoteText {
+    /// Taken through `z`.
+    pub fn mapped(self, z: &Zoom) -> Self {
+        Self {
+            center: z.p(self.center),
+            rect: z.rect(self.rect),
+            size: z.len(self.size),
+            wrap: z.len(self.wrap),
+            first_line: z.len(self.first_line),
+            ..self
+        }
+    }
+}
+
+impl LeaderPath {
+    /// Taken through `z`.
+    pub fn mapped(self, z: &Zoom) -> Self {
+        let p = |q: Pos2| z.p(q);
+        Self {
+            points: self.points.into_iter().map(p).collect(),
+            end: self.end,
+            bend: self.bend.map(p),
+            shoulder: self.shoulder.map(p),
+            landing: p(self.landing),
+            curve: self.curve.map(|(m, ends)| (p(m), ends.map(p))),
+        }
+    }
+}
+
+impl Mark {
+    /// Taken through `z`.
+    pub fn mapped(self, z: &Zoom) -> Self {
+        let ps = |v: Vec<Pos2>| v.into_iter().map(|q| z.p(q)).collect();
+        match self {
+            Mark::Stroke(v) => Mark::Stroke(ps(v)),
+            Mark::Solid(v) => Mark::Solid(ps(v)),
+            Mark::Blank(v) => Mark::Blank(ps(v)),
+            Mark::Text(t, size) => Mark::Text(t.mapped(z), z.len(size)),
+        }
+    }
+}
+
+impl NoteLayout {
+    /// The layout taken through `z` (from paper onto the canvas, or back).
+    pub fn mapped(self, z: &Zoom) -> Self {
+        Self {
+            id: self.id,
+            text: self.text.map(|t| t.mapped(z)),
+            leaders: self.leaders.into_iter().map(|l| l.mapped(z)).collect(),
+            frame: self.frame,
+            mask: self.mask,
+            segments: self
+                .segments
+                .into_iter()
+                .map(|[a, b]| [z.p(a), z.p(b)])
+                .collect(),
+            marks: self.marks.into_iter().map(|m| m.mapped(z)).collect(),
+        }
+    }
 }
 
 #[cfg(test)]

@@ -152,6 +152,18 @@ impl Editor {
         items
     }
 
+    /// The height (model mm) of text the Text tool or a paste makes: the tool bar's paper
+    /// height if one is set, else the drafting text height, at the drawing scale (as
+    /// [`drift_core::DraftStyle::text_world_height`], which the AI link and scripts use).
+    pub fn new_text_height(&self) -> f64 {
+        let style = self.doc.draft_style();
+        if self.prefs.text_height > 0.0 {
+            self.prefs.text_height * style.scale
+        } else {
+            style.text_world_height()
+        }
+    }
+
     /// Add a text (one undo step) and pick it.
     pub fn add_text(&mut self, text: SketchText) -> TextId {
         self.doc.begin();

@@ -419,8 +419,19 @@ impl Editor {
         })
     }
 
-    /// Add a dimension with its label placed at `placement` (offset from its anchor), as one
-    /// undoable step.
+    /// A label offset in the model (world mm, as drawn at the drawing scale) as it is kept:
+    /// in paper mm.
+    fn paper_offset(&self, world: DVec2) -> DVec2 {
+        let n = self.doc.draft_style().scale;
+        if n.is_finite() && n > 0.0 {
+            world / n
+        } else {
+            world
+        }
+    }
+
+    /// Add a dimension with its label placed at `placement` (offset from its anchor in the
+    /// model, world mm), as one undoable step.
     /// It goes through [`add_constraints`](Self::add_constraints), with no active element: a
     /// dimension is added at the geometry's current measurement, so adding it moves nothing.
     pub fn add_dimension(
@@ -448,7 +459,7 @@ impl Editor {
             // Fold the placement into the step that added the dimension.
             let tx_label = constraint.type_name();
             self.doc.begin();
-            let _ = self.doc.set_placement(id, offset);
+            let _ = self.doc.set_placement(id, self.paper_offset(offset));
             let tx = self.doc.commit(tx_label);
             self.history.merge_into_last(tx);
             self.sync();
@@ -470,7 +481,7 @@ impl Editor {
         let added = self.doc.add_constraint(constraint).and_then(|id| {
             self.doc.set_driven(id, true)?;
             if let Some(offset) = placement {
-                self.doc.set_placement(id, offset)?;
+                self.doc.set_placement(id, self.paper_offset(offset))?;
             }
             Ok(id)
         });
@@ -526,9 +537,11 @@ impl Editor {
         self.check_new_constraints(label, &[id], &before, &degenerate_before, None)
     }
 
-    /// Move a dimension's label (inside an open transaction while dragging).
+    /// Move a dimension's label to `offset` from its anchor in the model (world mm; kept on
+    /// paper, at the drawing scale), inside an open transaction while dragging.
     pub fn place_dimension(&mut self, id: ConstraintId, offset: DVec2) {
-        let _ = self.doc.set_placement(id, offset);
+        let paper = self.paper_offset(offset);
+        let _ = self.doc.set_placement(id, paper);
     }
 
     // ----- Regions ---------------------------------------------------------------------------

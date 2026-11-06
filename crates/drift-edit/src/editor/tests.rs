@@ -1302,6 +1302,76 @@ mod circle_drag {
             );
         }
     }
+
+    /// A point on a circle (or an arc) whose centre is fixed, dragged along a line through the
+    /// centre from `from` to x = −5 (times `scale`, about `at`) in `frames` frames: the frames
+    /// refused.
+    fn refused_crossing(arc: bool, from: f64, frames: u32, scale: f64, at: DVec2) -> Vec<u32> {
+        let mut ed = Editor::default();
+        ed.doc.begin();
+        let center = ed.doc.add_point(at);
+        let curve = if arc {
+            let start = ed.doc.add_point(at + v(0.0, -from) * scale);
+            let end = ed.doc.add_point(at + v(0.0, from) * scale);
+            ed.doc.add_arc(center, start, end).unwrap()
+        } else {
+            ed.doc.add_circle(center, from * scale).unwrap()
+        };
+        let p = ed.doc.add_point(at + v(from, 0.0) * scale);
+        ed.doc
+            .add_constraint(Constraint::PointOnCurve { point: p, curve })
+            .unwrap();
+        ed.doc
+            .add_constraint(Constraint::Fix { point: center, at })
+            .unwrap();
+        assert!(ed.commit("Sketch"));
+        ed.doc.begin();
+        let dragged = Param::point(p).to_vec();
+        let mut refused = Vec::new();
+        let mut applied = DVec2::ZERO;
+        for k in 1..=frames {
+            let target = v(-5.0 - from, 0.0) * scale * (f64::from(k) / f64::from(frames));
+            if ed.drag(&[p], target - applied, &dragged) {
+                applied = target;
+            } else {
+                refused.push(k);
+            }
+        }
+        ed.commit("Move");
+        refused
+    }
+
+    /// The crossing goes straight through, the same at every size and place: only a frame
+    /// whose target is on the centre itself (where the circle would be crushed, F1) is
+    /// refused, and the next frame lands on the far side. (The solve's step limit counts a
+    /// circle's radius as part of how far the drawing reaches; counting points only, a radius
+    /// change bigger than the points' spread had every step cut short, so the frame was taken
+    /// again in small steps along a path through the centre, and refused for a stretch past it.)
+    /// A point on an arc is refused on the centre frame too: the arc would turn (F1), as before.
+    #[test]
+    fn a_point_dragged_across_its_circles_centre_is_refused_only_on_it() {
+        let cases: [(bool, f64, u32, &[u32]); 7] = [
+            (false, 5.0, 20, &[10]),
+            (false, 5.0, 64, &[32]),
+            (false, 5.0, 7, &[]),
+            (false, 5.0, 21, &[]),
+            (false, 0.5, 20, &[]),
+            (false, 0.5, 64, &[]),
+            (true, 5.0, 20, &[10]),
+        ];
+        for (arc, from, frames, want) in cases {
+            for scale in [0.1, 1.0, 10.0] {
+                for at in [DVec2::ZERO, v(1e5, 1e5), v(1e6, 1e6)] {
+                    assert_eq!(
+                        refused_crossing(arc, from, frames, scale, at),
+                        want,
+                        "{} from {from}, {frames} frames, {scale}× about {at}",
+                        if arc { "arc" } else { "circle" }
+                    );
+                }
+            }
+        }
+    }
 }
 
 /// #342: an edit whose solve leaves geometry broken (rows no relation owns: an arc's end on

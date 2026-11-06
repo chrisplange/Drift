@@ -2050,3 +2050,69 @@ fn a_value_that_isnt_a_number_is_not_written() {
     assert!(!write_back(&mut doc, &sys));
     assert_eq!(doc.point(s).unwrap(), v(10.0, 0.0));
 }
+
+/// The step limit's size of the drawing: points only, unless a drag's solve asks for circles
+/// too, where a circle reaches its centre's distance from the middle plus its radius. A
+/// non-drag solve's limit is exactly as before. (A centre at the origin and a point at
+/// (−0.5, 0) on a circle of radius 5: points only, 0.5 across; with the circle, 10.5.)
+#[test]
+fn a_drags_step_limit_counts_how_far_a_circle_reaches() {
+    for (scale, at) in [(1.0, v(0.0, 0.0)), (10.0, v(0.0, 0.0)), (0.1, v(1e5, 1e5))] {
+        let mut doc = Document::new();
+        doc.begin();
+        let c = doc.add_point(at);
+        doc.add_circle(c, 5.0 * scale).unwrap();
+        doc.add_point(at + v(-0.5, 0.0) * scale);
+        let sys = System::build(&doc, &[], &Tolerances::default(), None);
+        let values: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
+        let points = drawing_across(&sys, &values, false);
+        let reach = drawing_across(&sys, &values, true);
+        assert!(
+            (points - 0.5 * scale).abs() <= 1e-9 * scale,
+            "{scale}× about {at}: {points}"
+        );
+        assert!(
+            (reach - 10.5 * scale).abs() <= 1e-9 * scale,
+            "{scale}× about {at}: {reach}"
+        );
+    }
+}
+
+/// `meets_within` judges an angle row (a sine, the same at any size and place) at the solver's
+/// own angle tolerance, whatever the length slack: a solved part with a Perpendicular between
+/// a 20 mm and a 17 mm line (turned by a 3-4-5 angle) passes at the slack a try at keeping a
+/// length gets there, at the origin and 1 m, 10 m and 1 km out. (Held to that slack, a sine
+/// far out is finer than round-off can tell, and the part failed from about 10 m.)
+#[test]
+fn meets_within_holds_angle_rows_to_the_solvers_own_tolerance() {
+    for at in [0.0, 1e3, 1e4, 1e6] {
+        let o = v(at, at);
+        let (c, s) = (0.8, 0.6);
+        let mut doc = Document::new();
+        doc.begin();
+        let p0 = doc.add_point(o);
+        let p1 = doc.add_point(o + v(20.0 * c, 20.0 * s));
+        let p2 = doc.add_point(o + v(-17.0 * s + 0.01, 17.0 * c));
+        let a = doc.add_line(p0, p1).unwrap();
+        let b = doc.add_line(p0, p2).unwrap();
+        doc.add_constraint(Constraint::Perpendicular { a, b })
+            .unwrap();
+        doc.add_constraint(Constraint::Fix { point: p0, at: o })
+            .unwrap();
+        assert!(solved(&mut doc).converged);
+        let scope: HashSet<EntityId> = doc.iter().map(|(id, _)| id).collect();
+        let pts = [p0, p1, p2].map(|p| doc.point(p).unwrap());
+        let middle = pts.iter().sum::<DVec2>() / 3.0;
+        let size = 2.0 * pts.iter().map(|p| p.distance(middle)).fold(0.0, f64::max);
+        let farthest = pts
+            .iter()
+            .map(|p| p.abs().max_element())
+            .fold(1.0, f64::max);
+        let slack = (1e-12 * (size / 4.0 / farthest).min(1.0)).max(64.0 * f64::EPSILON);
+        let relations = relations(&doc, None);
+        assert!(
+            meets_within(&doc, &scope, &relations, None, None, slack),
+            "{at} out: the part fails at slack {slack:e}"
+        );
+    }
+}

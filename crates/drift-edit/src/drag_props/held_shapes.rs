@@ -887,8 +887,9 @@ fn a_drag_refused_whole_leaves_the_history_as_any_refused_drag() {
 /// An unsettled start (a line drawn 9.51 where its dimension says 9, as an import or an old
 /// unsolved edit can leave it), beside a lever drag that can't land: every frame's solve settles
 /// it, and the rule reads the settling as the drag shortening a held line. A drag of nothing
-/// settles at once, as before; a real drag holds for its first hundredth of the settle (about
-/// 0.005 here), then goes, settled, at the origin and a kilometre out alike.
+/// settles at once, as before; a real drag holds until the pointer has moved a hundredth of the
+/// unsettled amount for a line (about 0.005 here; a tenth for a radius, see the next test),
+/// then settles with the drag, at the origin and a kilometre out alike.
 #[test]
 fn an_unsettled_start_holds_for_its_first_hundredth_then_goes() {
     for at in [DVec2::ZERO, DVec2::new(1e6, 0.0)] {
@@ -958,5 +959,249 @@ fn an_unsettled_start_holds_for_its_first_hundredth_then_goes() {
             );
             assert!((length(&ed) - 9.0).abs() < 1e-6, "at {at}: settled");
         }
+    }
+}
+
+/// The same with a radius (Fable's #361 follow-up): beside the lever, a circle centred on its
+/// far end, its radius dimensioned 5 and left at 6. Each frame's solve settles the radius by 1,
+/// which the radius rule reads as the drag changing a held radius by more than `SHAPE_HOLD`
+/// (10) times the pointer's offset: so the drag holds until the pointer has moved a tenth of
+/// the unsettled amount, then settles with it. A whole drag shorter than that never settles
+/// (the frames are refused and the radius stays 6). The same at the origin and a kilometre out.
+#[test]
+fn an_unsettled_radius_holds_for_a_tenth_then_settles() {
+    for at in [DVec2::ZERO, DVec2::new(1e6, 0.0)] {
+        for (off, frames) in [(0.2, 64u32), (0.07, 64)] {
+            let v = |x: f64, y: f64| at + DVec2::new(x, y);
+            let mut doc = drift_core::Document::new();
+            doc.begin();
+            let pivot = doc.add_point(v(0.0, 0.0));
+            let end = doc.add_point(v(10.0, 0.0));
+            let line = doc.add_line(pivot, end).unwrap();
+            let q = doc.add_point(v(2.0, 0.0));
+            let circle = doc.add_circle(end, 5.0).unwrap();
+            for c in [
+                Constraint::PointOnCurve {
+                    point: q,
+                    curve: line,
+                },
+                Constraint::Distance {
+                    a: pivot,
+                    b: end,
+                    value: 10.0,
+                },
+                Constraint::Distance {
+                    a: pivot,
+                    b: q,
+                    value: 2.0,
+                },
+                Constraint::Fix {
+                    point: pivot,
+                    at: v(0.0, 0.0),
+                },
+                Constraint::Radius {
+                    curve: circle,
+                    value: 5.0,
+                },
+            ] {
+                doc.add_constraint(c).unwrap();
+            }
+            doc.commit("Sketch");
+            let mut ed = Editor::new(doc);
+            ed.doc.begin();
+            ed.doc.set_radius(circle, 6.0).unwrap();
+            ed.doc.commit("Unsettle");
+            let radius = |ed: &Editor| match ed.doc.get(circle).unwrap().kind {
+                drift_core::EntityKind::Circle { radius, .. } => radius,
+                _ => unreachable!(),
+            };
+            ed.doc.begin();
+            let mut applied = DVec2::ZERO;
+            let mut first = None;
+            for k in 1..=frames {
+                let target =
+                    DVec2::new(1.0, 1.0).normalize() * off * (f64::from(k) / f64::from(frames));
+                if ed.drag(&[q], target - applied, &Param::point(q)) {
+                    applied = target;
+                    first.get_or_insert(target.length());
+                }
+            }
+            if off >= 0.1 {
+                let first = first.expect("goes in the end");
+                assert!(
+                    (0.09..=0.11).contains(&first),
+                    "at {at}, {off} in {frames}: first went at {first}"
+                );
+                assert!((radius(&ed) - 5.0).abs() < 1e-6, "at {at}: settled");
+            } else {
+                assert_eq!(first, None, "at {at}, {off} in {frames}: went");
+                assert_eq!(radius(&ed), 6.0, "at {at}: never settles");
+            }
+        }
+    }
+}
+
+/// A sketch for the try at keeping a length: a line `moved` (dragged as a curve) with its
+/// midpoint `m`, a line hanging from `m` to a free end, held equal to a line `stretched` from a
+/// fixed point to the moved line's start. A move of `moved` stretches `stretched`, so the
+/// hanging line's length must change with it: no try can keep it. With `refused`, the moved
+/// line's start is also on a circle round the fixed point (radius 10), and the frame takes it
+/// onto the circle's centre, which crushes it (F1): refused today.
+fn length_try_sketch(at: DVec2, refused: bool) -> (Editor, EntityId, Vec<Param>, [EntityId; 5]) {
+    let v = |x: f64, y: f64| at + DVec2::new(x, y);
+    let mut doc = drift_core::Document::new();
+    doc.begin();
+    let p0 = doc.add_point(v(0.0, 0.0));
+    let q = doc.add_point(v(10.0, 0.0));
+    let r = doc.add_point(v(10.0, 6.0));
+    let m = doc.add_point(v(10.0, 3.0));
+    let s = doc.add_point(v(20.0, 3.0));
+    let stretched = doc.add_line(p0, q).unwrap();
+    let moved = doc.add_line(q, r).unwrap();
+    let hanging = doc.add_line(m, s).unwrap();
+    let mut relations = vec![
+        Constraint::Fix {
+            point: p0,
+            at: v(0.0, 0.0),
+        },
+        Constraint::Midpoint {
+            point: m,
+            line: moved,
+        },
+        Constraint::Equal {
+            a: hanging,
+            b: stretched,
+        },
+    ];
+    if refused {
+        let circle = doc.add_circle(p0, 10.0).unwrap();
+        relations.push(Constraint::PointOnCurve {
+            point: q,
+            curve: circle,
+        });
+    }
+    for c in relations {
+        doc.add_constraint(c).unwrap();
+    }
+    doc.commit("Sketch");
+    let dragged = [q, r].into_iter().flat_map(Param::point).collect();
+    (Editor::new(doc), moved, dragged, [p0, q, r, m, s])
+}
+
+/// A try at keeping a hanging line's length that fails leaves the frame exactly as today's
+/// steps left it ([`length_try_sketch`]: the hanging line's length must change). Frames are
+/// tried and none kept, and the drag ends bit for bit where it does with the try switched off,
+/// pushing as much, at the origin, 100 mm out and a kilometre out.
+#[test]
+fn a_failed_try_at_keeping_a_length_leaves_the_frame_as_it_was() {
+    for at in [DVec2::ZERO, DVec2::new(100.0, -50.0), DVec2::new(1e6, 0.0)] {
+        let run = |no_try: bool| {
+            let (mut ed, moved, dragged, points) = length_try_sketch(at, false);
+            ed.drag_no_length_try = no_try;
+            ed.doc.begin();
+            let mut tries = (0, 0);
+            let mut went = Vec::new();
+            let mut applied = DVec2::ZERO;
+            for k in 1..=8 {
+                let target = DVec2::new(4.0, 1.0) * (f64::from(k) / 8.0);
+                let ok = ed.drag(&[moved], target - applied, &dragged);
+                if ok {
+                    applied = target;
+                }
+                went.push(ok);
+                tries.0 += ed.drag_length_tries.0;
+                tries.1 += ed.drag_length_tries.1;
+            }
+            let at_end: Vec<DVec2> = points.iter().map(|&p| ed.doc.point(p).unwrap()).collect();
+            (went, at_end, ed.drag_pushed(), tries)
+        };
+        let (went, at_end, pushed, tries) = run(false);
+        let (went_off, at_end_off, pushed_off, tries_off) = run(true);
+        assert!(tries.0 > 0, "at {at}: never tried");
+        assert_eq!(tries.1, 0, "at {at}: a try was kept");
+        assert_eq!(tries_off, (0, 0));
+        assert_eq!(went, went_off, "at {at}");
+        assert_eq!(at_end, at_end_off, "at {at}: not bit for bit");
+        assert_eq!(pushed, pushed_off, "at {at}");
+    }
+}
+
+/// A frame refused today stays refused with the try at keeping a length, and leaves the
+/// drawing as it was ([`length_try_sketch`] with the moved line's start taken onto a circle's
+/// centre: crushed, F1). The try is made only after a step that went, so it may run on the
+/// frame's earlier steps, but it never turns a refused frame into one that goes.
+#[test]
+fn a_frame_refused_today_stays_refused_with_the_try_at_keeping_a_length() {
+    for no_try in [false, true] {
+        let (mut ed, moved, dragged, points) = length_try_sketch(DVec2::ZERO, true);
+        ed.drag_no_length_try = no_try;
+        let start: Vec<DVec2> = points.iter().map(|&p| ed.doc.point(p).unwrap()).collect();
+        ed.doc.begin();
+        let went = ed.drag(&[moved], DVec2::new(-10.0, 0.0), &dragged);
+        assert!(!went, "with no_try {no_try}: went");
+        let now: Vec<DVec2> = points.iter().map(|&p| ed.doc.point(p).unwrap()).collect();
+        assert_eq!(
+            now, start,
+            "with no_try {no_try}: a refused frame moved something"
+        );
+    }
+}
+
+/// The tries at keeping a length share one budget across a drag call's parts: ten copies of
+/// [`length_try_sketch`]'s failing kind (each its own part, each trying every frame and
+/// failing) dragged in one call run no more than `LENGTH_TRY_SOLVES` (32) solves on their
+/// tries a frame, where ten budgets of their own would run each part's.
+#[test]
+fn many_parts_trying_to_keep_a_length_share_one_budget() {
+    let mut doc = drift_core::Document::new();
+    doc.begin();
+    let mut moved = Vec::new();
+    for t in 0..10 {
+        let o = DVec2::new(60.0 * f64::from(t), 0.0);
+        let v = |x: f64, y: f64| o + DVec2::new(x, y);
+        let p0 = doc.add_point(v(0.0, 0.0));
+        let q = doc.add_point(v(10.0, 0.0));
+        let r = doc.add_point(v(10.0, 6.0));
+        let m = doc.add_point(v(10.0, 3.0));
+        let s = doc.add_point(v(20.0, 3.0));
+        let stretched = doc.add_line(p0, q).unwrap();
+        let line = doc.add_line(q, r).unwrap();
+        let hanging = doc.add_line(m, s).unwrap();
+        for c in [
+            Constraint::Fix {
+                point: p0,
+                at: v(0.0, 0.0),
+            },
+            Constraint::Midpoint { point: m, line },
+            Constraint::Equal {
+                a: hanging,
+                b: stretched,
+            },
+        ] {
+            doc.add_constraint(c).unwrap();
+        }
+        moved.push(line);
+    }
+    doc.commit("Sketch");
+    let mut ed = Editor::new(doc);
+    let dragged: Vec<Param> = ed
+        .doc
+        .defining_points(moved.iter().copied())
+        .into_iter()
+        .flat_map(Param::point)
+        .collect();
+    ed.doc.begin();
+    let mut applied = DVec2::ZERO;
+    for k in 1..=4 {
+        let target = DVec2::new(4.0, 1.0) * (f64::from(k) / 4.0);
+        if ed.drag(&moved, target - applied, &dragged) {
+            applied = target;
+        }
+        let (tries, kept, solves) = ed.drag_length_tries;
+        assert!(
+            tries > 0 && kept == 0,
+            "frame {k}: {tries} tries, {kept} kept"
+        );
+        assert!(solves <= 32, "frame {k}: the tries ran {solves} solves");
     }
 }

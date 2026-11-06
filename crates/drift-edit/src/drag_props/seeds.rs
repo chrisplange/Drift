@@ -444,17 +444,27 @@ fn g_move_lands_off() {
     explained(r).unwrap();
 }
 
-/// H (#284): equal arcs and points on curves: a hanging line goes from 10 to 6 long. Line 2's
-/// kept length holds line 1's too (`Equal(1, 2)`), and line 1's free end would have to slide
-/// round the dragged arc's circle to where it is 10 from the dragged point, near the least
-/// distance there is: a kept length at a fold of its own. The preference's step closes next
-/// to nothing each iteration (1e-7 of the 4 left), and `SETTLE_PATIENCE` ends the solve at
-/// iteration 13 with the line at 6. The same at any size. (`move_keeps_untouched_lengths_heavy`,
-/// seed 1, shrunk on e002052.)
+/// H (fixed, #284): equal arcs and points on curves: a hanging line went from 10 to 6 long.
+/// Line 2's kept length holds line 1's too (`Equal(1, 2)`), and the step's first solve put
+/// line 1's free end where its kept length has no first-order way back: a kept length at a
+/// fold of its own. The preference's step closed next to nothing each iteration (1e-7 of the 4
+/// left), and `SETTLE_PATIENCE` ended the solve at iteration 13 with the line at 6, the same at
+/// any size. The frame went and landed, so it is tried once more with the fold steps from its
+/// start (`Editor::keep_lengths`), which keeps the length: line 1's end swings round the
+/// arc's circle instead. (`move_keeps_untouched_lengths_heavy`, seed 1, shrunk on e002052.)
 #[test]
-#[ignore = "#284: an untouched hanging line is stretched (a kept length stalled at a fold)"]
 fn h_untouched_line_stretched() {
-    let plan = Plan {
+    let plan = h_plan();
+    let pick = Pick::Curves(13773849351002921577);
+    let offset = DVec2::new(16.377975070732383, 0.0);
+    let steps = 1;
+    let r = no_unforced_stretch(&plan, &pick, offset, steps);
+    explained(r).unwrap();
+}
+
+/// `h_untouched_line_stretched`'s sketch.
+fn h_plan() -> Plan {
+    Plan {
         ops: vec![
             Op::Arc {
                 from: 0,
@@ -502,22 +512,94 @@ fn h_untouched_line_stretched() {
         ],
         fix: None,
         length: None,
-    };
-    let pick = Pick::Curves(13773849351002921577);
-    let offset = DVec2::new(16.377975070732383, 0.0);
-    let steps = 1;
-    let r = no_unforced_stretch(&plan, &pick, offset, steps);
-    explained(r).unwrap();
+    }
 }
 
-/// H (#284): the same sketch with both lines level (`move_keeps_untouched_lengths_heavy`
+/// #284's case beside unrelated parts elsewhere in the drawing: a 2 m line 100 m away whose
+/// dimension is met only to the solver's own test out there (off by 1e-8: within it, but far
+/// coarser than the dragged part is held to), and a line pinned at both ends under a dimension
+/// it can't meet (a conflict). The try at keeping a length reads only the dragged part's
+/// relations, so the hanging line still keeps its length.
+#[test]
+fn h_untouched_line_stretched_beside_an_unrelated_part() {
+    let sketch = h_plan().sketch().unwrap();
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    built.ed.doc.begin();
+    let a = built.ed.doc.add_point(DVec2::new(1e5, 1e5));
+    let b = built.ed.doc.add_point(DVec2::new(1e5 + 2000.0 + 1e-8, 1e5));
+    built.ed.doc.add_line(a, b).unwrap();
+    built
+        .ed
+        .doc
+        .add_constraint(Constraint::Distance {
+            a,
+            b,
+            value: 2000.0,
+        })
+        .unwrap();
+    let c = built.ed.doc.add_point(DVec2::new(-500.0, 300.0));
+    let d = built.ed.doc.add_point(DVec2::new(-400.0, 300.0));
+    built.ed.doc.add_line(c, d).unwrap();
+    for r in [
+        Constraint::Fix {
+            point: c,
+            at: DVec2::new(-500.0, 300.0),
+        },
+        Constraint::Fix {
+            point: d,
+            at: DVec2::new(-400.0, 300.0),
+        },
+        Constraint::Distance {
+            a: c,
+            b: d,
+            value: 90.0,
+        },
+    ] {
+        built.ed.doc.add_constraint(r).unwrap();
+    }
+    built.ed.doc.commit("Elsewhere");
+    let ids = Pick::Curves(13773849351002921577).ids(&built);
+    let dragged: Vec<Param> = built
+        .ed
+        .doc
+        .defining_points(ids.iter().copied())
+        .into_iter()
+        .flat_map(Param::point)
+        .collect();
+    let length = |built: &Built| {
+        let p = built.positions();
+        p[5].distance(p[6])
+    };
+    let before = length(&built);
+    built.ed.doc.begin();
+    assert!(
+        built
+            .ed
+            .drag(&ids, DVec2::new(16.377975070732383, 0.0), &dragged)
+    );
+    let after = length(&built);
+    assert!(
+        (after - before).abs() <= LANDS * before,
+        "line 2 went from {before} to {after} long"
+    );
+}
+
+/// H (fixed, #284): the same sketch with both lines level (`move_keeps_untouched_lengths_heavy`
 /// seed 1's own shrunk case on a561c30): the move turns a curve even in its smallest step,
 /// so the turned curves are carried along, and in that carried solve line 2's kept length
-/// crawls (1e-7 a step) until `SETTLE_PATIENCE` ends it at iteration 12, the line at 6.
+/// crawled (1e-7 a step) until `SETTLE_PATIENCE` ended it at iteration 12, the line at 6. The
+/// try at keeping the length (`Editor::keep_lengths`) keeps it.
 #[test]
-#[ignore = "#284: an untouched hanging line is stretched (a kept length stalled at a fold)"]
 fn h_untouched_line_stretched_level() {
-    let plan = Plan {
+    let plan = h_level_plan();
+    let pick = Pick::Curves(13767121785659795704);
+    let offset = DVec2::new(16.377975070732383, 2.966956818320761);
+    explained(no_unforced_stretch(&plan, &pick, offset, 1)).unwrap();
+}
+
+/// `h_untouched_line_stretched_level`'s sketch.
+fn h_level_plan() -> Plan {
+    Plan {
         ops: vec![
             Op::Arc {
                 from: 0,
@@ -560,10 +642,56 @@ fn h_untouched_line_stretched_level() {
         extras: (0..48).map(|i| [0, 1, 3].contains(&i)).collect(),
         fix: None,
         length: None,
-    };
-    let pick = Pick::Curves(13767121785659795704);
-    let offset = DVec2::new(16.377975070732383, 2.966956818320761);
-    explained(no_unforced_stretch(&plan, &pick, offset, 1)).unwrap();
+    }
+}
+
+/// #284's two cases at other sizes and far from the origin: the hanging line keeps its length
+/// at 0.1×, 1× and 10×, and a metre, 30 m, 100 m and a kilometre out. (The try at keeping a
+/// length is held to the part's size, with a floor at what round-off can still tell, so it
+/// works the same far out.)
+#[test]
+fn h_untouched_line_kept_at_any_size_and_place() {
+    let cases = [
+        (
+            h_plan(),
+            Pick::Curves(13773849351002921577),
+            DVec2::new(16.377975070732383, 0.0),
+        ),
+        (
+            h_level_plan(),
+            Pick::Curves(13767121785659795704),
+            DVec2::new(16.377975070732383, 2.966956818320761),
+        ),
+    ];
+    for (n, (plan, pick, offset)) in cases.iter().enumerate() {
+        let sketch = plan.sketch().unwrap();
+        for (scale, at) in [
+            (0.1, 0.0),
+            (1.0, 0.0),
+            (10.0, 0.0),
+            (1.0, 1e3),
+            (1.0, 3e4),
+            (1.0, 1e5),
+            (1.0, 1e6),
+        ] {
+            let t = Similarity {
+                scale,
+                turn: 0.0,
+                shift: DVec2::new(at, at),
+            };
+            let mut built = Built::new(&sketch, t).unwrap();
+            let ids = pick.ids(&built);
+            let run = drag(&mut built, &ids, t.vector(*offset), 1).unwrap();
+            let (before, after) = (
+                run.start[5].distance(run.start[6]),
+                run.end[5].distance(run.end[6]),
+            );
+            assert!(
+                (after - before).abs() <= LANDS * before,
+                "case {n} at {scale}×, ({at}, {at}): line 2 went from {before} to {after} long"
+            );
+        }
+    }
 }
 
 /// G (fixed, #283): a move of an arc, a line and a line's midpoint coincident with the arc's
@@ -1905,4 +2033,150 @@ fn k_a_point_that_jumps_beyond_the_swing_is_still_judged() {
     let mut jumped = run.clone();
     jumped.end[far] += DVec2::new(0.0, 50.0);
     assert!(judged_move(&jumped, far, Some(reach)) > allowed(&jumped, far));
+}
+
+/// #284's case with an angle relation in its part (its two level lines held parallel, which
+/// they already are), the sketch turned 37° (lines exactly level would leave a sine of exactly
+/// nothing anywhere): the hanging line keeps its length at 0.1×, 1× and 10×, and 30 m, 100 m
+/// and a kilometre out. The try's check holds angle rows to the solver's own (size-free)
+/// tolerance; held to the length slack, a sine is finer than round-off can tell far out.
+#[test]
+fn h_untouched_line_kept_with_an_angle_relation_at_any_size_and_place() {
+    let sketch = h_plan().sketch().unwrap();
+    for (scale, at) in [
+        (0.1, 0.0),
+        (1.0, 0.0),
+        (10.0, 0.0),
+        (1.0, 3e4),
+        (1.0, 1e5),
+        (1.0, 1e6),
+    ] {
+        let t = Similarity {
+            scale,
+            turn: 37.0,
+            shift: DVec2::new(at, at),
+        };
+        let mut built = Built::new(&sketch, t).unwrap();
+        built.ed.doc.begin();
+        built
+            .ed
+            .doc
+            .add_constraint(Constraint::Parallel {
+                a: built.curves[1],
+                b: built.curves[2],
+            })
+            .unwrap();
+        built.ed.doc.commit("Parallel");
+        let ids = Pick::Curves(13773849351002921577).ids(&built);
+        let run = drag(
+            &mut built,
+            &ids,
+            t.vector(DVec2::new(16.377975070732383, 0.0)),
+            1,
+        )
+        .unwrap();
+        let (before, after) = (
+            run.start[5].distance(run.start[6]),
+            run.end[5].distance(run.end[6]),
+        );
+        assert!(
+            (after - before).abs() <= LANDS * before,
+            "at {scale}×, ({at}, {at}): line 2 went from {before} to {after} long"
+        );
+    }
+}
+
+/// A drag a kilometre out (a census case: a line hanging from a midpoint, held perpendicular
+/// and equal to another, a curve and points on curves, dragged in 17 frames), where each
+/// frame's solve stops with the kept lengths off by about a billionth of themselves. That isn't
+/// a stretch, and isn't tried again: every frame is exactly as with no try at all. (Taken for
+/// one, the try landed across the fold on some frames, and the line jumped out by up to 2.3 mm
+/// for a frame and back the next.)
+#[test]
+fn a_solves_leftover_far_out_is_not_taken_for_a_stretch() {
+    let plan = Plan {
+        ops: vec![
+            Op::Dup {
+                from: 37,
+                angle: 4,
+                len: 0,
+            },
+            Op::OnLine {
+                line: 34,
+                at: 3,
+                angle: 7,
+                len: 2,
+            },
+            Op::OnArc {
+                arc: 33,
+                at: 10,
+                angle: 0,
+                len: 3,
+            },
+            Op::Step {
+                from: 30,
+                angle: 23,
+                len: 3,
+            },
+            Op::Mid {
+                line: 15,
+                angle: 4,
+                len: 1,
+            },
+            Op::Arc {
+                from: 39,
+                angle: 2,
+                radius: 2,
+                sweep: 0,
+                ccw: false,
+            },
+            Op::Step {
+                from: 56,
+                angle: 10,
+                len: 0,
+            },
+        ],
+        extras: vec![
+            false, true, true, false, true, false, true, false, false, true, false, false, true,
+            false, false, true, true, true, false, true, true, false, false, true, true, false,
+            false, true, false, false, true, true, false, true, false, true, true, false, true,
+            false, true, false, false, false, true, false, true, false,
+        ],
+        fix: None,
+        length: None,
+    };
+    let sketch = plan.sketch().unwrap();
+    let t = Similarity {
+        scale: 1.0,
+        turn: 0.0,
+        shift: DVec2::new(1e6, 1e6),
+    };
+    let offset = DVec2::new(3.1715384551452965, 2.422796244862606);
+    let frames = |no_try: bool| {
+        let mut built = Built::new(&sketch, t).unwrap();
+        built.ed.drag_no_length_try = no_try;
+        let ids = Pick::Curves(10082016649297418272).ids(&built);
+        let dragged: Vec<Param> = built
+            .ed
+            .doc
+            .defining_points(ids.iter().copied())
+            .into_iter()
+            .flat_map(Param::point)
+            .collect();
+        built.ed.doc.begin();
+        let mut applied = DVec2::ZERO;
+        let mut out = Vec::new();
+        for k in 1..=17 {
+            let target = offset * (f64::from(k) / 17.0);
+            if built.ed.drag(&ids, target - applied, &dragged) {
+                applied = target;
+            }
+            out.push(built.positions());
+        }
+        out
+    };
+    let (with, without) = (frames(false), frames(true));
+    for (k, (a, b)) in with.iter().zip(&without).enumerate() {
+        assert_eq!(a, b, "frame {}: differs from the drag with no try", k + 1);
+    }
 }

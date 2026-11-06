@@ -66,6 +66,7 @@ fn perf_editor_pipeline_frames() {
         thin_lines: false,
         show_grid: true,
         show_axes: true,
+        dash_world: None,
     };
     let palette = Palette::dark();
     let bounds = ed.bounds();
@@ -105,7 +106,7 @@ fn perf_app_frames() {
         .build_eframe(|cc| crate::DriftApp::new(cc));
     h.run();
     let (doc, curves) = torture_sketch();
-    h.state_mut().drawing.editor = Editor::new(doc);
+    h.state_mut().drawing.editor = Editor::new(perf_scale(doc));
     let fit = h.state().fit_bounds();
     h.state_mut().drawing.view.fit_target = Some(fit);
     h.run();
@@ -285,7 +286,7 @@ fn perf_zoom_frame_cost() {
         .build_eframe(|cc| crate::DriftApp::new(cc));
     h.run();
     h.state_mut()
-        .replace_document(doc, "zoom".into(), None, meta, true);
+        .replace_document(perf_scale(doc), "zoom".into(), None, meta, true);
     h.state_mut().show_view_crops = true;
     h.run();
     h.state_mut().drawing.view.fit_target = None;
@@ -327,4 +328,117 @@ fn perf_zoom_frame_cost() {
             }
         }
     }
+}
+
+/// Annotations at print size: frame cost through a zoom sweep (20 steps from a tenth of fit
+/// to ten times it) of a drawing with 600 dimensions and 100 notes, with the switch on and
+/// off, at 1:1 (most labels greeked when fitted) and at 1:20 (labels about 8–20 points high
+/// when fitted). The ladder keeps text from being laid out anew at every step.
+#[test]
+#[ignore = "torture test: run with --release --ignored --nocapture"]
+fn perf_annotation_zoom_sweep() {
+    use drift_core::{Anchor, Annotation, Constraint, DraftStyle, Leader, LeaderEnd, LeaderShape};
+    use egui_kittest::Harness;
+
+    if !crate::test_gpu::available() {
+        return;
+    }
+    // A 20 × 30 grid of 400 mm bars, each dimensioned, and a note on every sixth.
+    let annotated = |n: f64| {
+        let mut doc = Document::new();
+        doc.set_draft_style(DraftStyle {
+            scale: n,
+            ..doc.draft_style()
+        });
+        for row in 0..30 {
+            for col in 0..20 {
+                let (x, y) = (f64::from(col) * 600.0, f64::from(row) * 300.0);
+                let a = doc.add_point(DVec2::new(x, y));
+                let b = doc.add_point(DVec2::new(x + 400.0, y));
+                doc.add_line(a, b).unwrap();
+                let id = doc
+                    .add_constraint(Constraint::Distance { a, b, value: 400.0 })
+                    .unwrap();
+                doc.set_placement(id, DVec2::new(0.0, 4.0)).unwrap();
+                if (row * 20 + col) % 6 == 0 {
+                    doc.add_annotation(Annotation::Note {
+                        text: format!("BAR {row}-{col}"),
+                        at: DVec2::new(x + 200.0, y + 150.0),
+                        leaders: vec![Leader {
+                            to: Anchor::Free(DVec2::new(x + 200.0, y)),
+                            end: LeaderEnd::Arrow,
+                            shape: LeaderShape::Straight,
+                            shoulder: true,
+                            shoulder_len: Leader::SHOULDER,
+                        }],
+                        style: Default::default(),
+                    })
+                    .unwrap();
+                }
+            }
+        }
+        doc
+    };
+    let mut h = Harness::builder()
+        .with_size([1920.0, 1080.0])
+        .wgpu_setup(crate::test_gpu::setup())
+        .build_eframe(|cc| crate::DriftApp::new(cc));
+    h.run();
+    println!("\n600 dimensions, 100 notes at 1920 × 1080: frame ms through a zoom sweep");
+    for n in [1.0, 20.0] {
+        h.state_mut().replace_document(
+            annotated(n),
+            "annotated".into(),
+            None,
+            Default::default(),
+            true,
+        );
+        h.run();
+        let fit = h.state().fit_bounds();
+        h.state_mut().drawing.view.fit_target = Some(fit);
+        h.run();
+        h.state_mut().drawing.view.fit_target = None;
+        let fitted = h.state().drawing.view.camera;
+        for on in [false, true] {
+            h.state_mut().print_annotations = on;
+            let mut steps = Vec::new();
+            let start = Instant::now();
+            for k in 0..20 {
+                let zoom = 0.1 * 100f64.powf(f64::from(k) / 19.0);
+                h.state_mut().drawing.view.camera.scale = fitted.scale * zoom;
+                let t = Instant::now();
+                h.step();
+                steps.push(t.elapsed().as_secs_f64() * 1e3);
+            }
+            let total = start.elapsed().as_secs_f64() * 1e3;
+            let mut sorted = steps.clone();
+            sorted.sort_by(f64::total_cmp);
+            let line: Vec<String> = steps.iter().map(|s| format!("{s:.1}")).collect();
+            println!(
+                "1:{n:<3} print size {:<3}  mean {:>6.2}  median {:>6.2}  worst {:>6.2}  [{}]",
+                if on { "on" } else { "off" },
+                total / 20.0,
+                sorted[10],
+                sorted[19],
+                line.join(" ")
+            );
+        }
+    }
+}
+
+/// `doc` at the drawing scale `DRIFT_PERF_SCALE` names (1 : n), if set: the frame tests run
+/// with annotations at print size, legible or greeked as the scale makes them.
+fn perf_scale(mut doc: Document) -> Document {
+    if let Some(n) = std::env::var("DRIFT_PERF_SCALE")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .filter(|n| *n > 0.0)
+    {
+        doc.set_draft_style(drift_core::DraftStyle {
+            scale: n,
+            ..doc.draft_style()
+        });
+        println!("(drawing scale 1:{n})");
+    }
+    doc
 }

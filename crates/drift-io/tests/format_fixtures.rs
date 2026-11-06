@@ -136,6 +136,10 @@ const MEASUREMENTS: usize = 1;
 #[test]
 fn every_fixture_opens_keeps_its_contents_and_saves_as_current() {
     let all = fixtures();
+    let newest_key = all
+        .last()
+        .filter(|f| f.version == FORMAT_VERSION)
+        .map(|f| (f.version, f.addition));
     assert!(
         all.len() >= 4,
         "expected fixtures for several versions, found {}",
@@ -388,7 +392,9 @@ fn every_fixture_opens_keeps_its_contents_and_saves_as_current() {
             "{}",
             at("saved version")
         );
-        if version == FORMAT_VERSION {
+        // (The newest fixture is saved just as it reads; an older one of the same version
+        // gains what was added since, as `paper_label` in 44.2.)
+        if Some((version, addition)) == newest_key {
             assert_eq!(saved, text.replace("\r\n", "\n"), "{}", at("saved as read"));
         }
         let (again, again_meta, _) = load_with_notes(&saved).unwrap();
@@ -466,6 +472,11 @@ fn line(doc: &mut Document, a: EntityId, b: EntityId) -> EntityId {
 /// view, a traced PDF underlay with a picture, and one design option of each kind.
 fn fixture_drawing() -> Document {
     let mut doc = Document::new();
+    // A plan at 1:50 (44.2: label offsets are kept on paper).
+    doc.set_draft_style(drift_core::DraftStyle {
+        scale: 50.0,
+        ..doc.draft_style()
+    });
     let walls = doc.add_layer(Layer {
         color: Some(Rgb([0x30, 0x30, 0x30])),
         fill_color: Some(Rgb([0xd0, 0xc0, 0xa0])),
@@ -519,7 +530,8 @@ fn fixture_drawing() -> Document {
         })
         .unwrap();
     doc.set_expression(width, Some("w".into()));
-    doc.set_placement(width, DVec2::new(0.0, -400.0)).unwrap();
+    // (A label offset is kept in paper mm: 8 mm on paper, 400 mm in the model at 1:50.)
+    doc.set_placement(width, DVec2::new(0.0, -8.0)).unwrap();
     let depth = doc
         .add_constraint(Constraint::Distance {
             a: corners[1],

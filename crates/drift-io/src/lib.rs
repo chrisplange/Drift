@@ -420,9 +420,15 @@ struct ConstraintRecord {
     value: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     degrees: Option<f64>,
-    /// Dimension label offset from its anchor, in mm.
+    /// Dimension label offset from its anchor, in world mm at the drawing scale (as builds
+    /// before `paper_label` read it).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     label: Option<[f64; 2]>,
+    /// The same offset in paper mm, as it is kept: the same distance on every sheet whatever
+    /// the view's scale. Used when `label` agrees with it (an older build that moved the
+    /// label wrote `label` alone, and that wins).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    paper_label: Option<[f64; 2]>,
     /// A driven (reference) dimension: shown but not enforced.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     driven: bool,
@@ -1364,7 +1370,8 @@ fn file_out<'a>(doc: &'a Document, meta: &'a Metadata) -> FileOut<'a> {
     let constraints = doc
         .constraints()
         .map(|(id, c)| {
-            let mut r = constraint_record(id, c, doc.placement(id), doc.is_driven(id));
+            let mut r = constraint_record(id, c, doc.model_placement(id), doc.is_driven(id));
+            r.paper_label = doc.placement(id).map(|l| l.to_array());
             r.expr = doc.expression(id).map(str::to_owned);
             let ext = doc.extension_starts(id);
             r.ext = (ext != [None, None]).then_some(ext);
@@ -1833,6 +1840,10 @@ fn load_value(value: serde_json::Value) -> Result<(Document, Metadata, Vec<Strin
     for mut rec in file.constraints {
         let expr = rec.expr.take();
         let ext = rec.ext.take();
+        let paper_label = rec.paper_label.take().map(DVec2::from);
+        if paper_label.is_some_and(|l| !l.is_finite()) {
+            return Err(LoadError::NonFinite(rec.id.clone()));
+        }
         let note = drafting::dim_note(
             rec.prefix.take(),
             rec.suffix.take(),
@@ -1860,8 +1871,8 @@ fn load_value(value: serde_json::Value) -> Result<(Document, Metadata, Vec<Strin
             return Err(LoadError::DuplicateId(id.to_string()));
         }
         constraints.push((id, c));
-        if let Some(label) = label {
-            labels.push((id, label));
+        if label.is_some() || paper_label.is_some() {
+            labels.push((id, label, paper_label));
         }
     }
     let (mut doc, dropped) = Document::from_parts_dropping_degenerate(entities, constraints)
@@ -1871,13 +1882,10 @@ fn load_value(value: serde_json::Value) -> Result<(Document, Metadata, Vec<Strin
         .map(|(id, why)| format!("{id} ({why})"))
         .collect();
     let gone = |id: &ConstraintId| dropped.iter().any(|(d, _)| d == id);
-    labels.retain(|(id, _)| !gone(id));
+    labels.retain(|(id, ..)| !gone(id));
     driven.retain(|id| !gone(id));
     exts.retain(|(id, _)| !gone(id));
     notes.retain(|(id, _)| !gone(id));
-    for (id, label) in labels {
-        doc.set_placement(id, label).map_err(LoadError::Document)?;
-    }
     for id in driven {
         doc.set_driven(id, true).map_err(LoadError::Document)?;
     }
@@ -2116,6 +2124,11 @@ fn load_value(value: serde_json::Value) -> Result<(Document, Metadata, Vec<Strin
     if let Some(d) = file.drafting {
         doc.set_draft_style(drafting::parse_draft(d)?);
     }
+    // Label offsets, now the drawing scale, views and sheets are known.
+    for (id, label, paper) in labels {
+        doc.set_placement(id, paper_placement(&doc, id, label, paper))
+            .map_err(LoadError::Document)?;
+    }
     match file.project {
         Some(p) => doc.set_project(sheets::parse_project(p)?),
         None => lift_project(&mut doc),
@@ -2228,6 +2241,25 @@ fn lift_project(doc: &mut Document) {
         doc.set_sheet(id, sheet);
     }
     doc.set_project(project);
+}
+
+/// A dimension's label offset in paper mm, from what its record holds: `paper` when `label`
+/// (world mm) agrees with it at the drawing scale, or there is no `label`; otherwise `label`,
+/// written by a build from before offsets were kept on paper (or moved by one since), read
+/// at the scale its sheets print it at so they look as they did.
+fn paper_placement(
+    doc: &Document,
+    id: ConstraintId,
+    label: Option<DVec2>,
+    paper: Option<DVec2>,
+) -> DVec2 {
+    let n = doc.draft_style().scale;
+    match (label, paper) {
+        (None, Some(p)) => p,
+        (Some(l), Some(p)) if (l - p * n).abs().max_element() <= 1e-6 => p,
+        (Some(l), _) => l / doc.printed_scale(id),
+        (None, None) => DVec2::ZERO,
+    }
 }
 
 /// Upgrade a parsed file of any supported version to the current [`FORMAT_VERSION`].

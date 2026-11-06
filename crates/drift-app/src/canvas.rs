@@ -29,6 +29,9 @@ pub struct CanvasOptions {
     pub thin_lines: bool,
     pub show_grid: bool,
     pub show_axes: bool,
+    /// Dashes at their printed length for a drawing at 1 : this (see
+    /// `drift_render::Viewport::dash_world`).
+    pub dash_world: Option<f64>,
 }
 
 pub struct CanvasPainter {
@@ -77,6 +80,7 @@ impl CanvasPainter {
             thin_lines: options.thin_lines,
             show_grid: options.show_grid,
             show_axes: options.show_axes,
+            dash_world: options.dash_world,
         };
         let mut frame = build_frame(
             if groups.is_empty() { items } else { &[] },

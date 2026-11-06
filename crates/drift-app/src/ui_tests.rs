@@ -1832,7 +1832,13 @@ fn a_leaders_shoulder_and_curve_are_set_by_dragging() {
     let out = (grip.x - path.landing.x).signum();
     let before = (grip.x - path.landing.x).abs();
     drag(&mut h, grip, grip + egui::vec2(30.0 * out, 0.0));
-    let len = leader(&h).shoulder_len * f64::from(crate::annotations::PT_PER_MM);
+    // (On paper; on screen, at print size, that times the canvas's points per paper point.)
+    let k = h
+        .state()
+        .anno_space(&screen_map(&h))
+        .zoom
+        .map_or(1.0, |z| f64::from(z.k));
+    let len = leader(&h).shoulder_len * f64::from(crate::annotations::PT_PER_MM) * k;
     assert!(
         (len - f64::from(before + 30.0)).abs() < 1.5,
         "{len} vs {}",
@@ -3119,7 +3125,10 @@ fn drafting_tools_annotate_the_plate() {
     // Pick the note by its text and delete it.
     let painter = h.ctx.layer_painter(egui::LayerId::background());
     let map = screen_map(&h);
-    let note = crate::notes::layout_annotations(&painter, &h.state().drawing.editor.doc, &map)
+    let note = h
+        .state()
+        .anno_space(&map)
+        .layout_annotations(&painter, &h.state().drawing.editor.doc)
         .into_iter()
         .find(|l| {
             l.text
@@ -7325,7 +7334,10 @@ fn top_bar_switches_for_dimensions_selection_and_sheet_scales() {
     let mut units = h.state().drawing.editor.doc.units();
     units.length = drift_core::LengthFormat::Architectural;
     h.state_mut().drawing.editor.set_units(units);
-    assert_eq!(drift_core::sheets::scale_text([48.0]), "1/4\" = 1'-0\"");
+    assert_eq!(
+        drift_core::sheets::scale_text([48.0], true),
+        "1/4\" = 1'-0\""
+    );
 }
 
 #[test]
@@ -8287,7 +8299,7 @@ fn views_are_drawn_on_the_canvas_and_placed_on_sheets() {
     // (Sheets by number and name.)
     let row = format!(
         "View 1\n{} · on A-101  Sheet 1, A-102  Sheet 2",
-        scale_label(view.scale)
+        scale_label(view.scale, false)
     );
     assert!(
         h.query_by_label(&row).is_some(),
@@ -9372,9 +9384,11 @@ fn an_annotation_can_be_drawn_in_some_views_only() {
             .placed_views(app.drawing.editor.doc.sheet(sheet).unwrap())[0]
             .id;
         app.drawing.editor.doc.begin();
+        // (Room for the labels, which keep their paper distance: twice as far out in the
+        // model at 1:2.)
         let crop = drift_core::Bounds {
-            min: b.min - DVec2::splat(5.0),
-            max: b.max + DVec2::splat(5.0),
+            min: b.min - DVec2::splat(40.0),
+            max: b.max + DVec2::splat(40.0),
         };
         let v = drift_core::View::new("Detail", crop, 2.0);
         let second = app.drawing.editor.doc.add_view(v);
@@ -10063,7 +10077,8 @@ fn tool_preferences_carry_over_to_the_next_drawing() {
 #[test]
 fn saved_preferences_read_back_unchanged() {
     const SAVED: &str = concat!(
-        "grid=1;axes=1;snap=0;ptsnap=1;thin=0;status=1;auto=1;ends=0;crops=1;combs=1;",
+        "grid=1;axes=1;snap=0;ptsnap=1;thin=0;print_anno=1;status=1;auto=1;ends=0;crops=1;",
+        "combs=1;",
         "rscale=1;hidden=0;rlayer=0;rfill=1;stack=1;dfollow=0;newfill=1;wpoche=0;wcentre=0;",
         "tdims=1;ai=0;wheel=auto;asnap=0;gaptol=0.5;wthick=115.5;wjust=l;wlines=l;",
         "fillalone=2;xsize=16;xfull=0;xweight=1;upchk=1;dock_left=;",
@@ -10113,4 +10128,62 @@ fn preferences_has_three_pages() {
     h.run();
     h.get_by_label("Check for updates when Drift starts");
     h.get_by_label("Let AI assistants edit the open drawing");
+}
+
+/// Screenshots for review at 3440 × 1440: the example and (when it is on this computer) the
+/// shareable shelves drawing, with Annotations at print size on and off, fitted and zoomed
+/// in. Written to `target/tmp/anno_*.png`.
+/// `cargo test -p drift-app annotation_scale_screenshots -- --ignored --nocapture`.
+#[test]
+#[ignore = "screenshots for review"]
+fn annotation_scale_screenshots() {
+    if !crate::test_gpu::available() {
+        return;
+    }
+    let mut h = Harness::builder()
+        .with_size([3440.0, 1440.0])
+        .wgpu_setup(crate::test_gpu::setup())
+        .build_eframe(|cc| DriftApp::new(cc));
+    h.run();
+    let shoot = |h: &mut Harness<'_, DriftApp>, name: &str| {
+        for (zoom, tag) in [(1.0, "fit"), (4.0, "zoom")] {
+            for on in [true, false] {
+                let app = h.state_mut();
+                app.print_annotations = on;
+                let b = app.fit_bounds();
+                let half = b.size() / (2.0 * zoom);
+                app.drawing.view.fit_target = Some(drift_core::Bounds {
+                    min: b.center() - half,
+                    max: b.center() + half,
+                });
+                h.run();
+                h.state_mut().drawing.view.fit_target = None;
+                h.run_steps(3);
+                let state = if on { "on" } else { "off" };
+                save_png(&format!("anno_{name}_{tag}_{state}.png"), h);
+            }
+        }
+    };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    shoot(&mut h, "example");
+    // Its sheet, as it prints (the view at the drawing scale, 1:1 here), beside the canvas.
+    h.get_by_label("Add a sheet").click();
+    whole_view(&mut h);
+    h.run_steps(3);
+    save_png("anno_example_sheet.png", &mut h);
+    h.state_mut().drawing.view.sheet_preview = false;
+    h.run();
+    let shelves = std::path::Path::new(
+        "C:/Users/chris/Documents/Vibecoding/Sample Files for Drift/Blender Profile Tests/AthenianBarShelves_V2.drift",
+    );
+    if let Ok(text) = std::fs::read_to_string(shelves) {
+        let (doc, meta) = drift_io::load(&text).expect("the shelves open");
+        h.state_mut()
+            .replace_document(doc, "AthenianBarShelves_V2".into(), None, meta, true);
+        h.run();
+        shoot(&mut h, "shelves");
+    }
 }

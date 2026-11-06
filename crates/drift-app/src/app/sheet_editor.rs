@@ -727,7 +727,10 @@ impl DriftApp {
                     ui,
                     None,
                     v.title(),
-                    &format!("On {label} · {}", drift_core::sheets::scale_label(v.scale)),
+                    &format!(
+                        "On {label} · {}",
+                        drift_core::sheets::scale_label(v.scale, self.imperial())
+                    ),
                 );
                 typing |= self.views_section(ui, &sheet, &mut view);
                 ui.add_space(16.0);

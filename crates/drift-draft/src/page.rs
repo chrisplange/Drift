@@ -866,15 +866,7 @@ pub fn line_width_in(
 
 /// Dash pattern of a line type, in mm at line type scale 1: dash, gap, dash, gap…
 pub fn dash_pattern(line_type: LineType) -> &'static [f64] {
-    match line_type {
-        LineType::Continuous => &[],
-        LineType::Dashed => &[4.0, 1.5],
-        LineType::Hidden => &[2.0, 1.0],
-        LineType::Center => &[12.0, 1.5, 1.5, 1.5],
-        LineType::Phantom => &[12.0, 1.5, 1.5, 1.5, 1.5, 1.5],
-        // (Curves without a stroke aren't put on the page.)
-        LineType::None => &[],
-    }
+    line_type.paper_dashes()
 }
 
 /// Helvetica advance widths (per 1000 em) for ASCII 32–126.

@@ -7,6 +7,7 @@ use drift_render::Camera;
 use eframe::egui::{self, Color32, FontId, Pos2, Rect, Stroke, StrokeKind, vec2};
 
 /// Converts world positions to screen positions for one canvas rectangle.
+#[derive(Clone, Debug)]
 pub struct ScreenMap {
     pub rect: Rect,
     pub camera: Camera,

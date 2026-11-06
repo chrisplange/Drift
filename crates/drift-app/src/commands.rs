@@ -134,6 +134,8 @@ pub(crate) enum ViewFlag {
     Status,
     Endpoints,
     Dimensions,
+    /// Dimensions and notes at their printed size for the drawing scale.
+    PrintSize,
     Relations,
     Hidden,
     Free,
@@ -1401,6 +1403,15 @@ fn table() -> Vec<Spec> {
             "Show or hide dimensions and notes (shown again at each start)",
         )
         .keys(const { &[alt(Key::D)] }),
+        Spec::new(
+            "view.print_annotations",
+            C::View,
+            K::Toggle(ViewFlag::PrintSize),
+            "Annotations at print size",
+            "Show dimensions and notes at their printed size for the drawing scale, so they \
+             zoom with the drawing (off: a fixed size on screen)",
+        )
+        .aliases(&["ANNOSCALE", "ANNOAUTOSCALE"]),
         Spec::new(
             "view.hidden_annotations",
             C::View,

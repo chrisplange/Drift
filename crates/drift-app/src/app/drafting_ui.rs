@@ -41,16 +41,21 @@ impl DriftApp {
             };
         }
         ui.add_space(4.0);
+        let imperial = self.imperial();
         theme::row(ui, "Scale", |ui| {
-            ui.label("1 :");
-            ui.add(
-                egui::DragValue::new(&mut style.scale)
-                    .speed(0.5)
-                    .range(0.001..=100_000.0)
-                    .max_decimals(3),
-            )
-            .on_hover_text("The drawing scale: drafting hatch patterns are sized by it");
-        });
+            crate::app::scale_menu::scale_menu(
+                ui,
+                "drawing_scale",
+                &mut style.scale,
+                imperial,
+                ui.available_width() - 6.0,
+            );
+        })
+        .response
+        .on_hover_text(
+            "The drawing scale: dimensions and notes show at their printed size for it, and \
+             new text, drafting hatches and new views follow it",
+        );
         theme::row(ui, "Text height", |ui| {
             mm_field(ui, &mut style.text_height, 1.0..=20.0);
         });

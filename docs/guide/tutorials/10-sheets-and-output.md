@@ -27,8 +27,9 @@ only one). What you see in the sheet preview is exactly what prints.
 
 Drift makes sheet **A-101**, A3 landscape, with the **Modern** title block, empty: the
 sheet is shown, with its settings in the **Inspector**. **Add a view of the whole drawing**
-makes a view, **View 1**, and places it to fill the drawing area, at the largest standard
-scale at which the drawing, dimensions included, clears the title block. (Views also go on
+makes a view, **View 1**, and places it to fill the drawing area, at the drawing's scale
+(**Drawing settings → Drafting → Scale**) if the drawing, dimensions included, clears the
+title block at it, and otherwise at the largest standard scale at which it does. (Views also go on
 from the **Views** list, or with **V**: see below.) The next sheet you make is **A-102**,
 and so on.
 
@@ -185,10 +186,13 @@ Pick a view by clicking it on the sheet. The **Inspector** shows the views on th
 
 - **Title:** its name. Tick **Title** under **Show** to print the name, with the scale
   beneath it, under the view.
-- **Scale:** choose from the menu. The crop stays as it is in the model, so the frame
-  grows or shrinks on every sheet the view is on. Metric scales run from 10:1 to 1:10000.
-  Architectural scales (3" = 1'-0" down to 1/32" = 1'-0") and engineering scales
-  (1" = 10' to 1" = 200') are offered too, with your drawing's units first.
+- **Scale:** choose from the menu, or type one under **Custom** at its foot (`1:75`,
+  `5" = 1'-0"`, `2:1`) and press Enter. The crop stays as it is in the model, so the frame
+  grows or shrinks on every sheet the view is on. The menu is the one the drawing scale
+  uses: metric scales from 10:1 to 1:10000, architectural scales from 2" = 1" and full size
+  (1" = 1") through 6" = 1'-0" down to 1/32" = 1'-0", and engineering scales (1" = 10' to
+  1" = 200'), with your drawing's units first. See
+  [Sheet scales](../reference/units.md#sheet-scales).
 - **Fit:** the largest scale at which the whole drawing fits the frame, centred. The frame
   stays as it is on the paper, and the crop changes to suit.
 - **Fill drawing area:** frames the view to the sheet's whole drawing area, after a change

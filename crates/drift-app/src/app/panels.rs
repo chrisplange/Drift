@@ -580,6 +580,7 @@ impl DriftApp {
                         Some(C::Toggle(ViewFlag::Endpoints)),
                         None,
                         Some(C::Toggle(ViewFlag::Dimensions)),
+                        Some(C::Toggle(ViewFlag::PrintSize)),
                         Some(C::Toggle(ViewFlag::Hidden)),
                         Some(C::Toggle(ViewFlag::Relations)),
                         Some(C::Toggle(ViewFlag::Free)),

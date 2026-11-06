@@ -99,6 +99,24 @@ fn perf_big() {
             ed.doc.underlays().count()
         );
     }
+    // DRIFT_BIG_DIM: one dimension on the first line (so per-frame work on dimensioned
+    // drawings shows).
+    if std::env::var("DRIFT_BIG_DIM").is_ok() {
+        let ed = &mut h.state_mut().drawing.editor;
+        let line = ed.doc.iter().find_map(|(_, e)| match e.kind {
+            drift_core::EntityKind::Line { a, b } => Some((a, b)),
+            _ => None,
+        });
+        if let Some((a, b)) = line {
+            let value = ed.doc.point(a).unwrap().distance(ed.doc.point(b).unwrap());
+            ed.doc.begin();
+            ed.doc
+                .add_constraint(drift_core::Constraint::Distance { a, b, value })
+                .unwrap();
+            ed.commit("Dimension");
+            println!("(one dimension added)");
+        }
+    }
     let fit = h.state().fit_bounds();
     h.state_mut().drawing.view.fit_target = Some(fit);
     let t = Instant::now();

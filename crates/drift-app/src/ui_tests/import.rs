@@ -388,9 +388,9 @@ fn an_svg_underlay_has_the_scale_controls() {
     );
     h.run_steps(3);
     // Drawn at 1 : 50 from its menu, then calibrate.
-    h.get_by_value("1 : 1").click();
+    h.get_by_value("1:1").click();
     h.run();
-    h.get_by_label("1 : 50").click();
+    h.get_by_label("1:50").click();
     h.run();
     h.get_by_label("Then calibrate: pick two points on it and type their real distance")
         .click();

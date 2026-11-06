@@ -205,6 +205,26 @@ pub fn font_definitions() -> egui::FontDefinitions {
     fonts
 }
 
+/// Capital height over the em of the interface font (the first in the proportional family,
+/// where annotation text without a drawing font is shown).
+pub fn interface_cap_ratio() -> f64 {
+    static RATIO: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+    *RATIO.get_or_init(|| {
+        let fonts = font_definitions();
+        fonts
+            .families
+            .get(&FontFamily::Proportional)
+            .and_then(|list| list.first())
+            .and_then(|name| fonts.font_data.get(name))
+            .and_then(|data| {
+                drift_draft::font::Face::new(std::sync::Arc::new(data.font.to_vec()), data.index)
+            })
+            .map(|face| face.cap_ratio())
+            .filter(|r| *r > 0.0)
+            .unwrap_or(drift_draft::page::CAP_HEIGHT)
+    })
+}
+
 /// Apply the light and dark styles.
 pub fn apply(ctx: &egui::Context) {
     ctx.style_mut_of(Theme::Dark, |s| style(s, true));

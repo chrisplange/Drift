@@ -387,22 +387,489 @@ pub struct DimStyle {
 }
 
 impl DimStyle {
+    /// The sizes for the canvas at a fixed size on screen (Annotations at Print Size off):
+    /// as they always were, text kept between 8 and 40 points.
     pub fn of(style: &DraftStyle) -> Self {
-        let pt = |mm: f64| (mm as f32 * PT_PER_MM).clamp(0.0, 60.0);
-        Self {
-            text: pt(style.text_height).clamp(8.0, 40.0),
-            arrow: style.arrow,
-            arrow_len: pt(style.arrow_size).max(3.0),
-            gap: pt(style.extension_gap),
-            overshoot: pt(style.extension_overshoot),
-            aligned: style.aligned_text,
+        Self::sized(style, Sizing::Screen)
+    }
+
+    /// The sizes for `sizing`: on paper (sheets, and the canvas at print size) every size is
+    /// the style's, the text set so its capitals are `text_height` high; on screen they are
+    /// today's, text clamped.
+    pub fn sized(style: &DraftStyle, sizing: Sizing) -> Self {
+        match sizing {
+            Sizing::Screen => {
+                let pt = |mm: f64| (mm as f32 * PT_PER_MM).clamp(0.0, 60.0);
+                Self {
+                    text: pt(style.text_height).clamp(8.0, 40.0),
+                    arrow: style.arrow,
+                    arrow_len: pt(style.arrow_size).max(3.0),
+                    gap: pt(style.extension_gap),
+                    overshoot: pt(style.extension_overshoot),
+                    aligned: style.aligned_text,
+                }
+            }
+            Sizing::Paper => {
+                let pt = |mm: f64| (mm.max(0.0) as f32) * PT_PER_MM;
+                Self {
+                    text: paper_font(style.text_height),
+                    arrow: style.arrow,
+                    arrow_len: pt(style.arrow_size),
+                    gap: pt(style.extension_gap),
+                    overshoot: pt(style.extension_overshoot),
+                    aligned: style.aligned_text,
+                }
+            }
         }
     }
+}
+
+/// The font size (points at 96 dpi, an em) that sets text with capitals `cap_mm` high on
+/// paper in the drawing's font (the font `drift_io::pdf` prints in, so "3.5 mm" text prints
+/// 3.5 mm high).
+pub fn paper_font(cap_mm: f64) -> f32 {
+    (cap_mm.max(0.0) / drift_draft::font::cap_ratio()) as f32 * PT_PER_MM
 }
 
 impl Default for DimStyle {
     fn default() -> Self {
         Self::of(&DraftStyle::default())
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Annotation space: where dimensions and notes are laid out, and at what size
+
+/// How dimensions and notes are sized where they're drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sizing {
+    /// A fixed size on screen, whatever the zoom (the canvas with Annotations at Print Size
+    /// off, temporary dimensions, the AI link's pictures).
+    Screen,
+    /// Their size on paper: sheets, and the canvas at print size.
+    Paper,
+}
+
+/// A uniform scaling of screen space: `p` ↦ `c + p·k`, from a layout made about the origin.
+/// It takes a layout made on paper onto the canvas.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Zoom {
+    pub c: Pos2,
+    pub k: f32,
+}
+
+impl Zoom {
+    pub fn p(&self, p: Pos2) -> Pos2 {
+        self.c + p.to_vec2() * self.k
+    }
+
+    pub fn v(&self, v: Vec2) -> Vec2 {
+        v * self.k
+    }
+
+    pub fn len(&self, l: f32) -> f32 {
+        l * self.k
+    }
+
+    pub fn rect(&self, r: Rect) -> Rect {
+        Rect::from_two_pos(self.p(r.min), self.p(r.max))
+    }
+
+    /// The scaling back.
+    pub fn inverse(&self) -> Zoom {
+        let k = 1.0 / self.k;
+        Zoom {
+            c: (-self.c.to_vec2() * k).to_pos2(),
+            k,
+        }
+    }
+}
+
+/// Where annotations are laid out and how big they are: the screen map they're laid out on,
+/// their sizing, the scaling that takes that layout onto the screen (the canvas at print
+/// size lays out on paper, as a sheet does, then scales it), and how many world mm a paper
+/// mm is there (a placed label's offset is kept in paper mm).
+#[derive(Clone, Debug)]
+pub struct AnnoSpace {
+    pub map: ScreenMap,
+    pub sizing: Sizing,
+    pub zoom: Option<Zoom>,
+    pub world_per_paper: f64,
+}
+
+impl AnnoSpace {
+    /// At a fixed size on `map` (a screen), in a drawing at 1 : `n`.
+    pub fn screen(map: &ScreenMap, n: f64) -> Self {
+        Self {
+            map: map.clone(),
+            sizing: Sizing::Screen,
+            zoom: None,
+            world_per_paper: positive_scale(n),
+        }
+    }
+
+    /// On `map`, a page's points at 96 dpi for a view at 1 : `n` (a sheet).
+    pub fn sheet(map: &ScreenMap, n: f64) -> Self {
+        Self {
+            map: map.clone(),
+            sizing: Sizing::Paper,
+            zoom: None,
+            world_per_paper: positive_scale(n),
+        }
+    }
+
+    /// The canvas `map` at print size for a drawing at 1 : `n`: laid out as a 1 : `n` sheet
+    /// prints it, about the origin, and scaled onto the canvas about its centre.
+    pub fn print(map: &ScreenMap, n: f64) -> Self {
+        let n = positive_scale(n);
+        let paper = f64::from(PT_PER_MM) / n;
+        Self {
+            map: ScreenMap {
+                rect: Rect::from_center_size(Pos2::ZERO, map.rect.size()),
+                camera: drift_render::Camera {
+                    center: map.camera.center,
+                    scale: paper,
+                },
+            },
+            sizing: Sizing::Paper,
+            zoom: Some(Zoom {
+                c: map.rect.center(),
+                k: (map.camera.scale / paper) as f32,
+            }),
+            world_per_paper: n,
+        }
+    }
+
+    /// The canvas `map` in a drawing at 1 : `n`, at print size or at a fixed size.
+    pub fn canvas(map: &ScreenMap, n: f64, print_size: bool) -> Self {
+        if print_size {
+            Self::print(map, n)
+        } else {
+            Self::screen(map, n)
+        }
+    }
+
+    /// A dimension's label offset (world mm) from its stored one (paper mm).
+    pub fn label_world(&self, paper: DVec2) -> DVec2 {
+        paper * self.world_per_paper
+    }
+
+    /// Dimension `id`'s placed label offset, in world mm.
+    pub fn placement(&self, doc: &Document, id: ConstraintId) -> Option<DVec2> {
+        doc.placement(id).map(|p| self.label_world(p))
+    }
+
+    /// Logical points per world mm on the screen.
+    pub fn screen_scale(&self) -> f64 {
+        self.map.camera.scale * self.zoom.map_or(1.0, |z| f64::from(z.k))
+    }
+
+    /// Logical points per world mm on the map annotations are laid out on (what
+    /// [`default_offset`] takes).
+    pub fn layout_scale(&self) -> f64 {
+        self.map.camera.scale
+    }
+
+    /// Where an unplaced dimension's label goes (world mm from its anchor).
+    pub fn default_offset(&self, doc: &Document, c: &Constraint) -> DVec2 {
+        default_offset(doc, c, self.layout_scale())
+    }
+
+    /// `style`'s sizes here.
+    pub fn style(&self, style: &DraftStyle) -> DimStyle {
+        DimStyle::sized(style, self.sizing)
+    }
+
+    /// A dimension laid out on [`Self::map`], taken to the screen.
+    pub fn dim_to_screen(&self, l: DimLayout) -> DimLayout {
+        match self.zoom {
+            Some(z) => l.mapped(&z),
+            None => l,
+        }
+    }
+
+    /// An annotation laid out on [`Self::map`], taken to the screen.
+    pub fn note_to_screen(&self, l: crate::notes::NoteLayout) -> crate::notes::NoteLayout {
+        match self.zoom {
+            Some(z) => l.mapped(&z),
+            None => l,
+        }
+    }
+
+    /// Lay out a dimension (see [`layout_dimension`]) and take it to the screen. `placement`
+    /// is its label offset in world mm.
+    pub fn layout_dimension(
+        &self,
+        painter: &egui::Painter,
+        doc: &Document,
+        id: Option<ConstraintId>,
+        c: &Constraint,
+        placement: Option<DVec2>,
+    ) -> Option<DimLayout> {
+        layout_dimension(painter, doc, id, c, placement, self).map(|l| self.dim_to_screen(l))
+    }
+
+    /// Lay out an offset's distance (see [`layout_gap`]) and take it to the screen.
+    pub fn layout_gap(
+        &self,
+        painter: &egui::Painter,
+        doc: &Document,
+        gap: &drift_edit::offsets::Gap,
+    ) -> Option<DimLayout> {
+        layout_gap(painter, doc, gap, self).map(|l| self.dim_to_screen(l))
+    }
+
+    /// Lay out every annotation (see [`crate::notes::layout_annotations`]), taken to the
+    /// screen.
+    pub fn layout_annotations(
+        &self,
+        painter: &egui::Painter,
+        doc: &Document,
+    ) -> Vec<crate::notes::NoteLayout> {
+        crate::notes::layout_annotations(painter, doc, self)
+            .into_iter()
+            .map(|l| self.note_to_screen(l))
+            .collect()
+    }
+
+    /// Paint a dimension laid out here (and taken to the screen) with `pen` (the screen's
+    /// painter, or a recorder).
+    pub fn paint_dimension(
+        &self,
+        pen: &dyn Pen,
+        dim: &DimLayout,
+        state: AnnotationState,
+        colors: &AnnotationColors,
+    ) {
+        match self.zoom {
+            Some(z) => {
+                let paper = dim.clone().mapped(&z.inverse());
+                let pen = ZoomPen {
+                    inner: pen,
+                    zoom: z,
+                };
+                paint_dimension(&pen, &paper, state, colors);
+            }
+            None => paint_dimension(pen, dim, state, colors),
+        }
+    }
+
+    /// Paint an annotation laid out here (and taken to the screen) with `pen`, in `style`
+    /// (the annotation's drafting style).
+    pub fn paint_annotation(
+        &self,
+        pen: &dyn Pen,
+        l: &crate::notes::NoteLayout,
+        state: AnnotationState,
+        colors: &AnnotationColors,
+        style: &DraftStyle,
+    ) {
+        let sizes = self.style(style);
+        match self.zoom {
+            Some(z) => {
+                let paper = l.clone().mapped(&z.inverse());
+                let pen = ZoomPen {
+                    inner: pen,
+                    zoom: z,
+                };
+                crate::notes::paint_annotation(&pen, &paper, state, colors, &sizes);
+            }
+            None => crate::notes::paint_annotation(pen, l, state, colors, &sizes),
+        }
+    }
+}
+
+/// `n` if it is a usable scale (1 : n), else 1.
+fn positive_scale(n: f64) -> f64 {
+    if n.is_finite() && n > 0.0 { n } else { 1.0 }
+}
+
+/// Text under this size on screen (points) is greeked: shown as a faint bar where it is.
+pub const GREEK_PT: f32 = 4.0;
+/// Text is rasterised at sizes on a ladder this far apart (2^¼), up to [`LADDER_MAX_PT`],
+/// and scaled the rest of the way: zooming re-lays a label out only when it crosses a step.
+const LADDER_STEP: f32 = 1.189_207_1;
+const LADDER_MAX_PT: f32 = 96.0;
+
+/// The raster size for text drawn `size` points high on screen.
+pub fn ladder(size: f32) -> f32 {
+    if !(size.is_finite() && size > 0.0) {
+        return GREEK_PT;
+    }
+    let step = (size.ln() / LADDER_STEP.ln()).round();
+    LADDER_STEP.powf(step).clamp(GREEK_PT, LADDER_MAX_PT)
+}
+
+/// `galley` scaled by `r` about its top-left corner: its rows, glyphs and mesh.
+pub fn scale_galley(galley: &egui::Galley, r: f32) -> egui::Galley {
+    let mut g = galley.clone();
+    let sp = |p: Pos2| pos2(p.x * r, p.y * r);
+    let sr = |q: Rect| Rect::from_min_max(sp(q.min), sp(q.max));
+    for placed in &mut g.rows {
+        placed.pos = sp(placed.pos);
+        let row = std::sync::Arc::make_mut(&mut placed.row);
+        row.size *= r;
+        for glyph in &mut row.glyphs {
+            glyph.pos = sp(glyph.pos);
+            glyph.advance_width *= r;
+            glyph.line_height *= r;
+            glyph.font_ascent *= r;
+            glyph.font_height *= r;
+            glyph.font_face_ascent *= r;
+            glyph.font_face_height *= r;
+        }
+        for v in &mut row.visuals.mesh.vertices {
+            v.pos = sp(v.pos);
+        }
+        row.visuals.mesh_bounds = sr(row.visuals.mesh_bounds);
+    }
+    g.rect = sr(g.rect);
+    g.mesh_bounds = sr(g.mesh_bounds);
+    // What it is set in, as it now stands (what a recorder reads).
+    let job = std::sync::Arc::make_mut(&mut g.job);
+    for s in &mut job.sections {
+        s.format.font_id.size *= r;
+    }
+    job.wrap.max_width *= r;
+    g
+}
+
+/// What text drawn through a [`ZoomPen`] comes to on screen: its galley there, or a faint
+/// bar per line (greeked) when it would be smaller than [`GREEK_PT`].
+pub enum ShownText {
+    Set(std::sync::Arc<egui::Galley>),
+    Greeked(Vec<[Pos2; 4]>),
+}
+
+/// A [`Pen`] that takes what is drawn on paper onto the canvas (`inner`, the screen's
+/// painter) through a [`Zoom`]: lines keep their width on screen; arrowheads, dots, masks and
+/// text scale; text under [`GREEK_PT`] is greeked, the rest set on the raster ladder in the
+/// screen's font, sized so its capitals stand as high as they print.
+pub struct ZoomPen<'a> {
+    pub inner: &'a dyn Pen,
+    pub zoom: Zoom,
+}
+
+impl ZoomPen<'_> {
+    fn pts(&self, points: &[Pos2]) -> Vec<Pos2> {
+        points.iter().map(|p| self.zoom.p(*p)).collect()
+    }
+
+    /// Text laid out on paper in `galley`, its top-left corner at `top_left` (paper), as it
+    /// is shown on screen (its top-left corner at `self.zoom.p(top_left)`).
+    pub fn shown_text(
+        &self,
+        top_left: Pos2,
+        galley: &std::sync::Arc<egui::Galley>,
+        angle: f32,
+    ) -> ShownText {
+        let at = self.zoom.p(top_left);
+        let size = galley
+            .job
+            .sections
+            .first()
+            .map_or(12.0, |s| s.format.font_id.size);
+        // The screen's font may stand taller or shorter than the drawing's: match capitals.
+        let correction = crate::fonts::screen_cap_correction();
+        let shown = self.zoom.len(size) * correction;
+        let rot = egui::emath::Rot2::from_angle(angle);
+        // Off screen: nothing to set (zoomed in, most labels are).
+        let extent = self.zoom.v(galley.size());
+        let corners = [Vec2::ZERO, vec2(extent.x, 0.0), extent, vec2(0.0, extent.y)];
+        let bounds = Rect::from_points(&corners.map(|c| at + rot * c));
+        if !bounds.intersects(self.inner.painter().clip_rect()) {
+            return ShownText::Greeked(Vec::new());
+        }
+        if shown < GREEK_PT {
+            let bars = galley
+                .rows
+                .iter()
+                .map(|placed| {
+                    let r = placed.rect();
+                    let (h, mid) = (r.height() * 0.3, r.center().y);
+                    [
+                        pos2(r.left(), mid - h / 2.0),
+                        pos2(r.right(), mid - h / 2.0),
+                        pos2(r.right(), mid + h / 2.0),
+                        pos2(r.left(), mid + h / 2.0),
+                    ]
+                    .map(|c| at + rot * self.zoom.v(c.to_vec2()))
+                })
+                .collect();
+            return ShownText::Greeked(bars);
+        }
+        let raster = ladder(shown);
+        let f = raster / size;
+        let mut job = (*galley.job).clone();
+        for s in &mut job.sections {
+            s.format.font_id.size *= f;
+        }
+        job.wrap.max_width *= f;
+        let set = self.inner.painter().layout_job(job);
+        // Scaled the rest of the way: to the size it is shown at.
+        let r = shown / raster;
+        if (r - 1.0).abs() < 1e-5 {
+            ShownText::Set(set)
+        } else {
+            ShownText::Set(std::sync::Arc::new(scale_galley(&set, r)))
+        }
+    }
+}
+
+impl Pen for ZoomPen<'_> {
+    fn painter(&self) -> &egui::Painter {
+        self.inner.painter()
+    }
+
+    fn line(&self, points: &[Pos2], stroke: Stroke) {
+        self.inner.line(&self.pts(points), stroke);
+    }
+
+    fn polygon(&self, points: Vec<Pos2>, color: Color32) {
+        self.inner.polygon(self.pts(&points), color);
+    }
+
+    fn dot(&self, at: Pos2, radius: f32, color: Color32) {
+        self.inner
+            .dot(self.zoom.p(at), self.zoom.len(radius), color);
+    }
+
+    fn mask(&self, points: Vec<Pos2>, color: Color32) {
+        self.inner.mask(self.pts(&points), color);
+    }
+
+    fn text(
+        &self,
+        top_left: Pos2,
+        galley: std::sync::Arc<egui::Galley>,
+        angle: f32,
+        color: Color32,
+    ) {
+        match self.shown_text(top_left, &galley, angle) {
+            ShownText::Set(set) => {
+                // On the baseline it prints on (the screen's raster rounds differently from
+                // the page's, and its font may stand a little taller).
+                let base = |g: &egui::Galley| {
+                    g.rows.first().map_or(Vec2::ZERO, |r| {
+                        r.pos.to_vec2()
+                            + r.row.glyphs.first().map_or(Vec2::ZERO, |g| g.pos.to_vec2())
+                    })
+                };
+                let rot = egui::emath::Rot2::from_angle(angle);
+                let at = self.zoom.p(top_left) + rot * (self.zoom.v(base(&galley)) - base(&set));
+                self.inner.text(at, set, angle, color);
+            }
+            ShownText::Greeked(bars) => {
+                let faint = color.gamma_multiply(0.35);
+                for bar in bars {
+                    self.inner.polygon(bar.to_vec(), faint);
+                }
+            }
+        }
+    }
+
+    fn highlight(&self, rect: Rect, color: Color32) {
+        self.inner.highlight(self.zoom.rect(rect), color);
     }
 }
 
@@ -450,6 +917,72 @@ pub struct DimLayout {
     /// A driven (reference) dimension: drawn grey, its value in parentheses.
     pub driven: bool,
     pub style: DimStyle,
+}
+
+impl DimShape {
+    /// Taken through `z`.
+    pub fn mapped(self, z: &Zoom) -> Self {
+        let p = |q: Pos2| z.p(q);
+        match self {
+            DimShape::Linear {
+                p: ps,
+                d,
+                start,
+                ends,
+            } => DimShape::Linear {
+                p: ps.map(p),
+                d: d.map(p),
+                start: start.map(|s| z.len(s)),
+                ends,
+            },
+            DimShape::Radius { center, tip, from } => DimShape::Radius {
+                center: p(center),
+                tip: p(tip),
+                from: p(from),
+            },
+            DimShape::Diameter { ends } => DimShape::Diameter { ends: ends.map(p) },
+            DimShape::Angular {
+                extensions,
+                center,
+                radius,
+                start,
+                sweep,
+            } => DimShape::Angular {
+                extensions: extensions.map(|e| e.map(|e| e.map(p))),
+                center: p(center),
+                radius: z.len(radius),
+                start,
+                sweep,
+            },
+        }
+    }
+}
+
+impl DimStyle {
+    /// Its sizes taken through `z`.
+    pub fn mapped(self, z: &Zoom) -> Self {
+        Self {
+            text: z.len(self.text),
+            arrow_len: z.len(self.arrow_len),
+            gap: z.len(self.gap),
+            overshoot: z.len(self.overshoot),
+            ..self
+        }
+    }
+}
+
+impl DimLayout {
+    /// The layout taken through `z` (from paper onto the canvas, or back).
+    pub fn mapped(self, z: &Zoom) -> Self {
+        Self {
+            text_pos: z.p(self.text_pos),
+            handle: z.p(self.handle),
+            text_rect: z.rect(self.text_rect),
+            shape: self.shape.mapped(z),
+            style: self.style.mapped(z),
+            ..self
+        }
+    }
 }
 
 /// The text a dimension shows, in the document's units. A value the display rounds gets a
@@ -934,17 +1467,19 @@ fn relieved(at: f32, lo: f32, hi: f32) -> f32 {
     }
 }
 
-/// Lay out a dimension. `placement` is the label offset from the anchor (world units). A
-/// driven dimension shows the geometry's current measurement in parentheses.
+/// Lay out a dimension on `space`'s map (not taken to the screen: see
+/// [`AnnoSpace::layout_dimension`]). `placement` is the label offset from the anchor (world
+/// units). A driven dimension shows the geometry's current measurement in parentheses.
 pub fn layout_dimension(
     painter: &egui::Painter,
     doc: &Document,
     id: Option<ConstraintId>,
     c: &Constraint,
     placement: Option<DVec2>,
-    map: &ScreenMap,
+    space: &AnnoSpace,
 ) -> Option<DimLayout> {
-    let style = DimStyle::of(&dimension_style(doc, id));
+    let map = &space.map;
+    let style = space.style(&dimension_style(doc, id));
     let anchor = dimension_anchor(doc, c)?;
     let offset = placement.unwrap_or_else(|| default_offset(doc, c, map.camera.scale));
     let label = map.to_screen(anchor + offset);
@@ -1092,9 +1627,10 @@ pub fn layout_gap(
     painter: &egui::Painter,
     doc: &Document,
     gap: &drift_edit::offsets::Gap,
-    map: &ScreenMap,
+    space: &AnnoSpace,
 ) -> Option<DimLayout> {
-    let style = DimStyle::of(&dimension_style(doc, None));
+    let map = &space.map;
+    let style = space.style(&dimension_style(doc, None));
     let c = Constraint::Distance {
         a: EntityId(0),
         b: EntityId(0),
@@ -1970,7 +2506,15 @@ mod tests {
         let near = |a: Pos2, b: Pos2| a.distance(b) < 0.01;
         let check = |c: Constraint, label: DVec2, starts: [Pos2; 2]| {
             let id = doc.constraints().find(|(_, k)| **k == c).map(|(id, _)| id);
-            let dim = layout_dimension(&painter, &doc, id, &c, Some(label), &map).unwrap();
+            let dim = layout_dimension(
+                &painter,
+                &doc,
+                id,
+                &c,
+                Some(label),
+                &AnnoSpace::screen(&map, 1.0),
+            )
+            .unwrap();
             let lines = extension_lines(&painter, &dim);
             assert_eq!(lines.len(), 2, "{c:?}: {lines:?}");
             for (line, start) in lines.iter().zip(starts) {
@@ -2043,14 +2587,30 @@ mod tests {
             .unwrap();
         doc2.set_extension_start(h, 0, Some(30.0)).unwrap();
         let c = *doc2.constraint(h).unwrap();
-        let dim = layout_dimension(&painter, &doc2, Some(h), &c, Some(up), &map).unwrap();
+        let dim = layout_dimension(
+            &painter,
+            &doc2,
+            Some(h),
+            &c,
+            Some(up),
+            &AnnoSpace::screen(&map, 1.0),
+        )
+        .unwrap();
         let lines = extension_lines(&painter, &dim);
         assert!(near(lines[0][0], s(0.0, 30.0)), "{lines:?}");
         assert!(near(lines[1][0], past_tops[1]), "{lines:?}");
         // It keeps its distance when the geometry moves.
         doc2.set_point(a0, DVec2::new(-5.0, 10.0)).unwrap();
         let c = *doc2.constraint(h).unwrap();
-        let dim = layout_dimension(&painter, &doc2, Some(h), &c, Some(up), &map).unwrap();
+        let dim = layout_dimension(
+            &painter,
+            &doc2,
+            Some(h),
+            &c,
+            Some(up),
+            &AnnoSpace::screen(&map, 1.0),
+        )
+        .unwrap();
         let lines = extension_lines(&painter, &dim);
         assert!(near(lines[0][0], s(-5.0, 40.0)), "{lines:?}");
     }

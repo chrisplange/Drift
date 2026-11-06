@@ -129,6 +129,7 @@ fn viewport() -> Viewport {
         thin_lines: false,
         show_grid: true,
         show_axes: true,
+        dash_world: None,
     }
 }
 

@@ -23,11 +23,7 @@ impl Tool for TextTool {
         let Input::Click(p, _) = input else {
             return;
         };
-        let height = if ed.prefs.text_height > 0.0 {
-            ed.prefs.text_height
-        } else {
-            10.0
-        };
+        let height = ed.new_text_height();
         ed.selection.clear();
         // On a text: type into it, from where it was clicked.
         if let Some(t) = ed.text_at(p.raw, p.tolerance) {

@@ -37,7 +37,8 @@ pub struct EditPrefs {
     /// Show every end and centre point, or (Illustrator-like) only those of hovered or picked
     /// curves.
     pub always_endpoints: bool,
-    /// Cap height for new text (0: the default).
+    /// The Text tool bar's cap height for new text on paper (mm; 0: the drawing's drafting
+    /// text height). New text is this at the drawing scale: see `Editor::new_text_height`.
     pub text_height: f64,
     /// The Wall tool's thickness (0: by the drawing's units) and the expression it came
     /// from, which face the centreline is, whether the next segment is an arc, and the

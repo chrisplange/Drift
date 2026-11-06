@@ -9,6 +9,9 @@ use drift_core::{EntityId, FillId, FillKind};
 
 use super::*;
 
+/// Annotations at print size: the View switch, picking zoomed in and out, labels kept on
+/// paper, the drawing-scale hint.
+mod annotation_scale;
 /// Commands: the palette, the menus, repeat-last, view keys, dialogs over the canvas.
 mod commands;
 /// Dimensions and the solver: dimension a line, change it, drag it.

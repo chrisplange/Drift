@@ -136,6 +136,23 @@ pub enum LineType {
 }
 
 impl LineType {
+    /// Its dash pattern on paper (mm: dash, gap, dash, gap …; empty for a solid line or none),
+    /// before the line-type scale. Sheets and exports print it; the canvas shows it at the
+    /// drawing scale when annotations are at print size.
+    pub fn paper_dashes(self) -> &'static [f64] {
+        match self {
+            LineType::Continuous => &[],
+            LineType::Dashed => &[4.0, 1.5],
+            LineType::Hidden => &[2.0, 1.0],
+            LineType::Center => &[12.0, 1.5, 1.5, 1.5],
+            LineType::Phantom => &[12.0, 1.5, 1.5, 1.5, 1.5, 1.5],
+            // (Curves without a stroke aren't put on the page.)
+            LineType::None => &[],
+        }
+    }
+}
+
+impl LineType {
     pub const ALL: [LineType; 5] = [
         LineType::Continuous,
         LineType::Dashed,

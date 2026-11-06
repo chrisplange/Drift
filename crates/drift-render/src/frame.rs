@@ -110,6 +110,10 @@ pub struct Viewport {
     pub show_grid: bool,
     /// Draw the x and y axes through the origin.
     pub show_axes: bool,
+    /// Show line types' dashes at their printed length for a drawing at 1 : this (world mm
+    /// per paper mm), never shorter than the fixed screen pattern; `None`: the fixed screen
+    /// pattern.
+    pub dash_world: Option<f64>,
 }
 
 /// Everything needed to draw one frame of the canvas.
@@ -168,6 +172,8 @@ struct Builder<'a> {
     palette: &'a Palette,
     half_size: DVec2,
     frame: Frame,
+    /// Pixels per paper mm for line types' printed dashes (`Viewport::dash_world`), if shown.
+    px_per_paper: Option<f64>,
 }
 
 /// Build the GPU data for one frame.
@@ -183,12 +189,21 @@ pub fn build_frame(
         palette,
         half_size: viewport.size_px * 0.5 + DVec2::splat(CULL_MARGIN_PX),
         frame: Frame::default(),
+        px_per_paper: paper_dash_px(camera, viewport),
     };
     builder.frame.globals = builder.globals();
     for item in items {
         builder.add(item);
     }
     builder.frame
+}
+
+/// Pixels per paper mm for line types' printed dashes, when `viewport` shows them.
+fn paper_dash_px(camera: &Camera, viewport: Viewport) -> Option<f64> {
+    viewport
+        .dash_world
+        .filter(|n| n.is_finite() && *n > 0.0)
+        .map(|n| n * camera.scale * viewport.pixels_per_point)
 }
 
 /// Add items' curves and points to `frame`'s `arcs` and `segments`.
@@ -205,6 +220,7 @@ fn build_into(
         palette,
         half_size: viewport.size_px * 0.5 + DVec2::splat(CULL_MARGIN_PX),
         frame: std::mem::take(frame),
+        px_per_paper: paper_dash_px(camera, viewport),
     };
     for item in items {
         builder.add(item);
@@ -468,17 +484,21 @@ impl Builder<'_> {
             0.8 * ppp
         };
         let scale = (weighted / (0.8 * ppp)).max(1.0);
-        let dashes = |d: [f64; 3]| [d[0] * ppp * scale, d[1] * ppp * scale, d[2] * ppp * scale];
+        let fixed = |d: [f64; 3]| [d[0] * ppp * scale, d[1] * ppp * scale, d[2] * ppp * scale];
+        let dashes = |line_type: LineType, d: [f64; 3]| match self.px_per_paper {
+            Some(k) => paper_pattern(line_type, k, [d[0] * ppp, d[1] * ppp, d[2] * ppp]),
+            None => fixed(d),
+        };
         let (color, half_width, dash) = match item.kind {
             LineKind::Solid => (
                 custom.unwrap_or(solid),
                 weighted,
                 match item.line_type {
                     LineType::Continuous => [0.0; 3],
-                    LineType::Dashed => dashes([6.0, 3.0, 0.0]),
-                    LineType::Hidden => dashes([3.0, 2.0, 0.0]),
-                    LineType::Center => dashes([16.0, 3.0, 2.0]),
-                    LineType::Phantom => dashes([16.0, 3.0, -2.0]),
+                    LineType::Dashed => dashes(LineType::Dashed, [6.0, 3.0, 0.0]),
+                    LineType::Hidden => dashes(LineType::Hidden, [3.0, 2.0, 0.0]),
+                    LineType::Center => dashes(LineType::Center, [16.0, 3.0, 2.0]),
+                    LineType::Phantom => dashes(LineType::Phantom, [16.0, 3.0, -2.0]),
                     // No stroke: only seen picked or hovered (see `add`), as fine dashes.
                     LineType::None => [2.0 * ppp, 3.0 * ppp, 0.0],
                 },
@@ -762,6 +782,21 @@ fn clip_segment(a: DVec2, b: DVec2, half: DVec2) -> Option<(f64, f64)> {
     Bounds::from_center_half_size(DVec2::ZERO, half).clip_segment(a, b)
 }
 
+/// A line type's printed pattern (`[dash, gap, dot]` as [`pattern`] takes it; a negative dot
+/// is two dots) at `px_per_paper` pixels per paper mm, or `floor` (the fixed screen pattern)
+/// when that would be shorter on screen.
+fn paper_pattern(line_type: LineType, px_per_paper: f64, floor: [f64; 3]) -> [f64; 3] {
+    let p = line_type.paper_dashes();
+    let at = |i: usize| p.get(i).copied().unwrap_or(0.0) * px_per_paper;
+    let paper = match line_type {
+        LineType::Dashed | LineType::Hidden => [at(0), at(1), 0.0],
+        LineType::Center => [at(0), at(1), at(2)],
+        LineType::Phantom => [at(0), at(1), -at(2)],
+        _ => return floor,
+    };
+    if paper[0] < floor[0] { floor } else { paper }
+}
+
 fn pattern(dash: [f64; 3], distance: f64) -> [f32; 4] {
     let [long, gap, dot] = dash;
     if long <= 0.0 {
@@ -801,6 +836,7 @@ mod tests {
             thin_lines: false,
             show_grid: true,
             show_axes: true,
+            dash_world: None,
         }
     }
 
@@ -823,6 +859,49 @@ mod tests {
             scale: 1.0,
         };
         assert_eq!(grid_info(&camera, true).minor, 12.7); // 1/2"
+    }
+
+    /// With annotations at print size, a dashed line's dashes are as long on screen as they
+    /// print for the drawing scale (4 mm dashes, 1.5 mm gaps at 1 : n), never shorter than
+    /// the fixed screen pattern; without, the fixed pattern.
+    #[test]
+    fn dashes_at_print_size_follow_the_drawing_scale() {
+        let line = SketchItem::new(drift_core::Shape::Line {
+            a: DVec2::new(-100.0, 0.0),
+            b: DVec2::new(100.0, 0.0),
+        })
+        .with_look(None, 0, LineType::Dashed);
+        let dash = |scale: f64, dash_world: Option<f64>| {
+            let camera = Camera {
+                center: DVec2::ZERO,
+                scale,
+            };
+            let frame = build_frame(
+                std::slice::from_ref(&line),
+                &camera,
+                Viewport {
+                    dash_world,
+                    ..viewport()
+                },
+                &Palette::dark(),
+            );
+            frame.segments[0].pattern
+        };
+        // 1:50 at 0.1 points per mm: a 4 mm dash is 200 mm, 20 points; its gap 7.5.
+        let p = dash(0.1, Some(50.0));
+        assert!(
+            (p[0] - 20.0).abs() < 1e-4 && (p[1] - 7.5).abs() < 1e-4,
+            "{p:?}"
+        );
+        // Zoomed out so that would be shorter than the screen's 6-point dashes: those.
+        let p = dash(0.01, Some(50.0));
+        assert!(
+            (p[0] - 6.0).abs() < 1e-4 && (p[1] - 3.0).abs() < 1e-4,
+            "{p:?}"
+        );
+        // Off: the screen's pattern at any zoom.
+        assert_eq!(dash(0.1, None)[..2], [6.0, 3.0]);
+        assert_eq!(dash(10.0, None)[..2], [6.0, 3.0]);
     }
 
     /// A fill far bigger than `f32` reaches the GPU cut to the canvas, with finite corners

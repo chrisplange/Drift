@@ -101,7 +101,8 @@ impl DriftApp {
         if !self.show_dimensions {
             return Vec::new();
         }
-        notes::layout_annotations(painter, &self.drawing.editor.doc, map)
+        self.anno_space(map)
+            .layout_annotations(painter, &self.drawing.editor.doc)
             .into_iter()
             .filter(|l| self.on_canvas(drift_core::AnnotationRef::Annotation(l.id)))
             .collect()
@@ -425,7 +426,9 @@ impl DriftApp {
                         .and_then(|l| l.leaders.get(k))
                         .map(|l| l.landing);
                     if let Some(landing) = landing {
-                        let reach = (p.x - landing.x).abs();
+                        // On paper: screen points over the canvas's points per paper point.
+                        let zoom = self.anno_space(map).zoom.map_or(1.0, |z| z.k);
+                        let reach = (p.x - landing.x).abs() / zoom;
                         self.change_leaders(id, |leaders| {
                             if let Some(l) = leaders.get_mut(k) {
                                 l.shoulder = reach >= 2.0;
@@ -477,7 +480,14 @@ impl DriftApp {
         true
     }
 
-    pub(crate) fn paint_notes(&self, painter: &egui::Painter, layouts: &[NoteLayout], dark: bool) {
+    pub(crate) fn paint_notes(
+        &self,
+        painter: &egui::Painter,
+        map: &ScreenMap,
+        layouts: &[NoteLayout],
+        dark: bool,
+    ) {
+        let space = self.anno_space(map);
         for l in layouts {
             if self
                 .drawing
@@ -492,7 +502,7 @@ impl DriftApp {
             let draft = self.drawing.editor.doc.draft_style_for(r);
             let colors = AnnotationColors::drafting(dark, draft.color);
             let faded = colors.faded();
-            let style = annotations::DimStyle::of(&draft);
+            let style = space.style(&draft);
             let state = if self.annotation_picked(r)
                 || self.drawing.note_drag.is_some_and(|d| d.0 == l.id)
             {
@@ -504,7 +514,7 @@ impl DriftApp {
             };
             let shown = self.drawing.editor.doc.shown(r);
             let look = if shown.canvas { &colors } else { &faded };
-            notes::paint_annotation(painter, l, state, look, &style);
+            space.paint_annotation(painter, l, state, look, &draft);
             if self
                 .drawing
                 .selected_leader
@@ -628,7 +638,11 @@ impl DriftApp {
             return;
         };
         let field = egui::Id::new("note_edit_field");
-        let font = notes::text_size(&self.drawing.editor.doc);
+        // As big as the text shows, within reason for typing in.
+        let space = self.anno_space(&self.canvas_map());
+        let font = (notes::text_size(&self.drawing.editor.doc, space.sizing)
+            * space.zoom.map_or(1.0, |z| z.k))
+        .clamp(8.0, 40.0);
         let mut keep = true;
         egui::Area::new(egui::Id::new("note_edit"))
             .fixed_pos(rect.left_top() - egui::vec2(6.0, 4.0))

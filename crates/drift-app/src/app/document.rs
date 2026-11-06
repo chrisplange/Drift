@@ -7,7 +7,7 @@ use drift_edit::prefs::rules_pref;
 pub(crate) const LIVE_PROFILES_S: f64 = 0.1;
 
 /// How many switches the View menu has (see `view_flags`).
-pub(crate) const VIEW_FLAGS: usize = 12;
+pub(crate) const VIEW_FLAGS: usize = 13;
 
 /// What an older file's rules are taken from, said once as it opens.
 pub(crate) const OLDER_RULES: &str =
@@ -144,6 +144,7 @@ impl DriftApp {
             ("snap", self.grid_snap),
             ("ptsnap", self.perp_tangent_snap),
             ("thin", self.thin_lines),
+            ("print_anno", self.print_annotations),
             ("status", self.status_colors),
             ("auto", self.drawing.editor.prefs.auto_relations),
             ("ends", self.drawing.editor.prefs.always_endpoints),
@@ -232,6 +233,7 @@ impl DriftApp {
                 "snap" => self.grid_snap = on,
                 "ptsnap" => self.perp_tangent_snap = on,
                 "thin" => self.thin_lines = on,
+                "print_anno" => self.print_annotations = on,
                 "status" => self.status_colors = on,
                 "auto" => self.drawing.editor.prefs.auto_relations = on,
                 "ends" => self.drawing.editor.prefs.always_endpoints = on,
@@ -969,6 +971,11 @@ impl DriftApp {
                 self.show_dimensions,
                 "Dimensions and notes shown",
                 "Dimensions and notes hidden (Alt+D shows them)",
+            ),
+            (
+                self.print_annotations,
+                "Annotations at print size for the drawing scale",
+                "Annotations at a fixed size on screen",
             ),
             (
                 self.show_hidden_annotations,

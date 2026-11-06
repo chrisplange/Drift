@@ -734,20 +734,34 @@ fn annotations(ed: &Editor, painter: &egui::Painter, s: &Space, d: &mut Drawing)
             scale: pt_per_world,
         },
     };
+    // Laid out as on paper: text at its cap height, labels at their paper distance.
+    let space = annotations::AnnoSpace::sheet(&map, s.n);
     let recorder = Recorder::new(painter);
     let colors = print_colors();
     for (id, c) in doc.constraints() {
-        if !c.is_dimension()
-            || !s.dimensions
-            || !doc.shown(drift_core::AnnotationRef::Dimension(id)).sheets
-            || !s.has(doc, drift_core::AnnotationRef::Dimension(id))
-            || s.leaves_out(doc, &c.entities().collect::<Vec<_>>())
-        {
+        // In a view of the drawing's on a sheet, by the rule the drawing has for it (as label
+        // offsets from older files are read by); elsewhere (a model export, or the page a
+        // drawing without sheets prints on, through a view it doesn't keep), by the space's
+        // own settings.
+        let prints = match s.view.filter(|v| doc.view(*v).is_some()) {
+            Some(v) => doc.view_prints_dimension(v, id),
+            None => {
+                s.dimensions
+                    && doc.shown(drift_core::AnnotationRef::Dimension(id)).sheets
+                    && !s.leaves_out(doc, &c.entities().collect::<Vec<_>>())
+            }
+        };
+        if !c.is_dimension() || !prints || !s.has(doc, drift_core::AnnotationRef::Dimension(id)) {
             continue;
         }
-        if let Some(layout) =
-            annotations::layout_dimension(painter, doc, Some(id), c, doc.placement(id), &map)
-        {
+        if let Some(layout) = annotations::layout_dimension(
+            painter,
+            doc,
+            Some(id),
+            c,
+            space.placement(doc, id),
+            &space,
+        ) {
             annotations::paint_dimension(&recorder, &layout, AnnotationState::Normal, &colors);
         }
     }
@@ -757,7 +771,7 @@ fn annotations(ed: &Editor, painter: &egui::Painter, s: &Space, d: &mut Drawing)
             if s.leaves_out(doc, &c.entities().collect::<Vec<_>>()) {
                 continue;
             }
-            annotations::layout_dimension(painter, doc, None, &c, Some(at), &map)
+            annotations::layout_dimension(painter, doc, None, &c, Some(at), &space)
         } else if let Some(gap) = drift_edit::offsets::distance_dimension(doc, q) {
             let pieces: Vec<_> = q
                 .target
@@ -768,7 +782,7 @@ fn annotations(ed: &Editor, painter: &egui::Painter, s: &Space, d: &mut Drawing)
             if s.leaves_out(doc, &pieces) {
                 continue;
             }
-            annotations::layout_gap(painter, doc, &gap, &map)
+            annotations::layout_gap(painter, doc, &gap, &space)
         } else {
             None
         };
@@ -776,10 +790,9 @@ fn annotations(ed: &Editor, painter: &egui::Painter, s: &Space, d: &mut Drawing)
             annotations::paint_dimension(&recorder, &layout, AnnotationState::Normal, &colors);
         }
     }
-    for layout in notes::layout_annotations(painter, doc, &map) {
-        let style = annotations::DimStyle::of(
-            &doc.draft_style_for(drift_core::AnnotationRef::Annotation(layout.id)),
-        );
+    for layout in notes::layout_annotations(painter, doc, &space) {
+        let style =
+            space.style(&doc.draft_style_for(drift_core::AnnotationRef::Annotation(layout.id)));
         // Ordinates are dimensions; centre marks are linework, and always drawn.
         let shown = match doc.annotation(layout.id) {
             Some(drift_core::Annotation::Ordinate { .. }) => s.dimensions,
@@ -969,12 +982,13 @@ pub(crate) fn uncropped_sheet(
         };
         view(ed, patterns, painter, &space, &mut d);
     }
-    drift_draft::sheet::draw_views(sheet, views, &mut d);
+    let imperial = !ed.doc.units().length.is_metric();
+    drift_draft::sheet::draw_views(sheet, views, imperial, &mut d);
     // (An unreadable logo was refused when it was chosen; one from a file is skipped.)
     let logo = Some(ed.doc.logo())
         .filter(|svg| !svg.is_empty())
         .and_then(|svg| drift_draft::logo::parse(svg).ok());
-    let scale = drift_core::sheets::scale_text(views.iter().map(|v| v.scale));
+    let scale = drift_core::sheets::scale_text(views.iter().map(|v| v.scale), imperial);
     drift_draft::sheet::draw_frame(
         sheet,
         ed.doc.project(),
@@ -1212,7 +1226,7 @@ pub fn sheet_pages(
             sheet.fields.title = title.to_owned();
         }
         let imperial = !doc.units().length.is_metric();
-        let (view, port) = sheet_view(ed.bounds(), &sheet, imperial);
+        let (view, port) = sheet_view(ed.bounds(), &sheet, imperial, ed.doc.draft_style().scale);
         let placed = PlacedView::new(port.view, &view, &port);
         sheets.push((sheet, vec![placed]));
     }
@@ -1238,15 +1252,16 @@ pub fn fit_view(b: Bounds, view: &mut PlacedView, imperial: bool) {
 }
 
 /// A sheet's first view of `b` (world mm): filling the drawing area clear of the title block,
-/// at the largest preferred scale that fits, centred on it.
-pub fn sheet_view(b: Bounds, sheet: &Sheet, imperial: bool) -> (View, Viewport) {
+/// centred on it, at the drawing scale `preferred` if it fits there (so the sheet prints what
+/// the canvas shows), else the largest preferred scale that fits.
+pub fn sheet_view(b: Bounds, sheet: &Sheet, imperial: bool, preferred: f64) -> (View, Viewport) {
     let clear = drift_draft::sheet::view_area(sheet);
     let extent = if b.is_empty() {
         clear.size()
     } else {
         b.size() * 1.1
     };
-    let scale = drift_core::sheets::fit_scale(extent, clear.size() * 0.9, imperial);
+    let scale = drift_core::sheets::new_view_scale(extent, clear.size() * 0.9, imperial, preferred);
     let center = if b.is_empty() {
         DVec2::ZERO
     } else {

@@ -89,6 +89,27 @@ pub(crate) fn sync_screen(ctx: &egui::Context, editor: &Editor, state: &mut Scre
     }
 }
 
+/// Capital height over the em of the font annotation text is shown in on screen: the
+/// drawing's own once the renderer has it, else the interface font's.
+pub fn screen_cap_ratio() -> f64 {
+    if ON_SCREEN.with(Cell::get).0 {
+        drift_draft::font::cap_ratio()
+    } else {
+        crate::theme::interface_cap_ratio()
+    }
+}
+
+/// How much bigger to set text on screen so its capitals stand as high as the drawing's font
+/// prints them (1 when the screen shows the drawing's font).
+pub fn screen_cap_correction() -> f32 {
+    let screen = screen_cap_ratio();
+    if screen > 0.0 {
+        (drift_draft::font::cap_ratio() / screen) as f32
+    } else {
+        1.0
+    }
+}
+
 /// Forget that the renderer has a drawing font (a new window starts without one).
 pub(crate) fn reset_screen() {
     ON_SCREEN.with(|s| s.set((false, false)));

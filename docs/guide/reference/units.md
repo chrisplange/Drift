@@ -65,16 +65,37 @@ language.
 
 ## Sheet scales
 
-Sheet views offer metric scales (10:1 down to 1:10000), architectural scales (3" = 1'-0"
-down to 1/32" = 1'-0") and engineering scales (1" = 10' to 1" = 200'), with the drawing's
-own system listed first. Imperial scales are written in full on title blocks and view
-titles, such as `1/4" = 1'-0"`.
+The drawing scale (**File → Drawing settings… → Drafting → Scale**), sheet views and
+underlays share one scale menu, with the drawing's own system listed first:
+
+| Group | Scales |
+|---|---|
+| Architectural | 2" = 1", 1" = 1" (full size), 6" = 1'-0", 3" = 1'-0", 1-1/2" = 1'-0", 1" = 1'-0", 3/4" = 1'-0", 1/2" = 1'-0", 3/8" = 1'-0", 1/4" = 1'-0", 3/16" = 1'-0", 1/8" = 1'-0", 3/32" = 1'-0", 1/16" = 1'-0", 1/32" = 1'-0" |
+| Engineering | 1" = 10', 1" = 20', 1" = 30', 1" = 40', 1" = 50', 1" = 60', 1" = 100', 1" = 200' |
+| Metric | 10:1, 5:1, 2:1, 1:1, 1:2, 1:2.5, 1:5, 1:10, 1:20, 1:25, 1:50, 1:75, 1:100, 1:125, 1:200, 1:250, 1:500, 1:1000, 1:2000, 1:2500, 1:5000, 1:10000 |
+
+**Custom**, at the foot of the menu, takes any scale: type it and press Enter.
+
+- `1:75`, `2:1` or just `75` (1:75).
+- Paper `=` model: `3/8" = 1'-0"`, `1/2"=1'`, `1/4 = 1'` (a bare paper length is in
+  inches when the model one is in feet or inches), `1" = 20'`, `2" = 1"`, `10 mm = 1 m`.
+
+A scale from 1000:1 to 1:100000 is accepted. In a drawing in feet and inches, scales are
+written the architectural way on title blocks and view titles, such as `1/4" = 1'-0"`,
+`6" = 1'-0"` for half size and `1" = 1"` for full size; a custom one is too when it has a
+whole number of sixteenths to the foot (`5" = 1'-0"`), and is otherwise written `1:n`.
 
 ## Drafting units
 
 Dimension text height, arrow size and the like are set in paper millimetres in
 **File → Drawing settings… → Drafting**, whatever the drawing's units. **Dual units** adds the value in a
-second unit, in brackets.
+second unit, in brackets. Text heights are cap heights: 3.5 mm text has capitals 3.5 mm
+high on paper.
+
+New text (the **Text** tool, a paste, the AI link and scripts) is the drafting text height
+at the drawing scale: 3.5 mm at 1:50 makes text 175 mm high in the model, which prints
+3.5 mm high on a 1:50 sheet. The **Text** tool's **Height** is that paper height; change it
+there for the next texts, or click **Default** to follow the drawing again.
 
 ## DXF and DWG
 

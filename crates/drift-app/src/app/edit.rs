@@ -120,11 +120,7 @@ impl DriftApp {
         if line.is_empty() {
             return;
         }
-        let height = if self.drawing.editor.prefs.text_height > 0.0 {
-            self.drawing.editor.prefs.text_height
-        } else {
-            10.0
-        };
+        let height = self.drawing.editor.new_text_height();
         self.drawing.editor.selection.clear();
         self.drawing
             .editor

@@ -294,6 +294,7 @@ impl DriftApp {
             self.finish_import(&mut pending, now);
         }
         let units = self.drawing.editor.doc.units();
+        let imperial = !units.length.is_metric();
         let Some(pending) = &mut self.pending_import else {
             return;
         };
@@ -348,33 +349,16 @@ impl DriftApp {
                 let guess = pending.guess(units.length.mm_per_unit());
                 let before = pending.scale;
                 ui.horizontal(|ui| {
-                    ui.label("Drawn at");
-                    let current = SCALES
-                        .iter()
-                        .find(|(_, n)| ((n - pending.scale) / n).abs() < SAME_SCALE)
-                        .map_or_else(
-                            || drift_core::sheets::scale_label(pending.scale),
-                            |(label, _)| (*label).to_owned(),
-                        );
-                    egui::ComboBox::from_id_salt("import_scale")
-                        .selected_text(current)
-                        .width(150.0)
-                        .show_ui(ui, |ui| {
-                            for (label, n) in SCALES {
-                                ui.selectable_value(&mut pending.scale, *n, *label);
-                            }
-                        })
-                        .response
-                        .on_hover_text(
-                            "The scale the drawing is at on its paper: 1:50 makes 1 mm on the \
+                    ui.label("Drawn at").on_hover_text(
+                        "The scale the drawing is at on its paper: 1:50 makes 1 mm on the \
                          paper 50 mm in the sketch",
-                        );
-                    ui.label("1 :");
-                    ui.add(
-                        egui::DragValue::new(&mut pending.scale)
-                            .range(0.001..=100_000.0)
-                            .speed(0.5)
-                            .max_decimals(3),
+                    );
+                    crate::app::scale_menu::scale_menu(
+                        ui,
+                        "import_scale",
+                        &mut pending.scale,
+                        imperial,
+                        150.0,
                     );
                 });
                 if pending.scale != before {
@@ -389,7 +373,7 @@ impl DriftApp {
                     );
                 }
                 if let Some(g) = guess {
-                    let label = drift_core::sheets::scale_label(g.scale);
+                    let label = drift_core::sheets::scale_label(g.scale, imperial);
                     let sure = g.confidence();
                     let how = if g.written {
                         format!(
@@ -433,7 +417,7 @@ impl DriftApp {
                             egui::RichText::new(format!(
                                 "Some views look to be at {} ({n}): check the scale is the one \
                              for the view you want",
-                                drift_core::sheets::scale_label(other)
+                                drift_core::sheets::scale_label(other, imperial)
                             ))
                             .weak(),
                         );
@@ -898,8 +882,6 @@ fn curve_limits(
     }
     !too_many
 }
-
-use crate::app::underlays_ui::SCALES;
 
 /// Above this many curves an import as geometry is warned about, and above the second it is
 /// refused (an underlay takes it).

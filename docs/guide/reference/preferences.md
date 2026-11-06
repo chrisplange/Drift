@@ -89,6 +89,7 @@ says in the status bar what it just did.
 | **Constraint status colours** (off: each curve's own or its layer's colour) | Shift+C | Yes |
 | **Always show end points** (off: only on hovered or picked curves; an arc's or circle's centre shows only while it is hovered or picked, and while the pointer moves in from it to the centre) | Shift+Alt+V | Yes |
 | **Dimensions and notes** | Alt+D | No: shown again at each start |
+| **Annotations at print size** (dimensions and notes at their printed size for the drawing scale, so they zoom with the drawing; off: one size on screen) | | Yes |
 | **Hidden annotations (faded)** | Alt+H | Yes |
 | **Relations** | Alt+R | No: shown again at each start |
 | **Curvature combs** (on picked Bézier curves, while 50 or fewer are picked) | | Yes |
@@ -122,7 +123,8 @@ drawing rather than as a preference:
 - **Units:** **Metric** or **Imperial**, the **Format**, **Decimals** or the fraction to
   **Round to**, and **Angles** decimals. See [Units and length formats](units.md).
 - **Closed areas and fills:** see [below](#closed-areas-and-fills).
-- **Drafting:** **ISO 129** or **ASME Y14.5**, then scale, text height, **Arrows**,
+- **Drafting:** **ISO 129** or **ASME Y14.5**, then **Scale** (the drawing scale, from the
+  shared scale menu or typed), text height, **Arrows**,
   **Arrow size**, **Ext. gap**, **Ext. past**, text placement, **Zeros**, **Dual units**,
   **Colour** and the drawing's **Font**. A picked dimension or annotation can override
   these for itself; see [The drafting style](../tutorials/09-annotation.md#the-drafting-style).

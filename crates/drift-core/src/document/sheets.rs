@@ -172,6 +172,51 @@ impl Document {
             .collect()
     }
 
+    /// Whether view `view` prints dimension `id` where it is placed on a sheet, by the rules
+    /// sheets print by (`drift-app`'s output uses this too): the view shows dimensions, the
+    /// dimension is shown on sheets and in that view, and not every curve it is on is on a
+    /// layer the view hides.
+    pub fn view_prints_dimension(&self, view: ViewId, id: crate::ConstraintId) -> bool {
+        let (Some(v), Some(c)) = (self.views.get(&view), self.constraint(id)) else {
+            return false;
+        };
+        let r = crate::AnnotationRef::Dimension(id);
+        let entities: Vec<crate::EntityId> = c.entities().collect();
+        let hidden = !v.hidden_layers.is_empty()
+            && !entities.is_empty()
+            && entities.iter().all(|e| {
+                self.get(*e)
+                    .is_some_and(|x| v.hidden_layers.contains(&x.layer))
+            });
+        v.dimensions && self.shown(r).sheets && self.in_view(r, view) && !hidden
+    }
+
+    /// [`Self::view_prints_dimension`], and one of the points it measures is inside the view's
+    /// crop, so it is seen there rather than clipped away.
+    pub fn view_draws_dimension(&self, view: ViewId, id: crate::ConstraintId) -> bool {
+        let (Some(v), Some(c)) = (self.views.get(&view), self.constraint(id)) else {
+            return false;
+        };
+        let crop = v.crop();
+        self.view_prints_dimension(view, id)
+            && c.entities()
+                .filter_map(|e| self.ref_point(e))
+                .any(|p| p.cmpge(crop.min).all() && p.cmple(crop.max).all())
+    }
+
+    /// The scale (1 : n) dimension `id` is printed at: that of the first view placed on a
+    /// sheet (in sheet order, then the sheet's order) that draws it, else the drawing scale.
+    /// Labels placed before their offsets were kept on paper are read back by it, so a sheet
+    /// looks as it did.
+    pub fn printed_scale(&self, id: crate::ConstraintId) -> f64 {
+        self.sheets
+            .values()
+            .flat_map(|s| s.viewports.iter())
+            .find(|p| self.view_draws_dimension(p.view, id))
+            .and_then(|p| self.views.get(&p.view))
+            .map_or_else(|| self.draft_style().scale, |v| v.scale)
+    }
+
     /// A sheet's title block scale: its views' scale if they share one, else `As shown`.
     pub fn sheet_scale_text(&self, sheet: &Sheet) -> String {
         crate::sheets::scale_text(
@@ -179,6 +224,7 @@ impl Document {
                 .viewports
                 .iter()
                 .filter_map(|p| self.views.get(&p.view).map(|v| v.scale)),
+            !self.units().length.is_metric(),
         )
     }
 

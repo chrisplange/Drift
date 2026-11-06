@@ -205,9 +205,16 @@ impl Document {
         Ok(())
     }
 
-    /// Where a dimension's label sits, as an offset from its anchor (see [`Document`]).
+    /// Where a dimension's label sits, as an offset from its anchor (see [`Document`]) in
+    /// paper mm: on a sheet it is that far from its anchor at any view scale, and in the
+    /// model it is that times the scale it is drawn at (see [`Self::model_placement`]).
     pub fn placement(&self, id: ConstraintId) -> Option<DVec2> {
         self.placements.get(&id).copied()
+    }
+
+    /// [`Self::placement`] in world mm in the model: at the drawing scale.
+    pub fn model_placement(&self, id: ConstraintId) -> Option<DVec2> {
+        self.placement(id).map(|p| p * self.draft_style().scale)
     }
 
     pub fn set_placement(&mut self, id: ConstraintId, offset: DVec2) -> Result<(), DocumentError> {

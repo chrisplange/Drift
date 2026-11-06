@@ -6,33 +6,6 @@ use drift_core::{UnderlayId, underlays::MM_PER_POINT};
 use crate::icons::Glyph;
 use crate::*;
 
-/// Drawing scales for PDF underlays: a label and n in 1 : n.
-pub(crate) const SCALES: &[(&str, f64)] = &[
-    ("1 : 1", 1.0),
-    ("1 : 5", 5.0),
-    ("1 : 10", 10.0),
-    ("1 : 20", 20.0),
-    ("1 : 25", 25.0),
-    ("1 : 50", 50.0),
-    ("1 : 100", 100.0),
-    ("1 : 200", 200.0),
-    ("1 : 500", 500.0),
-    ("1 : 1000", 1000.0),
-    ("3\" = 1'-0\"", 4.0),
-    ("1-1/2\" = 1'-0\"", 8.0),
-    ("1\" = 1'-0\"", 12.0),
-    ("3/4\" = 1'-0\"", 16.0),
-    ("1/2\" = 1'-0\"", 24.0),
-    ("3/8\" = 1'-0\"", 32.0),
-    ("1/4\" = 1'-0\"", 48.0),
-    ("3/16\" = 1'-0\"", 64.0),
-    ("1/8\" = 1'-0\"", 96.0),
-    ("1/16\" = 1'-0\"", 192.0),
-    ("1\" = 10'", 120.0),
-    ("1\" = 20'", 240.0),
-    ("1\" = 50'", 600.0),
-];
-
 fn is_pdf(source: &str) -> bool {
     source.contains(", page")
 }
@@ -253,40 +226,16 @@ impl DriftApp {
             // millimetres on their paper.
             let per = if is_pdf(&u.source) { MM_PER_POINT } else { 1.0 };
             let n = u.scale / per;
-            let current = SCALES
-                .iter()
-                .find(|(_, s)| ((s - n) / s).abs() < 1e-4)
-                .map_or_else(
-                    || drift_core::sheets::scale_label(n),
-                    |(l, _)| (*l).to_owned(),
-                );
+            let imperial = self.imperial();
             theme::row(ui, "Scale", |ui| {
-                egui::ComboBox::from_id_salt(("underlay_scale", id.0))
-                    .selected_text(current)
-                    .width(130.0)
-                    .show_ui(ui, |ui| {
-                        for (label, s) in SCALES {
-                            if ui
-                                .selectable_label(((s - n) / s).abs() < 1e-4, *label)
-                                .clicked()
-                            {
-                                edited.scale = s * per;
-                            }
-                        }
-                    })
-                    .response
-                    .on_hover_text("The scale the drawing was drawn at (or calibrate it)");
-                ui.label("1 :");
                 let mut shown = n;
-                if ui
-                    .add(
-                        egui::DragValue::new(&mut shown)
-                            .range(1e-6..=1e6)
-                            .speed(0.5)
-                            .max_decimals(3),
-                    )
-                    .changed()
-                {
+                if crate::app::scale_menu::scale_menu(
+                    ui,
+                    ("underlay_scale", id.0),
+                    &mut shown,
+                    imperial,
+                    130.0,
+                ) {
                     edited.scale = shown * per;
                 }
             });

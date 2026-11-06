@@ -49,7 +49,7 @@ become dimensions when **Auto relations** is on.
 | **Centre arc** | A, A, A | Centre, start (sets the radius), end. Move round the centre to choose the direction. | Radius, then sweep. |
 | **Slot** | U | **Straight** (two end centres, then the width), **Centre** (the middle, then an end centre) or **Arc** (the arc's centre, the two end centres, then the width). U again cycles; also in the top bar. | Length, then width. |
 | **Point** | V | Click to place a point. | X, Tab, Y. |
-| **Text** | Shift+T | Click where the text starts (its baseline), or in an existing text, and type. Enter finishes; Shift+Enter starts a new line. Top bar: **Height**. | — |
+| **Text** | Shift+T | Click where the text starts (its baseline), or in an existing text, and type. Enter finishes; Shift+Enter starts a new line. Top bar: **Height** (on paper; new text is that at the drawing scale). | — |
 | **Fill / hatch** | H | Click inside a closed area to fill or hatch it with the style in the top bar. Alt+click a fill to pick up its style. The Rectangle, Polygon, Circle, Ellipse, Slot and Pen tools' bars have a **Fill** switch that fills closed shapes as they are drawn, in the same style. See [Fills and hatches](../tutorials/06-fills-and-hatches.md). | — |
 
 ## Build

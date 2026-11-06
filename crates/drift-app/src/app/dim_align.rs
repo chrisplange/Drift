@@ -8,6 +8,7 @@
 
 use drift_core::{Constraint, ConstraintId, DVec2, Document};
 
+use crate::annotations::AnnoSpace;
 use crate::*;
 
 /// How close (screen points) a dragged dimension's line comes to another's before it snaps.
@@ -43,13 +44,13 @@ fn label_and_dir(
     doc: &Document,
     id: ConstraintId,
     c: &Constraint,
-    scale: f64,
+    space: &AnnoSpace,
 ) -> Option<(DVec2, DVec2)> {
     let u = measure_dir(doc, c)?;
     let anchor = drift_edit::labels::dimension_anchor(doc, c)?;
-    let offset = doc
-        .placement(id)
-        .unwrap_or_else(|| annotations::default_offset(doc, c, scale));
+    let offset = space
+        .placement(doc, id)
+        .unwrap_or_else(|| space.default_offset(doc, c));
     Some((anchor + offset, u))
 }
 
@@ -58,16 +59,17 @@ fn level(label: DVec2, u: DVec2) -> f64 {
     label.dot(u.perp())
 }
 
-/// Snap a dragged dimension's label offset so its line is level with the nearest parallel
-/// dimension's within [`SNAP_PT`]: the offset to use, and a guide from its label to the
-/// other's (world).
+/// Snap a dragged dimension's label offset (world mm) so its line is level with the nearest
+/// parallel dimension's within [`SNAP_PT`] on screen: the offset to use, and a guide from its
+/// label to the other's (world).
 pub(crate) fn snap_label(
     doc: &Document,
     id: ConstraintId,
     c: &Constraint,
     offset: DVec2,
-    scale: f64,
+    space: &AnnoSpace,
 ) -> (DVec2, Option<[DVec2; 2]>) {
+    let scale = space.screen_scale();
     let (Some(u), Some(anchor)) = (
         measure_dir(doc, c),
         drift_edit::labels::dimension_anchor(doc, c),
@@ -78,7 +80,7 @@ pub(crate) fn snap_label(
     let best = doc
         .constraints()
         .filter(|(other, d)| *other != id && d.is_dimension())
-        .filter_map(|(other, d)| label_and_dir(doc, other, d, scale))
+        .filter_map(|(other, d)| label_and_dir(doc, other, d, space))
         .filter(|(_, v)| parallel(u, *v))
         .map(|(label, _)| (label, level(label, u) - ours))
         .filter(|(_, shift)| shift.abs() * scale <= SNAP_PT)
@@ -97,9 +99,9 @@ pub(crate) fn snap_label(
 pub(crate) fn aligned(
     doc: &Document,
     ids: &[ConstraintId],
-    scale: f64,
+    space: &AnnoSpace,
 ) -> Vec<(ConstraintId, DVec2)> {
-    let placed = placed_parallel(doc, ids, scale);
+    let placed = placed_parallel(doc, ids, space);
     let Some((_, first, u, _)) = placed.first().copied() else {
         return Vec::new();
     };
@@ -116,9 +118,9 @@ pub(crate) fn aligned(
 pub(crate) fn spaced(
     doc: &Document,
     ids: &[ConstraintId],
-    scale: f64,
+    space: &AnnoSpace,
 ) -> Vec<(ConstraintId, DVec2)> {
-    let mut placed = placed_parallel(doc, ids, scale);
+    let mut placed = placed_parallel(doc, ids, space);
     let Some((_, _, u, _)) = placed.first().copied() else {
         return Vec::new();
     };
@@ -142,7 +144,7 @@ pub(crate) fn spaced(
 fn placed_parallel(
     doc: &Document,
     ids: &[ConstraintId],
-    scale: f64,
+    space: &AnnoSpace,
 ) -> Vec<(ConstraintId, DVec2, DVec2, DVec2)> {
     let mut out: Vec<(ConstraintId, DVec2, DVec2, DVec2)> = Vec::new();
     for &id in ids {
@@ -150,7 +152,7 @@ fn placed_parallel(
             continue;
         };
         let (Some((label, u)), Some(anchor)) = (
-            label_and_dir(doc, id, c, scale),
+            label_and_dir(doc, id, c, space),
             drift_edit::labels::dimension_anchor(doc, c),
         ) else {
             continue;
@@ -178,11 +180,11 @@ impl DriftApp {
     /// One undo step; says what happened.
     pub(crate) fn align_picked_dimensions(&mut self, spread: bool, now: f64) {
         let ids = self.picked_dimensions();
-        let scale = self.drawing.view.camera.scale;
+        let space = self.anno_space(&self.canvas_map());
         let moves = if spread {
-            spaced(&self.drawing.editor.doc, &ids, scale)
+            spaced(&self.drawing.editor.doc, &ids, &space)
         } else {
-            aligned(&self.drawing.editor.doc, &ids, scale)
+            aligned(&self.drawing.editor.doc, &ids, &space)
         };
         if moves.is_empty() {
             let why = if spread {
@@ -218,12 +220,8 @@ impl DriftApp {
     /// Whether Align / Space evenly apply: two (or three) or more parallel dimensions picked.
     pub(crate) fn can_align_dimensions(&self) -> (bool, bool) {
         let ids = self.picked_dimensions();
-        let n = placed_parallel(
-            &self.drawing.editor.doc,
-            &ids,
-            self.drawing.view.camera.scale,
-        )
-        .len();
+        let space = self.anno_space(&self.canvas_map());
+        let n = placed_parallel(&self.drawing.editor.doc, &ids, &space).len();
         (n >= 2, n >= 3)
     }
 }
@@ -255,6 +253,18 @@ mod tests {
         (doc, ids.try_into().unwrap())
     }
 
+    /// A fixed-size canvas at `scale` points per mm, in a drawing at 1:1.
+    fn space(scale: f64) -> AnnoSpace {
+        let map = crate::overlay::ScreenMap {
+            rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0)),
+            camera: drift_render::Camera {
+                center: DVec2::ZERO,
+                scale,
+            },
+        };
+        AnnoSpace::screen(&map, 1.0)
+    }
+
     fn line_y(doc: &Document, id: ConstraintId) -> f64 {
         let c = doc.constraint(id).unwrap();
         drift_edit::labels::dimension_anchor(doc, c).unwrap().y + doc.placement(id).unwrap().y
@@ -266,11 +276,11 @@ mod tests {
         let c = *doc.constraint(b).unwrap();
         let anchor = drift_edit::labels::dimension_anchor(&doc, &c).unwrap();
         // Dragged to y = 10.3 at 10 pt per mm: 3 pt from the first's line, so it snaps.
-        let (offset, guide) = snap_label(&doc, b, &c, DVec2::new(0.0, 10.3) - anchor, 10.0);
+        let (offset, guide) = snap_label(&doc, b, &c, DVec2::new(0.0, 10.3) - anchor, &space(10.0));
         assert!(((anchor + offset).y - line_y(&doc, a)).abs() < 1e-9);
         assert!(guide.is_some());
         // Too far (2 mm = 20 pt): left where it is.
-        let (offset, guide) = snap_label(&doc, b, &c, DVec2::new(0.0, 12.0) - anchor, 10.0);
+        let (offset, guide) = snap_label(&doc, b, &c, DVec2::new(0.0, 12.0) - anchor, &space(10.0));
         assert!(((anchor + offset).y - 12.0).abs() < 1e-9);
         assert!(guide.is_none());
     }
@@ -278,14 +288,14 @@ mod tests {
     #[test]
     fn picked_dimensions_align_and_space_evenly() {
         let (mut doc, ids) = three();
-        for (id, offset) in aligned(&doc, &ids, 10.0) {
+        for (id, offset) in aligned(&doc, &ids, &space(10.0)) {
             doc.set_placement(id, offset).unwrap();
         }
         for id in ids {
             assert!((line_y(&doc, id) - 10.0).abs() < 1e-9);
         }
         let (mut doc, ids) = three();
-        for (id, offset) in spaced(&doc, &ids, 10.0) {
+        for (id, offset) in spaced(&doc, &ids, &space(10.0)) {
             doc.set_placement(id, offset).unwrap();
         }
         let ys: Vec<f64> = ids.iter().map(|id| line_y(&doc, *id)).collect();
@@ -301,7 +311,7 @@ mod tests {
                 value: 50.0,
             })
             .unwrap();
-        let moved = aligned(&doc, &[ids[0], vertical, ids[2]], 10.0);
+        let moved = aligned(&doc, &[ids[0], vertical, ids[2]], &space(10.0));
         assert_eq!(moved.len(), 1);
         assert_eq!(moved[0].0, ids[2]);
     }

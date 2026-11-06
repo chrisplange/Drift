@@ -89,7 +89,13 @@ impl DriftApp {
         let a = self.drawing.editor.doc.annotation(id)?.clone();
         let fallback = self.fit_bounds().size().max_element().max(1.0);
         let crop = mark_crop(&a, self.drawing.editor.bounds(), fallback)?;
-        let scale = drift_core::sheets::fit_scale(crop.size(), ROOM, self.imperial());
+        // At the drawing scale when it fits, so the view prints what the canvas shows.
+        let scale = drift_core::sheets::new_view_scale(
+            crop.size(),
+            ROOM,
+            self.imperial(),
+            self.drawing.editor.doc.draft_style().scale,
+        );
         let mut linked = a.clone();
         self.drawing.editor.doc.begin();
         let view = self

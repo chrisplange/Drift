@@ -752,6 +752,13 @@ impl DraftStyle {
         }
     }
 
+    /// The height new text takes in the model: the drafting text height (a cap height on
+    /// paper) at the drawing scale, so it prints at that height in a view at the drawing
+    /// scale. The Text tool, paste, the AI link and scripts all start from it.
+    pub fn text_world_height(&self) -> f64 {
+        self.text_height * self.scale
+    }
+
     pub fn preset(standard: Standard) -> Self {
         match standard {
             Standard::Iso => Self::iso(),

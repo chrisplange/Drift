@@ -94,8 +94,8 @@ pub const VIEW_TITLE_DEPTH: f64 = 11.0;
 
 /// The views' outlines and titles: a title is the view's name in bold over a rule, with its
 /// scale beneath, at the frame's lower left. Views are numbered in order when a sheet has
-/// more than one.
-pub fn draw_views(sheet: &Sheet, views: &[PlacedView], d: &mut Drawing) {
+/// more than one. Scales are written for a drawing in feet and inches if `imperial`.
+pub fn draw_views(sheet: &Sheet, views: &[PlacedView], imperial: bool, d: &mut Drawing) {
     let several = views.len() > 1;
     for (i, view) in views.iter().enumerate() {
         let frame = view.frame.bounds();
@@ -158,7 +158,7 @@ pub fn draw_views(sheet: &Sheet, views: &[PlacedView], d: &mut Drawing) {
         label(
             d,
             DVec2::new(left, top - 8.4),
-            &format!("Scale {}", scale_label(view.scale)),
+            &format!("Scale {}", scale_label(view.scale, imperial)),
             MUTED,
         );
     }

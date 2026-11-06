@@ -51,6 +51,7 @@ impl DriftApp {
             ViewFlag::Status => &mut self.status_colors,
             ViewFlag::Endpoints => &mut self.drawing.editor.prefs.always_endpoints,
             ViewFlag::Dimensions => &mut self.show_dimensions,
+            ViewFlag::PrintSize => &mut self.print_annotations,
             ViewFlag::Relations => &mut self.show_relations,
             ViewFlag::Hidden => &mut self.show_hidden_annotations,
             ViewFlag::Free => &mut self.drawing.params.show_free,

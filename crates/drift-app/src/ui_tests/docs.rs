@@ -95,6 +95,7 @@ fn docs_screenshots() {
     layers();
     construction();
     annotation();
+    annotation_print_size();
     sheets();
     underlay();
     checker();
@@ -705,6 +706,37 @@ fn construction() {
     h.hover_at(screen(&h, DVec2::new(30.0, -18.0)));
     h.run();
     shot("construction.png", &mut h);
+}
+
+/// Only the Annotations at print size shots:
+/// `cargo test -p drift-app --release docs_screenshots_print_size -- --ignored`.
+#[test]
+#[ignore = "writes two of the user guide's screenshots; run with --ignored"]
+fn docs_screenshots_print_size() {
+    if harness().is_none() {
+        return;
+    }
+    annotation_print_size();
+}
+
+/// The example zoomed in on the slot, with Annotations at print size on (the labels as a
+/// 1:1 sheet prints them) and off (one size on screen).
+fn annotation_print_size() {
+    for (on, name) in [
+        (true, "annotation-print-size.png"),
+        (false, "annotation-fixed-size.png"),
+    ] {
+        let mut h = harness().unwrap();
+        open_example(&mut h);
+        h.state_mut().print_annotations = on;
+        h.state_mut().drawing.view.fit_target = Some(drift_core::Bounds {
+            min: DVec2::new(-5.0, -10.0),
+            max: DVec2::new(65.0, 70.0),
+        });
+        h.run();
+        h.run();
+        shot(name, &mut h);
+    }
 }
 
 fn annotation() {

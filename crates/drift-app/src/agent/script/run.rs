@@ -1187,10 +1187,7 @@ impl<'s> Runner<'s> {
                 let mut at = self.centre_of(of)?;
                 let h = match height {
                     Some(h) => self.len(h)?,
-                    None => {
-                        let style = self.doc().draft_style();
-                        style.text_height * style.scale
-                    }
+                    None => self.doc().draft_style().text_world_height(),
                 };
                 at.y -= h / 2.0;
                 self.exec(
@@ -2046,8 +2043,7 @@ impl<'s> Runner<'s> {
             self.fix(ln, start)?;
         }
         // Labels just past the lines' far (or near) ends.
-        let style = self.doc().draft_style();
-        let h = style.text_height * style.scale;
+        let h = self.doc().draft_style().text_world_height();
         for (o, label) in offsets.iter().zip(labels) {
             let (at, align) = if cols {
                 (origin + DVec2::new(*o, len + h), "center")

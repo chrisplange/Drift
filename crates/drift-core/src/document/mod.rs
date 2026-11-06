@@ -123,10 +123,12 @@ pub struct Document {
     revision: u64,
     /// Changed by every change except geometry moving: see [`structure`](Self::structure).
     structure: u64,
+    /// Changed as `structure` is, but not by fills: see [`make_up`](Self::make_up).
+    make_up: u64,
     /// Changed by every change to entities: see [`geometry`](Self::geometry).
     geometry: u64,
     /// Pre-images of everything touched by the open transaction.
-    journal: Option<HashMap<Key, Option<Record>>>,
+    journal: Option<journal::Journal>,
     /// Counts transactions begun, so work spanning calls (a drag) can tell it is still in the
     /// same one (not part of the content).
     transaction_serial: u64,
@@ -291,6 +293,7 @@ impl Default for Document {
             next_wall_id: 1,
             revision: 0,
             structure: next_structure(),
+            make_up: next_structure(),
             geometry: next_structure(),
             journal: None,
             transaction_serial: 0,
@@ -453,6 +456,20 @@ impl Document {
     /// frame. Values are never reused, not even by another document.
     pub fn structure(&self) -> u64 {
         self.structure
+    }
+
+    /// Changes as [`structure`](Self::structure) does, except that a change to a fill alone
+    /// leaves it as it was: the drawing's make-up apart from its fills. A drag that carries a
+    /// hatch along rewrites the hatch on every frame, so caches that read no fill (the
+    /// Inspector's answers for the picks, a drag's scope) key on this instead and stay warm.
+    /// Values are never reused, not even by another document.
+    ///
+    /// Every place `structure` changes changes this too (`touch_key` for every key but
+    /// `Key::Placement`, which changes neither, and `Key::Fill`, which changes only
+    /// `structure`; [`replay`](Self::replay); [`rollback`](Self::rollback); undo and redo),
+    /// with a new value from the same counter.
+    pub fn make_up(&self) -> u64 {
+        self.make_up
     }
 
     /// Changes with every change to the sketch's entities (added, removed, moved, restyled,

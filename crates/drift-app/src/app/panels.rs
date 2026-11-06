@@ -6,11 +6,12 @@ use crate::icons::{self, Glyph};
 use crate::*;
 
 /// What the Inspector shows for the picks that depends only on what is picked and on the
-/// drawing's make-up ([`Document::structure`](drift_core::Document::structure): entities
-/// added, removed, rewired or restyled, relations, dimensions, variables, layers and fills),
-/// not on where anything is: the relations offered, the picked curves' kinds and layers,
-/// and the relations and dimensions on them. With tens of thousands of curves picked,
-/// finding them again every frame took most of a frame (#253).
+/// drawing's make-up apart from its fills ([`Document::make_up`](drift_core::Document::make_up):
+/// entities added, removed, rewired or restyled, relations, dimensions, variables, layers,
+/// walls), not on where anything is: the relations offered, the picked curves' kinds and
+/// layers, and the relations and dimensions on them. With tens of thousands of curves
+/// picked, finding them again every frame took most of a frame (#253). None of them reads a
+/// fill, so a drag carrying a hatch along (which rewrites it every frame) keeps them.
 #[derive(Default)]
 pub(crate) struct PickMemo {
     key: Option<PickKey>,
@@ -25,7 +26,7 @@ pub(crate) struct PickMemo {
 /// What a [`PickMemo`] was made for.
 struct PickKey {
     lineage: u64,
-    structure: u64,
+    make_up: u64,
     selection: std::collections::BTreeSet<drift_core::EntityId>,
     midpoints: std::collections::BTreeSet<drift_core::EntityId>,
 }
@@ -40,7 +41,7 @@ impl PickMemo {
     fn for_picks(&mut self, ed: &Editor) -> &mut Self {
         let current = self.key.as_ref().is_some_and(|k| {
             k.lineage == ed.doc.lineage()
-                && k.structure == ed.doc.structure()
+                && k.make_up == ed.doc.make_up()
                 && k.selection == ed.selection
                 && k.midpoints == ed.selected_midpoints
         });
@@ -49,7 +50,7 @@ impl PickMemo {
                 made: self.made + 1,
                 key: Some(PickKey {
                     lineage: ed.doc.lineage(),
-                    structure: ed.doc.structure(),
+                    make_up: ed.doc.make_up(),
                     selection: ed.selection.clone(),
                     midpoints: ed.selected_midpoints.clone(),
                 }),
@@ -1895,6 +1896,7 @@ mod pick_memo_tests {
         let mut ed = Editor::new(doc);
         ed.sync();
         let other = ed.add_layer("Other");
+        ed.prefs.fill_style.kind = drift_core::FillKind::Hatch(drift_core::Hatch::new("ANSI37"));
         ed.add_fill_at(DVec2::new(5.0, 5.0)).unwrap();
         ed.settle_areas();
         let width = ed
@@ -1917,7 +1919,12 @@ mod pick_memo_tests {
         };
         let all: Vec<EntityId> = ed.doc.iter().map(|(id, _)| id).collect();
         let hatch = ed.doc.fills().next().map(|(id, _)| id).unwrap();
+        assert!(matches!(
+            ed.doc.fill(hatch).unwrap().kind,
+            drift_core::FillKind::Hatch(_)
+        ));
         let mut kept_through_moves = 0;
+        let mut kept_through_hatched_moves = 0;
         let mut memo = PickMemo::default();
         check(&mut memo, &ed, 0, "at the start");
         for step in 1..300 {
@@ -1961,7 +1968,6 @@ mod pick_memo_tests {
                     } else {
                         lines[12..].to_vec()
                     };
-                    let _ = hatch;
                     let dragged: Vec<drift_solver::Param> = ed
                         .doc
                         .defining_points(ids.iter().copied())
@@ -1972,13 +1978,25 @@ mod pick_memo_tests {
                     ed.doc.begin();
                     check(&mut memo, &ed, step, "a move begun");
                     let made = memo.made;
+                    let origin = |ed: &Editor| match &ed.doc.fill(hatch).unwrap().kind {
+                        drift_core::FillKind::Hatch(h) => h.origin,
+                        _ => unreachable!(),
+                    };
+                    let was = origin(&ed);
                     for k in 1..4 {
                         ed.drag(&ids, DVec2::new(k as f64, 0.5), &dragged);
                         check(&mut memo, &ed, step, "a frame of a move");
                     }
-                    // (Kept through the move, unless a hatch carried along changed fills.)
-                    if !hatched {
-                        assert_eq!(memo.made, made, "{step}: found again mid-move");
+                    // Kept through the move, a hatch carried along (its fill rewritten every
+                    // frame) or not.
+                    assert_eq!(memo.made, made, "{step}: found again mid-move");
+                    if hatched {
+                        // (The rectangle may have been reshaped by a relation: carried only
+                        // when its outline moved as one.)
+                        if origin(&ed) != was {
+                            kept_through_hatched_moves += 1;
+                        }
+                    } else {
                         kept_through_moves += 1;
                     }
                     ed.commit("Move");
@@ -2025,5 +2043,9 @@ mod pick_memo_tests {
             check(&mut memo, &ed, step, what);
         }
         assert!(kept_through_moves > 5);
+        assert!(
+            kept_through_hatched_moves > 5,
+            "hatch carried in {kept_through_hatched_moves} moves"
+        );
     }
 }

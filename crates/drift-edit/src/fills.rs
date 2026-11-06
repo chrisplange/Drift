@@ -293,6 +293,12 @@ impl PatternLibrary {
 struct Areas<'a> {
     regions: &'a [Region],
     ids: &'a [EntityId],
+    maps: Rc<AreaMaps>,
+}
+
+/// What [`Areas`] looks regions up by: made from the regions and their curves alone, so the
+/// same regions give the same maps (see [`Editor::areas_of`]).
+pub(crate) struct AreaMaps {
     /// Regions (indices, in order) by their sorted outer curves.
     by_outline: HashMap<Vec<EntityId>, Vec<usize>>,
     /// Regions (indices, in order) by each curve of their outer boundary.
@@ -303,8 +309,51 @@ struct Areas<'a> {
     index: drift_geom::regions::RegionIndex,
 }
 
+impl std::ops::Deref for Areas<'_> {
+    type Target = AreaMaps;
+
+    fn deref(&self) -> &AreaMaps {
+        &self.maps
+    }
+}
+
+impl Editor {
+    /// [`Areas`] of the drawing's `regions` and their curves `ids` (as
+    /// [`regions`](Editor::regions) and [`region_ids`](Editor::region_ids) give them), their
+    /// maps made once for those values: kept while both are the same `Rc`s (held, so never
+    /// mistaken for others made at the same address).
+    fn areas_of<'a>(
+        &self,
+        regions: &'a crate::editor::Regions,
+        ids: &'a Rc<Vec<EntityId>>,
+    ) -> Areas<'a> {
+        let mut kept = self.area_maps.borrow_mut();
+        let maps = match &*kept {
+            Some((r, i, maps)) if std::sync::Arc::ptr_eq(r, regions) && Rc::ptr_eq(i, ids) => {
+                maps.clone()
+            }
+            _ => {
+                let maps = Rc::new(AreaMaps::new(regions, ids));
+                *kept = Some((regions.clone(), ids.clone(), maps.clone()));
+                maps
+            }
+        };
+        Areas { regions, ids, maps }
+    }
+}
+
 impl<'a> Areas<'a> {
     fn new(regions: &'a [Region], ids: &'a [EntityId]) -> Self {
+        Self {
+            regions,
+            ids,
+            maps: Rc::new(AreaMaps::new(regions, ids)),
+        }
+    }
+}
+
+impl AreaMaps {
+    fn new(regions: &[Region], ids: &[EntityId]) -> Self {
         let mut by_outline: HashMap<Vec<EntityId>, Vec<usize>> = HashMap::new();
         let mut by_curve: HashMap<EntityId, Vec<usize>> = HashMap::new();
         for (i, r) in regions.iter().enumerate() {
@@ -318,15 +367,15 @@ impl<'a> Areas<'a> {
             by_outline.entry(c).or_default().push(i);
         }
         Self {
-            regions,
-            ids,
             by_outline,
             by_curve,
             curves: ids.iter().copied().collect(),
             index: drift_geom::regions::RegionIndex::new(regions),
         }
     }
+}
 
+impl<'a> Areas<'a> {
     /// [`region_at`] among these regions.
     fn at(&self, p: DVec2) -> Option<&'a Region> {
         self.index.at(self.regions, p)
@@ -572,7 +621,11 @@ impl Editor {
         } else {
             (Default::default(), Rc::new(Vec::new()))
         };
-        let areas = Areas::new(&regions, &ids);
+        let areas = if needs_areas {
+            self.areas_of(&regions, &ids)
+        } else {
+            Areas::new(&regions, &ids)
+        };
         let mut solid = None;
         let mut out = BTreeMap::new();
         for (id, fill) in fills {
@@ -1118,7 +1171,11 @@ impl Editor {
         } else {
             (Default::default(), Rc::new(Vec::new()))
         };
-        let areas = Areas::new(&regions, &ids);
+        let areas = if needs_areas {
+            self.areas_of(&regions, &ids)
+        } else {
+            Areas::new(&regions, &ids)
+        };
         let mut solid = None;
         let mut created: Option<Vec<EntityId>> = None;
         let mut changes = Vec::new();

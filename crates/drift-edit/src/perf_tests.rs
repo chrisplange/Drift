@@ -1834,3 +1834,151 @@ fn perf_relation_options_large_pick() {
         "relation offers for 40,000 lines took {at_40k:.0} ms"
     );
 }
+
+/// A drag's first frame (its parts found) where many small parts solve, on a drawing with a
+/// locked layer and a wall: the locked geometry and what the walls made are found once for
+/// the drag, not once per part (each finding walks the whole drawing).
+#[test]
+#[ignore = "torture test: run with --release --ignored --nocapture"]
+fn perf_drag_many_solving_parts() {
+    let mut doc = Document::new();
+    let mut picked = Vec::new();
+    for k in 0..2_000 {
+        let (x, y) = ((k % 50) as f64 * 30.0, (k / 50) as f64 * 30.0);
+        let a = doc.add_point(v(x, y));
+        let b = doc.add_point(v(x + 20.0, y));
+        let l = doc.add_line(a, b).unwrap();
+        doc.add_constraint(Constraint::Horizontal { line: l })
+            .unwrap();
+        picked.push(l);
+    }
+    // Locked lines, and a wall.
+    let layer = doc.add_layer(drift_core::Layer {
+        locked: true,
+        ..drift_core::Layer::new("Locked")
+    });
+    for k in 0..5_000 {
+        let (x, y) = ((k % 100) as f64 * 15.0, -100.0 - (k / 100) as f64 * 15.0);
+        let a = doc.add_point(v(x, y));
+        let b = doc.add_point(v(x + 10.0, y + 5.0));
+        let l = doc.add_line(a, b).unwrap();
+        doc.set_entity_layer(l, layer).unwrap();
+        doc.set_entity_layer(a, layer).unwrap();
+        doc.set_entity_layer(b, layer).unwrap();
+    }
+    let (a, b) = (
+        doc.add_point(v(0.0, 2_000.0)),
+        doc.add_point(v(1_500.0, 2_000.0)),
+    );
+    let centre = doc.add_line(a, b).unwrap();
+    doc.set_style(centre, drift_core::LineKind::Construction);
+    let path = doc
+        .add_path(drift_core::Path {
+            curves: vec![centre],
+            closed: false,
+        })
+        .unwrap();
+    doc.add_wall(drift_core::Wall::new(
+        path,
+        200.0,
+        drift_core::LayerId::DEFAULT,
+    ))
+    .unwrap();
+    drift_geom::walls::regenerate(&mut doc);
+    let mut ed = Editor::new(doc);
+    ed.sync();
+    let dragged: Vec<drift_solver::Param> = ed
+        .doc
+        .defining_points(picked.iter().copied())
+        .into_iter()
+        .flat_map(drift_solver::Param::point)
+        .collect();
+    println!();
+    report(
+        "first drag frame, 2,000 solving parts",
+        time(5, |_| {
+            ed.doc.begin();
+            assert!(ed.drag(&picked, v(0.5, 0.25), &dragged));
+            ed.doc.rollback();
+            ed.sync();
+        }),
+    );
+}
+
+/// The Select tool moving picked curves of the 10,000-curve sketch, as the canvas drives it
+/// (no drawing): the modal move (G, the pointer in steps, a click to finish) and a mouse
+/// drag (pressed on a picked curve, dragged in steps, let go). Per step and the release.
+#[test]
+#[ignore = "torture test: run with --release --ignored --nocapture"]
+fn perf_select_tool_moves() {
+    use crate::editor::Pointer;
+    use crate::tools::{Input, Modifiers, SelectTool, Tool, ToolKey};
+    let (doc, _) = torture_sketch();
+    let mut ed = Editor::new(doc);
+    ed.sync();
+    let lines: Vec<EntityId> = ed
+        .doc
+        .iter()
+        .filter(|(_, e)| matches!(e.kind, drift_core::EntityKind::Line { .. }))
+        .map(|(id, _)| id)
+        .collect();
+    let all: Vec<EntityId> = ed
+        .doc
+        .iter()
+        .filter(|(_, e)| !e.kind.is_point())
+        .map(|(id, _)| id)
+        .collect();
+    let some: Vec<EntityId> = all.iter().copied().step_by(10).collect();
+    println!();
+    for (label, picked) in [("1,000 curves", &some), ("all curves", &all)] {
+        // A point a third of the way along a picked line: what a press picks up.
+        let line = *lines
+            .iter()
+            .find(|l| picked.contains(l))
+            .expect("a picked line");
+        let on = match ed.doc.shape(line) {
+            Some(drift_core::Shape::Line { a, b }) => a + (b - a) / 3.0,
+            _ => unreachable!(),
+        };
+        let p = |at: DVec2| Pointer::new(at, 1e-3);
+        for how in ["G move", "mouse drag"] {
+            ed.selection = picked.iter().copied().collect();
+            let mut tool = SelectTool::default();
+            let mut steps = Vec::new();
+            if how == "G move" {
+                tool.key(ToolKey::G, Some(&p(on)), &mut ed);
+            } else {
+                tool.handle(Input::DragStart(p(on), Modifiers::default()), &mut ed);
+            }
+            for k in 1..=8 {
+                let at = on + v(0.7 * k as f64, 0.3 * k as f64);
+                let t = Instant::now();
+                if how == "G move" {
+                    tool.handle(Input::Hover(p(at)), &mut ed);
+                } else {
+                    tool.handle(Input::Drag(p(at)), &mut ed);
+                }
+                steps.push(t.elapsed().as_secs_f64() * 1e3);
+            }
+            let end = on + v(5.6, 2.4);
+            let t = Instant::now();
+            if how == "G move" {
+                tool.handle(Input::Click(p(end), Modifiers::default()), &mut ed);
+            } else {
+                tool.handle(Input::DragEnd(p(end), Modifiers::default()), &mut ed);
+            }
+            ed.settle_areas();
+            let release = t.elapsed().as_secs_f64() * 1e3;
+            steps.sort_by(f64::total_cmp);
+            let moved = ed.history.undo_label() == Some("Move");
+            report(
+                &format!("{how} of {label}: step"),
+                (steps.iter().sum::<f64>() / 8.0, steps[7], steps[4]),
+            );
+            report(&format!("{how} of {label}: release"), once(release));
+            assert!(moved, "{how} of {label}: no move made");
+            assert!(ed.undo());
+            ed.selection.clear();
+        }
+    }
+}

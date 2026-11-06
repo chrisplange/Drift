@@ -359,8 +359,13 @@ impl SelectTool {
         true
     }
 
-    /// Confirm the move for the pointer at `target`. The final offset is applied again in one
-    /// step from the original geometry, so typed and snapped moves land exactly.
+    /// Confirm the move for the pointer at `target` (the modal move: G or Move, confirmed by
+    /// a click, Enter or a typed value; a mouse drag's release is
+    /// [`finish_mouse_move`](Self::finish_mouse_move)). The final offset is applied again in
+    /// one step from the original geometry, so typed and snapped moves land exactly. Where
+    /// every part of the move went whole all along, the open move is kept and its points set
+    /// where that one step puts them ([`Editor::land_whole_move`]): the same drawing and undo
+    /// step, without rolling back and moving it all again.
     pub(super) fn confirm_grab(&mut self, ed: &mut Editor) {
         let Some(grab) = self.grab.take() else { return };
         let offset = grab.offset();
@@ -368,6 +373,16 @@ impl SelectTool {
         // A picked region moves with its outline.
         if let Some(seed) = &mut ed.selected_region {
             *seed += offset;
+        }
+        // (A move that let go of its neighbours made new points: applied again, it makes
+        // others, so it goes the long way, as it did.)
+        if !grab.detach && !grab.ids.is_empty() {
+            ed.move_instances(&grab.instances, offset);
+            if ed.land_whole_move(&grab.ids, offset, &grab.dragged()) {
+                ed.place_riders(&grab.riders, &|p| p + offset);
+                ed.commit("Move");
+                return;
+            }
         }
         ed.doc.rollback();
         if offset == DVec2::ZERO {

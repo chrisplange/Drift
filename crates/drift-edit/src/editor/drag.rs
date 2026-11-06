@@ -160,9 +160,32 @@ pub(super) struct DragSession {
     start: Geometry,
     /// How far the drag has gone (the last frame that could go).
     offset: DVec2,
-    /// Where the last frame left the points: a call that doesn't find them there (something
-    /// else moved them) starts a new drag.
-    end: Vec<(EntityId, DVec2)>,
+    /// Where the last frame left the scope's points and circles: a call that doesn't find the
+    /// points there (something else moved them) starts a new drag. (Not in id order: built
+    /// from what the frame wrote, part by part.)
+    end: Geometry,
+    /// The scope the last frame moved.
+    scope: Rc<HashSet<EntityId>>,
+    /// Which document, and its [`geometry`](drift_core::Document::geometry) as the last frame
+    /// took `end`: unchanged since, with the same scope, nothing in the drawing has moved or
+    /// changed, so the points are where `end` says without looking (see
+    /// [`Editor::drag`]). None when the frame's own follow-ups (walls, offsets) changed
+    /// geometry after `end` was taken: the next frame then looks.
+    lineage: u64,
+    geometry: Option<u64>,
+    /// The drag began at the start of its transaction, the drawing as the transaction found
+    /// it, and has been this one drag since, nothing else changing the drawing between its
+    /// frames (see [`Editor::land_whole_move`]).
+    fresh: bool,
+    /// The document's revision as the last frame left it (its walls, offsets and hatches
+    /// followed): anything else that changes the drawing before the next frame or the
+    /// release (an edit of geometry the drag doesn't move, a fill, a dimension's label, a
+    /// copy or a text the move carries) moves it, and the drag is fresh no longer.
+    revision: u64,
+    /// A frame's walls or offsets followed it (changed the drawing).
+    followed: bool,
+    /// The drawing's [`make_up`](drift_core::Document::make_up) as the drag began.
+    make_up: u64,
     /// Whether the last frame pushed curves along that couldn't give way any further.
     pushed: bool,
     /// The parts of the scope, each moved on its own (the relations don't change during a
@@ -183,6 +206,7 @@ pub(super) struct DragSession {
 /// one connected drag that couldn't would; one that has to go in smaller steps (round a
 /// fold, past an arc squeezed by the move) takes them alone, not the whole drawing with it
 /// (#253).
+#[derive(Clone)]
 struct DragPart {
     scope: Rc<HashSet<EntityId>>,
     /// The dragged ids in it.
@@ -233,6 +257,13 @@ struct WholeMove {
     moved: std::collections::BTreeSet<EntityId>,
     /// The parts' entities (the index looks at these).
     scope: Vec<EntityId>,
+    /// The parts' other points, where the drag found them (they stay there).
+    kept: Vec<(EntityId, DVec2)>,
+    /// The parts' circles and their radii (a move keeps them).
+    circles: Vec<(EntityId, f64)>,
+    /// The points of the parts' arcs and ellipses: `normalize_arcs_using` may set them a
+    /// little off where they were moved to, so a frame reads them back.
+    rounds: HashSet<EntityId>,
 }
 
 /// What one call of [`Editor::drag`] works with for one part: the same for each step it
@@ -334,18 +365,59 @@ impl Editor {
         let ids = &self.with_handles(ids);
         // Only what's connected to the dragged geometry is solved, part by part.
         let (scope, scope_parts) = self.drag_scope_and_parts(ids);
-        let now = self.geometry_of(&scope);
         let serial = self.doc.transaction_serial();
         let session = self.drag_session.take().filter(|s| {
-            self.doc.in_transaction()
-                && s.serial == serial
-                && s.ids == *ids
-                && s.dragged == dragged
-                && s.end.len() == now.points.len()
-                && s.end
-                    .iter()
-                    .all(|&(id, p)| self.doc.point(id).ok() == Some(p))
+            self.doc.in_transaction() && s.serial == serial && s.ids == *ids && s.dragged == dragged
         });
+        // The same drag goes on when its points are where the last frame left them. Nothing
+        // in the drawing changed since that frame took `end` (its geometry counter moves with
+        // every change to any entity), with the same scope: they are, without looking.
+        // Otherwise they are looked at, one by one.
+        let unchanged = session.as_ref().is_some_and(|s| {
+            !self.drag_always_look
+                && s.lineage == self.doc.lineage()
+                && s.geometry == Some(self.doc.geometry())
+                && (Rc::ptr_eq(&s.scope, &scope) || *s.scope == *scope)
+        });
+        let (session, now) = if unchanged {
+            let mut s = session.expect("a drag going on");
+            let now = std::mem::take(&mut s.end);
+            #[cfg(debug_assertions)]
+            {
+                let looked = self.geometry_of(&scope);
+                assert!(
+                    now.points.len() == looked.points.len()
+                        && now
+                            .points
+                            .iter()
+                            .all(|&(id, p)| self.doc.point(id).ok() == Some(p)),
+                    "a drag's points, not looked at, aren't where its last frame left them"
+                );
+            }
+            (Some(s), now)
+        } else {
+            let now = self.geometry_of(&scope);
+            let session = session.filter(|s| {
+                s.end.points.len() == now.points.len()
+                    && s.end
+                        .points
+                        .iter()
+                        .all(|&(id, p)| self.doc.point(id).ok() == Some(p))
+            });
+            (session, now)
+        };
+        // (Changed since the last frame by anything but this drag: not fresh any more. A
+        // release then rolls back and moves again, as it always did, so what changed between
+        // frames goes as it always went.)
+        let carried = session.as_ref().map(|s| {
+            (
+                s.fresh && s.revision == self.doc.revision(),
+                s.followed,
+                s.make_up,
+            )
+        });
+        // (A drag starting now starts with its transaction when nothing changed since it began.)
+        let at_begin = self.doc.revision() == self.doc.revision_at_begin();
         let (start, offset, parts, whole, lowering, joins) = match session {
             Some(s) => (s.start, s.offset, s.parts, s.whole, s.lowering, s.joins),
             None => {
@@ -438,7 +510,47 @@ impl Editor {
             self.index.update_moved(&self.doc, scope.iter().copied());
         }
         self.index.rebuild_if_many_moved(&self.doc);
-        let end = self.geometry_of(&scope).points;
+        // Where this frame left the scope, from what it wrote: the parts that went whole at
+        // their start plus the offset (their rounds read back), the others as they are.
+        let end = if ok {
+            self.drag_end(&parts, &whole, to)
+        } else {
+            now
+        };
+        let geometry = self.doc.geometry();
+        let (fresh, followed, make_up) =
+            carried.unwrap_or_else(|| (at_begin, false, self.doc.make_up()));
+        // Walls follow their centrelines as they go (keeping their joins), and a hatch whose
+        // shape moved as one goes with it.
+        let mut follows_changed = false;
+        if self.doc.has_walls() {
+            let before = self.doc.revision();
+            self.follow_walls_with(joins.as_deref());
+            follows_changed |= self.doc.revision() != before;
+            // (The faces they made again are out of the scope: the index is told of them too,
+            // or it would look over the whole drawing for what changed. Only their points were
+            // touched, so the index adds the faces on them.)
+            if self.doc.revision() != before {
+                self.index.update_moved_with_curves(
+                    &self.doc,
+                    self.doc.entities_touched_in_transaction(),
+                );
+            }
+        }
+        if self.doc.has_offsets() {
+            let before = self.doc.revision();
+            self.follow_offsets();
+            follows_changed |= self.doc.revision() != before;
+            if self.doc.revision() != before {
+                self.index.update_moved_with_curves(
+                    &self.doc,
+                    self.doc.entities_touched_in_transaction(),
+                );
+            }
+        }
+        // (What the follow-ups wrote after `end` was taken isn't in it: if they changed any
+        // entity, the next frame looks.)
+        let unmoved_since = self.doc.geometry() == geometry;
         self.drag_session = Some(DragSession {
             serial,
             ids: ids.clone(),
@@ -446,20 +558,92 @@ impl Editor {
             start,
             offset: if ok { to } else { offset },
             end,
+            scope,
+            lineage: self.doc.lineage(),
+            geometry: unmoved_since.then_some(geometry),
+            fresh,
+            revision: 0,
+            followed: followed || follows_changed,
+            make_up,
             pushed,
             parts,
             whole,
             lowering,
             joins: joins.clone(),
         });
-        // Walls follow their centrelines as they go (keeping their joins), and a hatch whose
-        // shape moved as one goes with it.
+        self.carry_hatches();
+        let revision = self.doc.revision();
+        if let Some(s) = &mut self.drag_session {
+            s.revision = revision;
+        }
+        ok
+    }
+
+    /// Land the move in progress at `offset` from where it began, keeping it open, as
+    /// [`drag`](Self::drag) from the drawing as the transaction found it would, in one call
+    /// of `offset`: what the modal move's confirm ([`crate::tools`]' `confirm_grab`) does
+    /// when this returns true, instead of rolling the move back and dragging it again from
+    /// the start. (A mouse drag's release already keeps its move as it is.)
+    ///
+    /// Only when that comes out the same, bit for bit: the drag of `ids` going on is the
+    /// one that began with this transaction ([`DragSession::fresh`]) and nothing has changed
+    /// since its last frame (as [`drag`](Self::drag) tells without looking); every part of it
+    /// goes whole (nothing solved, refused or stepped, on any frame); no frame's walls or
+    /// offsets followed it; and the drawing's make-up is as it began. Each point it moves is
+    /// then set to where the drag found it plus `offset` (as that one call puts it: not the
+    /// frames' offsets added up, which can differ in the last bit), its rounds normalized,
+    /// the index told, and walls, offsets and hatches followed, as that call does. False,
+    /// with nothing changed, otherwise.
+    pub fn land_whole_move(&mut self, ids: &[EntityId], offset: DVec2, dragged: &[Param]) -> bool {
+        if self.land_whole_off {
+            return false;
+        }
+        if offset == DVec2::ZERO {
+            return false;
+        }
+        let ids = &self.without_offset_pieces(ids);
+        if ids.is_empty() {
+            return false;
+        }
+        let ids = &self.with_handles(ids);
+        let Some(s) = &self.drag_session else {
+            return false;
+        };
+        let (scope, _) = self.drag_scope_and_parts(ids);
+        let lands = self.doc.in_transaction()
+            && s.serial == self.doc.transaction_serial()
+            && s.ids == *ids
+            && s.dragged == dragged
+            && s.lineage == self.doc.lineage()
+            && s.geometry == Some(self.doc.geometry())
+            && (Rc::ptr_eq(&s.scope, &scope) || *s.scope == *scope)
+            && s.fresh
+            && s.revision == self.doc.revision()
+            && !s.followed
+            && s.make_up == self.doc.make_up()
+            && !s.whole.points.is_empty()
+            && s.parts.iter().all(|p| p.moves_whole);
+        if !lands {
+            return false;
+        }
+        let s = self.drag_session.take().expect("a drag going on");
+        self.drag_solves = 0;
+        self.drag_unfinished = 0;
+        self.drag_folds = 0;
+        self.drag_solved = 0;
+        for &(id, p) in &s.whole.points {
+            let at = p + offset;
+            if self.doc.point(id).ok() != Some(at) {
+                let _ = self.doc.set_point(id, at);
+            }
+        }
+        self.doc.normalize_arcs_using(&s.whole.moved);
+        self.index
+            .update_moved(&self.doc, s.whole.scope.iter().copied());
+        self.index.rebuild_if_many_moved(&self.doc);
         if self.doc.has_walls() {
             let before = self.doc.revision();
-            self.follow_walls_with(joins.as_deref());
-            // (The faces they made again are out of the scope: the index is told of them too,
-            // or it would look over the whole drawing for what changed. Only their points were
-            // touched, so the index adds the faces on them.)
+            self.follow_walls_with(s.joins.as_deref());
             if self.doc.revision() != before {
                 self.index.update_moved_with_curves(
                     &self.doc,
@@ -478,7 +662,34 @@ impl Editor {
             }
         }
         self.carry_hatches();
-        ok
+        self.landed_whole += 1;
+        true
+    }
+
+    /// Where a frame that went left the scope (see [`DragSession::end`]): the parts that go
+    /// whole at their start moved by `to` (the points of their rounds, which normalizing may
+    /// set a little off that, read back), their other points where they were, and the parts
+    /// that solve as they are now.
+    fn drag_end(&self, parts: &[DragPart], whole: &WholeMove, to: DVec2) -> Geometry {
+        let mut end = Geometry::default();
+        end.points.reserve(whole.points.len() + whole.kept.len());
+        for &(id, p) in whole.points.iter().chain(&whole.kept) {
+            let at = if whole.rounds.contains(&id) {
+                self.doc.point(id).unwrap_or(p)
+            } else if whole.moved.contains(&id) {
+                p + to
+            } else {
+                p
+            };
+            end.points.push((id, at));
+        }
+        end.circles.extend_from_slice(&whole.circles);
+        for part in parts.iter().filter(|p| !p.moves_whole) {
+            let g = self.geometry_of(&part.scope);
+            end.points.extend(g.points);
+            end.circles.extend(g.circles);
+        }
+        end
     }
 
     /// The parts of a drag's scope as it starts (see [`DragPart`]): the dragged ids and
@@ -618,18 +829,30 @@ impl Editor {
             part.moves_whole = !part.needs_solve
                 && !self.stretches_hanging_line(&part.ids, &part.dragged_set, &part.start);
         }
+        // (The locked geometry and what walls, openings and offsets made: each a walk over the
+        // whole drawing, so found once for the drag, not once per part that solves.)
+        let solving = out.iter().any(|p| p.needs_solve);
+        let locked = if solving {
+            self.doc.locked_entities()
+        } else {
+            Default::default()
+        };
+        let made: HashSet<EntityId> = if solving && (self.doc.has_walls() || self.doc.has_offsets())
+        {
+            self.doc.wall_owners().of.into_keys().collect()
+        } else {
+            HashSet::new()
+        };
         for part in out.iter_mut().filter(|p| p.needs_solve) {
-            self.find_held_shapes(part);
+            self.find_held_shapes(part, &locked, &made);
         }
         // (Only parts that solve can fail to land; the rest pay nothing for it.)
-        if curves && out.iter().any(|p| p.needs_solve) {
+        if curves && solving {
             // What walls, openings and offsets made, the walls' centrelines, and the offsets'
             // sources: geometry with a record that remakes it, which a part isn't moved with.
             let owned: HashSet<EntityId> = if self.doc.has_walls() || self.doc.has_offsets() {
-                self.doc
-                    .wall_owners()
-                    .of
-                    .into_keys()
+                made.iter()
+                    .copied()
                     .chain(
                         self.doc
                             .offsets()
@@ -639,7 +862,6 @@ impl Editor {
             } else {
                 HashSet::new()
             };
-            let locked = self.doc.locked_entities();
             let edit_scope = self.edit_scope();
             for part in out.iter_mut().filter(|p| p.needs_solve) {
                 let pinned = part.constraints.iter().any(|(_, c)| pins(c))
@@ -682,8 +904,19 @@ impl Editor {
     /// Not held, so never judged: what walls and offsets make (they are made again from their
     /// sources after the drag moves), and a line no longer than [`NO_WAY_ROUND`], which has no
     /// way round to keep.
-    fn find_held_shapes(&self, part: &mut DragPart) {
-        let locked = self.doc.locked_entities();
+    ///
+    /// `locked` is the drawing's locked geometry ([`Document::locked_entities`]) and `made`
+    /// what walls, openings and offsets made (the keys of [`Document::wall_owners`], empty
+    /// without walls or offsets): found once for the whole drag by [`Self::drag_parts`].
+    ///
+    /// [`Document::locked_entities`]: drift_core::Document::locked_entities
+    /// [`Document::wall_owners`]: drift_core::Document::wall_owners
+    fn find_held_shapes(
+        &self,
+        part: &mut DragPart,
+        locked: &std::collections::BTreeSet<EntityId>,
+        made: &HashSet<EntityId>,
+    ) {
         let mut fixed: HashMap<EntityId, [bool; 2]> = HashMap::new();
         for id in part.scope.iter().filter(|id| locked.contains(id)) {
             if let Some(e) = self.doc.get(*id) {
@@ -747,11 +980,6 @@ impl Editor {
                 }
             }
         }
-        let made: HashSet<EntityId> = if self.doc.has_walls() || self.doc.has_offsets() {
-            self.doc.wall_owners().of.into_keys().collect()
-        } else {
-            HashSet::new()
-        };
         let unheld = |id: EntityId, points: &[EntityId]| {
             made.contains(&id) || points.iter().any(|p| moved.contains(p))
         };
@@ -792,6 +1020,20 @@ impl Editor {
         lines.sort_unstable_by_key(|&(id, ..)| id);
         part.held_radii = held;
         part.held_lines = lines;
+    }
+
+    /// [`find_held_shapes`](Self::find_held_shapes) for one part, finding the locked
+    /// geometry and what walls and offsets made for it alone (as it did before they were
+    /// found once per drag): for the tests, to show both give the same.
+    #[cfg(test)]
+    fn find_held_shapes_alone(&self, part: &mut DragPart) {
+        let locked = self.doc.locked_entities();
+        let made: HashSet<EntityId> = if self.doc.has_walls() || self.doc.has_offsets() {
+            self.doc.wall_owners().of.into_keys().collect()
+        } else {
+            HashSet::new()
+        };
+        self.find_held_shapes(part, &locked, &made);
     }
 
     /// Whether `part`, moved by `offset` from where the drag found it, didn't land and broke a
@@ -862,13 +1104,28 @@ impl Editor {
         let mut whole = WholeMove::default();
         for part in parts.iter().filter(|p| p.moves_whole) {
             let moved = self.doc.defining_points(part.ids.iter().copied());
-            whole.points.extend(
-                part.start
-                    .points
-                    .iter()
-                    .copied()
-                    .filter(|(id, _)| moved.contains(id)),
-            );
+            for &(id, p) in &part.start.points {
+                if moved.contains(&id) {
+                    whole.points.push((id, p));
+                } else {
+                    whole.kept.push((id, p));
+                }
+            }
+            whole.circles.extend_from_slice(&part.start.circles);
+            for &id in part.scope.iter() {
+                if let Some(
+                    e @ drift_core::Entity {
+                        kind:
+                            EntityKind::Arc { .. }
+                            | EntityKind::Ellipse { .. }
+                            | EntityKind::EllipseArc { .. },
+                        ..
+                    },
+                ) = self.doc.get(id)
+                {
+                    whole.rounds.extend(e.kind.points());
+                }
+            }
             whole.moved.extend(moved);
             whole.scope.extend(part.scope.iter().copied());
         }
@@ -1458,6 +1715,125 @@ mod held_radii_tests {
     use drift_solver::Param;
 
     use super::Editor;
+
+    /// The locked geometry and what walls and offsets made, found once for a drag, hold
+    /// what finding them for each part did: the same moved points, held radii and held lines
+    /// for every part, on a drawing with a locked layer, a wall, an offset and parts that
+    /// solve (pinned, related, round).
+    #[test]
+    fn held_shapes_found_once_a_drag_are_found_per_part() {
+        let mut ed = Editor::default();
+        ed.doc.begin();
+        let v = DVec2::new;
+        let mut dragged_ids = Vec::new();
+        for k in 0..6 {
+            let x = k as f64 * 40.0;
+            let c = ed.doc.add_point(v(x, 0.0));
+            let s = ed.doc.add_point(v(x + 10.0, 0.0));
+            let e = ed.doc.add_point(v(x, 10.0));
+            let arc = ed.doc.add_arc(c, s, e).unwrap();
+            let p = ed.doc.add_point(v(x + 10.0, 20.0));
+            let line = ed.doc.add_line(s, p).unwrap();
+            let q = ed.doc.add_point(v(x + 20.0, 25.0));
+            let held = ed.doc.add_line(p, q).unwrap();
+            if k % 2 == 0 {
+                ed.doc
+                    .add_constraint(Constraint::Fix {
+                        point: q,
+                        at: v(x + 20.0, 25.0),
+                    })
+                    .unwrap();
+            }
+            ed.doc
+                .add_constraint(Constraint::Horizontal { line: held })
+                .unwrap();
+            let _ = arc;
+            dragged_ids.push(line);
+        }
+        // A locked layer with a line joined to the second part's dragged point (its line's
+        // start): locked, that point is fixed.
+        let locked_pt = ed.doc.add_point(v(40.0 + 10.0, -15.0));
+        let locked_line = {
+            let Some(drift_core::EntityKind::Line { a: s, .. }) =
+                ed.doc.get(dragged_ids[1]).map(|e| e.kind)
+            else {
+                unreachable!()
+            };
+            ed.doc.add_line(s, locked_pt).unwrap()
+        };
+        assert!(ed.commit("Sketch"));
+        let layer = ed.add_layer("Locked");
+        ed.doc.begin();
+        ed.doc.set_entity_layer(locked_line, layer).unwrap();
+        assert!(ed.commit("Layer"));
+        let mut l = ed.doc.layer(layer).unwrap().clone();
+        l.locked = true;
+        ed.update_layer(layer, l);
+        // A wall, and an offset of the last part's line.
+        ed.doc.begin();
+        let (a, b) = (
+            ed.doc.add_point(v(0.0, 100.0)),
+            ed.doc.add_point(v(200.0, 100.0)),
+        );
+        let centre = ed.doc.add_line(a, b).unwrap();
+        ed.doc.set_style(centre, drift_core::LineKind::Construction);
+        let path = ed
+            .doc
+            .add_path(drift_core::Path {
+                curves: vec![centre],
+                closed: false,
+            })
+            .unwrap();
+        ed.doc
+            .add_wall(drift_core::Wall::new(
+                path,
+                10.0,
+                drift_core::LayerId::DEFAULT,
+            ))
+            .unwrap();
+        assert!(ed.commit("Wall"));
+        let last = *dragged_ids.last().unwrap();
+        let _ = ed.offset(last, 3.0, v(215.0, 10.0));
+        assert!(ed.doc.has_walls() && ed.doc.has_offsets());
+        assert!(!ed.doc.locked_entities().is_empty());
+        let dragged: Vec<Param> = ed
+            .doc
+            .defining_points(dragged_ids.iter().copied())
+            .into_iter()
+            .flat_map(Param::point)
+            .collect();
+        ed.doc.begin();
+        ed.drag(&dragged_ids, v(0.5, 0.25), &dragged);
+        // (Found from the drawing as the drag found it.)
+        ed.doc.rollback();
+        let session = ed.drag_session.as_ref().unwrap();
+        let mut solving = 0;
+        for part in session.parts.iter().filter(|p| p.needs_solve) {
+            solving += 1;
+            let mut alone = part.clone();
+            alone.free_dragged.clear();
+            alone.held_radii.clear();
+            alone.held_lines.clear();
+            ed.find_held_shapes_alone(&mut alone);
+            assert_eq!(alone.free_dragged, part.free_dragged);
+            assert_eq!(alone.held_radii, part.held_radii);
+            assert_eq!(alone.held_lines, part.held_lines);
+        }
+        assert!(solving >= 6, "{solving} parts solve");
+        // (The lock reached a part: one of its dragged points is fixed by it.)
+        let locked = ed.doc.locked_entities();
+        assert!(
+            session
+                .parts
+                .iter()
+                .any(|p| p.scope.iter().any(|id| locked.contains(id))
+                    && p.free_dragged.len() < p.dragged.len() / 2)
+        );
+        assert!(
+            session.parts.iter().any(|p| !p.held_lines.is_empty()),
+            "something held"
+        );
+    }
 
     /// What [`Editor::breaks_held_shape`] judges: an arc whose end is a separate point joined
     /// by `Coincident` to the dragged point is moved by the drag, not held; an arc tied to the

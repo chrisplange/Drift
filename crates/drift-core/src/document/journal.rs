@@ -86,6 +86,127 @@ pub(super) enum Record {
     Offset(Offset),
 }
 
+/// What an open transaction has touched: the pre-image of each key it touched, as it was
+/// when the transaction began ([`Document::begin`]). After [`Document::reopen`] the step
+/// reopened is its lower layer: each of that step's keys counts as touched, with that step's
+/// before, without being copied in, and is only looked at again at commit if touched since.
+/// Every lookup goes through both layers, so none can miss one.
+#[derive(Clone, Debug, Default)]
+pub(super) struct Journal {
+    /// Keys first touched since the transaction began (or was reopened), and their
+    /// pre-images. None of them is in `lower`.
+    open: HashMap<Key, Option<Record>>,
+    /// The step reopened: its changes, sorted by key (before and after).
+    lower: Vec<(Key, Option<Record>, Option<Record>)>,
+    /// Keys of `lower` touched again since the reopen.
+    retouched: std::collections::HashSet<Key>,
+}
+
+impl Journal {
+    /// The step `tx` reopened: its keys touched, with its befores.
+    fn reopened(tx: Transaction) -> Self {
+        Self {
+            lower: tx.changes,
+            ..Self::default()
+        }
+    }
+
+    fn in_lower(&self, key: &Key) -> Option<&(Key, Option<Record>, Option<Record>)> {
+        self.lower
+            .binary_search_by(|(k, ..)| k.cmp(key))
+            .ok()
+            .map(|i| &self.lower[i])
+    }
+
+    /// `key`'s pre-image, if the transaction touched it.
+    pub(super) fn get(&self, key: &Key) -> Option<&Option<Record>> {
+        self.open
+            .get(key)
+            .or_else(|| self.in_lower(key).map(|(_, before, _)| before))
+    }
+
+    pub(super) fn contains_key(&self, key: &Key) -> bool {
+        self.get(key).is_some()
+    }
+
+    /// Every key the transaction touched (in no order).
+    pub(super) fn keys(&self) -> impl Iterator<Item = &Key> {
+        self.open.keys().chain(self.lower.iter().map(|(k, ..)| k))
+    }
+
+    /// Every key the transaction touched and its pre-image (in no order).
+    pub(super) fn iter(&self) -> impl Iterator<Item = (&Key, &Option<Record>)> {
+        self.open
+            .iter()
+            .chain(self.lower.iter().map(|(k, before, _)| (k, before)))
+    }
+
+    /// `key` touched: whether this is its first touch, so its pre-image is to be kept (with
+    /// [`keep`](Self::keep)). A key of the reopened step has its pre-image there already.
+    fn touch(&mut self, key: Key) -> bool {
+        if self.in_lower(&key).is_some() {
+            self.retouched.insert(key);
+            false
+        } else {
+            !self.open.contains_key(&key)
+        }
+    }
+
+    /// `key`'s pre-image, on its first touch.
+    fn keep(&mut self, key: Key, before: Option<Record>) {
+        self.open.insert(key, before);
+    }
+
+    /// Every key touched and its pre-image, for a rollback.
+    fn into_befores(self) -> impl Iterator<Item = (Key, Option<Record>)> {
+        self.open
+            .into_iter()
+            .chain(self.lower.into_iter().map(|(k, before, _)| (k, before)))
+    }
+
+    /// The changes made, sorted by key: each key touched, with its pre-image and what
+    /// `record` reads now, where those differ. A key of the reopened step not touched since
+    /// is as that step left it (the document was, when it was reopened), so it keeps that
+    /// step's after without reading it again.
+    fn changes(
+        self,
+        record: impl Fn(Key) -> Option<Record>,
+    ) -> Vec<(Key, Option<Record>, Option<Record>)> {
+        let Self {
+            open,
+            lower,
+            retouched,
+        } = self;
+        let mut new: Vec<_> = open
+            .into_iter()
+            .filter_map(|(key, before)| {
+                let after = record(key);
+                (before != after).then_some((key, before, after))
+            })
+            .collect();
+        new.sort_by_key(|(key, ..)| *key);
+        let lower = lower.into_iter().filter_map(|(key, before, after)| {
+            let after = if retouched.contains(&key) {
+                record(key)
+            } else {
+                after
+            };
+            (before != after).then_some((key, before, after))
+        });
+        // (Two sorted lists with no key in both: merged in key order.)
+        let mut out = Vec::with_capacity(new.len() + lower.size_hint().0);
+        let mut new = new.into_iter().peekable();
+        for change in lower {
+            while new.peek().is_some_and(|(k, ..)| *k < change.0) {
+                out.extend(new.next());
+            }
+            out.push(change);
+        }
+        out.extend(new);
+        out
+    }
+}
+
 /// A constraint left out when opening a document, and why.
 pub type Dropped = (ConstraintId, &'static str);
 
@@ -116,7 +237,7 @@ impl Document {
     /// Start recording changes. Nested calls are ignored; the outer transaction wins.
     pub fn begin(&mut self) {
         if self.journal.is_none() {
-            self.journal = Some(HashMap::new());
+            self.journal = Some(Journal::default());
             self.transaction_serial += 1;
             self.begun_at = self.revision;
         }
@@ -325,14 +446,7 @@ impl Document {
     /// Finish recording and return the changes made since [`begin`](Self::begin).
     pub fn commit(&mut self, label: impl Into<String>) -> Transaction {
         let journal = self.journal.take().unwrap_or_default();
-        let mut changes: Vec<_> = journal
-            .into_iter()
-            .filter_map(|(key, before)| {
-                let after = self.record(key);
-                (before != after).then_some((key, before, after))
-            })
-            .collect();
-        changes.sort_by_key(|(key, ..)| *key);
+        let changes = journal.changes(|key| self.record(key));
         Transaction {
             label: label.into(),
             changes,
@@ -341,15 +455,19 @@ impl Document {
 
     /// Open a transaction again on `tx`, the one just committed, as if it were still open:
     /// the document must be as `tx` left it. What is changed now and then committed comes
-    /// out as one step with it (an edit's fills followed after it was committed).
-    pub fn reopen(&mut self, tx: &Transaction) {
+    /// out as one step with it (an edit's fills followed after it was committed). `tx`'s
+    /// changes aren't copied into the journal: they are its lower layer (see [`Journal`]).
+    pub fn reopen(&mut self, tx: Transaction) {
         debug_assert!(self.journal.is_none(), "a transaction is open");
-        self.begin();
-        if let Some(journal) = &mut self.journal {
-            for (key, before, _) in &tx.changes {
-                journal.insert(*key, before.clone());
-            }
+        #[cfg(debug_assertions)]
+        for (key, _, after) in &tx.changes {
+            assert!(
+                self.record(*key) == *after,
+                "reopened over a document not as the step left it: {key:?}"
+            );
         }
+        self.begin();
+        self.journal = Some(Journal::reopened(tx));
     }
 
     /// Make `tx`'s changes again inside the open transaction, over the document as it is now:
@@ -360,16 +478,18 @@ impl Document {
             self.restore(*key, after.clone());
         }
         self.structure = next_structure();
+        self.make_up = self.structure;
     }
 
     /// Abandon the open transaction, restoring every touched entity.
     pub fn rollback(&mut self) {
         if let Some(journal) = self.journal.take() {
-            for (key, before) in journal {
+            for (key, before) in journal.into_befores() {
                 self.restore(key, before);
             }
             self.revision += 1;
             self.structure = next_structure();
+            self.make_up = self.structure;
         }
     }
 
@@ -424,7 +544,13 @@ impl Document {
 
     pub(super) fn touch_key(&mut self, key: Key) {
         if !matches!(key, Key::Placement(_)) {
-            self.structure = next_structure();
+            let fresh = next_structure();
+            self.structure = fresh;
+            // (A fill's change leaves the make-up apart from fills as it was. The two are
+            // only ever compared with themselves, so they can share a fresh value.)
+            if !matches!(key, Key::Fill(_)) {
+                self.make_up = fresh;
+            }
         }
         self.record_touch(key);
     }
@@ -432,10 +558,10 @@ impl Document {
     /// Note a change to `key` for the open transaction without changing the structure.
     pub(super) fn record_touch(&mut self, key: Key) {
         self.note_change(key);
-        if self.journal.is_some() {
-            let current = self.record(key);
+        if self.journal.as_mut().is_some_and(|j| j.touch(key)) {
+            let before = self.record(key);
             if let Some(journal) = &mut self.journal {
-                journal.entry(key).or_insert(current);
+                journal.keep(key, before);
             }
         }
         self.revision += 1;
@@ -669,6 +795,7 @@ impl Document {
         }
         self.revision += 1;
         self.structure = next_structure();
+        self.make_up = self.structure;
     }
 
     // ----- Edits -----------------------------------------------------------------------------

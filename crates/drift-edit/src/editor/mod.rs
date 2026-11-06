@@ -17,6 +17,8 @@ use drag::DragSession;
 #[cfg(test)]
 mod active_tests;
 mod constraints;
+#[cfg(test)]
+mod drag_speed_tests;
 mod edit_prefs;
 mod filter;
 mod items;
@@ -96,7 +98,15 @@ impl std::fmt::Display for EditError {
 pub(crate) type InstanceBounds =
     std::rc::Rc<std::collections::HashMap<drift_core::InstanceId, Bounds>>;
 
-/// A drag's cached scope: the dragged ids, the document structure it was worked out for, the
+/// The maps the drawing's regions are looked up by, and the regions and their curves they
+/// were made from (see `Editor::areas_of`).
+type KeptAreaMaps = (
+    Regions,
+    std::rc::Rc<Vec<EntityId>>,
+    std::rc::Rc<crate::fills::AreaMaps>,
+);
+
+/// A drag's cached scope: the dragged ids, the drawing's make-up it was worked out for, the
 /// connected entities, and the same split into parts nothing joins to one another.
 type DragScope = (
     Vec<EntityId>,
@@ -132,6 +142,15 @@ pub struct Editor {
     /// Whether a drag never tries a frame with the fold steps (for the tests: a drag as it
     /// was without).
     pub(crate) drag_no_fold: bool,
+    /// Whether the modal move's confirm never keeps the open move (for the tests: the move
+    /// rolled back and made again from the start, as it was; see `Editor::land_whole_move`).
+    pub(crate) land_whole_off: bool,
+    /// How many modal moves were kept open on release (for the tests; see
+    /// `Editor::land_whole_move`).
+    pub(crate) landed_whole: u32,
+    /// Whether a drag always looks at its points to tell it goes on (for the tests: as it
+    /// was, without telling from the drawing's geometry counter; see `Editor::drag`).
+    pub(crate) drag_always_look: bool,
     /// How many entities those solves took in, all told (for the tests: what a frame of a
     /// drag costs).
     pub(crate) drag_solved: usize,
@@ -279,6 +298,9 @@ pub struct Editor {
     /// Whether each fill was last found kept whole across curves that cross it, so an edit
     /// that newly divides its area can be told from one that leaves it as it was.
     pub(crate) fill_crossed: std::collections::HashMap<drift_core::FillId, bool>,
+    /// The maps the drawing's regions are looked up by, for the regions and curves they were
+    /// made from (see `Editor::areas_of`).
+    pub(crate) area_maps: std::cell::RefCell<Option<KeptAreaMaps>>,
     /// Each crossed fill's area as last found among the curves near it, with what it was
     /// found from: found again only when those change (an edit elsewhere leaves it).
     pub(crate) uncrossed_memo: std::cell::RefCell<
@@ -304,8 +326,8 @@ pub struct Editor {
     /// The point the pointer has snapped to while drawing (lit up like a hovered one).
     pub snapped_point: Option<EntityId>,
     /// What a drag of these entities can move (connected through points and relations), kept
-    /// while the sketch's structure stays the same: (dragged ids, entity and constraint
-    /// counts, the connected set).
+    /// while the sketch's make-up apart from fills stays the same: (dragged ids, the
+    /// make-up, the connected set and its parts).
     drag_scope: std::cell::RefCell<Option<DragScope>>,
     /// What tools see while a group or block is open for editing (see
     /// [`edit_scope`](Editor::edit_scope)), by group and document structure.

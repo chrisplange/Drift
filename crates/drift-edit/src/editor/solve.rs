@@ -18,7 +18,8 @@ fn plain(options: &SolveOptions) -> SolveOptions {
 }
 
 impl Editor {
-    /// The entities a drag of `ids` can move (cached while the structure is unchanged).
+    /// The entities a drag of `ids` can move (cached while the make-up is unchanged: see
+    /// [`drag_scope_and_parts`](Self::drag_scope_and_parts)).
     pub(crate) fn drag_scope(
         &self,
         ids: &[EntityId],
@@ -27,12 +28,15 @@ impl Editor {
     }
 
     /// [`drag_scope`](Self::drag_scope), and the same split into the parts nothing joins to
-    /// one another.
+    /// one another. Kept while the drawing's make-up apart from fills is the same
+    /// ([`Document::make_up`](drift_core::Document::make_up)): what joins what is the entities'
+    /// points and the relations (walls' lowered ones too), none of it a fill, so a drag that
+    /// carries a hatch along (rewriting it every frame) keeps it.
     pub(crate) fn drag_scope_and_parts(
         &self,
         ids: &[EntityId],
     ) -> (std::rc::Rc<std::collections::HashSet<EntityId>>, DragParts) {
-        let structure = self.doc.structure();
+        let structure = self.doc.make_up();
         if let Some((key, s, scope, parts)) = &*self.drag_scope.borrow()
             && key == ids
             && *s == structure
@@ -582,10 +586,11 @@ impl Editor {
             aside.push(tx);
         }
         if let Some(tx) = self.history.take_last() {
-            self.doc.reopen(&tx);
+            let label = tx.label.clone();
+            self.doc.reopen(tx);
             self.follow_fills();
             self.carry_hatches();
-            let tx = self.doc.commit(tx.label.clone());
+            let tx = self.doc.commit(label);
             self.history.put_back(tx);
         }
         for tx in aside.into_iter().rev() {

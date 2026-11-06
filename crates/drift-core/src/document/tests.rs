@@ -297,6 +297,71 @@ mod editing {
         assert_ne!(Document::new().structure(), Document::new().structure());
     }
 
+    /// `edit` moves both the structure and the make-up.
+    fn moves_the_make_up(doc: &mut Document, what: &str, edit: impl FnOnce(&mut Document)) {
+        let (s, m) = (doc.structure(), doc.make_up());
+        edit(doc);
+        assert_ne!(doc.structure(), s, "{what}: the structure");
+        assert_ne!(doc.make_up(), m, "{what}: the make-up");
+    }
+
+    #[test]
+    fn the_make_up_changes_as_the_structure_does_but_not_with_fills() {
+        let mut doc = Document::new();
+        let (_, l) = square(&mut doc);
+        let fill = doc.add_fill(crate::Fill::new(
+            l.to_vec(),
+            v(0.5, 0.5),
+            crate::FillKind::Solid,
+        ));
+        // A fill changed alone, and geometry moved: the structure moves, the make-up doesn't.
+        let (s, m) = (doc.structure(), doc.make_up());
+        doc.begin();
+        let mut f = doc.fill(fill).unwrap().clone();
+        f.seed = v(0.25, 0.5);
+        f.opacity = 0.5;
+        doc.set_fill(fill, f);
+        doc.translate([l[0]], v(5.0, 5.0));
+        assert_ne!(
+            doc.structure(),
+            s,
+            "a fill changed is a change of structure"
+        );
+        assert_eq!(doc.make_up(), m, "fills and moves keep the make-up");
+        let filled = doc.commit("Fill");
+        // Everything else that moves the structure moves the make-up too.
+        doc.begin();
+        moves_the_make_up(&mut doc, "a restyle", |d| {
+            d.set_style(l[1], LineKind::Construction)
+        });
+        moves_the_make_up(&mut doc, "a delete", |d| d.delete([l[2]]));
+        moves_the_make_up(&mut doc, "a layer", |d| {
+            d.add_layer(crate::Layer::new("Other"));
+        });
+        moves_the_make_up(&mut doc, "a rollback", |d| d.rollback());
+        doc.begin();
+        moves_the_make_up(&mut doc, "a relation", |d| {
+            d.add_constraint(crate::Constraint::Horizontal { line: l[0] })
+                .unwrap();
+        });
+        let related = doc.commit("Relation");
+        let mut history = History::default();
+        history.push(filled);
+        history.push(related.clone());
+        moves_the_make_up(&mut doc, "an undo", |d| assert!(history.undo(d)));
+        moves_the_make_up(&mut doc, "a redo", |d| assert!(history.redo(d)));
+        moves_the_make_up(&mut doc, "an undo of a fill's step", |d| {
+            assert!(history.undo(d));
+            assert!(history.undo(d));
+        });
+        moves_the_make_up(&mut doc, "a replay", |d| {
+            d.begin();
+            d.replay(&related);
+            d.commit("Again");
+        });
+        assert_ne!(Document::new().make_up(), Document::new().make_up());
+    }
+
     #[test]
     fn rollback_restores_everything() {
         let mut doc = Document::new();
@@ -529,5 +594,235 @@ mod change_log {
             copy.changes_since(copy.lineage(), at),
             Some(Changes::default())
         );
+    }
+}
+
+/// [`Document::reopen`] keeps the step it reopens as the journal's lower layer: an edit
+/// reopened and edited again comes out as the step it did when the reopen copied the step's
+/// befores into the journal (a transaction begun over the drawing as it was, the step made
+/// again in it), and every journal query mid-edit answers as that one's would.
+#[cfg(test)]
+mod reopened {
+    use super::*;
+    use crate::{Fill, FillKind, LineKind, Offset, Opening, Path, Wall};
+
+    fn v(x: f64, y: f64) -> DVec2 {
+        DVec2::new(x, y)
+    }
+
+    /// A drawing with lines, a fill, a wall on a path, an opening in it and an offset.
+    fn drawing() -> Document {
+        let mut doc = Document::new();
+        let p: Vec<EntityId> = (0..8)
+            .map(|k| doc.add_point(v(k as f64 * 10.0, (k % 3) as f64)))
+            .collect();
+        let lines: Vec<EntityId> = (0..7)
+            .map(|k| doc.add_line(p[k], p[k + 1]).unwrap())
+            .collect();
+        doc.add_fill(Fill::new(lines[..3].to_vec(), v(5.0, 0.5), FillKind::Solid));
+        let path = doc
+            .add_path(Path {
+                curves: vec![lines[4]],
+                closed: false,
+            })
+            .unwrap();
+        let wall = doc
+            .add_wall(Wall::new(path, 2.0, crate::LayerId::DEFAULT))
+            .unwrap();
+        doc.add_opening(Opening::new(wall, 0, 3.0)).unwrap();
+        doc.add_offset(Offset::new(vec![lines[6]], crate::Side::Left, 1.5))
+            .unwrap();
+        doc
+    }
+
+    /// Whatever every journal query says of `doc` now.
+    fn queries(doc: &Document) -> String {
+        let mut out = format!(
+            "touched {:?}\ncreated {:?}\nwalls/paths {:?}\nopenings {:?}\noffsets {:?}\ninstances {:?}\ntexts {:?}\n",
+            doc.entities_touched_in_transaction(),
+            doc.created_in_transaction(),
+            doc.walls_and_paths_touched_in_transaction(),
+            doc.openings_touched_in_transaction(),
+            doc.offsets_touched_in_transaction(),
+            doc.instances_created_in_transaction(),
+            doc.texts_created_in_transaction(),
+        );
+        for id in (1..40).map(EntityId) {
+            out += &format!(
+                "{id:?} {} {} {:?}\n",
+                doc.touched_in_transaction(id),
+                doc.reshaped_in_transaction(id),
+                doc.entity_before_transaction(id)
+            );
+        }
+        for n in 1..12 {
+            out += &format!(
+                "f{n} {:?} {}\nw{n} {:?}\np{n} {:?} {}\no{n} {:?}\nx{n} {:?}\n",
+                doc.fill_before_transaction(crate::FillId(n)),
+                doc.fill_created_in_transaction(crate::FillId(n)),
+                doc.wall_before_transaction(crate::WallId(n)),
+                doc.path_before_transaction(crate::PathId(n)),
+                doc.path_created_in_transaction(crate::PathId(n)),
+                doc.opening_before_transaction(crate::OpeningId(n)),
+                doc.offset_before_transaction(crate::OffsetId(n)),
+            );
+        }
+        out
+    }
+
+    /// One edit, chosen by `k`: moves, restyles, deletes and new curves, points set back to
+    /// where they were, fills changed, removed and put back under their id, walls, openings
+    /// and offsets changed or removed.
+    fn edit(doc: &mut Document, k: usize, was: &Document) {
+        let ids: Vec<EntityId> = doc.iter().map(|(id, _)| id).collect();
+        let pick = ids[(k / 16) % ids.len()];
+        let n = (k / 1024) % 5;
+        match k % 13 {
+            0 | 1 => {
+                if let Ok(at) = doc.point(pick) {
+                    let _ = doc.set_point(pick, at + v(n as f64 - 2.0, 0.25));
+                }
+            }
+            2 => {
+                // Back where it was before everything.
+                if let Ok(at) = was.point(pick) {
+                    let _ = doc.set_point(pick, at);
+                }
+            }
+            3 => doc.set_style(pick, LineKind::Construction),
+            4 => {
+                if doc.get(pick).is_some_and(|e| !e.kind.is_point()) {
+                    doc.delete([pick]);
+                }
+            }
+            5 => {
+                let a = doc.add_point(v(n as f64 * 9.0, 9.0));
+                let b = doc.add_point(v(n as f64 * 7.0, 19.0));
+                let _ = doc.add_line(a, b);
+            }
+            6 => {
+                let found = doc.fills().next().map(|(id, f)| (id, f.clone()));
+                if let Some((id, mut f)) = found {
+                    f.opacity = n as f64 / 10.0;
+                    doc.set_fill(id, f);
+                }
+            }
+            7 => {
+                // A fill removed, and maybe put back under its id.
+                let found = doc.fills().next().map(|(id, f)| (id, f.clone()));
+                if let Some((id, f)) = found {
+                    doc.remove_fill(id);
+                    if n.is_multiple_of(2) {
+                        doc.insert_fill(id, f).unwrap();
+                    }
+                } else if let Some((id, f)) = was.fills().next() {
+                    doc.insert_fill(id, f.clone()).unwrap();
+                }
+            }
+            8 => {
+                let found = doc.walls().next().map(|(id, w)| (id, w.clone()));
+                if let Some((id, mut w)) = found {
+                    w.thickness = 1.0 + n as f64;
+                    let _ = doc.set_wall(id, w);
+                }
+            }
+            9 => {
+                let found = doc.openings().next().map(|(id, o)| (id, o.clone()));
+                if let Some((id, mut o)) = found {
+                    if n == 0 {
+                        doc.remove_opening(id);
+                    } else {
+                        o.width = 1.0 + n as f64;
+                        let _ = doc.set_opening(id, o);
+                    }
+                }
+            }
+            10 => {
+                let found = doc.offsets().next().map(|(id, o)| (id, o.clone()));
+                if let Some((id, mut o)) = found {
+                    o.distance = 0.5 + n as f64;
+                    let _ = doc.set_offset(id, o);
+                }
+            }
+            11 => {
+                // Deleted, and a curve made again under the same ids is not possible: a
+                // point set back instead after being moved twice.
+                if let (Ok(at), Ok(_)) = (was.point(pick), doc.point(pick)) {
+                    let _ = doc.set_point(pick, at + v(1.0, 1.0));
+                    let _ = doc.set_point(pick, at);
+                }
+            }
+            _ => {
+                // A fill set back to what it was before everything.
+                if let Some((id, f)) = was.fills().next()
+                    && doc.fill(id).is_some()
+                {
+                    doc.set_fill(id, f.clone());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_reopened_step_comes_out_as_one_transaction_over_both() {
+        let mut seed: u64 = 0x0dd5_eed5_1234_5678;
+        let mut rnd = move |n: usize| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n.max(1) as u64) as usize
+        };
+        let mut rolled_back = 0;
+        for case in 0..400 {
+            let start = drawing();
+            let mut reopened = start.clone();
+            reopened.begin();
+            for _ in 0..1 + rnd(8) {
+                let k = rnd(1 << 24);
+                edit(&mut reopened, k, &start);
+            }
+            let tx = reopened.commit("Edit");
+            // What reopening did before the lower layer: the step undone, a transaction begun
+            // over the drawing as it was, the step made again in it (each change recorded with
+            // its before), its ids still taken.
+            let mut one = reopened.clone();
+            let mut back = History::default();
+            back.put_back(tx.clone());
+            assert!(back.undo(&mut one));
+            one.begin();
+            one.replay(&tx);
+            reopened.reopen(tx);
+            assert_eq!(queries(&reopened), queries(&one), "case {case}: reopened");
+            for step in 0..rnd(8) {
+                let k = rnd(1 << 24);
+                edit(&mut reopened, k, &start);
+                edit(&mut one, k, &start);
+                assert_eq!(
+                    queries(&reopened),
+                    queries(&one),
+                    "case {case}, edit {step} after the reopen"
+                );
+            }
+            if rnd(4) == 0 {
+                // Rolled back: the whole edit undone, as one transaction's rollback.
+                rolled_back += 1;
+                reopened.rollback();
+                one.rollback();
+                for (id, e) in start.iter() {
+                    assert_eq!(reopened.get(id), Some(e), "case {case}: rolled back");
+                }
+                assert_eq!(reopened.len(), start.len(), "case {case}: rolled back");
+                assert_eq!(
+                    format!("{:?}", reopened.fills().collect::<Vec<_>>()),
+                    format!("{:?}", start.fills().collect::<Vec<_>>()),
+                    "case {case}: rolled back"
+                );
+                continue;
+            }
+            let a = reopened.commit("Edit");
+            let b = one.commit("Edit");
+            assert_eq!(a, b, "case {case}: the steps differ");
+        }
+        assert!(rolled_back > 30);
     }
 }

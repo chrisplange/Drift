@@ -227,6 +227,45 @@ fn drawn_capitals_stand_as_high_as_printed() {
 
 fn drawn_capitals_stand_as_high_as_they_print(painter: &egui::Painter) {
     use crate::annotations::{ShownText, Zoom, ZoomPen};
+    // At zooms that set the text right on a raster ladder step (64 and 90.5 points: no
+    // scaling the rest of the way), the H's glyph on screen is no more than ¾ of a pixel
+    // smaller than it prints (the rasteriser rounds its edges, mostly out, by up to a few
+    // pixels): tight enough that leaving out the screen font's cap correction (2.5 % with
+    // Windows' interface font: a pixel at 64 points) fails it. The exact guard of the
+    // correction is the canvas-vs-sheet digest, which compares cap heights without pixels.
+    for step in [
+        crate::annotations::ladder(64.0),
+        crate::annotations::ladder(90.0),
+    ] {
+        let em = crate::annotations::paper_font(3.5);
+        let paper = painter.layout_no_wrap(
+            "H".into(),
+            crate::fonts::drafting_font(em, false),
+            egui::Color32::WHITE,
+        );
+        let k = step / (em * crate::fonts::screen_cap_correction());
+        let pen = ZoomPen {
+            inner: painter,
+            zoom: Zoom { c: Pos2::ZERO, k },
+        };
+        let ShownText::Set(shown) = pen.shown_text(Pos2::ZERO, &paper, 0.0) else {
+            panic!("set, not greeked");
+        };
+        let (lo, hi) = shown.rows[0]
+            .row
+            .visuals
+            .mesh
+            .vertices
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(lo, hi), v| {
+                (lo.min(v.pos.y), hi.max(v.pos.y))
+            });
+        let over = (hi - lo) - 3.5 * PT_PER_MM * k;
+        assert!(
+            (-0.75..=3.0).contains(&over),
+            "at the {step}-point step: an H {over} points off its printed height"
+        );
+    }
     let em = crate::annotations::paper_font(3.5);
     let paper = painter.layout_no_wrap(
         "H".into(),

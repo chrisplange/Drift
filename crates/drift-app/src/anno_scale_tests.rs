@@ -252,9 +252,14 @@ fn drawn_capitals_stand_as_high_as_they_print(painter: &egui::Painter) {
             });
         let drawn = hi - lo;
         let printed = 3.5 * PT_PER_MM * k;
+        // The rasteriser rounds a glyph's bounds out to whole pixels of the raster size, which
+        // the scaling the rest of the way enlarges: up to two of those on top of the 2 %
+        // (macOS and Linux fonts round further out than Windows').
+        let size = shown.job.sections[0].format.font_id.size;
+        let raster_px = size / crate::annotations::ladder(size);
         assert!(
-            (drawn / printed - 1.0).abs() <= 0.02,
-            "×{k}: an H {drawn} points high on screen, {printed} printed"
+            (drawn - printed).abs() <= printed * 0.02 + 2.0 * raster_px,
+            "×{k}: an H {drawn} points high on screen, {printed} printed (raster pixel {raster_px})"
         );
     }
 }

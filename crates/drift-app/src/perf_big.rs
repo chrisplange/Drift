@@ -929,3 +929,107 @@ fn perf_big_sheet_export() {
         // end branch-only
     }
 }
+
+/// The scene index on a big drawing with every layer shown and with half its curves on a
+/// hidden layer (#359 leaves out the points only hidden curves use): a full build, the
+/// update after one curve moves (followed, not rebuilt), and a drag frame's update, medians
+/// of `DRIFT_REPS` (9) runs. `DRIFT_BIG` as for [`perf_big`] (imported as geometry); every
+/// other curve is put on the hidden layer in a copy of the drawing.
+///
+/// `DRIFT_BIG=<file> cargo test --release -p drift-app perf_big_index_hidden -- --ignored --nocapture`
+#[test]
+#[ignore = "big-drawing probe: needs DRIFT_BIG and a GPU"]
+fn perf_big_index_hidden() {
+    use drift_geom::SceneIndex;
+    let Ok(path) = std::env::var("DRIFT_BIG") else {
+        return;
+    };
+    let reps: usize = std::env::var("DRIFT_REPS")
+        .ok()
+        .and_then(|r| r.parse().ok())
+        .unwrap_or(9);
+    let mut h = Harness::builder()
+        .with_size([1280.0, 800.0])
+        .wgpu()
+        .build_eframe(|cc| crate::DriftApp::new(cc));
+    h.run();
+    let name = std::path::Path::new(&path)
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let bytes = std::fs::read(&path).unwrap();
+    h.state_mut()
+        .begin_import(&name, bytes, Some(ImportAs::Geometry), 0.0);
+    let mut pending = h.state_mut().pending_import.take().expect("pending");
+    h.state_mut().finish_import(&mut pending, 0.0);
+    // (A copy: the app's drawing, and the file, are left as they are.)
+    let mut doc = h.state().drawing.editor.doc.clone();
+    let ids: Vec<EntityId> = doc
+        .iter()
+        .filter(|(_, e)| !e.kind.is_point())
+        .map(|(id, _)| id)
+        .collect();
+    let curves = ids.len();
+    // Every other curve onto a layer of its own (the one hidden), its points staying
+    // where they are (on layer 0, as the importer leaves them); a line left on its layer
+    // to move.
+    let biggest = doc.add_layer(drift_core::Layer::new("Probe hidden"));
+    for id in ids.iter().step_by(2) {
+        doc.set_entity_layer(*id, biggest).unwrap();
+    }
+    let on_it = ids.len().div_ceil(2);
+    let (line, a) = doc
+        .iter()
+        .find_map(|(id, e)| match e.kind {
+            drift_core::EntityKind::Line { a, .. } if e.layer != biggest => Some((id, a)),
+            _ => None,
+        })
+        .expect("a line off the hidden layer");
+    println!();
+    println!("{curves} curves; {on_it} of them on the layer hidden");
+    for hidden in [false, true] {
+        let mut layer = doc.layer(biggest).unwrap().clone();
+        layer.visible = !hidden;
+        doc.set_layer(biggest, layer);
+        let build = median(reps, || {
+            std::hint::black_box(SceneIndex::build(&doc));
+        });
+        let mut index = SceneIndex::build(&doc);
+        let at = doc.point(a).unwrap();
+        let mut k = 0.0;
+        let update = median(reps, || {
+            k += 1.0;
+            doc.begin();
+            doc.set_point(a, at + DVec2::new(k * 0.01, 0.0)).unwrap();
+            doc.commit("Nudge");
+            let t = Instant::now();
+            index.update(&doc);
+            std::hint::black_box(t);
+        });
+        // The same edit timed alone (the median above includes the edit itself).
+        let mut edit_only = Vec::new();
+        for _ in 0..reps {
+            k += 1.0;
+            doc.begin();
+            doc.set_point(a, at + DVec2::new(k * 0.01, 0.0)).unwrap();
+            doc.commit("Nudge");
+            let t = Instant::now();
+            index.update(&doc);
+            edit_only.push(ms(t));
+        }
+        edit_only.sort_by(f64::total_cmp);
+        doc.begin();
+        let drag = median(reps, || {
+            k += 1.0;
+            doc.set_point(a, at + DVec2::new(0.0, k * 0.01)).unwrap();
+            index.update_moved_with_curves(&doc, [a, line]);
+        });
+        doc.rollback();
+        println!(
+            "index, {:<16} build {build:>8.2}  update after a move {:>7.3}  drag frame {drag:>7.3} ms (move+update {update:.3})",
+            if hidden { "half hidden" } else { "all shown" },
+            edit_only[reps / 2],
+        );
+    }
+}

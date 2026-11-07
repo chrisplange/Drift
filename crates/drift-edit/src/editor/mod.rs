@@ -21,19 +21,26 @@ mod constraints;
 mod drag_speed_tests;
 mod edit_prefs;
 mod filter;
+#[cfg(test)]
+mod hidden_points_tests;
 mod items;
 mod layers;
 mod options;
 mod outbox;
+#[cfg(test)]
+mod picked_layer_tests;
 mod pointer;
 #[cfg(any(test, feature = "test-support"))]
 mod probes;
 mod regions;
 mod scope;
 mod selection;
+pub use selection::PickedLayer;
 mod solve;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod typed_size_tests;
 mod variables;
 
 use drift_core::blocks::exact_rotor;
@@ -442,9 +449,15 @@ impl Editor {
             self.evaluated = Some(self.doc.revision());
         }
         let doc = &self.doc;
-        // Hidden or locked geometry can't stay selected.
-        self.selection
-            .retain(|id| doc.contains(*id) && doc.is_visible(*id) && !doc.layer_of(*id).locked);
+        let index = &self.index;
+        // Hidden or locked geometry can't stay selected, nor a point the index leaves out
+        // because only curves on hidden layers use it (#359: Delete would take them along).
+        self.selection.retain(|id| {
+            doc.get(*id)
+                .is_some_and(|e| !e.kind.is_point() || index.shape(*id).is_some())
+                && doc.is_visible(*id)
+                && !doc.layer_of(*id).locked
+        });
         if self.active.is_some_and(|id| !self.selection.contains(&id)) {
             self.active = None;
         }

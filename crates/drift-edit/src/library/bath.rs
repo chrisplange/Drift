@@ -87,8 +87,10 @@ pub fn shower(width: f64, depth: f64) -> Sketch {
 pub fn grab_bar(length: f64) -> Sketch {
     let mut s = Sketch::new();
     s.rounded(0.0, -3.0, length, -1.5, 0.75);
-    s.rect(1.5, -1.5, 3.0, 0.0);
-    s.rect(length - 3.0, -1.5, length - 1.5, 0.0);
+    // The flanges, standing on the bar: its side is their foot (#354).
+    for x in [1.5, length - 3.0] {
+        s.polyline(&[(x, -1.5), (x, 0.0), (x + 1.5, 0.0), (x + 1.5, -1.5)]);
+    }
     s
 }
 

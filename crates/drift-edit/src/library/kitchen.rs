@@ -102,7 +102,8 @@ pub fn refrigerator(width: f64, depth: f64) -> Sketch {
     let mut s = Sketch::new();
     let body = depth - 2.0;
     s.rect(0.0, -body, width, 0.0);
-    s.rect(0.0, -depth, width, -body);
+    // The doors, open at the back: the cabinet's front is their edge there (#354).
+    s.polyline(&[(0.0, -body), (0.0, -depth), (width, -depth), (width, -body)]);
     if width >= 36.0 {
         s.line((width / 2.0, -depth), (width / 2.0, -body));
     }

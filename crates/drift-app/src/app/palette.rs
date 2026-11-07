@@ -235,6 +235,7 @@ impl DriftApp {
                 self.drawing.editor.select_all();
             }
             Command::SelectOverlapping => self.select_overlapping(now),
+            Command::MakePickedLayerCurrent => self.make_picked_layer_current(now),
             Command::CheckSketch => self.open_sketch_check(),
             Command::PickFilter(f) => {
                 if self.tool.kind() != ToolKind::Select {

@@ -378,3 +378,73 @@ fn smoke_dimensions_bare_numbers_in_expressions_follow_the_drawing_unit() {
         length(&h, line)
     );
 }
+
+/// The issue's flow (#348): click a point, Shift+click another, D, click them again and a
+/// place for the label, type a new value: the point picked last stays where it is, the other
+/// moves the whole change. Double-clicking the label afterwards and typing again: that picks
+/// the dimension, not its points, so nothing is active and its first point stays.
+#[test]
+fn smoke_dimensions_a_typed_distance_keeps_the_last_picked_point() {
+    let Some(mut h) = harness() else { return };
+    let v = DVec2::new;
+    view(&mut h, v(-20.0, -30.0), v(60.0, 30.0));
+    let (p, q) = {
+        let ed = &mut h.state_mut().drawing.editor;
+        ed.doc.begin();
+        let p = ed.doc.add_point(v(0.0, 0.0));
+        let q = ed.doc.add_point(v(30.0, 0.0));
+        ed.commit("Points");
+        (p, q)
+    };
+    h.run();
+    let (sp, sq) = (screen(&h, v(0.0, 0.0)), screen(&h, v(30.0, 0.0)));
+    click_with(&mut h, sp, EguiModifiers::NONE);
+    click_with(&mut h, sq, EguiModifiers::SHIFT);
+    assert_eq!(h.state().drawing.editor.active(), Some(q));
+    h.key_press(Key::D);
+    h.run();
+    click_world(&mut h, v(0.0, 0.0));
+    click_world(&mut h, v(30.0, 0.0));
+    click_world(&mut h, v(15.0, 12.0));
+    assert!(
+        h.state().drawing.dimension_edit.is_some(),
+        "its value to type"
+    );
+    assert_eq!(
+        h.state().drawing.editor.active(),
+        Some(q),
+        "still active as the value is typed"
+    );
+    type_text(&mut h, "45");
+    h.key_press(Key::Enter);
+    h.run();
+    assert_eq!(at(&h, q), v(30.0, 0.0), "the point picked last stays");
+    assert!((at(&h, p).distance(at(&h, q)) - 45.0).abs() < 1e-9);
+    assert!(
+        at(&h, p).distance(v(-15.0, 0.0)) < 1e-9,
+        "the other moves the whole change: {}",
+        at(&h, p)
+    );
+    // Back to Select, a double-click on the label, a new value.
+    h.key_press(Key::Escape);
+    h.run();
+    h.key_press(Key::S);
+    h.run();
+    let label = first_dimension(&h).text_rect.center();
+    double_click(&mut h, label);
+    assert!(
+        h.state().drawing.dimension_edit.is_some(),
+        "editing it again"
+    );
+    // The double-click picked the dimension, not its points: nothing is active.
+    assert_eq!(h.state().drawing.editor.active(), None);
+    assert!(h.state().drawing.editor.selection.is_empty());
+    h.key_press_modifiers(EguiModifiers::COMMAND, Key::A);
+    type_text(&mut h, "60");
+    h.key_press(Key::Enter);
+    h.run();
+    // So its first point (the one the Dimension tool was clicked on first) stays.
+    let p1 = v(-15.0, 0.0);
+    assert!(at(&h, p).distance(p1) < 1e-9, "{}", at(&h, p));
+    assert!(at(&h, q).distance(v(45.0, 0.0)) < 1e-9, "{}", at(&h, q));
+}

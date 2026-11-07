@@ -13,12 +13,13 @@ Two other kinds of setting live elsewhere:
   [Drawing settings](#drawing-settings) below. So the same file fills, picks and prints the
   same on every computer.
 
-The window has three pages, listed down its left side:
+The window has four pages, listed down its left side:
 
 | Page | Holds |
 |---|---|
 | **General** | [Appearance](#appearance), [Crosshair](#crosshair) and [Mouse and trackpad](#mouse-and-trackpad). |
 | **Drawing aids** | [While drawing](#while-drawing) and [Picked geometry](#picked-geometry). |
+| **Layers** | [When I select an object](#when-i-select-an-object). |
 | **Updates & Labs** | [Updates](#updates) and [Labs](#labs) (desktop only). |
 
 ## Appearance
@@ -56,6 +57,21 @@ zooms). The middle or right mouse button drags the view either way.
 | Setting | What it does |
 |---|---|
 | **Show temporary dimensions on the picked geometry** | Revit-style temporary dimensions when one line, circle or arc is picked. See [Temporary dimensions](../tutorials/05-temporary-dimensions.md). |
+
+## When I select an object
+
+What picking an object does in the **Layers** panel:
+
+| Choice | What it does |
+|---|---|
+| **Do nothing** | The panel only marks the layers the selection is on (a small square on each row). |
+| **Show its layer in the Layers panel** (the default) | The panel scrolls to the picked object's layer and outlines its row. The current layer stays. |
+| **Make its layer current** | The picked object's layer becomes the current layer, so what you draw next goes on it, and the panel shows it. This isn't an undo step and doesn't count as a change to save. A locked or hidden layer is shown but never made current. |
+
+With several objects picked, the one picked last decides; after a box pick on several
+layers, nothing changes. **Make its layer current**, in the canvas's right-click menu and
+the command palette, does it for one pick whatever is chosen here (as an undo step, as a
+click on the layer's row is).
 
 ## Updates
 

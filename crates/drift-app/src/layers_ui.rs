@@ -28,6 +28,118 @@ pub(crate) struct LayerList {
     opened: std::collections::HashMap<LayerId, f32>,
     /// A row to scroll into view.
     reveal: Option<LayerId>,
+    /// The picked object's layer, outlined in the list (see [`LayerOnPick`]).
+    pub shown: Option<LayerId>,
+    /// The pick as last seen, to tell a new one (see [`DriftApp::follow_pick`]).
+    seen: Option<PickSignature>,
+}
+
+/// What picking an object does in the Layers panel (Preferences → Layers, kept per user,
+/// not in the drawing; drift-releases#19).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum LayerOnPick {
+    /// Nothing: the panel only marks the layers the selection is on.
+    Nothing,
+    /// The panel scrolls to the picked object's layer and outlines it; the current layer
+    /// stays.
+    #[default]
+    Show,
+    /// As Show, and the picked object's layer becomes the current layer (not a locked or
+    /// hidden one).
+    MakeCurrent,
+}
+
+impl LayerOnPick {
+    pub(crate) const ALL: [LayerOnPick; 3] = [
+        LayerOnPick::Nothing,
+        LayerOnPick::Show,
+        LayerOnPick::MakeCurrent,
+    ];
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            LayerOnPick::Nothing => "Do nothing",
+            LayerOnPick::Show => "Show its layer in the Layers panel",
+            LayerOnPick::MakeCurrent => "Make its layer current",
+        }
+    }
+
+    /// What it does, said under the menu.
+    pub(crate) fn hint(self) -> &'static str {
+        match self {
+            LayerOnPick::Nothing => {
+                "The Layers panel marks the layers the selection is on, and nothing else \
+                 changes."
+            }
+            LayerOnPick::Show => {
+                "The Layers panel scrolls to the picked object's layer and outlines it. The \
+                 current layer stays as it is."
+            }
+            LayerOnPick::MakeCurrent => {
+                "The picked object's layer becomes the current layer, so what you draw next \
+                 goes on it, and the Layers panel shows it. Not an undo step. A locked or \
+                 hidden layer is shown but never made current."
+            }
+        }
+    }
+
+    pub(crate) fn key(self) -> &'static str {
+        match self {
+            LayerOnPick::Nothing => "n",
+            LayerOnPick::Show => "s",
+            LayerOnPick::MakeCurrent => "c",
+        }
+    }
+
+    pub(crate) fn from_key(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|m| m.key() == key)
+    }
+}
+
+/// What is picked, cheaply: the active element and the ends and sizes of each picked set.
+/// It can miss a pick that swaps one middle member for another of the same count (a box
+/// pick of the same number of things, say); that pick's layer is then not followed until
+/// the next one, which is fine for revealing and following a layer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PickSignature {
+    active: Option<EntityId>,
+    curves: (usize, Option<EntityId>, Option<EntityId>),
+    copies: (
+        usize,
+        Option<drift_core::InstanceId>,
+        Option<drift_core::InstanceId>,
+    ),
+    texts: (
+        usize,
+        Option<drift_core::TextId>,
+        Option<drift_core::TextId>,
+    ),
+    fills: (
+        usize,
+        Option<drift_core::FillId>,
+        Option<drift_core::FillId>,
+    ),
+}
+
+impl PickSignature {
+    fn of(ed: &drift_edit::editor::Editor) -> Self {
+        fn ends<T: Copy + Ord>(
+            set: &std::collections::BTreeSet<T>,
+        ) -> (usize, Option<T>, Option<T>) {
+            (set.len(), set.first().copied(), set.last().copied())
+        }
+        Self {
+            active: ed.active(),
+            curves: ends(&ed.selection),
+            copies: ends(&ed.selected_instances),
+            texts: ends(&ed.selected_texts),
+            fills: ends(&ed.selected_fills),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.curves.0 + self.copies.0 + self.texts.0 + self.fills.0 == 0
+    }
 }
 
 /// A layer shown on its own; ending the isolate puts `before` back.
@@ -280,6 +392,8 @@ struct RowInfo<'a> {
     has_selection: bool,
     counts: &'a std::collections::HashMap<LayerId, usize>,
     picked: &'a std::collections::BTreeSet<LayerId>,
+    /// The picked object's layer, outlined (see [`LayerOnPick`]).
+    shown: Option<LayerId>,
     isolated: Option<LayerId>,
     any_hidden: bool,
     /// The layer each setting is Alt-clicked onto, if any.
@@ -293,6 +407,91 @@ impl DriftApp {
     /// one highlighted) that opens to show its colours and line settings; then underlays.
     /// Only the rows in view are drawn, so a drawing with a thousand layers costs no more
     /// than one with ten.
+    /// After a new pick, what Preferences → Layers says (drift-releases#19): show the picked
+    /// object's layer in the Layers panel (scrolled to and outlined), and make it current if
+    /// asked, unless it is locked or hidden. A pick on several layers with no active element
+    /// does nothing. Run once a frame, after the canvas.
+    pub(crate) fn follow_pick(&mut self, now: f64) {
+        let pick = PickSignature::of(&self.drawing.editor);
+        if self.drawing.layer_list.seen == Some(pick) {
+            return;
+        }
+        self.drawing.layer_list.seen = Some(pick);
+        let picked = self.drawing.editor.picked_layer();
+        let layer = picked
+            .layer
+            .filter(|_| !pick.is_empty() && self.layer_on_pick != LayerOnPick::Nothing);
+        self.drawing.layer_list.shown = layer;
+        let Some(layer) = layer else {
+            return;
+        };
+        self.drawing.layer_list.reveal = Some(layer);
+        if self.layer_on_pick != LayerOnPick::MakeCurrent
+            || layer == self.drawing.editor.doc.current_layer()
+        {
+            return;
+        }
+        let Some(l) = self.drawing.editor.doc.layer(layer).cloned() else {
+            return;
+        };
+        if l.locked || !l.visible {
+            let why = if l.locked { "locked" } else { "hidden" };
+            self.set_status(
+                format!("{} is {why}: the current layer stays", l.name),
+                false,
+                now,
+            );
+            return;
+        }
+        // Not an undo step, nor a change to save (the user's choice, 2026-11-07).
+        let _ = self.drawing.editor.doc.set_current_layer_unrecorded(layer);
+        if picked.layers > 1 {
+            self.set_status(
+                format!(
+                    "Objects on {} layers picked: current layer set to {}, the last \
+                     picked one's",
+                    picked.layers, l.name
+                ),
+                false,
+                now,
+            );
+        }
+    }
+
+    /// Make its layer current: the picked object's layer becomes the current one (an undo
+    /// step, as a click on its row; a locked or hidden layer too), and the Layers panel
+    /// opens to it. Under every Preferences → Layers setting (drift-releases#19).
+    pub(crate) fn make_picked_layer_current(&mut self, now: f64) {
+        let picked = self.drawing.editor.picked_layer();
+        let Some(layer) = picked.layer else {
+            let text = if picked.layers > 1 {
+                format!(
+                    "Objects on {} layers picked: pick one object to make its layer current",
+                    picked.layers
+                )
+            } else {
+                "Pick an object to make its layer current".to_owned()
+            };
+            self.set_status(text, true, now);
+            return;
+        };
+        let Some(name) = self.drawing.editor.doc.layer(layer).map(|l| l.name.clone()) else {
+            return;
+        };
+        self.drawing.editor.set_current_layer(layer);
+        self.show_panel(crate::dock::Panel::Layers);
+        let list = &mut self.drawing.layer_list;
+        if !name
+            .to_lowercase()
+            .contains(&list.filter.trim().to_lowercase())
+        {
+            list.filter.clear();
+        }
+        list.reveal = Some(layer);
+        list.shown = Some(layer);
+        self.set_status(format!("Current layer: {name}"), false, now);
+    }
+
     pub(crate) fn layers_panel(&mut self, ui: &mut egui::Ui, now: f64) {
         self.end_stale_isolate();
         self.drawing.layer_counts.update(&self.drawing.editor.doc);
@@ -300,14 +499,29 @@ impl DriftApp {
         let layers = std::mem::take(&mut self.drawing.layer_counts.layers);
         let current = self.drawing.editor.doc.current_layer();
         let has_selection = !self.drawing.editor.selection.is_empty();
-        // The layers the selection is on.
-        let picked: std::collections::BTreeSet<LayerId> = self
-            .drawing
-            .editor
+        // The layers the selection is on (its curves and points, block copies, texts and
+        // fills).
+        let ed = &self.drawing.editor;
+        let mut picked: std::collections::BTreeSet<LayerId> = ed
             .selection
             .iter()
-            .filter_map(|id| self.drawing.editor.doc.get(*id).map(|e| e.layer))
+            .filter_map(|id| ed.doc.get(*id).map(|e| e.layer))
             .collect();
+        picked.extend(
+            ed.selected_instances
+                .iter()
+                .filter_map(|id| ed.doc.instance(*id).map(|i| i.layer)),
+        );
+        picked.extend(
+            ed.selected_texts
+                .iter()
+                .filter_map(|id| ed.doc.text(*id).map(|t| t.layer)),
+        );
+        picked.extend(
+            ed.selected_fills
+                .iter()
+                .filter_map(|id| ed.doc.fill(*id).map(|f| f.layer)),
+        );
         // The rows, top down as the layers stack (the top one draws over the rest), that
         // match the filter.
         let needle = self.drawing.layer_list.filter.trim().to_lowercase();
@@ -327,6 +541,7 @@ impl DriftApp {
             has_selection,
             counts: &counts,
             picked: &picked,
+            shown: self.drawing.layer_list.shown,
             isolated: self.drawing.layer_list.isolated.as_ref().map(|i| i.layer),
             any_hidden,
             solo_lock: self.solo_of(LayerFlag::Locked),
@@ -668,6 +883,14 @@ impl DriftApp {
                 row.rect,
                 7.0,
                 egui::Stroke::new(1.0, ui.visuals().widgets.hovered.bg_stroke.color),
+                egui::StrokeKind::Inside,
+            );
+        }
+        if info.shown == Some(id) {
+            ui.painter().rect_stroke(
+                row.rect,
+                7.0,
+                egui::Stroke::new(1.5, accent),
                 egui::StrokeKind::Inside,
             );
         }

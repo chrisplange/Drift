@@ -27,6 +27,8 @@ mod import;
 /// The Inspector's first row is the Layer, for every kind of pick (#300).
 #[cfg(not(feature = "demo"))]
 mod inspector_layer;
+/// Picking an object shows its layer, or makes it current (drift-releases#19).
+mod layer_on_pick;
 /// Alt-click a layer's lock or snap to set the other layers.
 mod layer_toggles;
 /// The live link: assistants editing the open drawing.
@@ -10100,7 +10102,7 @@ fn saved_preferences_read_back_unchanged() {
         "grid=1;axes=1;snap=0;ptsnap=1;thin=0;print_anno=1;status=1;auto=1;ends=0;crops=1;",
         "combs=1;",
         "rscale=1;hidden=0;rlayer=0;rfill=1;stack=1;dfollow=0;newfill=1;wpoche=0;wcentre=0;",
-        "tdims=1;ai=0;wheel=auto;asnap=0;gaptol=0.5;wthick=115.5;wjust=l;wlines=l;",
+        "tdims=1;ai=0;wheel=auto;layerpick=s;asnap=0;gaptol=0.5;wthick=115.5;wjust=l;wlines=l;",
         "fillalone=2;xsize=16;xfull=0;xweight=1;upchk=1;dock_left=;",
         "dock_right=inspector,parameters,layers,sheets,blocks;dock_stacks=;dock_front_left=;",
         "dock_front_right=inspector;dock_collapsed=00;dock_last=;dock_home_left=;",

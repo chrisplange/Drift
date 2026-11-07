@@ -19,7 +19,13 @@ pub fn bed(width: f64, length: f64, nightstands: bool) -> Sketch {
     let mut s = Sketch::new();
     let (x0, x1) = (-width / 2.0, width / 2.0);
     s.rect(x0, -HEADBOARD, x1, 0.0);
-    s.rect(x0, -HEADBOARD - length, x1, -HEADBOARD);
+    // The mattress, open at the top: the headboard's side is its edge there (#354).
+    s.polyline(&[
+        (x0, -HEADBOARD),
+        (x0, -HEADBOARD - length),
+        (x1, -HEADBOARD - length),
+        (x1, -HEADBOARD),
+    ]);
     s.pen(Pen::Thin);
     let pillows = if width < 50.0 { 1 } else { 2 };
     let gap = 2.0;
@@ -76,7 +82,8 @@ pub fn dining_chair(width: f64, depth: f64) -> Sketch {
     let mut s = Sketch::new();
     let (x0, x1) = (-width / 2.0, width / 2.0);
     s.rect(x0, -2.5, x1, 0.0);
-    s.rounded(x0 + 0.5, -depth, x1 - 0.5, -2.5, 2.0);
+    // The seat, its top on the back's lower side (#354).
+    s.rounded_open_top(x0 + 0.5, -depth, x1 - 0.5, -2.5, 2.0);
     s
 }
 
@@ -85,10 +92,10 @@ pub fn desk_chair(width: f64) -> Sketch {
     let mut s = Sketch::new();
     let r = width / 2.0;
     s.circle((0.0, -r), r - 2.0);
-    // The back: a band along the top of the seat.
+    // The back: a band along the top of the seat (the seat's circle is its inner edge,
+    // #354).
     let a = 35.0;
     s.arc((0.0, -r), r, 90.0 - a, 2.0 * a);
-    s.arc((0.0, -r), r - 2.0, 90.0 - a, 2.0 * a);
     let end = |deg: f64, rad: f64| {
         let t = deg.to_radians();
         (rad * t.cos(), -r + rad * t.sin())

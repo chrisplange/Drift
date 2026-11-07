@@ -90,15 +90,35 @@ pub(super) fn pocket(s: &mut Sketch, width: f64, wall: f64) {
 pub fn bypass_door(width: f64, wall: f64) -> Sketch {
     let mut s = Sketch::new();
     jambs(&mut s, 0.0, width, wall);
-    bypass(&mut s, width, wall);
+    leaves(&mut s, width, wall, false);
     s
 }
 
 /// Bypass doors' leaves, without their jambs.
 pub(super) fn bypass(s: &mut Sketch, width: f64, wall: f64) {
+    leaves(s, width, wall, true);
+}
+
+/// Bypass doors' leaves, their outer ends drawn only if `ends` (else jambs draw them). Each
+/// side is drawn once: where the leaves overlap, the back leaf's front side is the front
+/// leaf's back (a curve drawn twice counts as overlapping, #354).
+fn leaves(s: &mut Sketch, width: f64, wall: f64, ends: bool) {
     let mid = wall / 2.0;
-    s.rect(0.0, mid, width / 2.0 + 1.0, mid + INTERIOR_LEAF);
-    s.rect(width / 2.0 - 1.0, mid - INTERIOR_LEAF, width, mid);
+    let (back, front) = (mid + INTERIOR_LEAF, mid - INTERIOR_LEAF);
+    let (b1, f0) = (width / 2.0 + 1.0, width / 2.0 - 1.0);
+    // The back leaf, from the left end.
+    if ends {
+        s.rect(0.0, mid, b1, back);
+    } else {
+        s.polyline(&[(0.0, mid), (b1, mid), (b1, back), (0.0, back)]);
+    }
+    // The front leaf: its back side only beyond the back leaf.
+    s.line((b1, mid), (width, mid));
+    if ends {
+        s.polyline(&[(width, mid), (width, front), (f0, front), (f0, mid)]);
+    } else {
+        s.polyline(&[(width, front), (f0, front), (f0, mid)]);
+    }
 }
 
 /// Bifold doors: two panels folding out from each jamb (one pair below 48").

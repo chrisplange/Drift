@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use drift_core::{Bounds, DVec2, Document, EntityId, EntityKind, Shape};
 use rstar::{AABB, Envelope, RTree, RTreeObject};
@@ -54,6 +54,12 @@ pub struct SceneIndex {
     lineage: Option<u64>,
     /// The indexed curves using each point (what a point's move reshapes, and its role).
     users: HashMap<EntityId, BTreeSet<EntityId>>,
+    /// The curves left out because their layer is hidden, and the points each uses (as of
+    /// the last full pass; empty while every layer is shown). A point used only by such
+    /// curves is left out too, whatever its own layer (#359): see
+    /// [`hidden_only`](Self::hidden_only).
+    hidden_curves: HashSet<EntityId>,
+    hidden_users: HashMap<EntityId, BTreeSet<EntityId>>,
 }
 
 impl Default for SceneIndex {
@@ -67,6 +73,8 @@ impl Default for SceneIndex {
             roles: HashMap::new(),
             lineage: None,
             users: HashMap::new(),
+            hidden_curves: HashSet::new(),
+            hidden_users: HashMap::new(),
         }
     }
 }
@@ -160,6 +168,7 @@ impl SceneIndex {
         if let (Some(revision), Some(lineage)) = (self.revision, self.lineage)
             && let Some(changes) = doc.changes_since(lineage, revision)
             && !changes.layers
+            && !self.touches_hidden_curves(doc, &changes.entities)
         {
             self.revision = Some(doc.revision());
             self.update_changed(doc, &changes.entities);
@@ -168,11 +177,13 @@ impl SceneIndex {
         self.revision = Some(doc.revision());
         self.lineage = Some(doc.lineage());
 
+        // The points only curves on hidden layers use, left out with them.
+        let hidden_only = self.find_hidden(doc);
         let mut structure_changed = false;
         let mut changed: Vec<(EntityId, Option<Shape>)> = Vec::new();
         let mut seen = 0;
         for (id, entity) in doc.iter() {
-            if !doc.is_visible(id) {
+            if !doc.is_visible(id) || (!hidden_only.is_empty() && hidden_only.contains(&id)) {
                 continue;
             }
             let Some(shape) = doc.shape(id) else { continue };
@@ -192,14 +203,16 @@ impl SceneIndex {
                 }
             }
         }
-        // Gone (deleted or hidden).
+        // Gone (deleted, hidden, or now used only by hidden curves).
         let mut removed: Vec<(EntityId, Shape)> = Vec::new();
         if seen != self.shapes.len() {
             structure_changed = true;
             removed = self
                 .shapes
                 .iter()
-                .filter(|(id, _)| !doc.contains(**id) || !doc.is_visible(**id))
+                .filter(|(id, _)| {
+                    !doc.contains(**id) || !doc.is_visible(**id) || hidden_only.contains(*id)
+                })
                 .map(|(id, s)| (*id, *s))
                 .collect();
             for (id, _) in &removed {
@@ -327,7 +340,7 @@ impl SceneIndex {
         for id in look {
             let entity = doc
                 .get(id)
-                .filter(|_| doc.is_visible(id))
+                .filter(|e| doc.is_visible(id) && !(e.kind.is_point() && self.hidden_only(id)))
                 .and_then(|e| Some((e.kind, doc.shape(id)?)));
             let old_kind = self.kinds.get(&id).copied();
             let new_kind = entity.map(|(k, _)| k);
@@ -376,6 +389,7 @@ impl SceneIndex {
             }
         }
         for p in points {
+            self.reconcile_point(doc, p);
             let mut role = self
                 .kinds
                 .get(&p)
@@ -415,7 +429,9 @@ impl SceneIndex {
     pub fn update_moved(&mut self, doc: &Document, ids: impl IntoIterator<Item = EntityId>) {
         let mut known = true;
         for id in ids {
-            let shape = doc.shape(id).filter(|_| doc.is_visible(id));
+            let shape = doc
+                .shape(id)
+                .filter(|_| doc.is_visible(id) && !self.hidden_only(id));
             match (shape, self.shapes.get_mut(&id)) {
                 (Some(shape), Some(old)) => {
                     if *old != shape {
@@ -450,6 +466,77 @@ impl SceneIndex {
         all.sort_unstable();
         all.dedup();
         self.update_moved(doc, all);
+    }
+
+    /// For the full pass: note the curves on hidden layers and the points each uses (only
+    /// when a layer is hidden), and return the points only they use that it would index. (Kept out of
+    /// [`update`](Self::update), which stays as it was when nothing is hidden.)
+    #[inline(never)]
+    fn find_hidden(&mut self, doc: &Document) -> HashSet<EntityId> {
+        self.hidden_curves.clear();
+        self.hidden_users.clear();
+        if !doc.layers().any(|(_, l)| !l.visible) {
+            return HashSet::new();
+        }
+        let mut shown_users: HashSet<EntityId> = HashSet::new();
+        for (id, entity) in doc.iter().filter(|(_, e)| !e.kind.is_point()) {
+            if !doc.is_visible(id) {
+                self.hidden_curves.insert(id);
+                for p in used_points(&entity.kind) {
+                    self.hidden_users.entry(p).or_default().insert(id);
+                }
+            } else if doc.shape(id).is_some() {
+                shown_users.extend(used_points(&entity.kind));
+            }
+        }
+        // (Those the full pass would index otherwise: on a shown layer, with a shape.)
+        self.hidden_users
+            .keys()
+            .filter(|p| !shown_users.contains(p) && doc.is_visible(**p) && doc.shape(**p).is_some())
+            .copied()
+            .collect()
+    }
+
+    /// Whether `id` is a point used only by curves on hidden layers (not drawn, picked or
+    /// snapped to, #359). A point no curve uses goes by its own layer.
+    fn hidden_only(&self, id: EntityId) -> bool {
+        self.hidden_users.contains_key(&id) && !self.users.contains_key(&id)
+    }
+
+    /// Whether changes to `ids` reach a curve on a hidden layer (made, changed, deleted,
+    /// shown or hidden), which the points it uses follow: the full pass works them out
+    /// again. A drag of shown geometry never does.
+    fn touches_hidden_curves(&self, doc: &Document, ids: &[EntityId]) -> bool {
+        ids.iter().any(|id| {
+            self.hidden_curves.contains(id)
+                || doc
+                    .get(*id)
+                    .is_some_and(|e| !e.kind.is_point() && !doc.is_visible(*id))
+        })
+    }
+
+    /// Bring point `p` in or out of the index once the curves using it are up to date: out
+    /// if only hidden curves use it.
+    fn reconcile_point(&mut self, doc: &Document, p: EntityId) {
+        let Some(e) = doc.get(p).filter(|e| e.kind.is_point()) else {
+            return;
+        };
+        let want = doc.is_visible(p) && !self.hidden_only(p);
+        match (want, self.shapes.contains_key(&p)) {
+            (true, false) => {
+                if let Some(shape) = doc.shape(p) {
+                    self.shapes.insert(p, shape);
+                    self.kinds.insert(p, e.kind);
+                    self.moved.insert(p);
+                }
+            }
+            (false, true) => {
+                self.shapes.remove(&p);
+                self.kinds.remove(&p);
+                self.moved.insert(p);
+            }
+            _ => {}
+        }
     }
 
     fn mark_center(&mut self, id: EntityId) {
@@ -738,6 +825,103 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The end points of curves on a hidden layer are left out with them, though the points
+    /// are on a shown layer (layer 0, as importers leave them): not found, not picked. A
+    /// point a shown curve also uses stays (#359).
+    #[test]
+    fn points_only_hidden_curves_use_are_left_out() {
+        use drift_core::Layer;
+        let mut doc = Document::new();
+        let walls = doc.add_layer(Layer::new("Walls"));
+        let notes = doc.add_layer(Layer::new("Notes"));
+        let a = doc.add_point(v(0.0, 0.0));
+        let b = doc.add_point(v(10.0, 0.0));
+        let c = doc.add_point(v(10.0, 10.0));
+        let d = doc.add_point(v(20.0, 10.0));
+        let ab = doc.add_line(a, b).unwrap();
+        let bc = doc.add_line(b, c).unwrap();
+        let cd = doc.add_line(c, d).unwrap();
+        doc.set_entity_layer(ab, walls).unwrap();
+        doc.set_entity_layer(bc, walls).unwrap();
+        doc.set_entity_layer(cd, notes).unwrap();
+        let hide = |doc: &mut Document, on: bool| {
+            let mut layer = doc.layer(walls).unwrap().clone();
+            layer.visible = on;
+            doc.set_layer(walls, layer);
+        };
+        hide(&mut doc, false);
+        let index = SceneIndex::build(&doc);
+        for p in [a, b] {
+            assert_eq!(index.shape(p), None, "{p}");
+            assert_eq!(index.role(p), None, "{p}");
+        }
+        assert_eq!(index.pick(v(0.0, 0.0), 1.0, |_| true), None);
+        let all = Bounds::from_center_half_size(v(10.0, 5.0), v(50.0, 50.0));
+        let mut found: Vec<EntityId> = index.query(all).collect();
+        found.sort_unstable();
+        assert_eq!(found, vec![c, d, cd]);
+        // The shared point stays, an end of the shown line.
+        assert_eq!(index.role(c), Some(PointRole::Endpoint));
+        // Shown again, all back.
+        hide(&mut doc, true);
+        let index = SceneIndex::build(&doc);
+        assert_eq!(index.role(a), Some(PointRole::Endpoint));
+        assert_eq!(index.pick(v(0.0, 0.0), 1.0, |_| true), Some(a));
+    }
+
+    /// Followed edit by edit with a layer hidden, the index keeps leaving out the points only
+    /// hidden curves use, as a fresh build does: the last shown line on a shared point
+    /// deleted, a shown line drawn from a hidden-only point, a shown line moved onto the
+    /// hidden layer and back, and a hidden line deleted (#359).
+    #[test]
+    fn hidden_only_points_follow_edits() {
+        use drift_core::Layer;
+        let mut doc = Document::new();
+        let walls = doc.add_layer(Layer::new("Walls"));
+        let p: Vec<EntityId> = (0..5)
+            .map(|k| doc.add_point(v(k as f64 * 10.0, 0.0)))
+            .collect();
+        let hidden = doc.add_line(p[0], p[1]).unwrap();
+        doc.set_entity_layer(hidden, walls).unwrap();
+        let shown = doc.add_line(p[1], p[2]).unwrap();
+        let other = doc.add_line(p[3], p[4]).unwrap();
+        let mut layer = doc.layer(walls).unwrap().clone();
+        layer.visible = false;
+        doc.set_layer(walls, layer);
+        let mut index = SceneIndex::build(&doc);
+        let check = |index: &mut SceneIndex, doc: &Document, what: &str| {
+            index.update(doc);
+            let fresh = SceneIndex::build(doc);
+            assert_eq!(index.shapes, fresh.shapes, "{what}");
+            assert_eq!(index.kinds, fresh.kinds, "{what}");
+            assert_eq!(index.roles, fresh.roles, "{what}");
+        };
+        assert!(index.shape(p[0]).is_none() && index.shape(p[1]).is_some());
+        // The last shown line on p1 deleted: p1 is hidden-only now.
+        doc.delete([shown]);
+        check(&mut index, &doc, "shared point's shown line deleted");
+        assert!(index.shape(p[1]).is_none());
+        // A shown line drawn from it brings it back (the deleted line took p2 with it).
+        let q = doc.add_point(v(10.0, 10.0));
+        doc.add_line(p[1], q).unwrap();
+        check(&mut index, &doc, "shown line from a hidden-only point");
+        assert!(index.shape(p[1]).is_some());
+        // A shown line moved onto the hidden layer.
+        doc.set_entity_layer(other, walls).unwrap();
+        check(&mut index, &doc, "shown line hidden");
+        assert!(index.shape(p[3]).is_none());
+        // A hidden line deleted (with p0, which nothing else uses).
+        doc.delete([hidden]);
+        check(&mut index, &doc, "hidden line deleted");
+        assert!(!doc.contains(p[0]));
+        assert_eq!(index.role(p[1]), Some(PointRole::Endpoint));
+        // A line moved back onto a shown layer.
+        doc.set_entity_layer(other, drift_core::LayerId::DEFAULT)
+            .unwrap();
+        check(&mut index, &doc, "hidden line shown");
+        assert_eq!(index.role(p[3]), Some(PointRole::Endpoint));
     }
 
     #[test]

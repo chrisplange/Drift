@@ -209,32 +209,7 @@ impl Editor {
         let keep = self.kept_entity(keep, ids, &named, before);
         // The active element stays exactly where it is when the relations can be met that
         // way; otherwise they are solved exactly as without it, from the geometry as it was.
-        let mut kept = false;
-        if let Some(k) = keep {
-            let saved = self.doc.clone();
-            let held = self.doc.defining_points([k]);
-            let at = |doc: &Document| -> Vec<Option<DVec2>> {
-                held.iter().map(|p| doc.point(*p).ok()).collect()
-            };
-            let start = at(&self.doc);
-            let report = self.solve_new_constraints(ids, named.clone(), keep);
-            // Kept only where it landed exactly (`==`, no tolerance): the solver's landing
-            // goes on only from groups already exactly on their targets, solves again with
-            // them pinned (written back as they were), and puts the weighted values back
-            // where that fails; so the active element's points are either exactly where they
-            // were or didn't land at all. A tolerance would let a near miss through: the
-            // weighted result, which can push the rest of the sketch aside to spare the
-            // active element. (A point of it that is fully defined isn't among the targets,
-            // and doesn't move either.)
-            let landed = !self.new_conflicts(&report)
-                && !self.unfinished(&report)
-                && !self.new_degeneracy(degenerate_before)
-                && at(&self.doc) == start;
-            kept = landed;
-            if !kept {
-                self.put_geometry_back(&saved);
-            }
-        }
+        let kept = keep.is_some_and(|k| self.keep_in_place(ids, &named, k, degenerate_before));
         // Where it was kept, this is the same solve again from where that one landed, and
         // expected to take no step at all: the relations are met, and every preference is
         // measured from where the geometry already is. Its analysis is what the checks below
@@ -266,6 +241,67 @@ impl Editor {
         }
         self.commit(label);
         Ok(())
+    }
+
+    /// Solve constraints `ids` (active in the open transaction, naming `named`) with `keep`
+    /// carried: true if it stayed exactly where it is; else the geometry is put back as it
+    /// was before this solve, and false (see
+    /// [`check_new_constraints`](Self::check_new_constraints)).
+    fn keep_in_place(
+        &mut self,
+        ids: &[ConstraintId],
+        named: &HashSet<EntityId>,
+        keep: EntityId,
+        degenerate_before: &[EntityId],
+    ) -> bool {
+        let saved = self.doc.clone();
+        let held = self.doc.defining_points([keep]);
+        let at = |doc: &Document| -> Vec<Option<DVec2>> {
+            held.iter().map(|p| doc.point(*p).ok()).collect()
+        };
+        let start = at(&self.doc);
+        let report = self.solve_new_constraints(ids, named.clone(), Some(keep));
+        // Kept only where it landed exactly (`==`, no tolerance): the solver's landing goes
+        // on only from groups already exactly on their targets, solves again with them
+        // pinned (written back as they were), and puts the weighted values back where that
+        // fails; so the active element's points are either exactly where they were or didn't
+        // land at all. A tolerance would let a near miss through: the weighted result, which
+        // can push the rest of the sketch aside to spare the active element. (A point of it
+        // that is fully defined isn't among the targets, and doesn't move either.)
+        let landed = !self.new_conflicts(&report)
+            && !self.unfinished(&report)
+            && !self.new_degeneracy(degenerate_before)
+            && at(&self.doc) == start;
+        if !landed {
+            self.put_geometry_back(&saved);
+        }
+        landed
+    }
+
+    /// What stays put when a size is typed for constraint `c` (#348, as for a relation
+    /// since #333): the [active](Self::active) element if `c` names it; else the line of a
+    /// point-to-line distance (the reference: the point moves); else the first element `c`
+    /// names (a distance's first point, so a line's start; an angle's first line). Whether
+    /// it can stay is [`kept_entity`](Self::kept_entity)'s to say.
+    pub(super) fn typed_keep(&self, c: &Constraint) -> Option<EntityId> {
+        if let Some(active) = self.active()
+            && c.entities().any(|e| e == active)
+        {
+            return Some(active);
+        }
+        match *c {
+            Constraint::PointLineDistance { line, .. } => Some(line),
+            _ => c.entities().next(),
+        }
+    }
+
+    /// For a size typed for `c` (constraint `id`, not yet changed; none if it isn't added
+    /// yet): what can stay put (see [`typed_keep`](Self::typed_keep)), judged by the
+    /// analysis as it is now.
+    fn typed_kept_entity(&self, id: Option<ConstraintId>, c: &Constraint) -> Option<EntityId> {
+        let named: HashSet<EntityId> = c.entities().collect();
+        let ids: Vec<ConstraintId> = id.into_iter().collect();
+        self.kept_entity(self.typed_keep(c), &ids, &named, self.analysis())
     }
 
     /// Put every point and circle radius back where it is in `saved` (a copy of this document
@@ -749,6 +785,7 @@ impl Editor {
         if current.value() == Some(value) {
             return Ok(());
         }
+        let keep = self.typed_kept_entity(Some(id), &current);
         let degenerate_before = drift_solver::degenerate_entities(&self.doc);
         self.doc.begin();
         if let Err(e) = self.doc.set_constraint(id, current.with_value(value)) {
@@ -757,6 +794,13 @@ impl Editor {
             return Err(EditError::Invalid(e.to_string()));
         }
         self.settle_fillet(&current.with_value(value));
+        // One end stays where it is if it can (#348); else, or then, as before: a solve
+        // that moves everything as little as it can (from where the kept one landed, it
+        // takes no step).
+        if let Some(k) = keep {
+            let named: HashSet<EntityId> = current.entities().collect();
+            self.keep_in_place(&[id], &named, k, &degenerate_before);
+        }
         let report = self.solve(&[]);
         let error = if self.new_conflicts(&report) {
             Some(EditError::Conflict)
@@ -994,7 +1038,9 @@ impl Editor {
             return Ok(id);
         }
         let c = wanted.with_value(evaluated.value);
-        let id = self.add_constraints(c.type_name(), &[c])?[0];
+        // One end stays where it is, as when the size is changed later (#348).
+        let keep = self.typed_keep(&c);
+        let id = self.add_constraints_keeping(c.type_name(), &[c], keep)?[0];
         if !evaluated.references.is_empty() {
             // Keep the link to the variables it was typed with.
             self.set_dimension_text(id, text)?;
@@ -1008,6 +1054,7 @@ impl Editor {
     pub fn resize_once(&mut self, wanted: Constraint, text: &str) -> Result<(), EditError> {
         let evaluated = self.evaluate_text(text, dimension_kind(&wanted))?;
         let c = wanted.with_value(evaluated.value);
+        let keep = self.typed_kept_entity(None, &c);
         let degenerate_before = drift_solver::degenerate_entities(&self.doc);
         self.doc.begin();
         let id = match self.doc.add_constraint(c) {
@@ -1019,6 +1066,11 @@ impl Editor {
             }
         };
         self.settle_fillet(&c);
+        // One end stays where it is if it can, as with a dimension (#348).
+        if let Some(k) = keep {
+            let named: HashSet<EntityId> = c.entities().collect();
+            self.keep_in_place(&[id], &named, k, &degenerate_before);
+        }
         let report = self.solve(&[]);
         let error = if self.new_conflicts(&report) {
             Some(EditError::Conflict)

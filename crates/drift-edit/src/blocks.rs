@@ -811,8 +811,9 @@ impl Editor {
             .map_or_else(String::new, |b| b.name.clone());
         self.doc.begin();
         let created = self.add_copy_geometry(instance);
+        // Named as the block: the canvas tag says "Editing" (#354).
         let group = self.doc.add_group(drift_core::Group {
-            name: format!("Editing {name}"),
+            name,
             members: created.iter().copied().collect(),
         });
         self.commit("Edit block");
@@ -1550,5 +1551,22 @@ mod tests {
         assert_eq!(ed.purge_unused_blocks(), 0, "the placed one stays");
         ed.undo();
         assert_eq!(ed.doc.blocks().count(), doors.len());
+    }
+
+    /// The issue's case (#354): a library chair placed twice, well apart, one opened for
+    /// editing: its group is named as the block (the canvas tag adds "Editing"), and nothing
+    /// counts as overlapping.
+    #[test]
+    fn block_edit_is_named_as_the_block_and_overlaps_nothing() {
+        let mut ed = Editor::new(Document::new());
+        let chair = ed.library_block(crate::library::entry("Chair – Desk").expect("chair"));
+        ed.place_instance(chair, DVec2::ZERO, 0.0, false);
+        ed.place_instance(chair, DVec2::new(900.0, 0.0), 0.0, false);
+        let copy = ed.doc.instances().map(|(id, _)| id).min().unwrap();
+        ed.edit_block(copy);
+        let group = ed.open_group.expect("open");
+        assert_eq!(ed.doc.group(group).unwrap().name, "Chair – Desk");
+        assert!(ed.overlapping().is_empty(), "{:?}", ed.overlapping());
+        assert!(ed.overlapping_instances().is_empty());
     }
 }

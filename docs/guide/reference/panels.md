@@ -83,7 +83,12 @@ Ctrl+L shows or hides it.
   new geometry goes. Click anywhere on a row to make that layer current; double-click the
   name to rename it.
 - With more than eight layers, a **Filter layers** field narrows the list ("3 of 40"; × or
-  Esc clears it). A small square on a row means some of the selection is on that layer.
+  Esc clears it). A small square on a row means some of the selection (curves, block
+  copies, texts or fills) is on that layer. When you pick an object, the panel scrolls to
+  its layer and outlines that row; **Edit → Preferences… → Layers** can instead make the
+  picked object's layer current, or do nothing (see
+  [Preferences](preferences.md#when-i-select-an-object)). **Make its layer current**, in
+  the canvas's right-click menu and the command palette, makes it current once.
 - The list reads top down as the layers stack: the top layer draws over the ones below it,
   on the canvas and in output. Drag a row up or down to change the order; a line shows
   where it will go. New layers start at the top, and layer **0** starts at the bottom.
@@ -106,7 +111,10 @@ Ctrl+L shows or hides it.
 - **New layer** adds a layer, makes it current and lets you type its name.
 - Layer **0** always exists and can't be deleted.
 
-Hidden layers aren't drawn, picked or snapped to, but their geometry still solves. A
+Hidden layers aren't drawn, picked or snapped to, but their geometry still solves. That
+goes for the end and centre points of their curves too, even when the points themselves
+are on a shown layer (as imported drawings often leave them); a point a curve on a shown
+layer also uses stays. A
 closed area is picked only when its whole outline can be seen: one outlined (even in part)
 by curves on a hidden layer isn't, though fills keep their areas. Locked
 layers are drawn and can be snapped to and dimensioned against, but not picked; the solver

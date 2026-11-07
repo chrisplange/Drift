@@ -1,0 +1,938 @@
+entry Door – Bypass Closet – 48"
+L 0.0 0.0 0.0 114.3 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1219.1999999999998 0.0 1219.1999999999998 114.3 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 0.0 57.15 635.0 57.15 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 635.0 57.15 635.0 92.07499999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 635.0 92.07499999999999 0.0 92.07499999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 0.0 92.07499999999999 0.0 57.15 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 584.1999999999999 22.224999999999998 1219.1999999999998 22.224999999999998 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1219.1999999999998 22.224999999999998 1219.1999999999998 57.15 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1219.1999999999998 57.15 584.1999999999999 57.15 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 584.1999999999999 57.15 584.1999999999999 22.224999999999998 # Solid|Appearance { color: None, weight: None, line_type: None }
+entry Door – Bypass Closet – 60"
+L 0.0 0.0 0.0 114.3 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1524.0 0.0 1524.0 114.3 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 0.0 57.15 787.4 57.15 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 787.4 57.15 787.4 92.07499999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 787.4 92.07499999999999 0.0 92.07499999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 0.0 92.07499999999999 0.0 57.15 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 736.5999999999999 22.224999999999998 1524.0 22.224999999999998 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1524.0 22.224999999999998 1524.0 57.15 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1524.0 57.15 736.5999999999999 57.15 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 736.5999999999999 57.15 736.5999999999999 22.224999999999998 # Solid|Appearance { color: None, weight: None, line_type: None }
+entry Door – Bypass Closet – 72"
+L 0.0 0.0 0.0 114.3 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1828.8 0.0 1828.8 114.3 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 0.0 57.15 939.8 57.15 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 939.8 57.15 939.8 92.07499999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 939.8 92.07499999999999 0.0 92.07499999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 0.0 92.07499999999999 0.0 57.15 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 889.0 22.224999999999998 1828.8 22.224999999999998 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1828.8 22.224999999999998 1828.8 57.15 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1828.8 57.15 889.0 57.15 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 889.0 57.15 889.0 22.224999999999998 # Solid|Appearance { color: None, weight: None, line_type: None }
+entry Door – Bypass Closet – 96"
+L 0.0 0.0 0.0 114.3 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 2438.3999999999996 0.0 2438.3999999999996 114.3 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 0.0 57.15 1244.6 57.15 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1244.6 57.15 1244.6 92.07499999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1244.6 92.07499999999999 0.0 92.07499999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 0.0 92.07499999999999 0.0 57.15 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1193.8 22.224999999999998 2438.3999999999996 22.224999999999998 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 2438.3999999999996 22.224999999999998 2438.3999999999996 57.15 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 2438.3999999999996 57.15 1193.8 57.15 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1193.8 57.15 1193.8 22.224999999999998 # Solid|Appearance { color: None, weight: None, line_type: None }
+entry Refrigerator – 30"
+L 0.0 -711.1999999999999 762.0 -711.1999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 762.0 -711.1999999999999 762.0 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 762.0 0.0 0.0 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 0.0 0.0 0.0 -711.1999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 0.0 -762.0 762.0 -762.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 762.0 -762.0 762.0 -711.1999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 762.0 -711.1999999999999 0.0 -711.1999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 0.0 -711.1999999999999 0.0 -762.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+entry Refrigerator – 36"
+L 0.0 -711.1999999999999 914.4 -711.1999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 914.4 -711.1999999999999 914.4 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 914.4 0.0 0.0 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 0.0 0.0 0.0 -711.1999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 0.0 -762.0 914.4 -762.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 914.4 -762.0 914.4 -711.1999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 914.4 -711.1999999999999 0.0 -711.1999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 0.0 -711.1999999999999 0.0 -762.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 457.2 -762.0 457.2 -711.1999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+entry Grab Bar – 18"
+L 19.049999999999997 -76.19999999999999 438.15 -76.19999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 438.15 -57.15 19.049999999999997 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 438.15 -57.15 19.049999999999997 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 438.15 -38.099999999999994 19.049999999999997 -38.099999999999994 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 19.049999999999997 -57.15 19.049999999999997 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 19.049999999999997 -57.15 19.049999999999997 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 38.099999999999994 -38.099999999999994 76.19999999999999 -38.099999999999994 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 76.19999999999999 -38.099999999999994 76.19999999999999 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 76.19999999999999 0.0 38.099999999999994 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 38.099999999999994 0.0 38.099999999999994 -38.099999999999994 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 381.0 -38.099999999999994 419.09999999999997 -38.099999999999994 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 419.09999999999997 -38.099999999999994 419.09999999999997 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 419.09999999999997 0.0 381.0 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 381.0 0.0 381.0 -38.099999999999994 # Solid|Appearance { color: None, weight: None, line_type: None }
+entry Grab Bar – 24"
+L 19.049999999999997 -76.19999999999999 590.55 -76.19999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 590.55 -57.15 19.049999999999997 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 590.55 -57.15 19.049999999999997 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 590.55 -38.099999999999994 19.049999999999997 -38.099999999999994 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 19.049999999999997 -57.15 19.049999999999997 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 19.049999999999997 -57.15 19.049999999999997 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 38.099999999999994 -38.099999999999994 76.19999999999999 -38.099999999999994 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 76.19999999999999 -38.099999999999994 76.19999999999999 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 76.19999999999999 0.0 38.099999999999994 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 38.099999999999994 0.0 38.099999999999994 -38.099999999999994 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 533.4 -38.099999999999994 571.5 -38.099999999999994 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 571.5 -38.099999999999994 571.5 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 571.5 0.0 533.4 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 533.4 0.0 533.4 -38.099999999999994 # Solid|Appearance { color: None, weight: None, line_type: None }
+entry Grab Bar – 36"
+L 19.049999999999997 -76.19999999999999 895.3499999999999 -76.19999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 895.3499999999999 -57.15 19.049999999999997 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 895.3499999999999 -57.15 19.049999999999997 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 895.3499999999999 -38.099999999999994 19.049999999999997 -38.099999999999994 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 19.049999999999997 -57.15 19.049999999999997 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 19.049999999999997 -57.15 19.049999999999997 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 38.099999999999994 -38.099999999999994 76.19999999999999 -38.099999999999994 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 76.19999999999999 -38.099999999999994 76.19999999999999 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 76.19999999999999 0.0 38.099999999999994 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 38.099999999999994 0.0 38.099999999999994 -38.099999999999994 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 838.1999999999999 -38.099999999999994 876.3 -38.099999999999994 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 876.3 -38.099999999999994 876.3 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 876.3 0.0 838.1999999999999 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 838.1999999999999 0.0 838.1999999999999 -38.099999999999994 # Solid|Appearance { color: None, weight: None, line_type: None }
+entry Grab Bar – 42"
+L 19.049999999999997 -76.19999999999999 1047.75 -76.19999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 1047.75 -57.15 19.049999999999997 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 1047.75 -57.15 19.049999999999997 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1047.75 -38.099999999999994 19.049999999999997 -38.099999999999994 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 19.049999999999997 -57.15 19.049999999999997 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 19.049999999999997 -57.15 19.049999999999997 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 38.099999999999994 -38.099999999999994 76.19999999999999 -38.099999999999994 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 76.19999999999999 -38.099999999999994 76.19999999999999 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 76.19999999999999 0.0 38.099999999999994 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 38.099999999999994 0.0 38.099999999999994 -38.099999999999994 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 990.5999999999999 -38.099999999999994 1028.7 -38.099999999999994 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1028.7 -38.099999999999994 1028.7 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1028.7 0.0 990.5999999999999 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 990.5999999999999 0.0 990.5999999999999 -38.099999999999994 # Solid|Appearance { color: None, weight: None, line_type: None }
+entry Grab Bar – 48"
+L 19.049999999999997 -76.19999999999999 1200.1499999999999 -76.19999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 1200.1499999999999 -57.15 19.049999999999997 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 1200.1499999999999 -57.15 19.049999999999997 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1200.1499999999999 -38.099999999999994 19.049999999999997 -38.099999999999994 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 19.049999999999997 -57.15 19.049999999999997 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 19.049999999999997 -57.15 19.049999999999997 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 38.099999999999994 -38.099999999999994 76.19999999999999 -38.099999999999994 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 76.19999999999999 -38.099999999999994 76.19999999999999 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 76.19999999999999 0.0 38.099999999999994 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 38.099999999999994 0.0 38.099999999999994 -38.099999999999994 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1143.0 -38.099999999999994 1181.1 -38.099999999999994 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1181.1 -38.099999999999994 1181.1 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1181.1 0.0 1143.0 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1143.0 0.0 1143.0 -38.099999999999994 # Solid|Appearance { color: None, weight: None, line_type: None }
+entry Bed – Twin
+L -495.29999999999995 -50.8 495.29999999999995 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 495.29999999999995 -50.8 495.29999999999995 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 495.29999999999995 0.0 -495.29999999999995 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -495.29999999999995 0.0 -495.29999999999995 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -495.29999999999995 -1955.8 495.29999999999995 -1955.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 495.29999999999995 -1955.8 495.29999999999995 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 495.29999999999995 -50.8 -495.29999999999995 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -495.29999999999995 -50.8 -495.29999999999995 -1955.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -368.29999999999995 -457.2 368.29999999999995 -457.2 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 368.29999999999995 -381.0 76.19999999999999 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 444.5 -381.0 444.5 -177.79999999999998 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 368.29999999999995 -177.79999999999998 76.19999999999999 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 368.29999999999995 -101.6 -368.29999999999995 -101.6 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -368.29999999999995 -177.79999999999998 76.19999999999999 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -444.5 -177.79999999999998 -444.5 -381.0 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -368.29999999999995 -381.0 76.19999999999999 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -495.29999999999995 -609.5999999999999 495.29999999999995 -609.5999999999999 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 139.7 -609.5999999999999 292.09999999999997 -863.5999999999999 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 292.09999999999997 -863.5999999999999 495.29999999999995 -863.5999999999999 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+entry Bed – Twin XL
+L -495.29999999999995 -50.8 495.29999999999995 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 495.29999999999995 -50.8 495.29999999999995 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 495.29999999999995 0.0 -495.29999999999995 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -495.29999999999995 0.0 -495.29999999999995 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -495.29999999999995 -2082.7999999999997 495.29999999999995 -2082.7999999999997 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 495.29999999999995 -2082.7999999999997 495.29999999999995 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 495.29999999999995 -50.8 -495.29999999999995 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -495.29999999999995 -50.8 -495.29999999999995 -2082.7999999999997 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -368.29999999999995 -457.2 368.29999999999995 -457.2 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 368.29999999999995 -381.0 76.19999999999999 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 444.5 -381.0 444.5 -177.79999999999998 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 368.29999999999995 -177.79999999999998 76.19999999999999 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 368.29999999999995 -101.6 -368.29999999999995 -101.6 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -368.29999999999995 -177.79999999999998 76.19999999999999 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -444.5 -177.79999999999998 -444.5 -381.0 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -368.29999999999995 -381.0 76.19999999999999 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -495.29999999999995 -609.5999999999999 495.29999999999995 -609.5999999999999 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 139.7 -609.5999999999999 292.09999999999997 -863.5999999999999 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 292.09999999999997 -863.5999999999999 495.29999999999995 -863.5999999999999 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+entry Bed – Full
+L -685.8 -50.8 685.8 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 685.8 -50.8 685.8 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 685.8 0.0 -685.8 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -685.8 0.0 -685.8 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -685.8 -1955.8 685.8 -1955.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 685.8 -1955.8 685.8 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 685.8 -50.8 -685.8 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -685.8 -50.8 -685.8 -1955.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -558.8 -457.2 -101.6 -457.2 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -101.6 -381.0 76.19999999999999 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -25.4 -381.0 -25.4 -177.79999999999998 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -101.6 -177.79999999999998 76.19999999999999 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -101.6 -101.6 -558.8 -101.6 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -558.8 -177.79999999999998 76.19999999999999 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -635.0 -177.79999999999998 -635.0 -381.0 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -558.8 -381.0 76.19999999999999 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 101.6 -457.2 558.8 -457.2 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 558.8 -381.0 76.19999999999999 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 635.0 -381.0 635.0 -177.79999999999998 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 558.8 -177.79999999999998 76.19999999999999 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 558.8 -101.6 101.6 -101.6 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 101.6 -177.79999999999998 76.19999999999999 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 25.4 -177.79999999999998 25.4 -381.0 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 101.6 -381.0 76.19999999999999 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -685.8 -609.5999999999999 685.8 -609.5999999999999 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 330.2 -609.5999999999999 482.59999999999997 -863.5999999999999 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 482.59999999999997 -863.5999999999999 685.8 -863.5999999999999 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+entry Bed – Queen
+L -762.0 -50.8 762.0 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 762.0 -50.8 762.0 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 762.0 0.0 -762.0 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -762.0 0.0 -762.0 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -762.0 -2082.7999999999997 762.0 -2082.7999999999997 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 762.0 -2082.7999999999997 762.0 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 762.0 -50.8 -762.0 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -762.0 -50.8 -762.0 -2082.7999999999997 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -635.0 -457.2 -101.6 -457.2 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -101.6 -381.0 76.19999999999999 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -25.4 -381.0 -25.4 -177.79999999999998 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -101.6 -177.79999999999998 76.19999999999999 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -101.6 -101.6 -635.0 -101.6 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -635.0 -177.79999999999998 76.19999999999999 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -711.1999999999999 -177.79999999999998 -711.1999999999999 -381.0 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -635.0 -381.0 76.19999999999999 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 101.6 -457.2 635.0 -457.2 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 635.0 -381.0 76.19999999999999 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 711.1999999999999 -381.0 711.1999999999999 -177.79999999999998 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 635.0 -177.79999999999998 76.19999999999999 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 635.0 -101.6 101.6 -101.6 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 101.6 -177.79999999999998 76.19999999999999 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 25.4 -177.79999999999998 25.4 -381.0 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 101.6 -381.0 76.19999999999999 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -762.0 -609.5999999999999 762.0 -609.5999999999999 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 406.4 -609.5999999999999 558.8 -863.5999999999999 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 558.8 -863.5999999999999 762.0 -863.5999999999999 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+entry Bed – King
+L -965.1999999999999 -50.8 965.1999999999999 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 965.1999999999999 -50.8 965.1999999999999 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 965.1999999999999 0.0 -965.1999999999999 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -965.1999999999999 0.0 -965.1999999999999 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -965.1999999999999 -2082.7999999999997 965.1999999999999 -2082.7999999999997 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 965.1999999999999 -2082.7999999999997 965.1999999999999 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 965.1999999999999 -50.8 -965.1999999999999 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -965.1999999999999 -50.8 -965.1999999999999 -2082.7999999999997 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -838.1999999999999 -457.2 -101.6 -457.2 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -101.6 -381.0 76.19999999999999 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -25.4 -381.0 -25.4 -177.79999999999998 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -101.6 -177.79999999999998 76.19999999999999 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -101.6 -101.6 -838.1999999999999 -101.6 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -838.1999999999999 -177.79999999999998 76.19999999999999 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -914.4 -177.79999999999998 -914.4 -381.0 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -838.1999999999999 -381.0 76.19999999999999 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 101.6 -457.2 838.1999999999999 -457.2 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 838.1999999999999 -381.0 76.19999999999999 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 914.4 -381.0 914.4 -177.79999999999998 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 838.1999999999999 -177.79999999999998 76.19999999999999 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 838.1999999999999 -101.6 101.6 -101.6 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 101.6 -177.79999999999998 76.19999999999999 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 25.4 -177.79999999999998 25.4 -381.0 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 101.6 -381.0 76.19999999999999 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -965.1999999999999 -609.5999999999999 965.1999999999999 -609.5999999999999 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 609.5999999999999 -609.5999999999999 762.0 -863.5999999999999 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 762.0 -863.5999999999999 965.1999999999999 -863.5999999999999 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+entry Bed – California King
+L -914.4 -50.8 914.4 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 914.4 -50.8 914.4 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 914.4 0.0 -914.4 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -914.4 0.0 -914.4 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -914.4 -2184.4 914.4 -2184.4 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 914.4 -2184.4 914.4 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 914.4 -50.8 -914.4 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -914.4 -50.8 -914.4 -2184.4 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -787.4 -457.2 -101.6 -457.2 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -101.6 -381.0 76.19999999999999 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -25.4 -381.0 -25.4 -177.79999999999998 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -101.6 -177.79999999999998 76.19999999999999 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -101.6 -101.6 -787.4 -101.6 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -787.4 -177.79999999999998 76.19999999999999 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -863.5999999999999 -177.79999999999998 -863.5999999999999 -381.0 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -787.4 -381.0 76.19999999999999 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 101.6 -457.2 787.4 -457.2 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 787.4 -381.0 76.19999999999999 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 863.5999999999999 -381.0 863.5999999999999 -177.79999999999998 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 787.4 -177.79999999999998 76.19999999999999 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 787.4 -101.6 101.6 -101.6 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 101.6 -177.79999999999998 76.19999999999999 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 25.4 -177.79999999999998 25.4 -381.0 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 101.6 -381.0 76.19999999999999 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -914.4 -609.5999999999999 914.4 -609.5999999999999 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 558.8 -609.5999999999999 711.1999999999999 -863.5999999999999 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 711.1999999999999 -863.5999999999999 914.4 -863.5999999999999 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+entry Bed – Twin with Nightstands
+L -495.29999999999995 -50.8 495.29999999999995 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 495.29999999999995 -50.8 495.29999999999995 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 495.29999999999995 0.0 -495.29999999999995 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -495.29999999999995 0.0 -495.29999999999995 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -495.29999999999995 -1955.8 495.29999999999995 -1955.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 495.29999999999995 -1955.8 495.29999999999995 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 495.29999999999995 -50.8 -495.29999999999995 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -495.29999999999995 -50.8 -495.29999999999995 -1955.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -368.29999999999995 -457.2 368.29999999999995 -457.2 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 368.29999999999995 -381.0 76.19999999999999 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 444.5 -381.0 444.5 -177.79999999999998 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 368.29999999999995 -177.79999999999998 76.19999999999999 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 368.29999999999995 -101.6 -368.29999999999995 -101.6 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -368.29999999999995 -177.79999999999998 76.19999999999999 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -444.5 -177.79999999999998 -444.5 -381.0 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -368.29999999999995 -381.0 76.19999999999999 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -495.29999999999995 -609.5999999999999 495.29999999999995 -609.5999999999999 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 139.7 -609.5999999999999 292.09999999999997 -863.5999999999999 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 292.09999999999997 -863.5999999999999 495.29999999999995 -863.5999999999999 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -546.1 -457.2 -1104.8999999999999 -457.2 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1104.8999999999999 -457.2 -1104.8999999999999 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1104.8999999999999 0.0 -546.1 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -546.1 0.0 -546.1 -457.2 # Solid|Appearance { color: None, weight: None, line_type: None }
+C -825.5 -228.6 127.0 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 546.1 -457.2 1104.8999999999999 -457.2 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1104.8999999999999 -457.2 1104.8999999999999 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1104.8999999999999 0.0 546.1 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 546.1 0.0 546.1 -457.2 # Solid|Appearance { color: None, weight: None, line_type: None }
+C 825.5 -228.6 127.0 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+entry Bed – Twin XL with Nightstands
+L -495.29999999999995 -50.8 495.29999999999995 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 495.29999999999995 -50.8 495.29999999999995 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 495.29999999999995 0.0 -495.29999999999995 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -495.29999999999995 0.0 -495.29999999999995 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -495.29999999999995 -2082.7999999999997 495.29999999999995 -2082.7999999999997 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 495.29999999999995 -2082.7999999999997 495.29999999999995 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 495.29999999999995 -50.8 -495.29999999999995 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -495.29999999999995 -50.8 -495.29999999999995 -2082.7999999999997 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -368.29999999999995 -457.2 368.29999999999995 -457.2 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 368.29999999999995 -381.0 76.19999999999999 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 444.5 -381.0 444.5 -177.79999999999998 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 368.29999999999995 -177.79999999999998 76.19999999999999 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 368.29999999999995 -101.6 -368.29999999999995 -101.6 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -368.29999999999995 -177.79999999999998 76.19999999999999 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -444.5 -177.79999999999998 -444.5 -381.0 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -368.29999999999995 -381.0 76.19999999999999 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -495.29999999999995 -609.5999999999999 495.29999999999995 -609.5999999999999 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 139.7 -609.5999999999999 292.09999999999997 -863.5999999999999 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 292.09999999999997 -863.5999999999999 495.29999999999995 -863.5999999999999 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -546.1 -457.2 -1104.8999999999999 -457.2 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1104.8999999999999 -457.2 -1104.8999999999999 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1104.8999999999999 0.0 -546.1 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -546.1 0.0 -546.1 -457.2 # Solid|Appearance { color: None, weight: None, line_type: None }
+C -825.5 -228.6 127.0 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 546.1 -457.2 1104.8999999999999 -457.2 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1104.8999999999999 -457.2 1104.8999999999999 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1104.8999999999999 0.0 546.1 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 546.1 0.0 546.1 -457.2 # Solid|Appearance { color: None, weight: None, line_type: None }
+C 825.5 -228.6 127.0 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+entry Bed – Full with Nightstands
+L -685.8 -50.8 685.8 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 685.8 -50.8 685.8 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 685.8 0.0 -685.8 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -685.8 0.0 -685.8 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -685.8 -1955.8 685.8 -1955.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 685.8 -1955.8 685.8 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 685.8 -50.8 -685.8 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -685.8 -50.8 -685.8 -1955.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -558.8 -457.2 -101.6 -457.2 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -101.6 -381.0 76.19999999999999 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -25.4 -381.0 -25.4 -177.79999999999998 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -101.6 -177.79999999999998 76.19999999999999 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -101.6 -101.6 -558.8 -101.6 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -558.8 -177.79999999999998 76.19999999999999 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -635.0 -177.79999999999998 -635.0 -381.0 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -558.8 -381.0 76.19999999999999 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 101.6 -457.2 558.8 -457.2 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 558.8 -381.0 76.19999999999999 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 635.0 -381.0 635.0 -177.79999999999998 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 558.8 -177.79999999999998 76.19999999999999 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 558.8 -101.6 101.6 -101.6 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 101.6 -177.79999999999998 76.19999999999999 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 25.4 -177.79999999999998 25.4 -381.0 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 101.6 -381.0 76.19999999999999 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -685.8 -609.5999999999999 685.8 -609.5999999999999 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 330.2 -609.5999999999999 482.59999999999997 -863.5999999999999 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 482.59999999999997 -863.5999999999999 685.8 -863.5999999999999 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -736.5999999999999 -457.2 -1295.3999999999999 -457.2 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1295.3999999999999 -457.2 -1295.3999999999999 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1295.3999999999999 0.0 -736.5999999999999 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -736.5999999999999 0.0 -736.5999999999999 -457.2 # Solid|Appearance { color: None, weight: None, line_type: None }
+C -1016.0 -228.6 127.0 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 736.5999999999999 -457.2 1295.3999999999999 -457.2 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1295.3999999999999 -457.2 1295.3999999999999 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1295.3999999999999 0.0 736.5999999999999 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 736.5999999999999 0.0 736.5999999999999 -457.2 # Solid|Appearance { color: None, weight: None, line_type: None }
+C 1016.0 -228.6 127.0 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+entry Bed – Queen with Nightstands
+L -762.0 -50.8 762.0 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 762.0 -50.8 762.0 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 762.0 0.0 -762.0 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -762.0 0.0 -762.0 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -762.0 -2082.7999999999997 762.0 -2082.7999999999997 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 762.0 -2082.7999999999997 762.0 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 762.0 -50.8 -762.0 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -762.0 -50.8 -762.0 -2082.7999999999997 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -635.0 -457.2 -101.6 -457.2 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -101.6 -381.0 76.19999999999999 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -25.4 -381.0 -25.4 -177.79999999999998 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -101.6 -177.79999999999998 76.19999999999999 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -101.6 -101.6 -635.0 -101.6 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -635.0 -177.79999999999998 76.19999999999999 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -711.1999999999999 -177.79999999999998 -711.1999999999999 -381.0 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -635.0 -381.0 76.19999999999999 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 101.6 -457.2 635.0 -457.2 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 635.0 -381.0 76.19999999999999 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 711.1999999999999 -381.0 711.1999999999999 -177.79999999999998 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 635.0 -177.79999999999998 76.19999999999999 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 635.0 -101.6 101.6 -101.6 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 101.6 -177.79999999999998 76.19999999999999 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 25.4 -177.79999999999998 25.4 -381.0 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 101.6 -381.0 76.19999999999999 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -762.0 -609.5999999999999 762.0 -609.5999999999999 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 406.4 -609.5999999999999 558.8 -863.5999999999999 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 558.8 -863.5999999999999 762.0 -863.5999999999999 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -812.8 -457.2 -1371.6 -457.2 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1371.6 -457.2 -1371.6 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1371.6 0.0 -812.8 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -812.8 0.0 -812.8 -457.2 # Solid|Appearance { color: None, weight: None, line_type: None }
+C -1092.2 -228.6 127.0 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 812.8 -457.2 1371.6 -457.2 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1371.6 -457.2 1371.6 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1371.6 0.0 812.8 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 812.8 0.0 812.8 -457.2 # Solid|Appearance { color: None, weight: None, line_type: None }
+C 1092.2 -228.6 127.0 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+entry Bed – King with Nightstands
+L -965.1999999999999 -50.8 965.1999999999999 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 965.1999999999999 -50.8 965.1999999999999 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 965.1999999999999 0.0 -965.1999999999999 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -965.1999999999999 0.0 -965.1999999999999 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -965.1999999999999 -2082.7999999999997 965.1999999999999 -2082.7999999999997 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 965.1999999999999 -2082.7999999999997 965.1999999999999 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 965.1999999999999 -50.8 -965.1999999999999 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -965.1999999999999 -50.8 -965.1999999999999 -2082.7999999999997 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -838.1999999999999 -457.2 -101.6 -457.2 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -101.6 -381.0 76.19999999999999 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -25.4 -381.0 -25.4 -177.79999999999998 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -101.6 -177.79999999999998 76.19999999999999 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -101.6 -101.6 -838.1999999999999 -101.6 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -838.1999999999999 -177.79999999999998 76.19999999999999 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -914.4 -177.79999999999998 -914.4 -381.0 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -838.1999999999999 -381.0 76.19999999999999 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 101.6 -457.2 838.1999999999999 -457.2 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 838.1999999999999 -381.0 76.19999999999999 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 914.4 -381.0 914.4 -177.79999999999998 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 838.1999999999999 -177.79999999999998 76.19999999999999 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 838.1999999999999 -101.6 101.6 -101.6 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 101.6 -177.79999999999998 76.19999999999999 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 25.4 -177.79999999999998 25.4 -381.0 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 101.6 -381.0 76.19999999999999 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -965.1999999999999 -609.5999999999999 965.1999999999999 -609.5999999999999 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 609.5999999999999 -609.5999999999999 762.0 -863.5999999999999 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 762.0 -863.5999999999999 965.1999999999999 -863.5999999999999 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -1016.0 -457.2 -1574.8 -457.2 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1574.8 -457.2 -1574.8 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1574.8 0.0 -1016.0 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1016.0 0.0 -1016.0 -457.2 # Solid|Appearance { color: None, weight: None, line_type: None }
+C -1295.3999999999999 -228.6 127.0 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 1016.0 -457.2 1574.8 -457.2 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1574.8 -457.2 1574.8 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1574.8 0.0 1016.0 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1016.0 0.0 1016.0 -457.2 # Solid|Appearance { color: None, weight: None, line_type: None }
+C 1295.3999999999999 -228.6 127.0 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+entry Bed – California King with Nightstands
+L -914.4 -50.8 914.4 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 914.4 -50.8 914.4 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 914.4 0.0 -914.4 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -914.4 0.0 -914.4 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -914.4 -2184.4 914.4 -2184.4 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 914.4 -2184.4 914.4 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 914.4 -50.8 -914.4 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -914.4 -50.8 -914.4 -2184.4 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -787.4 -457.2 -101.6 -457.2 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -101.6 -381.0 76.19999999999999 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -25.4 -381.0 -25.4 -177.79999999999998 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -101.6 -177.79999999999998 76.19999999999999 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -101.6 -101.6 -787.4 -101.6 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -787.4 -177.79999999999998 76.19999999999999 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -863.5999999999999 -177.79999999999998 -863.5999999999999 -381.0 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A -787.4 -381.0 76.19999999999999 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 101.6 -457.2 787.4 -457.2 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 787.4 -381.0 76.19999999999999 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 863.5999999999999 -381.0 863.5999999999999 -177.79999999999998 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 787.4 -177.79999999999998 76.19999999999999 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 787.4 -101.6 101.6 -101.6 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 101.6 -177.79999999999998 76.19999999999999 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 25.4 -177.79999999999998 25.4 -381.0 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+A 101.6 -381.0 76.19999999999999 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -914.4 -609.5999999999999 914.4 -609.5999999999999 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 558.8 -609.5999999999999 711.1999999999999 -863.5999999999999 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 711.1999999999999 -863.5999999999999 914.4 -863.5999999999999 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L -965.1999999999999 -457.2 -1524.0 -457.2 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1524.0 -457.2 -1524.0 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1524.0 0.0 -965.1999999999999 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -965.1999999999999 0.0 -965.1999999999999 -457.2 # Solid|Appearance { color: None, weight: None, line_type: None }
+C -1244.6 -228.6 127.0 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+L 965.1999999999999 -457.2 1524.0 -457.2 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1524.0 -457.2 1524.0 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1524.0 0.0 965.1999999999999 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 965.1999999999999 0.0 965.1999999999999 -457.2 # Solid|Appearance { color: None, weight: None, line_type: None }
+C 1244.6 -228.6 127.0 # Solid|Appearance { color: None, weight: Some(LineWeight(0)), line_type: None }
+entry Chair – Dining
+L -228.6 -63.5 228.6 -63.5 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 228.6 -63.5 228.6 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 228.6 0.0 -228.6 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -228.6 0.0 -228.6 -63.5 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -165.1 -533.4 165.1 -533.4 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 165.1 -482.59999999999997 50.8 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 215.89999999999998 -482.59999999999997 215.89999999999998 -114.3 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 165.1 -114.3 50.8 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 165.1 -63.5 -165.1 -63.5 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -165.1 -114.3 50.8 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -215.89999999999998 -114.3 -215.89999999999998 -482.59999999999997 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -165.1 -482.59999999999997 50.8 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+entry Chair – Lounge
+L -355.59999999999997 -863.5999999999999 355.59999999999997 -863.5999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 355.59999999999997 -812.8 50.8 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 406.4 -812.8 406.4 -50.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 355.59999999999997 -50.8 50.8 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 355.59999999999997 0.0 -355.59999999999997 0.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -355.59999999999997 -50.8 50.8 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -406.4 -50.8 -406.4 -812.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -355.59999999999997 -812.8 50.8 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -279.4 0.0 -279.4 -838.1999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 279.4 0.0 279.4 -838.1999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -279.4 -203.2 279.4 -203.2 # Solid|Appearance { color: None, weight: None, line_type: None }
+entry Chair – Desk
+C 0.0 -304.79999999999995 254.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 0.0 -304.79999999999995 304.79999999999995 0.9599310885968813 1.2217304763960306 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 0.0 -304.79999999999995 254.0 0.9599310885968813 1.2217304763960306 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 145.6884148331657 -96.7353807505961 174.82609779979882 -55.12245690071531 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -145.68841483316572 -96.7353807505961 -174.82609779979887 -55.122456900715356 # Solid|Appearance { color: None, weight: None, line_type: None }
+entry Dining Table – 4 Seats 48" × 36"
+L -609.5999999999999 -457.2 609.5999999999999 -457.2 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 609.5999999999999 -457.2 609.5999999999999 457.2 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 609.5999999999999 457.2 -609.5999999999999 457.2 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -609.5999999999999 457.2 -609.5999999999999 -457.2 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -533.4 977.8999999999999 -76.19999999999996 977.8999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -76.19999999999996 977.8999999999999 -76.19999999999996 1041.3999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -76.19999999999996 1041.3999999999999 -533.4 1041.3999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -533.4 1041.3999999999999 -533.4 977.8999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -469.9 507.9999999999999 -139.69999999999996 507.9999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -139.69999999999996 558.8 50.8 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -88.89999999999998 558.8 -88.89999999999998 927.0999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -139.69999999999996 927.0999999999999 50.8 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -139.69999999999996 977.8999999999999 -469.9 977.8999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -469.9 927.0999999999999 50.8 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -520.6999999999999 927.0999999999999 -520.6999999999999 558.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -469.9 558.8 50.8 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -76.19999999999996 -977.8999999999999 -533.4 -977.8999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -533.4 -977.8999999999999 -533.4 -1041.3999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -533.4 -1041.3999999999999 -76.19999999999996 -1041.3999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -76.19999999999996 -1041.3999999999999 -76.19999999999996 -977.8999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -139.69999999999996 -507.9999999999999 -469.9 -507.9999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -469.9 -558.8 50.8 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -520.6999999999999 -558.8 -520.6999999999999 -927.0999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -469.9 -927.0999999999999 50.8 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -469.9 -977.8999999999999 -139.69999999999996 -977.8999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -139.69999999999996 -927.0999999999999 50.8 4.71238898038469 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -88.89999999999998 -927.0999999999999 -88.89999999999998 -558.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -139.69999999999996 -558.8 50.8 6.283185307179586 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 76.19999999999996 977.8999999999999 533.4 977.8999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 533.4 977.8999999999999 533.4 1041.3999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 533.4 1041.3999999999999 76.19999999999996 1041.3999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 76.19999999999996 1041.3999999999999 76.19999999999996 977.8999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 139.69999999999996 507.9999999999999 469.9 507.9999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 469.9 558.8 50.8 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 520.6999999999999 558.8 520.6999999999999 927.0999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 469.9 927.0999999999999 50.8 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 469.9 977.8999999999999 139.69999999999996 977.8999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 139.69999999999996 927.0999999999999 50.8 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 88.89999999999998 927.0999999999999 88.89999999999998 558.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 139.69999999999996 558.8 50.8 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 533.4 -977.8999999999999 76.19999999999996 -977.8999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 76.19999999999996 -977.8999999999999 76.19999999999996 -1041.3999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 76.19999999999996 -1041.3999999999999 533.4 -1041.3999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 533.4 -1041.3999999999999 533.4 -977.8999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 469.9 -507.9999999999999 139.69999999999996 -507.9999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 139.69999999999996 -558.8 50.8 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 88.89999999999998 -558.8 88.89999999999998 -927.0999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 139.69999999999996 -927.0999999999999 50.8 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 139.69999999999996 -977.8999999999999 469.9 -977.8999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 469.9 -927.0999999999999 50.8 4.71238898038469 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 520.6999999999999 -927.0999999999999 520.6999999999999 -558.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 469.9 -558.8 50.8 6.283185307179586 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+entry Dining Table – 6 Seats 72" × 36"
+L -914.4 -457.2 914.4 -457.2 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 914.4 -457.2 914.4 457.2 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 914.4 457.2 -914.4 457.2 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -914.4 457.2 -914.4 -457.2 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -685.8 977.8999999999999 -228.6 977.8999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -228.6 977.8999999999999 -228.6 1041.3999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -228.6 1041.3999999999999 -685.8 1041.3999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -685.8 1041.3999999999999 -685.8 977.8999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -622.3 507.9999999999999 -292.1 507.9999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -292.1 558.8 50.8 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -241.3 558.8 -241.3 927.0999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -292.1 927.0999999999999 50.8 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -292.1 977.8999999999999 -622.3 977.8999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -622.3 927.0999999999999 50.8 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -673.0999999999999 927.0999999999999 -673.0999999999999 558.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -622.3 558.8 50.8 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -228.6 -977.8999999999999 -685.8 -977.8999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -685.8 -977.8999999999999 -685.8 -1041.3999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -685.8 -1041.3999999999999 -228.6 -1041.3999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -228.6 -1041.3999999999999 -228.6 -977.8999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -292.1 -507.9999999999999 -622.3 -507.9999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -622.3 -558.8 50.8 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -673.0999999999999 -558.8 -673.0999999999999 -927.0999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -622.3 -927.0999999999999 50.8 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -622.3 -977.8999999999999 -292.1 -977.8999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -292.1 -927.0999999999999 50.8 4.71238898038469 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -241.3 -927.0999999999999 -241.3 -558.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -292.1 -558.8 50.8 6.283185307179586 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 228.6 977.8999999999999 685.8 977.8999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 685.8 977.8999999999999 685.8 1041.3999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 685.8 1041.3999999999999 228.6 1041.3999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 228.6 1041.3999999999999 228.6 977.8999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 292.1 507.9999999999999 622.3 507.9999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 622.3 558.8 50.8 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 673.0999999999999 558.8 673.0999999999999 927.0999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 622.3 927.0999999999999 50.8 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 622.3 977.8999999999999 292.1 977.8999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 292.1 927.0999999999999 50.8 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 241.3 927.0999999999999 241.3 558.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 292.1 558.8 50.8 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 685.8 -977.8999999999999 228.6 -977.8999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 228.6 -977.8999999999999 228.6 -1041.3999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 228.6 -1041.3999999999999 685.8 -1041.3999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 685.8 -1041.3999999999999 685.8 -977.8999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 622.3 -507.9999999999999 292.1 -507.9999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 292.1 -558.8 50.8 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 241.3 -558.8 241.3 -927.0999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 292.1 -927.0999999999999 50.8 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 292.1 -977.8999999999999 622.3 -977.8999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 622.3 -927.0999999999999 50.8 4.71238898038469 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 673.0999999999999 -927.0999999999999 673.0999999999999 -558.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 622.3 -558.8 50.8 6.283185307179586 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1435.1 -228.6 -1435.1 228.6 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1435.1 228.6 -1498.6 228.6 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1498.6 228.6 -1498.6 -228.6 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1498.6 -228.6 -1435.1 -228.6 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -965.1999999999999 -165.1 -965.1999999999999 165.1 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -1016.0 165.1 50.8 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1016.0 215.89999999999998 -1384.3 215.89999999999998 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -1384.3 165.1 50.8 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1435.1 165.1 -1435.1 -165.1 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -1384.3 -165.1 50.8 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1384.3 -215.89999999999998 -1016.0 -215.89999999999998 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -1016.0 -165.1 50.8 4.71238898038469 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1435.1 228.6 1435.1 -228.6 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1435.1 -228.6 1498.6 -228.6 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1498.6 -228.6 1498.6 228.6 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1498.6 228.6 1435.1 228.6 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 965.1999999999999 165.1 965.1999999999999 -165.1 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 1016.0 -165.1 50.8 -3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1016.0 -215.89999999999998 1384.3 -215.89999999999998 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 1384.3 -165.1 50.8 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1435.1 -165.1 1435.1 165.1 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 1384.3 165.1 50.8 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1384.3 215.89999999999998 1016.0 215.89999999999998 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 1016.0 165.1 50.8 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+entry Dining Table – 8 Seats 96" × 42"
+L -1219.1999999999998 -533.4 1219.1999999999998 -533.4 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1219.1999999999998 -533.4 1219.1999999999998 533.4 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1219.1999999999998 533.4 -1219.1999999999998 533.4 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1219.1999999999998 533.4 -1219.1999999999998 -533.4 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1041.3999999999999 1054.1 -584.1999999999999 1054.1 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -584.1999999999999 1054.1 -584.1999999999999 1117.6 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -584.1999999999999 1117.6 -1041.3999999999999 1117.6 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1041.3999999999999 1117.6 -1041.3999999999999 1054.1 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -977.9 584.1999999999999 -647.6999999999999 584.1999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -647.6999999999999 635.0 50.8 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -596.9 635.0 -596.9 1003.3 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -647.6999999999999 1003.3 50.8 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -647.6999999999999 1054.1 -977.9 1054.1 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -977.9 1003.3 50.8 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1028.6999999999998 1003.3 -1028.6999999999998 635.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -977.9 635.0 50.8 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -584.1999999999999 -1054.1 -1041.3999999999999 -1054.1 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1041.3999999999999 -1054.1 -1041.3999999999999 -1117.6 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1041.3999999999999 -1117.6 -584.1999999999999 -1117.6 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -584.1999999999999 -1117.6 -584.1999999999999 -1054.1 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -647.6999999999999 -584.1999999999999 -977.9 -584.1999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -977.9 -635.0 50.8 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1028.6999999999998 -635.0 -1028.6999999999998 -1003.3 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -977.9 -1003.3 50.8 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -977.9 -1054.1 -647.6999999999999 -1054.1 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -647.6999999999999 -1003.3 50.8 4.71238898038469 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -596.9 -1003.3 -596.9 -635.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -647.6999999999999 -635.0 50.8 6.283185307179586 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -228.6 1054.1 228.6 1054.1 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 228.6 1054.1 228.6 1117.6 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 228.6 1117.6 -228.6 1117.6 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -228.6 1117.6 -228.6 1054.1 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -165.1 584.1999999999999 165.1 584.1999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 165.1 635.0 50.8 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 215.89999999999998 635.0 215.89999999999998 1003.3 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 165.1 1003.3 50.8 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 165.1 1054.1 -165.1 1054.1 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -165.1 1003.3 50.8 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -215.89999999999998 1003.3 -215.89999999999998 635.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -165.1 635.0 50.8 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 228.6 -1054.1 -228.6 -1054.1 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -228.6 -1054.1 -228.6 -1117.6 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -228.6 -1117.6 228.6 -1117.6 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 228.6 -1117.6 228.6 -1054.1 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 165.1 -584.1999999999999 -165.1 -584.1999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -165.1 -635.0 50.8 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -215.89999999999998 -635.0 -215.89999999999998 -1003.3 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -165.1 -1003.3 50.8 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -165.1 -1054.1 165.1 -1054.1 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 165.1 -1003.3 50.8 4.71238898038469 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 215.89999999999998 -1003.3 215.89999999999998 -635.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 165.1 -635.0 50.8 6.283185307179586 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 584.1999999999999 1054.1 1041.3999999999999 1054.1 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1041.3999999999999 1054.1 1041.3999999999999 1117.6 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1041.3999999999999 1117.6 584.1999999999999 1117.6 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 584.1999999999999 1117.6 584.1999999999999 1054.1 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 647.6999999999999 584.1999999999999 977.9 584.1999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 977.9 635.0 50.8 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1028.6999999999998 635.0 1028.6999999999998 1003.3 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 977.9 1003.3 50.8 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 977.9 1054.1 647.6999999999999 1054.1 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 647.6999999999999 1003.3 50.8 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 596.9 1003.3 596.9 635.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 647.6999999999999 635.0 50.8 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1041.3999999999999 -1054.1 584.1999999999999 -1054.1 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 584.1999999999999 -1054.1 584.1999999999999 -1117.6 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 584.1999999999999 -1117.6 1041.3999999999999 -1117.6 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1041.3999999999999 -1117.6 1041.3999999999999 -1054.1 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 977.9 -584.1999999999999 647.6999999999999 -584.1999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 647.6999999999999 -635.0 50.8 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 596.9 -635.0 596.9 -1003.3 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 647.6999999999999 -1003.3 50.8 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 647.6999999999999 -1054.1 977.9 -1054.1 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 977.9 -1003.3 50.8 4.71238898038469 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1028.6999999999998 -1003.3 1028.6999999999998 -635.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 977.9 -635.0 50.8 6.283185307179586 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1739.8999999999999 -228.6 -1739.8999999999999 228.6 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1739.8999999999999 228.6 -1803.3999999999999 228.6 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1803.3999999999999 228.6 -1803.3999999999999 -228.6 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1803.3999999999999 -228.6 -1739.8999999999999 -228.6 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1270.0 -165.1 -1270.0 165.1 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -1320.8 165.1 50.8 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1320.8 215.89999999999998 -1689.1 215.89999999999998 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -1689.1 165.1 50.8 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1739.8999999999999 165.1 -1739.8999999999999 -165.1 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -1689.1 -165.1 50.8 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1689.1 -215.89999999999998 -1320.8 -215.89999999999998 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -1320.8 -165.1 50.8 4.71238898038469 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1739.8999999999999 228.6 1739.8999999999999 -228.6 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1739.8999999999999 -228.6 1803.3999999999999 -228.6 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1803.3999999999999 -228.6 1803.3999999999999 228.6 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1803.3999999999999 228.6 1739.8999999999999 228.6 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1270.0 165.1 1270.0 -165.1 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 1320.8 -165.1 50.8 -3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1320.8 -215.89999999999998 1689.1 -215.89999999999998 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 1689.1 -165.1 50.8 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1739.8999999999999 -165.1 1739.8999999999999 165.1 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 1689.1 165.1 50.8 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1689.1 215.89999999999998 1320.8 215.89999999999998 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 1320.8 165.1 50.8 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+entry Dining Table – 4 Seats Round 42"
+C 0.0 0.0 533.4 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -228.59999999999994 1054.1 228.60000000000005 1054.1 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 228.60000000000005 1054.1 228.60000000000005 1117.6 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 228.60000000000005 1117.6 -228.59999999999994 1117.6 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -228.59999999999994 1117.6 -228.59999999999994 1054.1 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -165.09999999999994 584.1999999999999 165.10000000000005 584.1999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 165.10000000000005 635.0 50.8 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 215.90000000000003 635.0 215.90000000000003 1003.3 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 165.10000000000005 1003.3 50.8 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 165.10000000000005 1054.1 -165.09999999999994 1054.1 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -165.09999999999994 1003.3 50.8 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -215.89999999999992 1003.3 -215.89999999999992 635.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -165.09999999999994 635.0 50.8 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1054.1 -228.59999999999985 -1054.1 228.60000000000014 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1054.1 228.60000000000014 -1117.6 228.60000000000014 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1117.6 228.60000000000014 -1117.6 -228.59999999999985 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1117.6 -228.59999999999985 -1054.1 -228.59999999999985 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -584.1999999999999 -165.09999999999985 -584.1999999999999 165.10000000000014 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -635.0 165.10000000000014 50.8 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -635.0 215.90000000000012 -1003.3 215.90000000000012 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -1003.3 165.10000000000014 50.8 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1054.1 165.10000000000014 -1054.1 -165.09999999999985 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -1003.3 -165.09999999999985 50.8 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1003.3 -215.89999999999984 -635.0 -215.89999999999984 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -635.0 -165.09999999999985 50.8 4.71238898038469 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 228.5999999999998 -1054.1 -228.6000000000002 -1054.1 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -228.6000000000002 -1054.1 -228.6000000000002 -1117.6 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -228.6000000000002 -1117.6 228.5999999999998 -1117.6 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 228.5999999999998 -1117.6 228.5999999999998 -1054.1 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 165.0999999999998 -584.1999999999999 -165.1000000000002 -584.1999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -165.1000000000002 -635.0 50.8 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -215.90000000000018 -635.0 -215.90000000000018 -1003.3 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -165.1000000000002 -1003.3 50.8 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -165.1000000000002 -1054.1 165.0999999999998 -1054.1 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 165.0999999999998 -1003.3 50.8 4.71238898038469 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 215.89999999999978 -1003.3 215.89999999999978 -635.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 165.0999999999998 -635.0 50.8 6.283185307179586 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1054.1 228.5999999999997 1054.1 -228.60000000000028 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1054.1 -228.60000000000028 1117.6 -228.60000000000028 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1117.6 -228.60000000000028 1117.6 228.5999999999997 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1117.6 228.5999999999997 1054.1 228.5999999999997 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 584.1999999999999 165.0999999999997 584.1999999999999 -165.10000000000028 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 635.0 -165.10000000000028 50.8 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 635.0 -215.90000000000026 1003.3 -215.90000000000026 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 1003.3 -165.10000000000028 50.8 4.71238898038469 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1054.1 -165.10000000000028 1054.1 165.0999999999997 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 1003.3 165.0999999999997 50.8 6.283185307179586 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1003.3 215.8999999999997 635.0 215.8999999999997 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 635.0 165.0999999999997 50.8 7.853981633974483 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+entry Dining Table – 4 Seats Round 48"
+C 0.0 0.0 609.5999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -228.5999999999999 1130.3 228.60000000000008 1130.3 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 228.60000000000008 1130.3 228.60000000000008 1193.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 228.60000000000008 1193.8 -228.5999999999999 1193.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -228.5999999999999 1193.8 -228.5999999999999 1130.3 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -165.0999999999999 660.4 165.10000000000008 660.4 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 165.10000000000008 711.2 50.8 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 215.90000000000006 711.2 215.90000000000006 1079.5 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 165.10000000000008 1079.5 50.8 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 165.10000000000008 1130.3 -165.0999999999999 1130.3 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -165.0999999999999 1079.5 50.8 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -215.8999999999999 1079.5 -215.8999999999999 711.2 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -165.0999999999999 711.2 50.8 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1130.3 -228.59999999999985 -1130.3 228.60000000000014 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1130.3 228.60000000000014 -1193.8 228.60000000000014 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1193.8 228.60000000000014 -1193.8 -228.59999999999985 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1193.8 -228.59999999999985 -1130.3 -228.59999999999985 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -660.4 -165.09999999999985 -660.4 165.10000000000014 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -711.2 165.10000000000014 50.8 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -711.2 215.90000000000012 -1079.5 215.90000000000012 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -1079.5 165.10000000000014 50.8 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1130.3 165.10000000000014 -1130.3 -165.09999999999985 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -1079.5 -165.09999999999985 50.8 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1079.5 -215.89999999999984 -711.2 -215.89999999999984 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -711.2 -165.09999999999985 50.8 4.71238898038469 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 228.59999999999977 -1130.3 -228.60000000000022 -1130.3 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -228.60000000000022 -1130.3 -228.60000000000022 -1193.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -228.60000000000022 -1193.8 228.59999999999977 -1193.8 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 228.59999999999977 -1193.8 228.59999999999977 -1130.3 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 165.09999999999977 -660.4 -165.10000000000022 -660.4 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -165.10000000000022 -711.2 50.8 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -215.9000000000002 -711.2 -215.9000000000002 -1079.5 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -165.10000000000022 -1079.5 50.8 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -165.10000000000022 -1130.3 165.09999999999977 -1130.3 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 165.09999999999977 -1079.5 50.8 4.71238898038469 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 215.89999999999975 -1079.5 215.89999999999975 -711.2 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 165.09999999999977 -711.2 50.8 6.283185307179586 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1130.3 228.5999999999997 1130.3 -228.60000000000028 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1130.3 -228.60000000000028 1193.8 -228.60000000000028 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1193.8 -228.60000000000028 1193.8 228.5999999999997 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1193.8 228.5999999999997 1130.3 228.5999999999997 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 660.4 165.0999999999997 660.4 -165.10000000000028 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 711.2 -165.10000000000028 50.8 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 711.2 -215.90000000000026 1079.5 -215.90000000000026 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 1079.5 -165.10000000000028 50.8 4.71238898038469 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1130.3 -165.10000000000028 1130.3 165.0999999999997 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 1079.5 165.0999999999997 50.8 6.283185307179586 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1079.5 215.8999999999997 711.2 215.8999999999997 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 711.2 165.0999999999997 50.8 7.853981633974483 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+entry Dining Table – 6 Seats Round 60"
+C 0.0 0.0 762.0 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -228.5999999999999 1282.6999999999998 228.60000000000008 1282.6999999999998 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 228.60000000000008 1282.6999999999998 228.60000000000008 1346.1999999999998 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 228.60000000000008 1346.1999999999998 -228.5999999999999 1346.1999999999998 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -228.5999999999999 1346.1999999999998 -228.5999999999999 1282.6999999999998 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -165.0999999999999 812.7999999999998 165.10000000000008 812.7999999999998 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 165.10000000000008 863.5999999999999 50.8 -1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 215.90000000000006 863.5999999999999 215.90000000000006 1231.8999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 165.10000000000008 1231.8999999999999 50.8 0.0 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 165.10000000000008 1282.6999999999998 -165.0999999999999 1282.6999999999998 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -165.0999999999999 1231.8999999999999 50.8 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -215.8999999999999 1231.8999999999999 -215.8999999999999 863.5999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -165.0999999999999 863.5999999999999 50.8 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1225.1507854342997 443.3765926948772 -996.5507854342995 839.3234073051226 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -996.5507854342995 839.3234073051226 -1051.5433985746115 871.0734073051226 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1051.5433985746115 871.0734073051226 -1280.1433985746114 475.1265926948772 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1280.1433985746114 475.1265926948772 -1225.1507854342997 443.3765926948772 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -786.455448195992 263.419205835189 -621.3554481959919 549.3807941648107 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -665.3495387082414 574.7807941648107 50.8 -0.5235987755982989 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -639.9495387082414 618.7748846770601 -958.9066949220501 802.9248846770602 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -984.3066949220502 758.9307941648108 50.8 1.0471975511965976 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1028.3007854342995 784.3307941648108 -1193.4007854342997 498.36920583518906 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -1149.40669492205 472.9692058351891 50.8 2.617993877991494 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1174.8066949220502 428.97511532293964 -855.8495387082414 244.8251153229396 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -830.4495387082414 288.81920583518905 50.8 4.1887902047863905 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -996.5507854342994 -839.3234073051228 -1225.1507854342992 -443.37659269487744 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1225.1507854342992 -443.37659269487744 -1280.1433985746112 -475.12659269487744 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1280.1433985746112 -475.12659269487744 -1051.5433985746113 -871.0734073051228 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1051.5433985746113 -871.0734073051228 -996.5507854342994 -839.3234073051228 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -621.3554481959917 -549.380794164811 -786.4554481959916 -263.4192058351895 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -830.4495387082411 -288.81920583518945 50.8 0.5235987755982987 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -855.8495387082411 -244.82511532293995 -1174.80669492205 -428.97511532293987 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -1149.4066949220498 -472.9692058351893 50.8 2.0943951023931953 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -1193.4007854342992 -498.36920583518935 -1028.3007854342995 -784.330794164811 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -984.3066949220499 -758.930794164811 50.8 3.665191429188092 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -958.90669492205 -802.9248846770604 -639.9495387082412 -618.7748846770605 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -665.3495387082412 -574.7807941648111 50.8 5.235987755982988 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 228.59999999999974 -1282.6999999999998 -228.60000000000025 -1282.6999999999998 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -228.60000000000025 -1282.6999999999998 -228.60000000000025 -1346.1999999999998 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -228.60000000000025 -1346.1999999999998 228.59999999999974 -1346.1999999999998 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 228.59999999999974 -1346.1999999999998 228.59999999999974 -1282.6999999999998 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 165.09999999999974 -812.7999999999998 -165.10000000000025 -812.7999999999998 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -165.10000000000025 -863.5999999999999 50.8 1.5707963267948966 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -215.90000000000023 -863.5999999999999 -215.90000000000023 -1231.8999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A -165.10000000000025 -1231.8999999999999 50.8 3.141592653589793 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L -165.10000000000025 -1282.6999999999998 165.09999999999974 -1282.6999999999998 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 165.09999999999974 -1231.8999999999999 50.8 4.71238898038469 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 215.89999999999972 -1231.8999999999999 215.89999999999972 -863.5999999999999 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 165.09999999999974 -863.5999999999999 50.8 6.283185307179586 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1225.150785434299 -443.3765926948779 996.5507854342989 -839.3234073051232 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 996.5507854342989 -839.3234073051232 1051.5433985746106 -871.0734073051233 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1051.5433985746106 -871.0734073051233 1280.143398574611 -475.12659269487796 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1280.143398574611 -475.12659269487796 1225.150785434299 -443.3765926948779 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 786.4554481959914 -263.4192058351896 621.3554481959912 -549.3807941648112 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 665.3495387082407 -574.7807941648111 50.8 2.617993877991494 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 639.9495387082408 -618.7748846770606 958.9066949220494 -802.9248846770608 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 984.3066949220494 -758.9307941648113 50.8 4.1887902047863905 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1028.3007854342989 -784.3307941648113 1193.400785434299 -498.36920583518975 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 1149.4066949220496 -472.96920583518977 50.8 5.759586531581287 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1174.8066949220495 -428.97511532294027 855.849538708241 -244.82511532294012 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 830.4495387082409 -288.81920583518956 50.8 7.330382858376184 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 996.5507854342993 839.3234073051226 1225.1507854342995 443.3765926948772 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1225.1507854342995 443.3765926948772 1280.1433985746112 475.1265926948772 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1280.1433985746112 475.1265926948772 1051.5433985746113 871.0734073051226 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1051.5433985746113 871.0734073051226 996.5507854342993 839.3234073051226 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 621.3554481959917 549.3807941648107 786.4554481959917 263.419205835189 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 830.4495387082412 288.81920583518905 50.8 3.6651914291880923 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 855.8495387082412 244.8251153229396 1174.80669492205 428.97511532293964 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 1149.4066949220498 472.9692058351891 50.8 5.235987755982989 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 1193.4007854342995 498.36920583518906 1028.3007854342993 784.3307941648108 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 984.3066949220499 758.9307941648108 50.8 6.806784082777885 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }
+L 958.9066949220498 802.9248846770602 639.9495387082412 618.7748846770601 # Solid|Appearance { color: None, weight: None, line_type: None }
+A 665.3495387082412 574.7807941648107 50.8 8.377580409572783 1.5707963267948966 # Solid|Appearance { color: None, weight: None, line_type: None }

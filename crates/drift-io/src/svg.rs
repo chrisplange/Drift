@@ -27,6 +27,11 @@ fn escape(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
+/// Whether a pen draws dashes (or dots).
+fn dashed(pen: &Pen) -> bool {
+    !dash_pattern(pen.line_type).is_empty()
+}
+
 fn stroke(pen: &Pen, lts: f64) -> String {
     let [r, g, b] = pen.color.0;
     let mut s = format!(
@@ -139,6 +144,12 @@ pub fn write(d: &Drawing) -> String {
                 window = w;
             }
             match piece {
+                // A dashed stroke is a path of its own, starting its dashes afresh, as PDF
+                // and the canvas draw each stroke: chained, they'd run on across the
+                // joins (#346).
+                Some((start, path)) if dashed(&item.pen) => {
+                    write_path(&mut out, start, &path, &item.pen, h, d.line_type_scale);
+                }
                 Some(p) => {
                     run.push(p);
                     run_pen = Some(item.pen);
@@ -419,6 +430,27 @@ fn item_svg(
                 out,
                 r#"<{tag} points="{}" {}/>"#,
                 pts.join(" "),
+                stroke(pen, lts)
+            );
+        }
+        // A dashed circle as two half arcs from angle 0, anticlockwise on the page (sweep
+        // flag 0 once flipped), where PDF and the canvas start and run its dashes; a
+        // `<circle>` starts there too but runs clockwise (#346).
+        Prim::Circle { center, radius } if dashed(pen) => {
+            let (cy, r) = (y(center.y), *radius);
+            let _ = writeln!(
+                out,
+                r#"<path d="M {} {} A {} {} 0 1 0 {} {} A {} {} 0 1 0 {} {} Z" {}/>"#,
+                num(center.x + r),
+                num(cy),
+                num(r),
+                num(r),
+                num(center.x - r),
+                num(cy),
+                num(r),
+                num(r),
+                num(center.x + r),
+                num(cy),
                 stroke(pen, lts)
             );
         }
@@ -848,5 +880,88 @@ pub(crate) mod tests {
             "{shapes:?}"
         );
         assert!((art.paths[0].stroke.as_ref().unwrap().width - 0.5).abs() < 1e-9);
+    }
+
+    /// A dashed whole circle starts its dashes at angle 0 and runs anticlockwise on the
+    /// page, as PDF and the canvas do: a path, not a `<circle>`, which runs clockwise
+    /// (#346). A solid one stays a `<circle>`.
+    #[test]
+    fn a_dashed_circle_starts_and_runs_as_in_pdf() {
+        let mut d = Drawing::new(DVec2::new(100.0, 100.0));
+        let circle = Prim::Circle {
+            center: DVec2::new(50.0, 30.0),
+            radius: 10.0,
+        };
+        d.push(
+            "a",
+            Pen::new(0.35).with_type(LineType::Dashed),
+            circle.clone(),
+        );
+        let svg = write(&d);
+        assert!(!svg.contains("<circle"), "{svg}");
+        // From (60, 30) up (y flipped: 70) to (40, 30) and back, sweep flag 0.
+        assert!(
+            svg.contains(r#"d="M 60 70 A 10 10 0 1 0 40 70 A 10 10 0 1 0 60 70 Z""#),
+            "{svg}"
+        );
+        let mut d = Drawing::new(DVec2::new(100.0, 100.0));
+        d.push("a", Pen::new(0.35), circle);
+        assert!(write(&d).contains("<circle"));
+    }
+
+    /// Dashed strokes that meet end to end are paths of their own, each starting its
+    /// dashes afresh as in PDF; solid ones still join into one path (#346).
+    #[test]
+    fn dashed_strokes_that_meet_are_not_joined() {
+        let v = DVec2::new;
+        let page = |pen: Pen| {
+            let mut d = Drawing::new(v(100.0, 100.0));
+            d.line("a", pen, v(0.0, 0.0), v(10.0, 0.0));
+            d.line("a", pen, v(10.0, 0.0), v(10.0, 10.0));
+            write(&d)
+        };
+        let dashed = page(Pen::new(0.35).with_type(LineType::Hidden));
+        assert_eq!(dashed.matches("<path").count(), 2, "{dashed}");
+        assert!(dashed.contains(r#"d="M 0 100 L 10 100""#), "{dashed}");
+        assert!(dashed.contains(r#"d="M 10 100 L 10 90""#), "{dashed}");
+        let solid = page(Pen::new(0.35));
+        assert_eq!(solid.matches("<path").count(), 1, "{solid}");
+        assert!(solid.contains(r#"d="M 0 100 L 10 100 L 10 90""#), "{solid}");
+    }
+
+    /// A lone dashed arc starts where PDF starts it (at its start angle) and runs the same
+    /// way (anticlockwise on the page: sweep flag 0); a dashed open polyline from its first
+    /// point (#346).
+    #[test]
+    fn a_dashed_arc_and_polyline_start_as_in_pdf() {
+        let v = DVec2::new;
+        let mut d = Drawing::new(v(100.0, 100.0));
+        let pen = Pen::new(0.35).with_type(LineType::Center);
+        d.push(
+            "a",
+            pen,
+            Prim::Arc {
+                center: v(50.0, 50.0),
+                radius: 10.0,
+                start: 0.0,
+                sweep: std::f64::consts::FRAC_PI_2,
+            },
+        );
+        d.push(
+            "a",
+            pen,
+            Prim::Polyline {
+                points: vec![v(60.0, 50.0), v(80.0, 50.0), v(80.0, 70.0)],
+                closed: false,
+            },
+        );
+        let svg = write(&d);
+        assert!(svg.contains(r#"d="M 60 50 A 10 10 0 0 0 50 40""#), "{svg}");
+        assert!(svg.contains(r#"d="M 60 50 L 80 50 L 80 30""#), "{svg}");
+        // PDF: the arc from (60, 50) anticlockwise, the polyline from its first point.
+        let pdf = String::from_utf8_lossy(&crate::pdf::write(&[d], "dashes")).into_owned();
+        // (60, 50) mm is (170.079, 141.732) pt; the arc's first curve ends at 90°.
+        assert_eq!(pdf.matches("170.079 141.732 m").count(), 2, "{pdf}");
+        assert!(pdf.contains("141.732 170.079 c"), "{pdf}");
     }
 }

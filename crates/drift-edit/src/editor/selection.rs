@@ -1,6 +1,7 @@
 //! What is picked: deleting, duplicating, chains, groups, construction, bounds and locks.
 
 use super::*;
+use drift_core::LayerId;
 
 /// The curves drawn on top of earlier ones ([`Editor::overlapping`]), kept from one revision
 /// to the next.
@@ -27,6 +28,15 @@ pub(crate) struct CopyOverlaps {
     revision: u64,
     lineage: u64,
     found: std::rc::Rc<Vec<drift_core::InstanceId>>,
+}
+
+/// The layer of what is picked (see [`Editor::picked_layer`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PickedLayer {
+    /// The active element's layer, or the one layer everything picked is on.
+    pub layer: Option<LayerId>,
+    /// How many layers the pick is on.
+    pub layers: usize,
 }
 
 impl Editor {
@@ -736,6 +746,52 @@ impl Editor {
             self.doc.set_style(id, style);
         }
         self.commit("Toggle construction");
+    }
+
+    /// The layer of what is picked (drift-releases#19): the [active](Self::active)
+    /// element's (the last picked); else, if everything picked (curves and points, block
+    /// copies, texts, fills) is on one layer, that one. An end or centre point counts as on
+    /// its curve's layer. Also says on how many layers the pick is.
+    pub fn picked_layer(&self) -> PickedLayer {
+        // A point a shown curve uses is on that curve's layer, as far as the user can tell.
+        let layer_of = |id: EntityId| -> Option<LayerId> {
+            let e = self.doc.get(id)?;
+            if e.kind.is_point()
+                && let Some(curve) = self.index.users_of(id).next()
+            {
+                return self.doc.get(curve).map(|c| c.layer);
+            }
+            Some(e.layer)
+        };
+        let mut layers: BTreeSet<LayerId> = self
+            .selection
+            .iter()
+            .filter_map(|id| layer_of(*id))
+            .collect();
+        layers.extend(
+            self.selected_instances
+                .iter()
+                .filter_map(|id| self.doc.instance(*id).map(|i| i.layer)),
+        );
+        layers.extend(
+            self.selected_texts
+                .iter()
+                .filter_map(|id| self.doc.text(*id).map(|t| t.layer)),
+        );
+        layers.extend(
+            self.selected_fills
+                .iter()
+                .filter_map(|id| self.doc.fill(*id).map(|f| f.layer)),
+        );
+        let layer = match self.active().and_then(layer_of) {
+            Some(l) => Some(l),
+            None if layers.len() == 1 => layers.first().copied(),
+            None => None,
+        };
+        PickedLayer {
+            layer,
+            layers: layers.len(),
+        }
     }
 
     /// The active element: the one picked last by a click, while it is still picked (#333).

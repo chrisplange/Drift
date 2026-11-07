@@ -54,6 +54,7 @@ pub(crate) enum Command {
     Redo,
     SelectAll,
     SelectOverlapping,
+    MakePickedLayerCurrent,
     CheckSketch,
     HideAnnotations,
     AnnotationsOffSheets,
@@ -1838,6 +1839,16 @@ fn table() -> Vec<Spec> {
         .keys(const { &[cmd(Key::L)] })
         .global()
         .aliases(&["LAYER", "LA"]),
+        // No key (the user, 2026-10-29): the right-click menu and the palette.
+        Spec::new(
+            "layers.make_picked_current",
+            C::Layers,
+            K::MakePickedLayerCurrent,
+            "Make its layer current",
+            "Make the picked object's layer the current layer, and show it in the Layers panel",
+        )
+        .when(When::Picked)
+        .aliases(&["LAYMCUR"]),
         // Help.
         Spec::new(
             "help.guide",

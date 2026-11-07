@@ -170,6 +170,7 @@ impl DriftApp {
             .map(|(k, v)| format!("{k}={}", u8::from(*v)))
             .collect();
         prefs.push(format!("wheel={}", self.wheel.mode.key()));
+        prefs.push(format!("layerpick={}", self.layer_on_pick.key()));
         prefs.push(format!("asnap={}", self.angle_snap.unwrap_or(0.0)));
         prefs.push(format!("gaptol={}", rules.gap_tolerance));
         // The Wall tool's thickness (0: by the drawing's units) and justification.
@@ -226,6 +227,11 @@ impl DriftApp {
                 "wheel" => {
                     if let Some(mode) = crate::app::view::WheelMode::from_key(value) {
                         self.wheel.mode = mode;
+                    }
+                }
+                "layerpick" => {
+                    if let Some(mode) = crate::layers_ui::LayerOnPick::from_key(value) {
+                        self.layer_on_pick = mode;
                     }
                 }
                 "grid" => self.show_grid = on,

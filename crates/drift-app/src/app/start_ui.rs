@@ -623,6 +623,7 @@ impl DriftApp {
         match page {
             PrefsPage::General => self.general_prefs(ui),
             PrefsPage::Drawing => self.drawing_prefs(ui),
+            PrefsPage::Layers => self.layer_prefs(ui),
             #[cfg(not(target_arch = "wasm32"))]
             PrefsPage::Updates => {
                 self.updates_section(ui);
@@ -639,6 +640,29 @@ impl DriftApp {
         theme::section(ui, "Crosshair");
         self.crosshair_prefs(ui);
         self.mouse_prefs(ui);
+    }
+
+    /// Preferences → Layers: what picking an object does to the layers (drift-releases#19).
+    fn layer_prefs(&mut self, ui: &mut egui::Ui) {
+        use crate::layers_ui::LayerOnPick;
+        theme::section(ui, "When I select an object");
+        egui::ComboBox::from_id_salt("layer_on_pick")
+            .selected_text(self.layer_on_pick.label())
+            .width(ui.available_width().min(280.0))
+            .show_ui(ui, |ui| {
+                for mode in LayerOnPick::ALL {
+                    ui.selectable_value(&mut self.layer_on_pick, mode, mode.label());
+                }
+            });
+        ui.label(egui::RichText::new(self.layer_on_pick.hint()).weak());
+        ui.label(
+            egui::RichText::new(
+                "Make its layer current, in the right-click menu and the command palette, \
+                 does it for one pick whatever is chosen here.",
+            )
+            .small()
+            .weak(),
+        );
     }
 
     fn drawing_prefs(&mut self, ui: &mut egui::Ui) {
@@ -804,20 +828,27 @@ pub(crate) enum PrefsPage {
     #[default]
     General,
     Drawing,
+    Layers,
     #[cfg(not(target_arch = "wasm32"))]
     Updates,
 }
 
 impl PrefsPage {
     #[cfg(not(target_arch = "wasm32"))]
-    const ALL: [PrefsPage; 3] = [PrefsPage::General, PrefsPage::Drawing, PrefsPage::Updates];
+    const ALL: [PrefsPage; 4] = [
+        PrefsPage::General,
+        PrefsPage::Drawing,
+        PrefsPage::Layers,
+        PrefsPage::Updates,
+    ];
     #[cfg(target_arch = "wasm32")]
-    const ALL: [PrefsPage; 2] = [PrefsPage::General, PrefsPage::Drawing];
+    const ALL: [PrefsPage; 3] = [PrefsPage::General, PrefsPage::Drawing, PrefsPage::Layers];
 
     fn label(self) -> &'static str {
         match self {
             PrefsPage::General => "General",
             PrefsPage::Drawing => "Drawing aids",
+            PrefsPage::Layers => "Layers",
             #[cfg(not(target_arch = "wasm32"))]
             PrefsPage::Updates => "Updates & Labs",
         }

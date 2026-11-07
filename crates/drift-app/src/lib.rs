@@ -607,6 +607,8 @@ pub struct DriftApp {
     show_hidden_annotations: bool,
     /// Temporary dimensions show on a picked curve (a preference).
     show_temp_dims: bool,
+    /// What picking an object does in the Layers panel (a preference, drift-releases#19).
+    layer_on_pick: layers_ui::LayerOnPick,
     /// The rules a new drawing starts with (how its areas and fills behave, its gap
     /// tolerance), and those an older file is given: kept on this computer.
     new_rules: drift_core::DrawingRules,
@@ -797,6 +799,7 @@ impl DriftApp {
             show_view_crops: true,
             show_hidden_annotations: false,
             show_temp_dims: true,
+            layer_on_pick: Default::default(),
             new_rules: drift_core::DrawingRules::default(),
             view_seen: None,
             new_block_name: String::new(),
@@ -1207,6 +1210,8 @@ impl eframe::App for DriftApp {
         });
         self.floating_panels(&ctx);
         self.dock_drag(&ctx);
+        // A new pick: its layer shown, or made current (Preferences → Layers).
+        self.follow_pick(now);
 
         self.dialogs(&ctx);
         self.announce_view_changes(now);

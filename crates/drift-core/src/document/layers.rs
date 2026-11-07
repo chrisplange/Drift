@@ -161,6 +161,19 @@ impl Document {
         Ok(())
     }
 
+    /// Make `id` the current layer without recording it: not an undo step, and not a change
+    /// (the revision stays, so the drawing stays saved; Save writes whichever layer is
+    /// current then). For the layer of what is picked, made current as it is picked
+    /// (drift-releases#19). Undo and Redo of other steps leave it be; a step that changed the
+    /// current layer itself puts back the layer it recorded.
+    pub fn set_current_layer_unrecorded(&mut self, id: LayerId) -> Result<(), DocumentError> {
+        if !self.layers.contains_key(&id) {
+            return Err(DocumentError::MissingLayer(id));
+        }
+        self.current_layer = id;
+        Ok(())
+    }
+
     /// Move an entity to a layer.
     pub fn set_entity_layer(&mut self, id: EntityId, layer: LayerId) -> Result<(), DocumentError> {
         if !self.layers.contains_key(&layer) {

@@ -1193,6 +1193,7 @@ impl DriftApp {
                     }
                 }
             });
+            self.command_item(ui, Command::MakePickedLayerCurrent);
             self.command_item(ui, Command::MakeBlock);
             if self.drawing.editor.convertible_group().is_some() {
                 self.command_item(ui, Command::BlockFromGroup);

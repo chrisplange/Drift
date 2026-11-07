@@ -233,10 +233,32 @@ impl Sketch {
 
     /// A rectangle with rounded corners of radius `r`.
     pub fn rounded(&mut self, x0: f64, y0: f64, x1: f64, y1: f64, r: f64) -> &mut Self {
+        self.rounded_sides(x0, y0, x1, y1, r, true)
+    }
+
+    /// [`rounded`](Self::rounded) without the straight part of its top side: for a shape
+    /// whose top lies on another's side, which draws it (a curve drawn twice counts as
+    /// overlapping, #354).
+    pub fn rounded_open_top(&mut self, x0: f64, y0: f64, x1: f64, y1: f64, r: f64) -> &mut Self {
+        self.rounded_sides(x0, y0, x1, y1, r, false)
+    }
+
+    fn rounded_sides(
+        &mut self,
+        x0: f64,
+        y0: f64,
+        x1: f64,
+        y1: f64,
+        r: f64,
+        top: bool,
+    ) -> &mut Self {
         let (x0, x1) = (x0.min(x1), x0.max(x1));
         let (y0, y1) = (y0.min(y1), y0.max(y1));
         let r = r.min((x1 - x0) / 2.0).min((y1 - y0) / 2.0);
         if r <= 0.0 {
+            if !top {
+                return self.polyline(&[(x1, y1), (x1, y0), (x0, y0), (x0, y1)]);
+            }
             return self.rect(x0, y0, x1, y1);
         }
         let straight = |s: &mut Self, a: (f64, f64), b: (f64, f64)| {
@@ -248,7 +270,9 @@ impl Sketch {
         self.arc((x1 - r, y0 + r), r, -90.0, 90.0);
         straight(self, (x1, y0 + r), (x1, y1 - r));
         self.arc((x1 - r, y1 - r), r, 0.0, 90.0);
-        straight(self, (x1 - r, y1), (x0 + r, y1));
+        if top {
+            straight(self, (x1 - r, y1), (x0 + r, y1));
+        }
         self.arc((x0 + r, y1 - r), r, 90.0, 90.0);
         straight(self, (x0, y1 - r), (x0, y0 + r));
         self.arc((x0 + r, y0 + r), r, 180.0, 90.0)
@@ -427,6 +451,122 @@ mod tests {
                 tops.len() == 1 || centred,
                 "{family}: the back moves between types: {tops:?}"
             );
+        }
+    }
+
+    /// Placed and exploded (as Edit block and Explode make them curves), no library block
+    /// has a curve on top of another: the status bar's overlap warning would show for a
+    /// drawing that only uses library blocks (#354).
+    #[test]
+    fn no_library_block_has_overlapping_curves() {
+        let mut found = Vec::new();
+        for e in all() {
+            let mut ed = crate::editor::Editor::new(drift_core::Document::new());
+            let block = ed.library_block(e);
+            ed.place_instance(block, drift_core::DVec2::ZERO, 0.0, false);
+            ed.selected_instances = ed.doc.instances().map(|(id, _)| id).collect();
+            ed.explode_selected();
+            assert!(ed.doc.instances().next().is_none(), "{}", e.block.name);
+            let n = ed.overlapping().len();
+            if n > 0 {
+                found.push(format!("{} ({n})", e.block.name));
+            }
+        }
+        assert!(found.is_empty(), "overlapping curves in {found:?}");
+    }
+
+    /// Points along a library curve, on it: its ends and evenly between.
+    fn samples(shape: &drift_core::Shape) -> Vec<drift_core::DVec2> {
+        use drift_core::{DVec2, Shape};
+        let n = 64;
+        let t = (0..=n).map(move |k| k as f64 / n as f64);
+        match *shape {
+            Shape::Line { a, b } => t.map(|t| a.lerp(b, t)).collect(),
+            Shape::Arc {
+                center,
+                radius,
+                start,
+                sweep,
+            } => t
+                .map(|t| center + DVec2::from_angle(start + sweep * t) * radius)
+                .collect(),
+            Shape::Circle { center, radius } => t
+                .map(|t| center + DVec2::from_angle(std::f64::consts::TAU * t) * radius)
+                .collect(),
+            ref other => panic!("not in the redraw: {other:?}"),
+        }
+    }
+
+    /// The blocks redrawn so that no side is drawn twice (#354) draw exactly what they drew
+    /// before, pen by pen: every point along each curve they had (as `testdata/redraw-354.txt`
+    /// keeps them, from before the redraw) lies on a curve they have now with the same style
+    /// and look, and the reverse, within 1e-6 mm.
+    #[test]
+    fn blocks_redrawn_for_overlaps_draw_the_same() {
+        use drift_core::{DVec2, Shape};
+        const TOLERANCE: f64 = 1e-6;
+        let text = include_str!("testdata/redraw-354.txt");
+        let mut before: Vec<(String, Vec<(Shape, String)>)> = Vec::new();
+        for line in text.lines() {
+            if let Some(name) = line.strip_prefix("entry ") {
+                before.push((name.to_owned(), Vec::new()));
+                continue;
+            }
+            let (shape, pen) = line.split_once(" # ").expect("pen");
+            let mut f = shape.split(' ');
+            let kind = f.next().expect("kind");
+            let v: Vec<f64> = f.map(|x| x.parse().expect("number")).collect();
+            let shape = match kind {
+                "L" => Shape::Line {
+                    a: DVec2::new(v[0], v[1]),
+                    b: DVec2::new(v[2], v[3]),
+                },
+                "A" => Shape::Arc {
+                    center: DVec2::new(v[0], v[1]),
+                    radius: v[2],
+                    start: v[3],
+                    sweep: v[4],
+                },
+                "C" => Shape::Circle {
+                    center: DVec2::new(v[0], v[1]),
+                    radius: v[2],
+                },
+                other => panic!("{other}"),
+            };
+            before
+                .last_mut()
+                .expect("entry")
+                .1
+                .push((shape, pen.to_owned()));
+        }
+        assert_eq!(before.len(), 32);
+        let pen = |i: &drift_core::BlockItem| format!("{:?}|{:?}", i.style, i.appearance);
+        // Every point of `from` lies on some curve of `onto` with its pen.
+        let covered = |from: &[(Shape, String)], onto: &[(Shape, String)]| -> Option<String> {
+            for (shape, p) in from {
+                for at in samples(shape) {
+                    let near = onto
+                        .iter()
+                        .filter(|(_, q)| q == p)
+                        .map(|(s, _)| drift_geom::distance(s, at))
+                        .fold(f64::INFINITY, f64::min);
+                    if near > TOLERANCE {
+                        return Some(format!("{shape:?} at {at} is {near} mm off ({p})"));
+                    }
+                }
+            }
+            None
+        };
+        for (name, old) in &before {
+            let e = entry(name).unwrap_or_else(|| panic!("{name} is gone"));
+            let now: Vec<(Shape, String)> =
+                e.block.items.iter().map(|i| (i.shape, pen(i))).collect();
+            if let Some(miss) = covered(old, &now) {
+                panic!("{name}: a curve it drew is gone: {miss}");
+            }
+            if let Some(miss) = covered(&now, old) {
+                panic!("{name}: draws something new: {miss}");
+            }
         }
     }
 }

@@ -64,15 +64,9 @@ impl DriftApp {
         let accent = theme::accent(dark);
         if let Some(g) = ed.open_group
             && let Some(rect) = self.group_rect(map, g)
+            && let Some(tag) = open_group_tag(ed)
         {
-            let name = ed.doc.group(g).map_or("", |x| x.name.as_str());
-            Self::frame(
-                painter,
-                rect,
-                accent,
-                false,
-                &format!("Editing {name} · Esc to finish"),
-            );
+            Self::frame(painter, rect, accent, false, &tag);
         }
         let mut shown = std::collections::BTreeSet::new();
         for id in &ed.selection {
@@ -172,5 +166,32 @@ impl DriftApp {
                 self.block_from_group(g, now);
             }
         });
+    }
+}
+
+/// The tag over the group open for editing (a block being edited is a group named as the
+/// block): "Editing <name> · Esc to finish".
+pub(crate) fn open_group_tag(ed: &Editor) -> Option<String> {
+    let group = ed.doc.group(ed.open_group?)?;
+    Some(format!("Editing {} · Esc to finish", group.name))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// "Editing" once over a block being edited (#354).
+    #[test]
+    fn the_block_edit_tag_says_editing_once() {
+        let mut ed = Editor::new(drift_core::Document::new());
+        let chair = ed.library_block(drift_edit::library::entry("Chair – Desk").expect("chair"));
+        ed.place_instance(chair, drift_core::DVec2::ZERO, 0.0, false);
+        let copy = ed.doc.instances().map(|(id, _)| id).next().unwrap();
+        assert_eq!(open_group_tag(&ed), None);
+        ed.edit_block(copy);
+        assert_eq!(
+            open_group_tag(&ed).as_deref(),
+            Some("Editing Chair – Desk · Esc to finish")
+        );
     }
 }

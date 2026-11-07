@@ -1572,7 +1572,7 @@ fn fill_outlines(
 /// edge comes out as smooth as a line; the fill grows by half a pixel. A ring under a pixel
 /// across, or outside what the painter shows, isn't stroked: nothing would show. Each comes
 /// with whether it is a whole ring (closed) or a run of one's edges.
-fn smooth_edges(p: &egui::Painter, rings: Vec<(Vec<Pos2>, bool)>, color: Color32) {
+pub(crate) fn smooth_edges(p: &egui::Painter, rings: Vec<(Vec<Pos2>, bool)>, color: Color32) {
     let pixel = 1.0 / p.pixels_per_point();
     let stroke = egui::Stroke::new(pixel, color);
     let clip = p.clip_rect();

@@ -303,6 +303,60 @@ fn drawn_capitals_stand_as_high_as_they_print(painter: &egui::Painter) {
     }
 }
 
+/// Past the top of the raster ladder, text is set as filled glyph outlines: a capital H
+/// stands its font's cap height on the galley's baseline, turned with the label, and text
+/// with a character the font lacks keeps the bitmap (which has the fallback font's).
+#[test]
+fn large_text_is_drawn_as_outlines() {
+    let painter = with_drawing_font();
+    let size = 400.0;
+    let galley = painter.layout_no_wrap(
+        "H".into(),
+        crate::fonts::drafting_font(size, false),
+        egui::Color32::WHITE,
+    );
+    let white = egui::Color32::WHITE;
+    let (mesh, rings, _) =
+        crate::annotations::outline_shapes(Pos2::ZERO, &galley, 0.0, white).expect("outlined");
+    let (lo, hi) = mesh
+        .vertices
+        .iter()
+        .fold((f32::MAX, f32::MIN), |(lo, hi), v| {
+            (lo.min(v.pos.y), hi.max(v.pos.y))
+        });
+    let cap = size
+        * drift_draft::font::drawing_font()
+            .unwrap()
+            .regular
+            .cap_ratio() as f32;
+    assert!(
+        ((hi - lo) - cap).abs() < 0.5,
+        "H {} high, cap {cap}",
+        hi - lo
+    );
+    let baseline = galley.rows[0].pos.y + galley.rows[0].row.glyphs[0].pos.y;
+    assert!((hi - baseline).abs() < 0.5, "{hi} vs baseline {baseline}");
+    assert_eq!(rings.len(), 1, "an H is one ring");
+    // Turned a quarter: as wide as it was high.
+    let (turned, _, _) =
+        crate::annotations::outline_shapes(Pos2::ZERO, &galley, std::f32::consts::FRAC_PI_2, white)
+            .unwrap();
+    let (l, r) = turned
+        .vertices
+        .iter()
+        .fold((f32::MAX, f32::MIN), |(l, r), v| {
+            (l.min(v.pos.x), r.max(v.pos.x))
+        });
+    assert!(((r - l) - cap).abs() < 0.5, "turned: {} wide", r - l);
+    let lacking = painter.layout_no_wrap(
+        "H\u{4e2d}".into(),
+        crate::fonts::drafting_font(size, false),
+        white,
+    );
+    assert!(crate::annotations::outline_shapes(Pos2::ZERO, &lacking, 0.0, white).is_none());
+    crate::fonts::reset_screen();
+}
+
 /// A painter whose screen font is a drawing font the drawing keeps (egui's own Ubuntu), the
 /// drawing font set for printing too.
 fn with_drawing_font() -> egui::Painter {

@@ -734,6 +734,150 @@ pub fn scale_galley(galley: &egui::Galley, r: f32) -> egui::Galley {
     g
 }
 
+/// Draw `galley` (laid out at the size it is shown, its top-left corner at `top_left` on
+/// screen, turned by `angle`) as filled glyph outlines in the screen's drawing font, each
+/// letter where the galley put it. `false`, with nothing drawn, when it can't be: the screen
+/// is still on the interface font, or the font lacks one of the characters (the renderer
+/// would have used a fallback font for it).
+pub fn outline_text(
+    painter: &egui::Painter,
+    top_left: Pos2,
+    galley: &egui::Galley,
+    angle: f32,
+    color: Color32,
+) -> bool {
+    let Some((mesh, rings, color)) = outline_shapes(top_left, galley, angle, color) else {
+        return false;
+    };
+    painter.add(egui::Shape::mesh(mesh));
+    // A mesh's edges aren't feathered (and the window has no multisampling): stroke each
+    // ring a pixel wide, as filled outlines elsewhere are, so letters come out smooth.
+    crate::output::smooth_edges(painter, rings, color);
+    true
+}
+
+/// Rings of points on screen, each with whether it is closed.
+pub type Rings = Vec<(Vec<Pos2>, bool)>;
+
+/// The filled mesh of [`outline_text`], its rings (flattened, on screen) and its colour.
+pub fn outline_shapes(
+    top_left: Pos2,
+    galley: &egui::Galley,
+    angle: f32,
+    color: Color32,
+) -> Option<(egui::Mesh, Rings, Color32)> {
+    use lyon_tessellation::math::point;
+    use lyon_tessellation::path::Path;
+    use lyon_tessellation::{BuffersBuilder, FillOptions, FillTessellator, FillVertex};
+
+    let format = &galley.job.sections.first()?.format;
+    let bold = crate::fonts::is_bold(&format.font_id.family);
+    let face = crate::fonts::screen_face(bold)?;
+    // The galley's font size is its em (epaint scales by size over units per em).
+    let em = f64::from(format.font_id.size);
+    let cap = em * face.cap_ratio();
+    let slant = if format.italics {
+        drift_draft::page::ITALIC_SLANT
+    } else {
+        0.0
+    };
+    let color = if format.color == Color32::PLACEHOLDER {
+        color
+    } else {
+        format.color
+    };
+    let rot = egui::emath::Rot2::from_angle(angle);
+    let mut builder = Path::builder();
+    for placed in &galley.rows {
+        for glyph in &placed.row.glyphs {
+            if glyph.chr.is_whitespace() {
+                continue;
+            }
+            let text = glyph.chr.to_string();
+            if face.glyphs(&text).first().is_none_or(|g| g.0 == 0) {
+                return None;
+            }
+            let baseline = placed.pos.to_vec2() + glyph.pos.to_vec2();
+            // Font space is y up: down the screen from the baseline, slanted for italics.
+            let to = |p: DVec2| {
+                let local = vec2((p.x + slant * p.y) as f32, -p.y as f32) + baseline;
+                let s = top_left + rot * local;
+                point(s.x, s.y)
+            };
+            let contours = drift_draft::outline::contours_in(
+                &face.data,
+                face.index,
+                &text,
+                cap,
+                DVec2::ZERO,
+                0.0,
+                0.0,
+            );
+            for contour in contours {
+                let mut open = false;
+                for shape in contour {
+                    match shape {
+                        drift_core::Shape::Line { a, b } => {
+                            if !open {
+                                builder.begin(to(a));
+                                open = true;
+                            }
+                            builder.line_to(to(b));
+                        }
+                        drift_core::Shape::Bezier { p } => {
+                            if !open {
+                                builder.begin(to(p[0]));
+                                open = true;
+                            }
+                            builder.cubic_bezier_to(to(p[1]), to(p[2]), to(p[3]));
+                        }
+                        _ => {}
+                    }
+                }
+                if open {
+                    builder.close();
+                }
+            }
+        }
+    }
+    let path = builder.build();
+    let mut buffers: lyon_tessellation::VertexBuffers<Pos2, u32> = Default::default();
+    // Glyph outlines wind non-zero; a tenth of a point is finer than the eye can tell.
+    let options = FillOptions::non_zero().with_tolerance(0.1);
+    let ok = FillTessellator::new()
+        .tessellate_path(
+            &path,
+            &options,
+            &mut BuffersBuilder::new(&mut buffers, |v: FillVertex| {
+                pos2(v.position().x, v.position().y)
+            }),
+        )
+        .is_ok();
+    if !ok {
+        return None;
+    }
+    let mut mesh = egui::Mesh::default();
+    for p in &buffers.vertices {
+        mesh.colored_vertex(*p, color);
+    }
+    mesh.indices = buffers.indices;
+    let mut rings: Rings = Vec::new();
+    use lyon_tessellation::path::iterator::PathIterator as _;
+    for event in path.iter().flattened(0.1) {
+        use lyon_tessellation::path::Event;
+        match event {
+            Event::Begin { at } => rings.push((vec![pos2(at.x, at.y)], true)),
+            Event::Line { to, .. } => {
+                if let Some((ring, _)) = rings.last_mut() {
+                    ring.push(pos2(to.x, to.y));
+                }
+            }
+            _ => {}
+        }
+    }
+    Some((mesh, rings, color))
+}
+
 /// What text drawn through a [`ZoomPen`] comes to on screen: its galley there, or a faint
 /// bar per line (greeked) when it would be smaller than [`GREEK_PT`].
 pub enum ShownText {
@@ -857,6 +1001,16 @@ impl Pen for ZoomPen<'_> {
                 };
                 let rot = egui::emath::Rot2::from_angle(angle);
                 let at = self.zoom.p(top_left) + rot * (self.zoom.v(base(&galley)) - base(&set));
+                // Past the top of the raster ladder a bitmap would only be stretched: set
+                // the letters as filled outlines instead, sharp at any size.
+                let shown = set
+                    .job
+                    .sections
+                    .first()
+                    .map_or(0.0, |s| s.format.font_id.size);
+                if shown > LADDER_MAX_PT && self.inner.outlined_text(at, &set, angle, color) {
+                    return;
+                }
                 self.inner.text(at, set, angle, color);
             }
             ShownText::Greeked(bars) => {
@@ -1232,6 +1386,17 @@ pub trait Pen {
     );
     /// A picked or hovered outline (screen only).
     fn highlight(&self, rect: Rect, color: Color32);
+    /// Large text as filled glyph outlines (see [`outline_text`]). `false` where this pen
+    /// doesn't draw it so, or can't: the text then comes to [`Pen::text`].
+    fn outlined_text(
+        &self,
+        _top_left: Pos2,
+        _galley: &egui::Galley,
+        _angle: f32,
+        _color: Color32,
+    ) -> bool {
+        false
+    }
 }
 
 impl Pen for egui::Painter {
@@ -1271,6 +1436,16 @@ impl Pen for egui::Painter {
 
     fn highlight(&self, rect: Rect, color: Color32) {
         self.rect_stroke(rect, 2.0, Stroke::new(1.0, color), StrokeKind::Inside);
+    }
+
+    fn outlined_text(
+        &self,
+        top_left: Pos2,
+        galley: &egui::Galley,
+        angle: f32,
+        color: Color32,
+    ) -> bool {
+        outline_text(self, top_left, galley, angle, color)
     }
 }
 

@@ -89,6 +89,17 @@ pub(crate) fn sync_screen(ctx: &egui::Context, editor: &Editor, state: &mut Scre
     }
 }
 
+/// The face annotation text is shown in on screen, when it is the drawing's font (the
+/// standard one included) and the screen's text renderer has it: what large text is
+/// outlined in. `None` while the screen still shows the interface font.
+pub fn screen_face(bold: bool) -> Option<Face> {
+    let (ready, has_bold) = ON_SCREEN.with(Cell::get);
+    if !ready {
+        return None;
+    }
+    drift_draft::font::drawing_font().map(|f| f.face(bold && has_bold).clone())
+}
+
 /// Capital height over the em of the font annotation text is shown in on screen: the
 /// drawing's own once the renderer has it, else the interface font's.
 pub fn screen_cap_ratio() -> f64 {

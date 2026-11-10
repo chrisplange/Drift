@@ -118,3 +118,30 @@ fn smoke_pattern_takes_a_picked_text_along() {
     assert_eq!(at(&h), [2.0]);
     assert!(h.state().drawing.editor.doc.text(text).is_some());
 }
+
+/// #264 (lead 2): picked lines, Shift+D, then Esc during the move leaves the drawing as it
+/// was: the unmoved copy is removed, not left stacked on the originals, and the originals
+/// are picked again.
+#[test]
+fn smoke_shift_d_then_esc_leaves_entity_count_unchanged() {
+    let Some(mut h) = harness() else { return };
+    view(&mut h, DVec2::new(-10.0, -10.0), DVec2::new(50.0, 40.0));
+    let (sides, _) = rectangle(&mut h, DVec2::ZERO, DVec2::new(40.0, 30.0), Fill::No);
+    let picked: std::collections::BTreeSet<_> = sides.iter().copied().collect();
+    h.state_mut().drawing.editor.selection = picked.clone();
+    h.run();
+    let count = |h: &Harness<'_, DriftApp>| h.state().drawing.editor.doc.iter().count();
+    let before = count(&h);
+    h.hover_at(screen(&h, DVec2::new(20.0, 0.0)));
+    h.run();
+    h.key_press_modifiers(EguiModifiers::SHIFT, Key::D);
+    h.run();
+    assert!(count(&h) > before, "duplicated, and being moved");
+    assert!(h.state().tool.is_busy());
+    h.key_press(Key::Escape);
+    h.run();
+    assert_eq!(count(&h), before, "Esc removed the unmoved copy");
+    assert!(!h.state().tool.is_busy());
+    assert_eq!(h.state().drawing.editor.selection, picked);
+    assert!(status(&h).contains("Copy removed"), "{}", status(&h));
+}

@@ -791,7 +791,7 @@ fn the_documented_statements_run() {
         "circle col r 200 at 0,0 fixed\narray studs of col 4 x 1 m up",
         "wall w3 from 8 m,0 to 8 m,6 m thick 200 length 6 m fixed",
         // (w2 drawn off square, so the angle has something to drive.)
-        "wall w1 from 0,0 to 8 m,0 thick 200\nwall w2 from 0,0 to 300,6 m thick 200 left\n\
+        "wall w1 from 0,0 to 8 m,0 thick 200\nwall w2 from 0,0 to 600,6 m thick 200 left\n\
          dim angle w1.left w2.left = 90°",
         // (An arc drawn by its ends has no size of its own to clash with.)
         "arc col centre 0,0 from 200,0 to 0,200\ndim r col = 225",
@@ -799,8 +799,8 @@ fn the_documented_statements_run() {
     ] {
         run(&mut Session::new(), script);
     }
-    let lines = "line a from 0,0 to 4 m,50\nline b from 0,1 m to 4 m,1.1 m\n\
-                 line c from 0,2 m to 3 m,2.05 m\n";
+    let lines = "line a from 0,0 to 4 m,400\nline b from 0,1 m to 4 m,1.45 m\n\
+                 line c from 0,2 m to 3 m,2.3 m\n";
     for relation in [
         "parallel a b",
         "perpendicular a b",
@@ -811,7 +811,7 @@ fn the_documented_statements_run() {
     }
     let shapes = "line a from 0,0 to 4 m,0\ncircle c r 500 at 2 m,520\n\
                   circle c1 r 500 at 6 m,0\ncircle c2 r 300 at 6.02 m,10\n\
-                  line l from 0,3 m to 4 m,3.05 m\nline axis from 2 m,2 m to 2 m,6 m\n\
+                  line l from 0,3 m to 4 m,3.4 m\nline axis from 2 m,2 m to 2 m,6 m\n\
                   point p at 1 m,4 m\npoint q at 3.05 m,4.02 m\n";
     for relation in [
         "tangent a c",

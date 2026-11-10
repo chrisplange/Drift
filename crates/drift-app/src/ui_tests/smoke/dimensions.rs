@@ -353,7 +353,8 @@ fn smoke_dimensions_bare_numbers_in_expressions_follow_the_drawing_unit() {
     h.key_press(Key::Enter);
     h.run();
     assert!(
-        (length(&h, line) - 120.0).abs() < 1e-9,
+        // (Within the solver's bar: a billionth of a quarter of the sketch's size.)
+        (length(&h, line) - 120.0).abs() < 1e-7,
         "{}",
         length(&h, line)
     );
@@ -373,7 +374,7 @@ fn smoke_dimensions_bare_numbers_in_expressions_follow_the_drawing_unit() {
     assert_eq!(ed.doc.expression(d), Some("W + 2 in"));
     h.run();
     assert!(
-        (length(&h, line) - 6.0 * 25.4).abs() < 1e-9,
+        (length(&h, line) - 6.0 * 25.4).abs() < 1e-7,
         "{}",
         length(&h, line)
     );

@@ -968,8 +968,8 @@ fn at_a_fold_case() -> (Plan, Pick, DVec2, u32) {
 /// at one place and not at another (also similarity 6, 16, 17 and 18). See #280.
 /// (`drag_is_invariant_under_similarity_heavy`, seed 20, shrunk with #282's carry.)
 ///
-/// Passes since a drag's solve near the origin judges every stop against the part's size
-/// (the solver's `Yardstick`): both sizes now stop at the same iteration.
+/// Passes since every solve judges its stops against its component's size in the
+/// component's frame (the solver's `Bar`): both sizes stop at the same iteration.
 #[test]
 fn e_result_depends_on_size_at_a_fold() {
     let (plan, pick, offset, steps) = at_a_fold_case();
@@ -1180,10 +1180,10 @@ fn after_277_case() -> (Plan, Pick, DVec2, u32) {
 /// `drag_is_invariant_under_similarity_heavy` seed 5 shrinks to once #277's case (pinned
 /// above, `i_hanging_end_depends_on_size`) is fixed; also similarity 14 and 15's mechanism.
 ///
-/// Passes since a near drag solve judges its stops against the part's size and, once its
-/// rows hold, no longer lets the round-off gain steer the damping (both the solver's
-/// `Yardstick`): the patience cut then falls at the same point at both sizes. Without the
-/// damping part it still fails.
+/// Passes since a drag's solve judges its stops against its component's size (the solver's
+/// `Bar`) and, once its rows hold, no longer lets the round-off gain steer the damping: the
+/// patience cut then falls at the same point at both sizes. Without the damping part it
+/// still fails.
 #[test]
 fn e_result_depends_on_size_after_277() {
     let (plan, pick, offset, steps) = after_277_case();
@@ -1583,12 +1583,12 @@ fn e_result_depends_on_size_arc_ends_meet_scale_and_shift() {
 /// the landing pass closes the rest: 6e-5 apart. No relations at all.
 /// (`drag_is_invariant_under_similarity_heavy`, seed 19.)
 ///
-/// Still fails, by design: the ¼-size copy is a 0.55 mm part 29 mm out, some 54 times its
-/// own size from the origin, so its solves are "far" (the solver's `Yardstick`) and run
-/// today's code line for line, while the 1× copy is near. The far copy's result is main's,
-/// bit for bit.
+/// Failed while a part more than 17.6 times its size out was solved against its coordinates
+/// (the ¼ copy, 54 sizes out) and the 1× copy against its size. Passes since PR 2 of the
+/// solver audit: both are solved in their frames against the same bar, and a dragged point
+/// an ulp off its target counts as landed (`drift_solver`'s `on_target`), so neither takes
+/// a landing pass the other doesn't.
 #[test]
-#[ignore = "#280: a band pair: one copy near the origin, the other far (today's solve)"]
 fn e_result_depends_on_size_patience_and_landing() {
     let plan = Plan {
         ops: vec![Op::Arc {
@@ -1624,11 +1624,10 @@ fn e_result_depends_on_size_patience_and_landing() {
 /// through a point at the circle's own radius). See #280.
 /// (`drag_is_invariant_under_similarity_heavy`, seed 11, after #280's A1.)
 ///
-/// Still fails, by design: the ¼-size copy sits 351 mm out, some 50 times its own size from
-/// the origin, so its solves are "far" (the solver's `Yardstick`) and keep today's code: main
-/// crushes the arc there, as before, while the 1× copy (near) keeps it.
+/// Failed while the ¼ copy (351 mm out, 50 of its sizes) was solved against its coordinates
+/// and crushed the arc, and the 1× copy against its size and kept it. Passes since PR 2 of
+/// the solver audit: both are solved in their frames against the same bar, and keep it.
 #[test]
-#[ignore = "#280: a band pair: one copy near the origin, the other far (today's solve)"]
 fn e_result_depends_on_size_crushed_at_one_size() {
     let plan = Plan {
         ops: vec![
@@ -1721,15 +1720,21 @@ fn tangent_and_parallel_plan() -> Plan {
 /// and from there the two take different halvings and carries. See #280.
 /// (`drag_is_invariant_under_similarity_heavy`, seed 3's own shrunk case on a561c30.)
 ///
-/// Passes at this similarity since near drag solves judge their stops against the part's
-/// size. **Not size-free in general:** at 0.3× and 3.7× it still differs. The frame's 8th
+/// Re-ignored by #381 for failing on Ubuntu only: a fold amplified an ulp of libm into a stop
+/// decision. Un-ignored by PR 2 of the solver audit and re-ignored there for the same reason:
+/// the drag ends on one of two branches some 0.15 mm apart, chosen by its last bits. With its
+/// offset nudged by -6..+6 ulps in x and -3, 0, +3 in y, 8 of the 39 copies end on the other
+/// branch at one size (Windows, PR 2's final build; 15 of 39 at an earlier PR 2 build, about
+/// 21 on main by the audit's probe), and glibc's libm lands on one of them: a branch at a
+/// fold, for PR 3's stop or PR 4's fold awareness. **Not size-free in general:** at 0.3× and
+/// 3.7× it still differed before PR 2. The frame's 8th
 /// solve reaches the same scaled state at both sizes; once its rows hold, the rows' step
 /// from a round-off residual, amplified by the fold's near-singular Jacobian (some 2,300 ε
 /// of the coordinates), is above the part-size bar at one size (it runs to patience) and
 /// below it at the other (it settles). Round-off at a fold, not a yardstick; similarity 3
 /// still fails for it.
 #[test]
-#[ignore = "#280: refused at one size only, on Ubuntu CI by chance (passed on bed7642, failed on 8464d63)"]
+#[ignore = "#280: a branch at a fold chosen by the last bits, 8 of 39 ulp nudges (Windows); fails on Linux (libm). PR 3/PR 4"]
 fn e_result_depends_on_size_tangent_and_parallel() {
     let plan = tangent_and_parallel_plan();
     let t = Similarity {
@@ -2269,10 +2274,10 @@ fn size_free_near_the_origin_at_other_similarities() {
 /// Similarity 4's shrunk case: an arc whose centre a 14 mm drag of two curves flings metres
 /// away. Main flings it in exact proportion at every size (8.8 m at 1×), so the property held;
 /// a near solve flings it less (0.68 m at 1×) but not in proportion (also at 3.7×, both copies
-/// near), and the ¼ copy, 305 mm out (38 part-sizes), is far and main's bit for bit. Round-off
-/// at a degenerate fold, and a band pair. See #280.
+/// near), and the ¼ copy, 305 mm out (38 part-sizes), was far and main's bit for bit. Round-off
+/// at a degenerate fold, and a band pair. See #280. Passes since PR 2 of the solver audit:
+/// both copies are solved in their frames against the same bar.
 #[test]
-#[ignore = "#280: round-off at a degenerate fold (and a band pair at ¼ size, 305 mm out)"]
 fn e_result_depends_on_size_flung_centre() {
     let plan = Plan {
         ops: vec![
@@ -2326,9 +2331,9 @@ fn e_result_depends_on_size_flung_centre() {
 /// solve lands a deformed member of the shape's family (points moving 0.06 to 13.8 mm) where
 /// main, and the same drag at the origin, carry the part rigidly 18.9 mm with the pointer: a
 /// branch choice at the edge, not a stall (holding its capped solve changes nothing). See
-/// #280.
+/// #280. Passes since PR 2 of the solver audit, which deleted that edge: every solve is in
+/// its component's frame against one bar, at any distance from the origin.
 #[test]
-#[ignore = "#280: a branch choice at the hand-over (17.1 part-sizes out), 19 mm on the last frame"]
 fn e_result_depends_on_size_at_the_hand_over() {
     let plan = Plan {
         ops: vec![
@@ -2478,79 +2483,6 @@ fn e_result_depends_on_size_crawl_at_the_cap() {
     .unwrap();
 }
 
-/// Every solve of a drag frame is judged against one part size, the part's as the frame
-/// began (`DragFrame::size`: the part as the frame's first solve starts from it, the dragged
-/// points at their targets, never a retake's), however its retakes and steps fling the
-/// geometry:
-/// `tangent_and_parallel`'s drag, whose one frame takes dozens of solves (the arc flung to
-/// metres mid-try), reads one size in every solve. (Read per solve, its sizes ran from 7 mm to
-/// 610 m within the frame, each judged "near" by its own.)
-#[test]
-fn every_solve_of_a_frame_reads_the_frames_size() {
-    let sketch = tangent_and_parallel_plan().sketch().unwrap();
-    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
-    let ids = Pick::Curves(9929081795026096183).ids(&built);
-    let dragged: Vec<Param> = built
-        .ed
-        .doc
-        .defining_points(ids.iter().copied())
-        .into_iter()
-        .flat_map(Param::point)
-        .collect();
-    // The part as the frame's first solve starts from it: the dragged points moved by the
-    // frame's offset, the rest where the frame found them. Twice its farthest point from its
-    // points' middle (it has arcs, no circles), as the solver's `drawing_across` reads it.
-    let offset = DVec2::new(15.457267808482761, -17.270854180887095);
-    let moved: std::collections::HashSet<EntityId> = built
-        .ed
-        .doc
-        .defining_points(ids.iter().copied())
-        .into_iter()
-        .collect();
-    let points: Vec<DVec2> = built
-        .ed
-        .doc
-        .iter()
-        .filter(|(_, e)| e.kind.is_point())
-        .map(|(id, _)| {
-            built.ed.doc.point(id).unwrap()
-                + if moved.contains(&id) {
-                    offset
-                } else {
-                    DVec2::ZERO
-                }
-        })
-        .collect();
-    let middle = points.iter().sum::<DVec2>() / points.len() as f64;
-    let start = 2.0
-        * points
-            .iter()
-            .map(|p| p.distance(middle))
-            .fold(0.0, f64::max);
-    built.ed.doc.begin();
-    built.ed.drag_sizes = Some(Vec::new());
-    built.ed.drag(
-        &ids,
-        DVec2::new(15.457267808482761, -17.270854180887095),
-        &dragged,
-    );
-    let sizes: Vec<Option<f64>> = built
-        .ed
-        .drag_sizes
-        .as_ref()
-        .unwrap()
-        .iter()
-        .map(|s| s.0)
-        .collect();
-    assert!(sizes.len() >= 3, "only {} solves", sizes.len());
-    assert!(
-        sizes[0].is_some_and(|a| (a - start).abs() <= 1e-12 * start),
-        "{:?}, the starting part {start}",
-        sizes[0]
-    );
-    assert!(sizes.iter().all(|a| *a == sizes[0]), "{sizes:?}");
-}
-
 /// No stall is read as landed, at any size: the drag of `crawl_at_the_cap`, whose near solves
 /// crawl at a fold and stop at the iteration cap a hair off the part-size bar (15 times in its
 /// frames), at 0.1×, 1× and 10× about the origin. Every frame that goes meets every relation,
@@ -2572,90 +2504,6 @@ fn no_stall_is_read_as_landed_at_any_size() {
             panic!("{scale}×: {e}");
         }
     }
-}
-
-/// A drag census case 10 m from the origin, its part some 100 times its own size out, so
-/// every solve of every frame is far and today's: none is judged by the part's size, not
-/// even the landing pass of a frame's first solve after its run has flung a point some
-/// 0.9 m (read afresh there, the flung geometry measured 889 mm, a "near" part). It reads the
-/// size its run began with.
-#[test]
-fn a_landing_pass_reads_the_size_its_solve_began_with() {
-    let plan = Plan {
-        ops: vec![
-            Op::OnLine {
-                line: 45,
-                at: 0,
-                angle: 10,
-                len: 1,
-            },
-            Op::Arc {
-                from: 27,
-                angle: 10,
-                radius: 0,
-                sweep: 0,
-                ccw: true,
-            },
-            Op::Step {
-                from: 38,
-                angle: 1,
-                len: 3,
-            },
-            Op::OnLine {
-                line: 8,
-                at: 2,
-                angle: 15,
-                len: 2,
-            },
-            Op::Tangent {
-                arc: 29,
-                end: false,
-                forward: true,
-                len: 1,
-            },
-            Op::Step {
-                from: 48,
-                angle: 19,
-                len: 3,
-            },
-            Op::Tangent {
-                arc: 3,
-                end: false,
-                forward: false,
-                len: 2,
-            },
-        ],
-        extras: vec![
-            false, true, false, false, false, false, false, true, true, false, true, true, false,
-            true, false, false, true, false, false, true, false, true, false, true, false, true,
-            true, false, false, false, true, false, true, false, true, false, false, true, true,
-            true, false, true, false, true, false, true, false, false,
-        ],
-        fix: None,
-        length: None,
-    };
-    let sketch = plan.sketch().unwrap();
-    let t = Similarity {
-        scale: 1.0,
-        turn: 0.0,
-        shift: DVec2::new(7071.0, 7071.0),
-    };
-    let mut built = Built::new(&sketch, t).unwrap();
-    let ids = Pick::Curves(9750649514805135734).ids(&built);
-    built.ed.drag_sizes = Some(Vec::new());
-    drag(
-        &mut built,
-        &ids,
-        DVec2::new(0.6120504876783168, -14.22643746812479),
-        16,
-    )
-    .unwrap();
-    let sizes = built.ed.drag_sizes.as_ref().unwrap();
-    assert!(!sizes.is_empty());
-    assert!(
-        sizes.iter().all(|(_, near, _, _)| !near),
-        "a solve judged near: {sizes:?}"
-    );
 }
 
 /// Similarity seed 15's shrunk case at 3.7×, near the origin at both sizes: a frame refused
@@ -2723,4 +2571,39 @@ fn e_result_depends_on_size_patience_cut_at_one_size() {
         t,
     ))
     .unwrap();
+}
+
+/// No solve of a drag frame is held looser than the frame's first, however its retakes and
+/// steps fling the geometry (`DragFrame::first_bar`, passed as `SolveOptions::bar_cap`; the
+/// guard of #280's `every_solve_of_a_frame_reads_the_frames_size`, restored for PR 2's bars):
+/// `tangent_and_parallel`'s drag, whose one frame takes dozens of solves with its arc flung
+/// to hundreds of metres mid-try. (Read from each solve's own start, its bars ran from 1e-8 to
+/// 1.9e-4, a part 770 m across.)
+#[test]
+fn no_solve_of_a_frame_is_held_looser_than_its_first() {
+    let sketch = tangent_and_parallel_plan().sketch().unwrap();
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let ids = Pick::Curves(9929081795026096183).ids(&built);
+    let dragged: Vec<Param> = built
+        .ed
+        .doc
+        .defining_points(ids.iter().copied())
+        .into_iter()
+        .flat_map(Param::point)
+        .collect();
+    built.ed.doc.begin();
+    built.ed.drag_bars = Some(Vec::new());
+    built.ed.drag(
+        &ids,
+        DVec2::new(15.457267808482761, -17.270854180887095),
+        &dragged,
+    );
+    let bars = built.ed.drag_bars.take().unwrap();
+    assert!(bars.len() >= 10, "only {} solves", bars.len());
+    assert!(
+        bars.iter().all(|&b| b <= bars[0]),
+        "first {:e}, coarsest {:e}",
+        bars[0],
+        bars.iter().copied().fold(0.0, f64::max)
+    );
 }

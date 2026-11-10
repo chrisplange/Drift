@@ -202,7 +202,8 @@ fn the_offset_follows_its_source_and_adds_no_freedom() {
     let before: Vec<EntityId> = pieces(&ed, x);
     // The plate grows: the offset follows, same pieces.
     ed.set_variable(w, "100").unwrap();
-    assert_eq!(ed.doc.point(p1).unwrap(), v(100.0, 0.0));
+    // (Within the solver's bar: a billionth of a quarter of the plate's size.)
+    assert!(ed.doc.point(p1).unwrap().distance(v(100.0, 0.0)) < 1e-7);
     assert!(all_at(&gaps(&ed, x), 3.0), "{:?}", gaps(&ed, x));
     assert_eq!(pieces(&ed, x), before, "the same curves, moved");
     let right =
@@ -210,7 +211,7 @@ fn the_offset_follows_its_source_and_adds_no_freedom() {
     let Some(Shape::Line { a, .. }) = ed.doc.shape(right) else {
         unreachable!()
     };
-    assert!((a.x - 103.0).abs() < 1e-9, "{a}");
+    assert!((a.x - 103.0).abs() < 1e-7, "{a}");
     // One undo step puts both back.
     assert!(ed.undo());
     assert_eq!(ed.doc.point(p1).unwrap(), v(60.0, 0.0));
@@ -603,8 +604,9 @@ fn a_circles_and_an_ellipses_offset_add_no_freedom_and_follow() {
     };
     assert!((r(&ed) - 23.0).abs() < 1e-9);
     ed.set_dimension_text(radius, "30").unwrap();
+    // (Within the solver's bar: a billionth of a quarter of the sketch's size.)
     assert!(
-        (r(&ed) - 33.0).abs() < 1e-9,
+        (r(&ed) - 33.0).abs() < 1e-7,
         "follows the radius: {}",
         r(&ed)
     );

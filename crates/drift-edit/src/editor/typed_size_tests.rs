@@ -134,7 +134,8 @@ fn a_held_end_falls_back_to_the_solve_as_before() {
     unpick(&mut ed);
     ed.set_dimension_text(d, "40").unwrap();
     assert_eq!(at(&ed, q), q0);
-    assert!((at(&ed, p).distance(q0) - 40.0).abs() < 1e-9);
+    // (Within the solver's bar: a billionth of a quarter of the sketch's size.)
+    assert!((at(&ed, p).distance(q0) - 40.0).abs() < 1e-7);
     // (Fixed fully, as an old file can have it: Fix itself pins only what is still free.)
     let p0 = at(&ed, p);
     ed.doc.begin();

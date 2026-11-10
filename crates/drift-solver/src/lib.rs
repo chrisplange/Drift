@@ -28,6 +28,7 @@ pub use crate::incremental::{AnalysisCache, analyze_cached};
 pub use crate::lowering::{Lowered, Lowering, Relations, relations};
 pub use crate::system::{TouchingEnds, touching_ends};
 
+use crate::equations::Equation;
 use crate::linalg::{Matrix, rref};
 use crate::sparse::{Dd, Skyline, qr_rank};
 use crate::system::{EntityShape, Shape, System};
@@ -50,19 +51,34 @@ impl Param {
     }
 }
 
-/// Convergence tolerances.
+/// Convergence tolerances: the bar every stop of a solve is measured against (see `Bar`).
 #[derive(Clone, Copy, Debug)]
 pub struct Tolerances {
-    /// Length residual tolerance, relative to the magnitude of the coordinates involved.
+    /// Length tolerance, as a share of a quarter of the size of the component it is read in
+    /// (a length row, a step, a kept shape). Never below [`FLOOR_ULPS`] ulps of the stored
+    /// coordinates.
     pub length: f64,
     /// Angle residual tolerance (a sine).
     pub angle: f64,
 }
 
+/// The solver's own length tolerance ([`Tolerances::length`]): a billionth of a quarter of
+/// a component's size, 2.5 pm on a 10 mm part, 0.25 nm on a 1 m one. Far below anything
+/// drawn or exported, and far above round-off in the component's frame, so the same drag
+/// stops at the same step at any size and at any place up to about a million of its sizes
+/// from the origin (decision 2 of the solver audit).
+pub const BAR: f64 = 1e-9;
+
+/// A length bar never goes below this many ε of the largest stored coordinate it reads:
+/// geometry is stored in absolute coordinates between solves, so a row read from storage is
+/// off by a few ulps of them whatever a solve left. [`BAR`] of a part's size only meets this
+/// about a million part-sizes from the origin.
+pub const FLOOR_ULPS: f64 = 8.0;
+
 impl Default for Tolerances {
     fn default() -> Self {
         Self {
-            length: 1e-12,
+            length: BAR,
             angle: 1e-12,
         }
     }
@@ -132,17 +148,12 @@ pub struct SolveOptions {
     /// other solve is as it was. (A drag takes these steps only as a last resort, where its
     /// move can always land: see `Editor::drag`.)
     pub fold: bool,
-    /// This is one connected part's solve in a drag's frame (`Editor::drag`): only such a
-    /// solve may be judged by the part's size near the origin (see the solver's
-    /// `Yardstick`). Every other solve, a commit's or one over several parts among them, is
-    /// judged as it always was.
-    pub drag_part: bool,
-    /// With [`drag_part`](Self::drag_part): the part's size as the frame's first solve read
-    /// it ([`SolveReport::drag_size`]), so that every solve of one frame (its retakes,
-    /// landing passes and tries) judges itself against one size, not against wherever a try
-    /// has flung the geometry. `None`: the solve's own size, read where it starts. (How a drag's solve uses it: near the origin every stop is
-    /// judged against a quarter of this size; see the solver's `Yardstick`.)
-    pub drag_size: Option<f64>,
+    /// The coarsest length bar any component of this solve may be held to: a drag frame's
+    /// later solves pass the bar its first solve was held to ([`SolveReport::bar`]), so a
+    /// solve that begins from geometry a try has flung (a frame's arc thrown metres out mid-try
+    /// would make a part metres across) is never held looser than the part as the frame began.
+    /// A component's own finer bar stands. `None`: each component's own.
+    pub bar_cap: Option<f64>,
 }
 
 /// How completely an entity's position is determined by constraints.
@@ -207,95 +218,364 @@ pub struct SolveReport {
     pub dof: Option<usize>,
     /// Per-entity definition state (with [`SolveOptions::analyze`]).
     pub definitions: HashMap<EntityId, Definition>,
-    /// For a drag frame's solve ([`SolveOptions::drag_part`]): the part's size it was judged
-    /// against (see [`SolveOptions::drag_size`]), for the frame's later solves to read.
-    pub drag_size: Option<f64>,
-    /// Some pass of the solve (its run or a landing pass) was judged by the part's size, near
-    /// the origin, rather than as solves always were.
-    pub drag_near: bool,
-    /// How many of its near components were cut by `SETTLE_PATIENCE` still moving, with
-    /// their rows holding only the part-size bar and not today's: each is reported unfinished,
-    /// not converged (see the solver's `Yardstick`).
-    pub drag_cut_short: usize,
-    /// How many of its near components ran to the iteration cap and were counted converged
-    /// with their rows holding the part-size bar but not today's (the looseness a size-free
-    /// bar allows near the origin; not cut short).
-    pub drag_capped_loose: usize,
+    /// The length bar the components holding a dragged or carried parameter were solved to
+    /// (see `Bar`), the coarsest of them; for a solve with none dragged, the coarsest of all
+    /// its components; zero for a solve with no component. A drag reads whether it landed
+    /// against it ([`landed_within`]), as the solver's own landing test reads each dragged
+    /// parameter's component's bar.
+    pub bar: f64,
 }
 
-/// What "small enough" is measured against: how far off a row may be and still hold, how
-/// far a step may move and still be no move, how far off a kept shape may be and still be
-/// met.
+/// What a component's stops are measured against: how far off a length row may be and still
+/// hold, how far a step may move and still be no move, how far off a kept shape may be and
+/// still be met (all [`length`](Self::length)), and how far off an angle row, a sine, may be
+/// ([`angle`](Self::angle)).
 ///
-/// Every solve but one kind reads these against the coordinates involved, tol·max(1, |c|),
-/// as it always has. That makes the same drag finish at different iterations at different
-/// sizes and places, and where a solve is cut mid-crawl (at a fold, or by
-/// `SETTLE_PATIENCE`) its result moves with the drawing (#280). So a drag's solve that is
-/// **near** the origin measures every one of them against a quarter of the part's size, A/4,
-/// the same however big the part is or wherever it sits: its iterations, and so where it is
-/// cut, are then the same at every size and place.
+/// Every solve, a drag's, a commit's or an analysis's, reads one bar per component (see
+/// [`Frame`]): [`Tolerances::length`] of a quarter of the component's size, A/4, in place of
+/// a share of the coordinates involved. So the same drag runs the same iterations, and stops
+/// at the same step, however big the part is and wherever it sits (#280, #366); and a part
+/// far from the origin is held to its own size, not to its coordinates, in a frame where its
+/// angle rows can be met (#387). The component's size is what it draws (see
+/// [`Frame::enter`]). Its length bar never goes below [`FLOOR_ULPS`] ε of the largest stored
+/// value the component reads, what storage rounding leaves between solves: [`BAR`] of a
+/// part's size meets that floor only about a million part-sizes out.
 ///
-/// **Near** is decided once per solve: the part's size A (see [`SolveOptions::drag_size`],
-/// else [`drawing_across`] with circles counted) gives a bar of tol·A/4, and that bar must
-/// stay at least [`NEAR_FLOOR`] ε above the largest coordinate of the part's points, where a
-/// residual's round-off sits:
-///
-/// tol·A/4 ≥ 64 ε |c|max  ⇔  |c|max ≤ 17.6 A   (tol = 1e-12)
-///
-/// **Far** from that (a part more than about 17.6 times its own size from the origin) the
-/// solve is today's, line for line: the size-free bar would sit below what its residuals can
-/// reach, and the user's answer for such drags was "far out unchanged". 64 ε is not derived:
-/// it is the widest floor the drag census showed solves reach (ρ 16, 64, 256 measured; at 16
-/// the census gained new stops 1–3 m out, at 256 most of the fix was lost), and one census
-/// drag at 17.1 part-sizes still stalled at 175 ε. It is the floor the editor already treats
-/// as round-off (`breaks_held_shape`, the length try's slack).
-///
-/// Near the origin the bar is looser than today's for rows within A/4 of the origin (a part
-/// over 4 mm across), and tighter for rows farther out: tol/4 of the part's size either way.
-/// Non-drag solves, and [`unmet`] and [`meets_within`], always read today's.
+/// An angle row keeps its unitless bar, which its frame makes reachable, but read from storage
+/// a line's direction is known only to the floor over its length, so that is its floor. It
+/// takes over from the unitless bar about 560 lengths of the row's shorter line out (5.6 m for
+/// a 10 mm line), and inside a solve too: **an edge in where a solve with angle rows stops,
+/// well inside a million part-sizes**, left for PR 3 of the solver audit (applied only to
+/// stored values, it moved two size-free pins).
 #[derive(Clone, Copy, Debug)]
-struct Yardstick {
-    /// A/4 in a near drag solve; `None` for today's, tol·max(1, |c|).
-    quarter: Option<f64>,
+struct Bar {
+    length: f64,
+    angle: f64,
+    /// [`FLOOR_ULPS`] ε of the largest stored value the component reads.
+    floor: f64,
 }
 
-/// See [`Yardstick`]: the size-free bar must stay this many ε of the part's largest coordinate
-/// above zero for a drag's solve to be judged by the part's size.
-const NEAR_FLOOR: f64 = 64.0;
+impl Bar {
+    /// For geometry `size` across (see [`extent`]) whose stored values reach `largest`.
+    fn new(size: f64, largest: f64, tol: &Tolerances) -> Self {
+        let share = if size.is_finite() {
+            tol.length * size / 4.0
+        } else {
+            0.0
+        };
+        let floor = FLOOR_ULPS * f64::EPSILON * largest;
+        Self {
+            length: share.max(floor),
+            angle: tol.angle,
+            floor,
+        }
+    }
+}
 
-impl Yardstick {
-    /// Today's: every test against the coordinates it reads.
-    const TODAY: Self = Self { quarter: None };
+/// How far geometry is across, and its middle: twice its farthest point from the points'
+/// middle, a circle counting as far as it reaches (its centre's distance from the middle
+/// plus its radius). The same however the geometry is turned or wherever it is. Zero for a
+/// single point.
+fn extent(points: &[DVec2], circles: &[(Option<DVec2>, f64)]) -> (DVec2, f64) {
+    let middle = points.iter().sum::<DVec2>() / points.len().max(1) as f64;
+    let mut size = points
+        .iter()
+        .map(|p| p.distance(middle))
+        .fold(0.0, f64::max);
+    for &(center, r) in circles {
+        let reach = center.map_or(0.0, |c| c.distance(middle)) + r.abs();
+        size = size.max(reach);
+    }
+    (middle, 2.0 * size)
+}
 
-    /// A drag's solve over `sys` from `values`: near or far as [`Yardstick`] says. `size` is
-    /// the part's size read at the frame's start, if known; otherwise the solve's own.
-    fn for_drag(sys: &System, values: &[f64], size: Option<f64>, tol: &Tolerances) -> (Self, f64) {
-        let a = size.unwrap_or_else(|| drawing_across(sys, values, true));
-        let largest = sys
-            .params
+/// How far a point stored at `target` may be from it and still have landed, for a solve whose
+/// length bar was `bar` ([`SolveReport::bar`]): the bar, never below its floor of ulps of the
+/// stored coordinates (a point reached in steps rather than set is at its target only to
+/// rounding). What the editor asks whether a drag landed with (`Editor::landed`,
+/// `breaks_held_shape`), so it measures with the solver's bar rather than one of its own.
+pub fn landed_within(bar: f64, target: DVec2) -> f64 {
+    bar.max(FLOOR_ULPS * f64::EPSILON * target.abs().max_element())
+}
+
+/// Which way a group moves when its geometry is translated: x, y, or not at all (a radius).
+fn axis_of(sys: &System, g: usize) -> Option<usize> {
+    match sys.params[*sys.groups[g].members.first()?] {
+        Param::X(_) | Param::MidX(_) => Some(0),
+        Param::Y(_) | Param::MidY(_) => Some(1),
+        Param::Radius(_) => None,
+    }
+}
+
+/// What a component's size is measured by, found once per pass over a system (see
+/// [`Frame::enter`]): each circle's centre, by the circle, and each arc of
+/// [`System::arcs`], by the groups of its ends.
+struct Drawn {
+    centres: HashMap<EntityId, EntityId>,
+    arcs_by_group: HashMap<usize, Vec<usize>>,
+}
+
+impl Drawn {
+    fn of(sys: &System) -> Self {
+        let centres = sys
+            .entities
             .iter()
-            .enumerate()
-            .filter(|(_, p)| matches!(p, Param::X(_) | Param::Y(_)))
-            .map(|(i, _)| values[sys.group_of[i]].abs())
-            .fold(0.0, f64::max);
-        let near =
-            a.is_finite() && a > 0.0 && tol.length * a / 4.0 >= NEAR_FLOOR * f64::EPSILON * largest;
-        (
-            Self {
-                quarter: near.then_some(a / 4.0),
-            },
-            a,
-        )
+            .filter_map(|(id, shape)| match shape {
+                EntityShape::Curve(points, Some(r)) if r == id => Some((*id, *points.first()?)),
+                _ => None,
+            })
+            .collect();
+        let mut arcs_by_group: HashMap<usize, Vec<usize>> = HashMap::new();
+        for (a, [_, start, end]) in sys.arcs.iter().enumerate() {
+            for p in [Param::X(*start), Param::X(*end)] {
+                if let Some(&i) = sys.param_index.get(&p) {
+                    arcs_by_group.entry(sys.group_of[i]).or_default().push(a);
+                }
+            }
+        }
+        Self {
+            centres,
+            arcs_by_group,
+        }
+    }
+}
+
+/// Points along an arc from `start` counter-clockwise to `end` about `center`, at a quarter,
+/// half and three quarters of its sweep: with its ends, what it reaches as drawn, to within
+/// a few per cent of its radius (a whole circle's sweep where its ends meet). Built from
+/// bisectors of unit vectors, with square roots only: no trigonometry, whose last bits differ
+/// between platforms' maths libraries, and would make a part's size, and so where a drag at a
+/// fold stops, depend on the platform (`tangent_and_parallel` on Linux).
+fn along_arc(center: DVec2, start: DVec2, end: DVec2) -> [DVec2; 3] {
+    let (u, w) = (start - center, end - center);
+    let r = u.length();
+    let unit = |v: DVec2| v / v.length();
+    let (a, b) = (unit(u), unit(w));
+    // The bisector of two directions less than a half turn apart (counter-clockwise from the
+    // first), and the direction a quarter turn on from one.
+    let half = |a: DVec2, b: DVec2| {
+        let sum = a + b;
+        if sum.length() > 1e-12 {
+            unit(sum)
+        } else {
+            a.perp()
+        }
+    };
+    // The arc's middle: on the bisector of its ends' directions, on the side its sweep goes
+    // (a quarter turn on where they are opposite, whichever side rounding puts them; opposite
+    // its start where they meet, a whole circle).
+    let cross = a.perp_dot(b);
+    let middle = if (a + b).length() <= 1e-12 {
+        a.perp()
+    } else if cross > 0.0 {
+        half(a, b)
+    } else if cross < 0.0 {
+        -half(a, b)
+    } else {
+        -a
+    };
+    [half(a, middle), middle, half(middle, b)].map(|d| center + d * r)
+}
+
+/// A component's own frame (#280, #366, #387): its geometry translated so that its middle is
+/// at the origin, and the [`Bar`] its stops are measured against.
+///
+/// Geometry is stored in absolute coordinates, so a part far from the origin carried the
+/// round-off of its place into every residual, step and stop, and the same drag came out
+/// differently there. In its frame a component's coordinates are about its own size wherever
+/// it is. The shift is the middle rounded to a multiple of the largest power of two not over
+/// the component's size, so translating in is exact (each value less the shift is a
+/// difference on that power of two's grid), and a value the solve leaves as it found it goes
+/// back as it was stored, bit for bit: a solve whose rows already hold writes nothing.
+struct Frame {
+    /// Each translated group: its value as stored, and the shift taken off it.
+    moved: Vec<(usize, f64, f64)>,
+    bar: Bar,
+}
+
+impl Frame {
+    /// Translate `groups` (a component's unknowns and every pinned group its rows and kept
+    /// shapes read, each once) into their frame, in `values`. `asked` is the longest length
+    /// its rows ask for, which counts towards its size: a line dimensioned at 100 is a part
+    /// 100 across once solved, however short it was drawn.
+    ///
+    /// Its size is what it draws: its points (each point an arc only centres on left out), an
+    /// arc's ends and points along it, and each circle's reach. A nearly straight arc with a
+    /// 10 mm chord and a 10 km radius is a part some 10 mm across, not 20 km (counted, its
+    /// centre made the bar a thousand times coarser than the arc's, and a 0.003 mm misfit
+    /// beside it "held"). Its centre still counts towards the floor of ulps: the rows read its
+    /// stored coordinates.
+    fn enter(
+        sys: &System,
+        groups: &[usize],
+        asked: f64,
+        values: &mut [f64],
+        tol: &Tolerances,
+        drawn: &Drawn,
+    ) -> Self {
+        let group = |p: Param| sys.param_index.get(&p).map(|&i| sys.group_of[i]);
+        let value = |p: Param| group(p).map(|g| values[g]);
+        let mut ids: Vec<(EntityId, bool)> = Vec::new();
+        let mut radii: Vec<EntityId> = Vec::new();
+        let mut largest = 0.0f64;
+        for &g in groups {
+            largest = largest.max(values[g].abs());
+            for &i in &sys.groups[g].members {
+                match sys.params[i] {
+                    Param::X(id) | Param::Y(id) => ids.push((id, false)),
+                    Param::MidX(id) | Param::MidY(id) => ids.push((id, true)),
+                    Param::Radius(id) => radii.push(id),
+                }
+            }
+        }
+        radii.sort_unstable();
+        radii.dedup();
+        // (One point per pair of groups: points that substitution merged, a point held on
+        // another, are one point of the component, however many entities they were.)
+        let mut pairs: Vec<(usize, usize)> = ids
+            .iter()
+            .filter(|&&(id, mid)| mid || !sys.centres_only.contains(&id))
+            .filter_map(|&(id, mid)| {
+                let (x, y) = if mid {
+                    (Param::MidX(id), Param::MidY(id))
+                } else {
+                    (Param::X(id), Param::Y(id))
+                };
+                Some((group(x)?, group(y)?))
+            })
+            .collect();
+        pairs.sort_unstable();
+        pairs.dedup();
+        let mut points: Vec<DVec2> = pairs
+            .iter()
+            .map(|&(x, y)| DVec2::new(values[x], values[y]))
+            .collect();
+        let mut arcs: Vec<usize> = groups
+            .iter()
+            .filter_map(|g| drawn.arcs_by_group.get(g))
+            .flatten()
+            .copied()
+            .collect();
+        arcs.sort_unstable();
+        arcs.dedup();
+        let point = |id: EntityId| Some(DVec2::new(value(Param::X(id))?, value(Param::Y(id))?));
+        for a in arcs {
+            let [c, s, e] = sys.arcs[a];
+            if let (Some(c), Some(s), Some(e)) = (point(c), point(s), point(e)) {
+                points.extend(along_arc(c, s, e).into_iter().filter(|p| p.is_finite()));
+            }
+        }
+        let circles: Vec<(Option<DVec2>, f64)> = radii
+            .iter()
+            .filter_map(|&id| {
+                let center = drawn
+                    .centres
+                    .get(&id)
+                    .and_then(|&c| Some(DVec2::new(value(Param::X(c))?, value(Param::Y(c))?)));
+                Some((center, value(Param::Radius(id))?))
+            })
+            .collect();
+        let (middle, size) = extent(&points, &circles);
+        let size = size.max(asked);
+        let bar = Bar::new(size, largest, tol);
+        let mut moved = Vec::new();
+        if size.is_finite() && size > 0.0 && middle.is_finite() {
+            let grid = size.log2().floor().exp2();
+            let shift = [
+                (middle.x / grid).round() * grid,
+                (middle.y / grid).round() * grid,
+            ];
+            for &g in groups {
+                if let Some(axis) = axis_of(sys, g)
+                    && shift[axis] != 0.0
+                {
+                    moved.push((g, values[g], shift[axis]));
+                    values[g] -= shift[axis];
+                }
+            }
+        }
+        Self { moved, bar }
     }
 
-    fn near(&self) -> bool {
-        self.quarter.is_some()
+    /// Translate back into storage: a value the solve changed is shifted back, one it left as
+    /// it found it is put back exactly as it was stored.
+    fn leave(self, values: &mut [f64]) {
+        for (g, stored, shift) in self.moved {
+            values[g] = if values[g] == stored - shift {
+                stored
+            } else {
+                values[g] + shift
+            };
+        }
     }
+}
 
-    /// The scale a length test reads, for coordinates of magnitude `c`.
-    fn scale(&self, c: f64) -> f64 {
-        self.quarter.unwrap_or(c.max(1.0))
+/// What a component reads besides its unknowns: the indices of the kept shapes over any of
+/// them ([`System::keep`]), every group its rows and those shapes read (its unknowns among
+/// them, each once), and the longest length its rows ask for (see [`Frame::enter`]).
+fn reach(sys: &System, unknowns: &[usize], rows: &[usize]) -> (Vec<usize>, Vec<usize>, f64) {
+    let own: HashSet<usize> = unknowns.iter().copied().collect();
+    let shapes: Vec<usize> = if own.is_empty() {
+        Vec::new()
+    } else {
+        (0..sys.keep.len())
+            .filter(|&s| {
+                sys.keep[s]
+                    .params()
+                    .iter()
+                    .any(|p| own.contains(&sys.group_of[*p]))
+            })
+            .collect()
+    };
+    let mut groups: Vec<usize> = unknowns.to_vec();
+    let mut asked = 0.0f64;
+    for &r in rows {
+        let eq = &sys.rows[r].equation;
+        groups.extend(eq.params().into_iter().map(|p| sys.group_of[p]));
+        if let Some(length) = eq.length_asked() {
+            asked = asked.max(length.abs());
+        }
     }
+    for &s in &shapes {
+        groups.extend(sys.keep[s].params().iter().map(|p| sys.group_of[*p]));
+    }
+    groups.sort_unstable();
+    groups.dedup();
+    (shapes, groups, asked)
+}
+
+/// Whether each row of `sys` holds where the geometry stands, as a solve judges it: in its
+/// component's frame, against that component's bar; a row over pinned geometry alone (one
+/// of `constant_rows`) in its own. False for a residual that isn't a number.
+fn rows_holding(
+    sys: &System,
+    comps: &[Component],
+    constant_rows: &[usize],
+    tol: &Tolerances,
+) -> Vec<bool> {
+    let mut values: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
+    let drawn = Drawn::of(sys);
+    let mut holds = vec![true; sys.rows.len()];
+    let mut grad = Vec::new();
+    let mut judge = |unknowns: &[usize], rows: &[usize], values: &mut [f64]| {
+        let (_, groups, asked) = reach(sys, unknowns, rows);
+        let frame = Frame::enter(sys, &groups, asked, values, tol, &drawn);
+        for &r in rows {
+            grad.clear();
+            let res = sys.rows[r]
+                .equation
+                .eval(&|p| values[sys.group_of[p]], &mut grad);
+            holds[r] = res.abs() <= row_tolerance(sys, r, frame.bar, values);
+        }
+        frame.leave(values);
+    };
+    for &r in constant_rows {
+        judge(&[], &[r], &mut values);
+    }
+    for comp in comps {
+        judge(&comp.unknowns, &comp.rows, &mut values);
+    }
+    holds
 }
 
 /// The most iterations a component's Newton solve runs.
@@ -335,6 +615,12 @@ const FELT_ROUND_OFF: f64 = 1e-14;
 /// times its offset away. (Without the bound the heavy drag properties creep and fling.)
 const SETTLE_PATIENCE: usize = 10;
 
+/// What share of the bar a drag's solve cut by [`SETTLE_PATIENCE`] must hold its rows to,
+/// to count as converged (fallback (b) of #377; see `newton`): a thousandth, so the cut is
+/// held to 1e-12 of a quarter of the part's size, the share of the coordinates it was held to
+/// before the frame. Deleted with patience itself (PR 3 of the solver audit).
+const PATIENCE_SHARE: f64 = 1e-3;
+
 /// With [`SolveOptions::fold`]: a kept shape is met once it is off by no more than this
 /// times its own size (an arc's radius, a line's length), or the solver's tolerance where
 /// that is looser. One off by more gets a Gauss–Newton step of its own; the rows' fold
@@ -345,17 +631,10 @@ pub const FOLD_MET: f64 = 1e-9;
 /// Solve the document's constraints in place. Changes go through the document's normal edit
 /// methods, so they are recorded by an open transaction.
 pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
-    solve_judged(doc, options, false)
-}
-
-/// [`solve`]; with `today`, every stop is today's whatever the drag ([`Yardstick::TODAY`]),
-/// for the tests to compare a far drag's solve with.
-fn solve_judged(doc: &mut Document, options: &SolveOptions, today: bool) -> SolveReport {
     let mut sys = System::build_in(
         doc,
         &options.dragged,
         &options.carried,
-        &options.tolerances,
         options.scope.as_deref(),
         &options.radii,
         options.lowering.as_deref(),
@@ -455,9 +734,11 @@ fn solve_judged(doc: &mut Document, options: &SolveOptions, today: bool) -> Solv
     } else {
         Vec::new()
     };
-    let (mut report, yard) = run(&mut sys, options, true, today, None);
-    if report.converged {
-        report = land(&mut sys, options, &targets, report, today);
+    let (mut report, failed) = run(&mut sys, options, true);
+    // (Landed wherever every component converged: an old conflict over pinned geometry
+    // alone, which no step can change, doesn't keep a drag beside it off its targets.)
+    if failed.components == 0 {
+        report = land(&mut sys, options, &targets, report, &failed.rows);
     }
     // With the fold steps, finished means everything met: the relations, every rank landed
     // exactly where it was asked (`land` pins them so), and every kept shape. Otherwise
@@ -466,8 +747,8 @@ fn solve_judged(doc: &mut Document, options: &SolveOptions, today: bool) -> Solv
         let landed = targets
             .iter()
             .flatten()
-            .all(|&(g, v)| sys.groups[g].value == v);
-        if !(report.converged && landed && kept_met(&sys, &options.tolerances, yard)) {
+            .all(|&(g, v)| on_target(&sys, g, v));
+        if !(report.converged && landed && kept_met(&sys)) {
             for (group, v) in sys.groups.iter_mut().zip(entry) {
                 group.value = v;
             }
@@ -490,76 +771,81 @@ fn solve_judged(doc: &mut Document, options: &SolveOptions, today: bool) -> Solv
 }
 
 /// How far off a kept shape over `k` may be and still be met: [`FOLD_MET`] of its length, or
-/// the solver's tolerance at its coordinates where that is looser.
-fn met_within(
-    k: &[usize; 4],
-    value: impl Fn(usize) -> f64,
-    tol: &Tolerances,
-    yard: Yardstick,
-) -> f64 {
-    let scale = yard.scale(k.iter().map(|p| value(*p).abs()).fold(0.0, f64::max));
-    (FOLD_MET * Shape::length(k, &value)).max(tol.length * scale)
+/// the length bar it is solved to (`bar`) where that is looser.
+fn met_within(k: &[usize; 4], value: impl Fn(usize) -> f64, bar: f64) -> f64 {
+    (FOLD_MET * Shape::length(k, &value)).max(bar)
 }
 
-/// Whether every kept shape the solve could move is met ([`met_within`]). A shape whose
+/// Whether every kept shape the solve could move is met ([`met_within`]), each against the
+/// bar of the component its parameters were last solved in ([`System::bars`]), and never
+/// finer than a few ulps of its stored coordinates (it is read from storage). A shape whose
 /// parameters are all pinned is as the solve found it, and isn't judged.
-fn kept_met(sys: &System, tol: &Tolerances, yard: Yardstick) -> bool {
+fn kept_met(sys: &System) -> bool {
     let value = |p: usize| sys.groups[sys.group_of[p]].value;
     sys.keep.iter().all(|shape| {
         let k = shape.params();
+        let bar = k
+            .iter()
+            .map(|p| sys.bars[sys.group_of[*p]].max(FLOOR_ULPS * f64::EPSILON * value(*p).abs()))
+            .fold(0.0, f64::max);
         k.iter().all(|p| sys.groups[sys.group_of[*p]].fixed)
             || shape
                 .offset(value)
-                .is_none_or(|(_, off)| off.abs() <= met_within(k, value, tol, yard))
+                .is_none_or(|(_, off)| off.abs() <= met_within(k, value, bar))
     })
+}
+
+/// Whether group `g` is where it was asked to be, `v`, to the bar it was solved to
+/// ([`System::bars`]): a dragged point an ulp off its target (at one size, and on it to the bit
+/// at another) has landed as surely as one on it, and gets no landing pass (#280).
+fn on_target(sys: &System, g: usize, v: f64) -> bool {
+    (sys.groups[g].value - v).abs() <= sys.bars.get(g).copied().unwrap_or(0.0)
 }
 
 /// After a drag's solve: the dragged and carried parameters are only heavy, not pinned, so
 /// where other geometry has to follow them they give a little (and, steps being measured from
 /// where the solve is rather than from the targets, nothing pulls them back). Pin them where
 /// they were asked to be and solve again, rank by rank (the dragged first, then the carried
-/// with them); keep each that leaves the relations met, so a move lands exactly wherever it
-/// can, and what it pushes along lands with it where that still leaves room.
+/// with them); keep each that fails nothing the solve didn't (`failed`, the rows it failed:
+/// none, or only rows over pinned geometry, an old conflict), so a move lands exactly wherever
+/// it can, and what it pushes along lands with it where that still leaves room.
 fn land(
     sys: &mut System,
     options: &SolveOptions,
     targets: &[Vec<(usize, f64)>],
     mut report: SolveReport,
-    today: bool,
+    failed: &[usize],
 ) -> SolveReport {
     let mut pinned: Vec<(usize, f64)> = Vec::new();
     for rank in targets {
         pinned.extend(rank);
-        if rank.is_empty() || pinned.iter().all(|&(g, v)| sys.groups[g].value == v) {
+        if rank.is_empty() || pinned.iter().all(|&(g, v)| on_target(sys, g, v)) {
             continue;
         }
         let solved: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
+        // (A pass not kept leaves the bars the solve was held to, as well as its values.)
+        let bars = sys.bars.clone();
         for &(g, v) in &pinned {
             sys.groups[g].value = v;
             sys.groups[g].fixed = true;
         }
-        // (Judged against the size the solve began with, not wherever its run left the
-        // geometry: a run that flung a point would otherwise make its landing pass a part of
-        // another size.)
-        let (landed, _) = run(sys, options, true, today, report.drag_size);
+        let (landed, landed_failed) = run(sys, options, true);
         for &(g, _) in &pinned {
             sys.groups[g].fixed = false;
         }
-        if landed.converged {
+        // (Kept where it fails nothing the solve didn't.)
+        if landed_failed.components == 0 && landed_failed.rows == failed {
             report = SolveReport {
                 iterations: landed.iterations.max(report.iterations),
                 wandered: landed.wandered.max(report.wandered),
-                // (The size the solve began with, not the landing pass's.)
-                drag_size: report.drag_size,
-                drag_near: report.drag_near || landed.drag_near,
-                drag_cut_short: report.drag_cut_short + landed.drag_cut_short,
-                drag_capped_loose: report.drag_capped_loose + landed.drag_capped_loose,
+                bar: landed.bar.max(report.bar),
                 ..landed
             };
         } else {
             for (group, v) in sys.groups.iter_mut().zip(solved) {
                 group.value = v;
             }
+            sys.bars = bars;
             return report;
         }
     }
@@ -567,8 +853,10 @@ fn land(
 }
 
 /// The constraints the geometry doesn't meet as it stands (nothing is moved): those with an
-/// equation off by more than `slack`, relative to the size of the coordinates involved (a sine,
-/// for angles).
+/// equation off by more than `slack`, as a share of a quarter of its component's size in that
+/// component's frame, as a solve judges it with `slack` for its tolerance (see `Bar`; never
+/// finer than [`FLOOR_ULPS`] ulps of the stored coordinates); a sine within `slack`, for
+/// angles.
 pub fn unmet(doc: &Document, slack: f64) -> HashSet<ConstraintId> {
     unmet_with(doc, slack, None)
 }
@@ -583,62 +871,43 @@ pub fn unmet_with(
         length: slack,
         angle: slack,
     };
-    let sys = System::build(doc, &[], &tol, lowering);
-    let values: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
-    let val = |p: usize| values[sys.group_of[p]];
-    let mut grad = Vec::new();
-    let mut out = HashSet::new();
-    for (r, row) in sys.rows.iter().enumerate() {
-        let Some(id) = row.source else {
-            continue;
-        };
-        grad.clear();
-        if row.equation.eval(&val, &mut grad).abs()
-            > row_tolerance(&sys, r, &values, &tol, Yardstick::TODAY)
-        {
-            out.insert(id);
-        }
-    }
-    out
+    let sys = System::build(doc, &[], lowering);
+    let (comps, constant_rows) = components(&sys, &tol);
+    let holds = rows_holding(&sys, &comps, &constant_rows, &tol);
+    sys.rows
+        .iter()
+        .zip(holds)
+        .filter(|(_, holds)| !holds)
+        .filter_map(|(row, _)| row.source)
+        .collect()
 }
 
 /// Whether every row of `scope`'s system (its `relations` as lowered, and each curve's own
-/// geometry) holds: a length row within `slack`, relative to the size of the coordinates
-/// involved as [`unmet`] reads it, and an angle row (a sine, already the same at any size and
-/// place) within the solver's own angle tolerance. Only the scope is built and read, so
-/// geometry elsewhere in the drawing, however far off, has no say, and the cost is the scope's.
+/// geometry) holds as a solve with the default [`Tolerances`] judges it: in its component's
+/// frame, against the solver's own bar. Only the scope is built and read, so geometry
+/// elsewhere in the drawing, however far off, has no say, and the cost is the scope's.
 pub fn meets_within(
     doc: &Document,
     scope: &HashSet<EntityId>,
     relations: &Relations,
     lowering: Option<&Lowering>,
     touching: Option<&TouchingEnds>,
-    slack: f64,
 ) -> bool {
-    let tol = Tolerances {
-        length: slack,
-        angle: Tolerances::default().angle,
-    };
+    let tol = Tolerances::default();
     let sys = System::build_in(
         doc,
         &[],
         &[],
-        &tol,
         Some(scope),
         &HashMap::new(),
         lowering,
         Some(relations.as_slice()),
         touching,
     );
-    let values: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
-    let val = |p: usize| values[sys.group_of[p]];
-    let mut grad = Vec::new();
-    (0..sys.rows.len()).all(|r| {
-        grad.clear();
-        // (False for a residual that isn't a number.)
-        sys.rows[r].equation.eval(&val, &mut grad).abs()
-            <= row_tolerance(&sys, r, &values, &tol, Yardstick::TODAY)
-    })
+    let (comps, constant_rows) = components(&sys, &tol);
+    rows_holding(&sys, &comps, &constant_rows, &tol)
+        .into_iter()
+        .all(|holds| holds)
 }
 
 /// Evaluate constraints and degrees of freedom without changing the document.
@@ -652,8 +921,8 @@ pub fn analyze_with(doc: &Document, lowering: Option<&Lowering>) -> SolveReport 
         analyze: true,
         ..Default::default()
     };
-    let mut sys = System::build(doc, &[], &options.tolerances, lowering);
-    let (mut report, _) = run(&mut sys, &options, false, false, None);
+    let mut sys = System::build(doc, &[], lowering);
+    let (mut report, _) = run(&mut sys, &options, false);
     // (In one order however the relations were found redundant: what an analysis kept
     // cluster by cluster reports too.)
     report.redundant.sort();
@@ -1270,7 +1539,7 @@ struct Component {
 
 /// Split free groups into independent components connected by equations. Rows with no free
 /// unknowns form their own (constant) components.
-fn components(sys: &System, tol: &Tolerances, yard: Yardstick) -> (Vec<Component>, Vec<usize>) {
+fn components(sys: &System, tol: &Tolerances) -> (Vec<Component>, Vec<usize>) {
     let n = sys.groups.len();
     let mut parent = UnionFind::new(n);
     let mut constant_rows = Vec::new();
@@ -1297,9 +1566,14 @@ fn components(sys: &System, tol: &Tolerances, yard: Yardstick) -> (Vec<Component
     // free end can follow the other), and one that is off makes a component of them where
     // no equation does: with the other end pinned (the landing pass of a drag, say) the
     // free end has no equation left, and would otherwise not be solved for at all. (Only
-    // one that is off: a rigid move of a big sketch has thousands that aren't.)
+    // one that is off: a rigid move of a big sketch has thousands that aren't. Off by more
+    // than the bar of the shape's own size, never more than its component's, which a solve
+    // then reads.)
     let value = |p: usize| sys.groups[sys.group_of[p]].value;
-    let scale = |k: &[usize; 4]| yard.scale(k.iter().map(|p| value(*p).abs()).fold(0.0, f64::max));
+    let bar = |k: &[usize; 4]| {
+        let largest = k.iter().map(|p| value(*p).abs()).fold(0.0, f64::max);
+        Bar::new(Shape::length(k, value), largest, tol).length
+    };
     let mut soft_roots: Vec<usize> = Vec::new();
     for shape in &sys.keep {
         let k = shape.params();
@@ -1313,7 +1587,7 @@ fn components(sys: &System, tol: &Tolerances, yard: Yardstick) -> (Vec<Component
             parent.join(w[0], w[1]);
         }
         if let Some(&g) = free.first()
-            && off.abs() > tol.length * scale(k)
+            && off.abs() > bar(k)
         {
             soft_roots.push(g);
         }
@@ -1350,19 +1624,22 @@ fn components(sys: &System, tol: &Tolerances, yard: Yardstick) -> (Vec<Component
     (comps, constant_rows)
 }
 
-/// Residual tolerance for one row: an angle's (a sine, the same at any size), or a length's
-/// against the coordinates involved or the part's size ([`Yardstick`]).
-fn row_tolerance(sys: &System, r: usize, values: &[f64], tol: &Tolerances, yard: Yardstick) -> f64 {
-    let eq = &sys.rows[r].equation;
-    if eq.is_angular() {
-        tol.angle
-    } else {
-        let c = eq
-            .params()
-            .into_iter()
-            .map(|p| values[sys.group_of[p]].abs())
-            .fold(0.0, f64::max);
-        tol.length * yard.scale(c)
+/// Residual tolerance for one row at `values`, in its component's frame: the component's
+/// length bar, or for an angle its unitless bar (a sine, the same at any size), never below
+/// the floor over the shorter of its lines (see [`Bar`]).
+fn row_tolerance(sys: &System, r: usize, bar: Bar, values: &[f64]) -> f64 {
+    match sys.rows[r].equation {
+        Equation::Angle { l1, l2, .. } => {
+            let length = |l: [usize; 4]| Shape::length(&l, |p| values[sys.group_of[p]]);
+            let shortest = length(l1).min(length(l2));
+            if shortest > 0.0 {
+                bar.angle.max(bar.floor / shortest)
+            } else {
+                bar.angle
+            }
+        }
+        ref eq if eq.is_angular() => bar.angle,
+        _ => bar.length,
     }
 }
 
@@ -1479,12 +1756,6 @@ fn scaled_norm2(res: &[f64], scales: &[f64]) -> f64 {
 
 struct ComponentOutcome {
     converged: bool,
-    /// Cut by `SETTLE_PATIENCE` in a near drag solve with its rows off today's bar, so
-    /// reported unfinished.
-    cut_short: bool,
-    /// Ran to the cap in a near drag solve, converged on the part-size bar with its rows off
-    /// today's ([`SolveReport::drag_capped_loose`]).
-    capped_loose: bool,
     iterations: usize,
     /// Steps on the way to the relations that its linearisation badly mispredicted (or that
     /// were refused): see [`SolveReport::wandered`].
@@ -1495,18 +1766,19 @@ struct ComponentOutcome {
 ///
 /// `dragging` is a drag's solve (the landing passes too, where the dragged parameters are
 /// pinned): there the solve goes on until nothing moves, not only until the rows hold.
-/// `fold`: take the fold steps (see [`SolveOptions::fold`]). `yard`: what its stops are
-/// measured against ([`Yardstick`]).
+/// `fold`: take the fold steps (see [`SolveOptions::fold`]). `values` are in the component's
+/// frame, `bar` is what its stops are measured against, and `shapes` are the kept shapes over
+/// its unknowns ([`reach`]).
 #[allow(clippy::too_many_arguments)]
 fn newton(
     sys: &System,
     comp: &Component,
+    shapes: &[usize],
     values: &mut [f64],
-    tol: &Tolerances,
+    bar: Bar,
     dragging: bool,
     across: f64,
     fold: bool,
-    yard: Yardstick,
 ) -> ComponentOutcome {
     let n = comp.unknowns.len();
     let m = comp.rows.len();
@@ -1521,10 +1793,15 @@ fn newton(
         .iter()
         .map(|g| sys.groups[*g].mobility)
         .collect();
+    // (An angle row's floor over its shorter line holds here too, though after a step the
+    // values are the frame's: a place-dependent stop from some 560 line lengths out, left for
+    // PR 3. Held only to stored values, at the solve's first test, a far solve whose rows
+    // held there by the floor took no step where the same solve near the origin did, and two
+    // size-free pins failed.)
     let converged = |res: &[f64], values: &[f64]| {
         res.iter()
             .zip(&comp.rows)
-            .all(|(f, r)| f.abs() <= row_tolerance(sys, *r, values, tol, yard))
+            .all(|(f, r)| f.abs() <= row_tolerance(sys, *r, bar, values))
     };
 
     let ((mut res, mut jac), mut own) = evaluate_with_own(sys, &comp.rows, values, &col_of);
@@ -1543,7 +1820,8 @@ fn newton(
         }
     }
     // The shapes kept (see below) couple their parameters too.
-    for shape in &sys.keep {
+    let shapes: Vec<&Shape> = shapes.iter().map(|&s| &sys.keep[s]).collect();
+    for shape in &shapes {
         let cols: Vec<usize> = shape
             .params()
             .iter()
@@ -1596,7 +1874,7 @@ fn newton(
     // the rows hold, keep stepping until a step moves nothing (at the tolerance). A
     // preference the relations rule out has no step left in the null space, so it stops at
     // once; without preferences there is nothing to settle.
-    let mut settled = sys.keep.is_empty();
+    let mut settled = shapes.is_empty();
     let mut settling = 0;
     // How far the last step moved anything. A drag's solve isn't over while a step still
     // moves something, even with the rows holding: where the drag can't land, the dragged
@@ -1624,24 +1902,41 @@ fn newton(
     let (mut exit, mut ran) = (exits::Exit::Cap, MAX_ITERATIONS);
     for iteration in 0..MAX_ITERATIONS {
         let rows_hold = converged(&res, values);
-        let at_rest = !dragging || last_moved <= still_at(values, tol, yard);
+        let at_rest = !dragging || last_moved <= bar.length;
+        // A drag's solve held to a [`PATIENCE_SHARE`] of the bar (fallback (b), see below).
+        // (No floor: it is a test of the frame's own values, and floored, it gave way to the
+        // floor some 140 part-sizes out, a hinge in where a patience cut counts.)
+        let fine = Bar {
+            length: PATIENCE_SHARE * bar.length,
+            angle: bar.angle,
+            floor: 0.0,
+        };
+        let fine_rows = |res: &[f64], values: &[f64]| {
+            res.iter()
+                .zip(&comp.rows)
+                .all(|(f, r)| f.abs() <= row_tolerance(sys, *r, fine, values))
+        };
+        // With the fold steps a solve finishes only where it meets everything, so patience
+        // doesn't cut one before its rows hold to the patience share and every kept shape is
+        // met: that could only end it unfinished. (Held to a coordinate-relative bar, its rows
+        // went on "unmet" until then, and patience hadn't begun counting.)
+        let fold_open = fold
+            && (!fine_rows(&res, values)
+                || shapes.iter().any(|shape| {
+                    let value = |p: usize| values[sys.group_of[p]];
+                    shape.offset(value).is_some_and(|(_, off)| {
+                        off.abs() > met_within(shape.params(), value, bar.length)
+                    })
+                }));
         if rows_hold {
-            if (settled && at_rest) || settling >= SETTLE_PATIENCE {
-                // A patience cut leaves a preference mid-crawl, the solve still moving. In a
-                // near drag solve the rows "hold" against the part's size, which near the
-                // origin can be looser than today's bar, and counted as converged there a cut
-                // that is still moving sends a frame that will be refused anyway down its
-                // ladder of retakes (a part 1 m across: 18 solves a frame in place of 7). So, to
-                // bound that work, a near patience cut counts as converged only where its rows
-                // also hold at today's bar. A cost measure on patience cuts alone: a solve that
-                // settled, or that ran to the cap with its rows met at the part-size bar, keeps
-                // the part's size (F2's size-relative looseness); far solves are today's anyway.
-                let cut_short = !(settled && at_rest)
-                    && yard.near()
-                    && dragging
-                    && !res.iter().zip(&comp.rows).all(|(f, r)| {
-                        f.abs() <= row_tolerance(sys, *r, values, tol, Yardstick::TODAY)
-                    });
+            if (settled && at_rest) || (settling >= SETTLE_PATIENCE && !fold_open) {
+                // Fallback (b) of #377, until PR 3 replaces patience with a stationarity
+                // test: a drag's patience cut leaves a kept shape mid-crawl, the solve still
+                // moving, and counts as converged only where its rows also hold to a
+                // [`PATIENCE_SHARE`] of the bar. Counted as converged, a cut that is still
+                // moving sends a frame that will be refused anyway down its ladder of
+                // retakes (a part 1 m across: 18 solves a frame in place of 7).
+                let cut_short = !(settled && at_rest) && dragging && !fine_rows(&res, values);
                 #[cfg(feature = "exit-counts")]
                 exits::record(
                     if settled && at_rest {
@@ -1654,8 +1949,6 @@ fn newton(
                 );
                 return ComponentOutcome {
                     converged: !cut_short,
-                    cut_short,
-                    capped_loose: false,
                     iterations: iteration,
                     wandered,
                 };
@@ -1664,8 +1957,7 @@ fn newton(
         }
         // The shapes kept: arcs' radii, lines' lengths and directions, each as how far off
         // it is and the gradient of that over its four parameters.
-        let soft_terms: Vec<(&[usize; 4], [f64; 4], f64)> = sys
-            .keep
+        let soft_terms: Vec<(&[usize; 4], [f64; 4], f64)> = shapes
             .iter()
             .filter_map(|shape| {
                 let (gradient, off) = shape.offset(|p| values[sys.group_of[p]])?;
@@ -1675,12 +1967,7 @@ fn newton(
         // What the preferences have left to do, at the tolerance: nothing where the rows
         // hold and none is off (a move that carries everything along as it is), and then
         // there is nothing to settle and no step to build.
-        let (lo, hi) = values
-            .iter()
-            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| {
-                (lo.min(*v), hi.max(*v))
-            });
-        let still = tol.length * yard.scale(hi.abs().max(lo.abs()));
+        let still = bar.length;
         if soft_terms.iter().all(|(_, _, off)| off.abs() <= still) {
             settled = true;
             if rows_hold && at_rest {
@@ -1688,8 +1975,6 @@ fn newton(
                 exits::record(exits::Exit::Settled, dragging, iteration);
                 return ComponentOutcome {
                     converged: true,
-                    cut_short: false,
-                    capped_loose: false,
                     iterations: iteration,
                     wandered,
                 };
@@ -1704,7 +1989,7 @@ fn newton(
         // differently on the same sketch at another size (#94). Scaled, every row counts as
         // the distance it is off by.
         let row_scale = row_scales(&jac, &own, |k| {
-            res[k].abs() <= row_tolerance(sys, comp.rows[k], values, tol, yard)
+            res[k].abs() <= row_tolerance(sys, comp.rows[k], bar, values)
         });
         let (scaled_jac, scaled_res) = scaled_rows(&jac, &res, &row_scale);
         normal.clear();
@@ -1761,7 +2046,7 @@ fn newton(
                 kept.push((
                     grad,
                     off,
-                    met_within(k, value, tol, yard),
+                    met_within(k, value, bar.length),
                     Shape::length(k, value),
                 ));
             }
@@ -1983,10 +2268,10 @@ fn newton(
             }
             // Once the rows hold, what is left of a step's gain is a ratio of round-off-sized
             // residuals, and following it would let round-off steer the damping, and with it
-            // how fast a kept shape closes before `SETTLE_PATIENCE` cuts it: in a near drag
-            // solve that would make where the cut falls depend on the drawing's size again.
-            // There λ falls as for a perfect step instead.
-            if yard.near() && dragging && rows_hold {
+            // how fast a kept shape closes before `SETTLE_PATIENCE` cuts it: in a drag's solve
+            // that would make where the cut falls depend on the drawing's size again. There λ
+            // falls as for a perfect step instead.
+            if dragging && rows_hold {
                 lambda /= 3.0;
             } else {
                 lambda *= (1.0 - (2.0 * gain - 1.0).powi(3)).max(1.0 / 3.0);
@@ -2012,17 +2297,8 @@ fn newton(
     }
     #[cfg(feature = "exit-counts")]
     exits::record(exit, dragging, ran);
-    let converged_at_cap = converged(&res, values);
     ComponentOutcome {
-        converged: converged_at_cap,
-        cut_short: false,
-        capped_loose: converged_at_cap
-            && yard.near()
-            && dragging
-            && !res
-                .iter()
-                .zip(&comp.rows)
-                .all(|(f, r)| f.abs() <= row_tolerance(sys, *r, values, tol, Yardstick::TODAY)),
+        converged: converged(&res, values),
         iterations: MAX_ITERATIONS,
         wandered,
     }
@@ -2195,127 +2471,149 @@ fn drawing_across(sys: &System, values: &[f64], circles: bool) -> f64 {
     }
 }
 
-/// A move below this, at the scale of the coordinates or the part ([`Yardstick`]), is no move
-/// at all (the length tolerance, as `row_tolerance` takes it).
-fn still_at(values: &[f64], tol: &Tolerances, yard: Yardstick) -> f64 {
-    let (lo, hi) = values
-        .iter()
-        .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| {
-            (lo.min(*v), hi.max(*v))
-        });
-    tol.length * yard.scale(hi.abs().max(lo.abs()))
-}
-
 /// Whether none of `rows` belongs to a constraint (see [`SolveReport::unsourced_failure`]).
 fn unsourced(sys: &System, rows: &[usize]) -> bool {
     rows.iter().all(|&r| sys.rows[r].source.is_none())
 }
 
 /// The entities whose own geometry is in the failed `rows` ([`SolveReport::exposed`]), and
-/// of them those with a row not within its tolerance at `values` ([`SolveReport::broken`]),
-/// added to `exposed` and `broken`. Judged row by row, with the test convergence uses
-/// (`<=`), negated: a residual that isn't a number is broken.
+/// of them those with a row that doesn't hold (`holds`, the test convergence uses: a
+/// residual that isn't a number doesn't) ([`SolveReport::broken`]), added to `exposed` and
+/// `broken`.
 pub(crate) fn exposed_and_broken(
     sys: &System,
     rows: &[usize],
-    values: &[f64],
-    tol: &Tolerances,
+    holds: impl Fn(usize) -> bool,
     exposed: &mut Vec<EntityId>,
     broken: &mut Vec<EntityId>,
-    yard: Yardstick,
 ) {
     for &r in rows {
         let Some(owner) = sys.rows[r].owner else {
             continue;
         };
         exposed.push(owner);
-        let res = sys.rows[r]
-            .equation
-            .eval(&|p| values[sys.group_of[p]], &mut Vec::new());
-        // (False for a residual that isn't a number: then it is broken.)
-        let met = res.abs() <= row_tolerance(sys, r, values, tol, yard);
-        if !met {
+        if !holds(r) {
             broken.push(owner);
         }
     }
 }
 
-/// One pass of the solve over `sys`, with the [`Yardstick`] it was judged against.
-/// `size`, if given, is the part's size to judge by in place of `options.drag_size`.
-fn run(
-    sys: &mut System,
-    options: &SolveOptions,
-    iterate: bool,
-    today: bool,
-    size: Option<f64>,
-) -> (SolveReport, Yardstick) {
+/// What failed in a pass of the solve ([`run`]): its rows, sorted, and how many of its
+/// components failed (the rest of the rows are over pinned geometry alone).
+struct Failed {
+    rows: Vec<usize>,
+    components: usize,
+}
+
+/// One pass of the solve over `sys`: each component in its own [`Frame`], against its bar.
+/// The length bar each free group was solved to is left in [`System::bars`].
+fn run(sys: &mut System, options: &SolveOptions, iterate: bool) -> (SolveReport, Failed) {
     let tol = &options.tolerances;
     let mut report = SolveReport {
         conflicts: sys.conflicts.clone(),
         redundant: sys.redundant.clone(),
         ..Default::default()
     };
-    let yard = if !options.drag_part || options.dragged.is_empty() || today {
-        Yardstick::TODAY
-    } else {
-        let values: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
-        let (yard, size) = Yardstick::for_drag(sys, &values, size.or(options.drag_size), tol);
-        report.drag_size = Some(size);
-        report.drag_near = yard.near();
-        yard
-    };
-    let (comps, constant_rows) = components(sys, tol, yard);
+    let (comps, constant_rows) = components(sys, tol);
     let mut values: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
+    let drawn = Drawn::of(sys);
+    let mut bars = vec![0.0; sys.groups.len()];
     let mut failed_rows: Vec<usize> = Vec::new();
+    let mut failed_components = 0;
+    let (mut dragged_bar, mut any_bar) = (0.0f64, 0.0f64);
+    let across = drawing_across(sys, &values, !options.dragged.is_empty());
+    let mut grad = Vec::new();
 
     for &r in &constant_rows {
+        let (_, groups, asked) = reach(sys, &[], &[r]);
+        let frame = Frame::enter(sys, &groups, asked, &mut values, tol, &drawn);
+        grad.clear();
         let res = sys.rows[r]
             .equation
-            .eval(&|p| values[sys.group_of[p]], &mut Vec::new());
-        if res.abs() > row_tolerance(sys, r, &values, tol, yard) {
-            failed_rows.push(r);
-            report.unsourced_failure |= sys.rows[r].source.is_none();
-        } else {
+            .eval(&|p| values[sys.group_of[p]], &mut grad);
+        if res.abs() <= row_tolerance(sys, r, frame.bar, &values) {
             // Satisfied, but everything it involves is pinned: it adds nothing.
             report.dependent_equations += 1;
+        } else {
+            failed_rows.push(r);
+            report.unsourced_failure |= sys.rows[r].source.is_none();
+            exposed_and_broken(
+                sys,
+                &[r],
+                |_| false,
+                &mut report.exposed,
+                &mut report.broken,
+            );
         }
+        frame.leave(&mut values);
     }
-    let across = drawing_across(sys, &values, !options.dragged.is_empty());
     for comp in &comps {
-        if iterate {
+        let (shapes, groups, asked) = reach(sys, &comp.unknowns, &comp.rows);
+        let mut frame = Frame::enter(sys, &groups, asked, &mut values, tol, &drawn);
+        if let Some(cap) = options.bar_cap {
+            frame.bar.length = frame.bar.length.min(cap).max(frame.bar.floor);
+        }
+        let bar = frame.bar;
+        for &g in &comp.unknowns {
+            bars[g] = bar.length;
+        }
+        if comp
+            .unknowns
+            .iter()
+            .any(|&g| sys.groups[g].mobility <= system::CARRIED_MOBILITY)
+        {
+            dragged_bar = dragged_bar.max(bar.length);
+        }
+        any_bar = any_bar.max(bar.length);
+        let converged = if iterate {
             let outcome = newton(
                 sys,
                 comp,
+                &shapes,
                 &mut values,
-                tol,
+                bar,
                 !options.dragged.is_empty(),
                 across,
                 options.fold,
-                yard,
             );
             report.iterations = report.iterations.max(outcome.iterations);
             report.wandered = report.wandered.max(outcome.wandered);
-            report.drag_cut_short += usize::from(outcome.cut_short);
-            report.drag_capped_loose += usize::from(outcome.capped_loose);
-            if !outcome.converged {
-                failed_rows.extend(&comp.rows);
-                report.unsourced_failure |= unsourced(sys, &comp.rows);
-            }
+            outcome.converged
         } else {
-            let col_of = HashMap::new();
-            let (res, _) = evaluate(sys, &comp.rows, &values, &col_of);
-            for (f, r) in res.iter().zip(&comp.rows) {
-                if f.abs() > row_tolerance(sys, *r, &values, tol, yard) {
-                    failed_rows.extend(&comp.rows);
-                    report.unsourced_failure |= unsourced(sys, &comp.rows);
-                    break;
-                }
-            }
+            let (res, _) = evaluate(sys, &comp.rows, &values, &HashMap::new());
+            res.iter()
+                .zip(&comp.rows)
+                .all(|(f, r)| f.abs() <= row_tolerance(sys, *r, bar, &values))
+        };
+        if !converged {
+            failed_components += 1;
+            failed_rows.extend(&comp.rows);
+            report.unsourced_failure |= unsourced(sys, &comp.rows);
+            let at = &values;
+            exposed_and_broken(
+                sys,
+                &comp.rows,
+                |r| {
+                    let res = sys.rows[r]
+                        .equation
+                        .eval(&|p| at[sys.group_of[p]], &mut Vec::new());
+                    res.abs() <= row_tolerance(sys, r, bar, at)
+                },
+                &mut report.exposed,
+                &mut report.broken,
+            );
         }
+        frame.leave(&mut values);
     }
     for (g, v) in values.iter().enumerate() {
         sys.groups[g].value = *v;
     }
+    sys.bars = bars;
+    report.bar = if dragged_bar > 0.0 {
+        dragged_bar
+    } else {
+        any_bar
+    };
     for &r in &failed_rows {
         if let Some(cid) = sys.rows[r].source
             && !report.conflicts.contains(&cid)
@@ -2324,15 +2622,6 @@ fn run(
         }
     }
     report.conflicts.sort();
-    exposed_and_broken(
-        sys,
-        &failed_rows,
-        &values,
-        tol,
-        &mut report.exposed,
-        &mut report.broken,
-        yard,
-    );
     for list in [&mut report.exposed, &mut report.broken] {
         list.sort_unstable();
         list.dedup();
@@ -2342,7 +2631,14 @@ fn run(
     if options.analyze {
         analyze_dof(sys, &comps, &values, &failed_rows, &mut report);
     }
-    (report, yard)
+    failed_rows.sort_unstable();
+    (
+        report,
+        Failed {
+            rows: failed_rows,
+            components: failed_components,
+        },
+    )
 }
 
 /// Reduced row echelon form of the equilibrated Jacobian, with its pivot columns. Used as the
@@ -2518,8 +2814,8 @@ pub fn free_directions_with(
     lowering: Option<&Lowering>,
 ) -> HashMap<EntityId, Freedom> {
     let options = SolveOptions::default();
-    let sys = System::build(doc, &[], &options.tolerances, lowering);
-    let (comps, _) = components(&sys, &options.tolerances, Yardstick::TODAY);
+    let sys = System::build(doc, &[], lowering);
+    let (comps, _) = components(&sys, &options.tolerances);
     let values: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
     // Null-space basis vectors, as group → component, indexed by the groups they touch.
     let mut basis: Vec<BTreeMap<usize, f64>> = Vec::new();

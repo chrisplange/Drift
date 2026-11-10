@@ -167,6 +167,18 @@ impl Equation {
         }
     }
 
+    /// The length (mm) the equation asks for, if it asks for one (a dimension's value): what
+    /// a component's size counts as well as its geometry (see the solver's `Frame`).
+    pub fn length_asked(&self) -> Option<f64> {
+        match *self {
+            Equation::OffsetFrom { value, .. }
+            | Equation::LengthValue { value, .. }
+            | Equation::Difference { value, .. }
+            | Equation::PointLine { value, .. } => Some(value),
+            _ => None,
+        }
+    }
+
     /// Whether the residual is an angle (unitless) rather than a length (mm).
     pub fn is_angular(&self) -> bool {
         matches!(

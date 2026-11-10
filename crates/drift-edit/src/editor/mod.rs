@@ -168,13 +168,10 @@ pub struct Editor {
     /// How many entities those solves took in, all told (for the tests: what a frame of a
     /// drag costs).
     pub(crate) drag_solved: usize,
-    /// The part size each drag solve was judged against, whether it was judged near, and how
-    /// many of its near components were cut short and capped loose
-    /// (`SolveReport::drag_cut_short`, `drag_capped_loose`), in
-    /// order, once a test sets it to
-    /// `Some` (every solve of a frame reads the frame's one size; see `DragFrame::size`).
+    /// Each drag solve's bar and the bar of the part as its frame began, in order, once a test
+    /// sets it to `Some` (see `DragFrame::bar`).
     #[cfg(test)]
-    pub(crate) drag_sizes: Option<Vec<DragSizeRecord>>,
+    pub(crate) drag_bars: Option<Vec<f64>>,
     /// The last constraints added: whether they kept the active element where it was, and how
     /// many iterations the solve they were checked with took (for the tests: none, where it
     /// was kept).
@@ -487,8 +484,3 @@ impl Editor {
         self.analysis_cache.report()
     }
 }
-
-/// One drag solve as the tests record it (`Editor::drag_sizes`): the part's size it read,
-/// whether it was judged near, and its cut-short and capped-loose counts.
-#[cfg(test)]
-pub(crate) type DragSizeRecord = (Option<f64>, bool, usize, usize);

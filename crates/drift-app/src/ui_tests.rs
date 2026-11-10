@@ -3329,10 +3329,9 @@ fn drawn_circle_can_be_picked_and_dimensioned() {
     h.key_press(Key::Enter);
     h.run();
     h.run();
-    assert_eq!(
-        drift_solver::radius_of(&h.state().drawing.editor.doc, circle),
-        Some(25.0)
-    );
+    // (Within the solver's bar: a billionth of a quarter of the circle's size.)
+    let r = drift_solver::radius_of(&h.state().drawing.editor.doc, circle).unwrap();
+    assert!((r - 25.0).abs() < 1e-7, "{r}");
 }
 
 #[test]

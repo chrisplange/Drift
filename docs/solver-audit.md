@@ -284,9 +284,11 @@ job; "kept" means it stays as a plain design parameter.
 |---|---|---|---|---|
 | Tolerance 1e-12 × max(1, \|c\|) | `Tolerances`, `Yardstick::scale` | early | Convergence | **Replaced** (PR 2): one bar, a fixed share of the part's size, in the part's frame |
 | `Yardstick`, `NEAR_FLOOR` = 64 ε, the 17.6 part-size hinge, `drag_part`, `drag_size`, `drag_near` | `lib.rs` 224–297 | #377 | Size-free stops near the origin, today's far out | **Deleted** (PR 2) |
-| Today/near split in `newton` (`cut_short`, `capped_loose`, `solve_judged(today)`) | `lib.rs` | #377 | Bound the work of a refused frame on a big part | **Deleted** (PR 2/3) |
-| Fallback (b): a near patience cut counts only if today's bar holds | `newton` | #377 | Same | **Deleted** (PR 3) |
-| λ /= 3 once rows hold (near drags only) | `newton` | #377 | Round-off steering the damping | **Deleted** (PR 3) |
+| Today/near split in `newton` (`cut_short`, `capped_loose`, `solve_judged(today)`) | `lib.rs` | #377 | Bound the work of a refused frame on a big part | **Deleted** (PR 2) |
+| Fallback (b): a near patience cut counts only if today's bar holds | `newton` | #377 | Same | **Kept by PR 2** for every drag solve, held to `PATIENCE_SHARE` (1e-3) of the bar, with no floor (floored, it gave way some 140 part-sizes out). **Deleted** (PR 3) |
+| λ /= 3 once rows hold (near drags only) | `newton` | #377 | Round-off steering the damping | **Extended by PR 2** to every drag solve (in a frame, every drag solve is what "near" was). **Deleted** (PR 3) |
+| Angle rows' floor of ulps over their shorter line (`row_tolerance`) | `lib.rs` | PR 2 | Storage rounding of a line's direction far out (#387) | **Open edge for PR 3**: it takes over from the unitless 1e-12 some 560 lengths of the shorter line out, inside a solve as well as for stored values. Applied to stored values only, a far solve whose rows held there by the floor took no step where the same solve at the origin did, and `tangent_and_parallel` and `h_untouched_line_kept_with_an_angle_relation...` failed |
+| A fold solve isn't cut by patience before its rows hold to the patience share and every kept shape is met | `newton` | PR 2 | A fold solve finishes only where it meets everything; at the part's bar its rows hold sooner, and patience cut it mid-crawl (macOS CI) | **Deleted** with patience (PR 3) |
 | `SETTLE_PATIENCE` = 10 | `newton` | #94 | Bounds a kept shape's crawl | **Replaced** (PR 3): a stationarity test of the preferences on the relations' manifold |
 | `MAX_ITERATIONS` = 100 as the conflict test | `newton` | early | A failing part stops | **Replaced** (PR 3): an infeasibility test; the cap stays only as a safety net that the corpus shows never firing |
 | λ > 1e12 × max_diag break; 30-try factor loop | `newton` | early | A step that can't be taken | **Replaced** (PR 3): trust-region steps with a stagnation test |
@@ -297,7 +299,7 @@ job; "kept" means it stays as a plain design parameter.
 | `land()` landing passes | `lib.rs` 521 | #94 era | The heavy, not pinned, dragged give a little | **Deleted** (PR 5): targets are exact |
 | Step limit `across` (`drawing_across`, circles counted) | `newton` | #103, #280 | One iteration can't fling geometry | **Kept** as the trust region's upper bound |
 | Fold steps: `SolveOptions::fold`, `FOLD_MET` = 1e-9, `fold_scale`, `fold_step` | `newton` | #282 | Finish a solve stalled at a fold | **Replaced** (PR 3 + 4) |
-| `drag_from_start` substeps (size/4, ≤ 16), `drag_towards` (≤ 4 halvings), `drag_in_steps` (`MAX_SPLITS` = 6) | `drag.rs` | #103, c99881c | Go round the shape, not across a fold | **Replaced** (PR 5) |
+| `drag_from_start` substeps (size/4, ≤ 16), `drag_towards` (≤ 4 halvings), `drag_in_steps` (`MAX_SPLITS` = 6) | `drag.rs` | #103, c99881c | Go round the shape, not across a fold | **Replaced** (PR 5). PR 2: its size counts each place once (points at one place counted twice moved its middle) |
 | `DRAG_SOLVES` = 200, `UNFINISHED_WORK` = 6,400 | `drag.rs` | 1c46e52, #281 | Bound a frame's cost | **Replaced** (PR 5): one budget on the continuation's steps |
 | Fold try (own budgets) | `drag_frame_today` | #282 | Retry with fold steps | **Deleted** (PR 5) |
 | Length try: `LENGTH_TRY_SOLVES` = 32 (shared), `LENGTH_TRY_STRETCH` = 1e-6, `LENGTH_TRY_TOLERANCE`, `length_slack` | `keep_lengths` | #284, #365, #377 | A hanging line keeps its length | **Deleted** (PR 5): the continuation tracks the branch where the length is kept |

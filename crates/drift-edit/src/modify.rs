@@ -52,7 +52,8 @@ fn closed_trim_refusal(shape: &Shape, crossings: usize) -> String {
     )
 }
 
-/// How far off a constraint may be and still count as met, relative to the coordinates' size.
+/// How far off a constraint may be and still count as met: a share of a quarter of its part's
+/// size, as `drift_solver::unmet` reads it (a sine, for angles).
 const UNMET: f64 = 1e-7;
 
 /// A crossing this close to a cutting curve's own end (relative to the coordinates' size, at
@@ -2851,8 +2852,10 @@ mod tests {
         ed
     }
 
+    /// (Within the solver's bar: a billionth of a quarter of the sketch's size, which for
+    /// these sketches of up to some 200 mm is under 1e-7.)
     fn close(a: DVec2, b: DVec2) -> bool {
-        a.distance(b) < 1e-9
+        a.distance(b) < 1e-7
     }
 
     /// An editor with lines between the given point pairs; returns the line ids.

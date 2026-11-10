@@ -36,5 +36,7 @@ test-support = []
 workspace = true
 
 [dev-dependencies]
+# The solver's exit counters, for the drag census (test builds only).
+drift-solver = { workspace = true, features = ["exit-counts"] }
 proptest = "1"
 tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd", "png-format"] }

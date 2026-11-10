@@ -1,0 +1,61 @@
+name: Solver bar
+
+# The solver's acceptance bar on Linux (docs/solver-audit.md, section 5, item 6, and decision
+# 9): the heavy drag matrix and the ignored pins on ubuntu, where libm's sin, cos and atan2
+# differ from Windows' and macOS' by the ulps that decide a drag at a fold. Nightly, by hand,
+# and on any pull request that touches the solver, the drag code or this bar.
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "crates/drift-solver/**"
+      - "crates/drift-edit/src/editor/drag.rs"
+      - "crates/drift-edit/src/editor/solve.rs"
+      - "crates/drift-edit/src/drag_props.rs"
+      - "crates/drift-edit/src/drag_props/**"
+      - "scripts/solver-bar/**"
+      - ".github/workflows/solver-bar.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  heavy:
+    name: Heavy drag matrix and pins (ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # 14 properties x seeds 1-20, release, --exact. Fails on a failure scripts/solver-bar/
+      # expected.txt doesn't list for Linux; the table goes to the job summary.
+      - name: Heavy matrix
+        run: python3 scripts/solver-bar/heavy.py --jobs 4 --out target/solver-bar/heavy
+      # The ignored pins (#280's), reported, not judged: each solver PR names the pins it
+      # un-ignores, and a pin that changes on Linux alone shows here.
+      - name: Pins (report only)
+        if: always()
+        run: |
+          cargo test --release -p drift-edit --lib drag_props::seeds:: -- --ignored --test-threads=4 \
+            > target/solver-bar/pins.txt 2>&1 || true
+          {
+            echo "### Ignored pins (Linux)"
+            echo
+            grep -E '^test .* \.\.\. (ok|FAILED)$' target/solver-bar/pins.txt \
+              | sed -E 's/^test drag_props::seeds::(.*) \.\.\. (.*)$/- `\1`: \2/'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: solver-bar-linux
+          path: target/solver-bar/
+          if-no-files-found: ignore

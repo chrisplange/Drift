@@ -684,6 +684,116 @@ fn explained(result: Result<(), TestCaseError>) -> Result<(), TestCaseError> {
     })
 }
 
+/// What the geometry doesn't meet as it stands, or `None`: the relations
+/// [`drift_solver::unmet_with`] reads (the rows a relation owns), and the structural rows it
+/// skips (#343), each arc's end on the circle through its start. Each is held to [`SLACK`],
+/// relative to the coordinates involved as `unmet` reads a length row: |off| ≤ SLACK ·
+/// max(1, |c|max).
+///
+/// Midpoints are checked directly too: each Midpoint relation's point at its line's middle,
+/// to the same bar. (`unmet` reads those rows already, unless a lowering takes them over; a
+/// line's hidden midpoint, the other structural row, is read from the line's ends whenever a
+/// system is built, never stored, so it always holds. Ellipses' rows are not checked: no drag
+/// sketch has an ellipse.)
+fn broken(doc: &drift_core::Document, lowering: Option<&drift_solver::Lowering>) -> Option<String> {
+    let unmet = drift_solver::unmet_with(doc, SLACK, lowering);
+    let mut off_rows = Vec::new();
+    for (id, e) in doc.iter() {
+        if let drift_core::EntityKind::Arc { center, start, end } = e.kind {
+            let (Ok(c), Ok(s), Ok(t)) = (doc.point(center), doc.point(start), doc.point(end))
+            else {
+                continue;
+            };
+            let off = c.distance(t) - c.distance(s);
+            let largest = [c, s, t]
+                .iter()
+                .map(|p| p.abs().max_element())
+                .fold(0.0, f64::max);
+            // (A residual that isn't a number counts as off.)
+            if off.is_nan() || off.abs() > SLACK * largest.max(1.0) {
+                off_rows.push(format!("arc {id:?}'s end {off:e} off its circle"));
+            }
+        }
+    }
+    for (_, c) in doc.constraints() {
+        if let Constraint::Midpoint { point, line } = *c
+            && let Some(drift_core::EntityKind::Line { a, b }) = doc.get(line).map(|e| e.kind)
+            && let (Ok(m), Ok(a), Ok(b)) = (doc.point(point), doc.point(a), doc.point(b))
+        {
+            let off = m.distance((a + b) / 2.0);
+            let largest = [m, a, b]
+                .iter()
+                .map(|p| p.abs().max_element())
+                .fold(0.0, f64::max);
+            if off.is_nan() || off > SLACK * largest.max(1.0) {
+                off_rows.push(format!("midpoint {point:?} {off:e} off its line's middle"));
+            }
+        }
+    }
+    (!unmet.is_empty() || !off_rows.is_empty()).then(|| {
+        let mut what = Vec::new();
+        if !unmet.is_empty() {
+            what.push(format!("relations unmet: {unmet:?}"));
+        }
+        what.extend(off_rows);
+        what.join("; ")
+    })
+}
+
+/// #343: the drag properties' check sees an arc whose end has come off its circle, and a
+/// point off its line's middle, which no relation's row in `unmet` reports (1.18 mm was
+/// found passing), and passes them again once they hold. Far out, the bar is relative to the
+/// coordinates, as `unmet`'s.
+#[test]
+fn the_drag_check_sees_structural_rows() {
+    for at in [DVec2::ZERO, DVec2::splat(707_106.78)] {
+        let mut doc = drift_core::Document::new();
+        doc.begin();
+        let c = doc.add_point(at);
+        let s = doc.add_point(at + DVec2::new(10.0, 0.0));
+        let e = doc.add_point(at + DVec2::new(0.0, 10.0));
+        doc.add_arc(c, s, e).unwrap();
+        let (a, b) = (
+            doc.add_point(at + DVec2::new(20.0, 0.0)),
+            doc.add_point(at + DVec2::new(40.0, 0.0)),
+        );
+        let line = doc.add_line(a, b).unwrap();
+        let m = doc.add_point(at + DVec2::new(30.0, 0.0));
+        doc.add_constraint(Constraint::Midpoint { point: m, line })
+            .unwrap();
+        doc.commit("Sketch");
+        assert_eq!(broken(&doc, None), None, "holds as drawn at {at}");
+        assert!(drift_solver::unmet(&doc, SLACK).is_empty());
+
+        let end = doc.point(e).unwrap();
+        doc.set_point(e, end + DVec2::new(0.0, 1.18)).unwrap();
+        assert!(
+            drift_solver::unmet(&doc, SLACK).is_empty(),
+            "unmet can't see it (the gap)"
+        );
+        let off = broken(&doc, None).expect("an arc off its circle");
+        assert!(off.contains("off its circle"), "{off}");
+        doc.set_point(e, end).unwrap();
+        assert_eq!(broken(&doc, None), None);
+
+        // Within the bar (relative to the coordinates) is no break; past it is.
+        // (The arc's largest coordinate is 10 mm beyond `at`'s.)
+        let bar = SLACK * (at.abs().max_element() + 10.0);
+        doc.set_point(e, end + DVec2::new(0.0, bar / 10.0)).unwrap();
+        assert_eq!(broken(&doc, None), None, "inside the bar at {at}");
+        doc.set_point(e, end + DVec2::new(0.0, bar * 10.0)).unwrap();
+        assert!(broken(&doc, None).is_some(), "past the bar at {at}");
+        doc.set_point(e, end).unwrap();
+
+        doc.set_point(m, at + DVec2::new(30.0, 0.5)).unwrap();
+        let off = broken(&doc, None).expect("a midpoint off its line's middle");
+        assert!(
+            off.contains("midpoint") || off.contains("relations unmet"),
+            "{off}"
+        );
+    }
+}
+
 fn close(a: DVec2, b: DVec2, size: f64) -> bool {
     a.distance(b) <= LANDS * size.max(1.0)
 }
@@ -758,10 +868,11 @@ fn drag_along(
         let before = built.positions();
         if built.ed.drag(ids, target - applied, &dragged) {
             applied = target;
-            let unmet = drift_solver::unmet(&built.ed.doc, SLACK);
+            let broken = broken(&built.ed.doc, None);
             prop_assert!(
-                unmet.is_empty(),
-                "step {k}: relations unmet after a drag: {unmet:?}"
+                broken.is_none(),
+                "step {k}: geometry off after a drag: {}",
+                broken.unwrap_or_default()
             );
         } else {
             refused += 1;
@@ -776,10 +887,11 @@ fn drag_along(
     let committed = built.ed.commit("Move");
     let end = built.positions();
     if committed {
-        let unmet = drift_solver::unmet(&built.ed.doc, SLACK);
+        let broken = broken(&built.ed.doc, None);
         prop_assert!(
-            unmet.is_empty(),
-            "relations unmet after the commit: {unmet:?}"
+            broken.is_none(),
+            "geometry off after the commit: {}",
+            broken.unwrap_or_default()
         );
     } else {
         prop_assert_eq!(&end, &start, "a refused commit moved geometry");
@@ -2624,14 +2736,14 @@ fn face_dimensions_hold(
     };
     let tees = ends(ed);
     let dragged = Param::point(p).to_vec();
-    let unmet = |ed: &Editor| drift_solver::unmet_with(&ed.doc, SLACK, ed.lowering().as_deref());
-    prop_assert!(unmet(ed).is_empty(), "holds to begin with");
+    let unmet = |ed: &Editor| broken(&ed.doc, ed.lowering().as_deref());
+    prop_assert!(unmet(ed).is_none(), "holds to begin with");
     ed.doc.begin();
     for k in 1..=steps {
         let to = offset * (f64::from(k) / f64::from(steps));
         let ok = ed.drag(&[p], to, &dragged);
         prop_assert!(
-            unmet(ed).is_empty(),
+            unmet(ed).is_none(),
             "step {k} (moved: {ok}): {:?}",
             unmet(ed)
         );
@@ -2641,7 +2753,7 @@ fn face_dimensions_hold(
         }
     }
     ed.commit("Drag");
-    prop_assert!(unmet(ed).is_empty(), "after the commit");
+    prop_assert!(unmet(ed).is_none(), "after the commit: {:?}", unmet(ed));
     let thick_now: Vec<f64> = ed.doc.walls().map(|(_, w)| w.thickness).collect();
     prop_assert_eq!(thick, thick_now);
     for (q, at) in s.lone.iter().zip(lone_at) {
@@ -2995,5 +3107,6 @@ fn a_try_with_the_fold_steps_that_fails_leaves_the_frame_as_it_was() {
     assert!(kept > 0 && undone > 0, "{kept} tries kept, {undone} undone");
 }
 
+mod census;
 mod held_shapes;
 mod seeds;

@@ -2022,3 +2022,83 @@ fn a_near_patience_cut_off_todays_bar_is_never_read_as_landed() {
     assert!(most <= 7, "{most} solves a frame");
     ed.doc.rollback();
 }
+
+/// The solver bar's tiled sketch (#365, #377; `docs/solver-audit.md`, section 5, item 5): 200
+/// and 1,000 copies of a sketch whose drag always refuses (a line dragged as a curve, its
+/// midpoint carrying a hanging line held equal to a line the move stretches from a fixed
+/// point) in one drawing, every moved line dragged together for 10 frames. Milliseconds per
+/// drag call; then the drag is rolled back and every point checked unchanged.
+#[test]
+#[ignore = "torture test: run with --release --ignored --nocapture"]
+fn perf_drag_tiles() {
+    println!();
+    for n in [200usize, 1_000] {
+        let mut doc = Document::new();
+        doc.begin();
+        let mut moved = Vec::new();
+        let side = (n as f64).sqrt().ceil() as usize;
+        for t in 0..n {
+            let o = v(60.0 * (t % side) as f64, 60.0 * (t / side) as f64);
+            let at = |x: f64, y: f64| o + v(x, y);
+            let p0 = doc.add_point(at(0.0, 0.0));
+            let q = doc.add_point(at(10.0, 0.0));
+            let r = doc.add_point(at(10.0, 6.0));
+            let m = doc.add_point(at(10.0, 3.0));
+            let s = doc.add_point(at(20.0, 3.0));
+            let stretched = doc.add_line(p0, q).unwrap();
+            let line = doc.add_line(q, r).unwrap();
+            let hanging = doc.add_line(m, s).unwrap();
+            doc.add_constraint(Constraint::Fix {
+                point: p0,
+                at: at(0.0, 0.0),
+            })
+            .unwrap();
+            doc.add_constraint(Constraint::Midpoint { point: m, line })
+                .unwrap();
+            doc.add_constraint(Constraint::Equal {
+                a: hanging,
+                b: stretched,
+            })
+            .unwrap();
+            moved.push(line);
+        }
+        doc.commit("Tiles");
+        let mut ed = Editor::new(doc);
+        let original: Vec<(EntityId, DVec2)> = ed
+            .doc
+            .iter()
+            .filter(|(_, e)| e.kind.is_point())
+            .map(|(id, _)| (id, ed.doc.point(id).unwrap()))
+            .collect();
+        let dragged: Vec<drift_solver::Param> = ed
+            .doc
+            .defining_points(moved.iter().copied())
+            .into_iter()
+            .flat_map(drift_solver::Param::point)
+            .collect();
+        let mut times = Vec::new();
+        for _ in 0..3 {
+            ed.doc.begin();
+            let mut applied = DVec2::ZERO;
+            for k in 1..=10 {
+                let target = v(4.0, 1.0) * (f64::from(k) / 10.0);
+                let t0 = Instant::now();
+                if ed.drag(&moved, target - applied, &dragged) {
+                    applied = target;
+                }
+                times.push(t0.elapsed());
+            }
+            ed.doc.rollback();
+            for &(id, at) in &original {
+                assert_eq!(ed.doc.point(id).unwrap(), at, "the drawing changed");
+            }
+        }
+        times.sort_unstable();
+        let ms = |d: Duration| d.as_secs_f64() * 1e3;
+        let mean = times.iter().map(|d| ms(*d)).sum::<f64>() / times.len() as f64;
+        report(
+            &format!("tiled sketch, {n} copies, drag call"),
+            (mean, ms(times[times.len() - 1]), ms(times[times.len() / 2])),
+        );
+    }
+}

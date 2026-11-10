@@ -11,6 +11,12 @@ publish.workspace = true
 [dependencies]
 drift-core.workspace = true
 
+[features]
+# Test-only: count how each component's Newton solve ends (`exits`), for the acceptance
+# bar's census (docs/solver-audit.md, section 5). drift-edit's tests turn it on; no build of
+# the app should.
+exit-counts = []
+
 [dev-dependencies]
 proptest = "1"
 

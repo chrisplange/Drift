@@ -118,14 +118,14 @@ fn similarity_census() {
                 println!("A {case} {tag} {what} steps {steps} ERR {counts}");
                 continue;
             };
+            if tag == "id" {
+                let pts = &run.start;
+                let mid = pts.iter().sum::<DVec2>() / pts.len().max(1) as f64;
+                let size = 2.0 * pts.iter().map(|p| p.distance(mid)).fold(0.0, f64::max);
+                reference = Some((run.clone(), size.max(1e-300)));
+            }
             let (dev, rel) = match &reference {
-                None => {
-                    let pts = &run.start;
-                    let mid = pts.iter().sum::<DVec2>() / pts.len().max(1) as f64;
-                    let size = 2.0 * pts.iter().map(|p| p.distance(mid)).fold(0.0, f64::max);
-                    reference = Some((run.clone(), size.max(1e-300)));
-                    (0.0, 0.0)
-                }
+                None => (0.0, 0.0),
                 Some((origin, size)) => {
                     let dev = origin
                         .end
@@ -178,10 +178,29 @@ fn collapsed_arcs(built: &Built) -> usize {
         .count()
 }
 
+/// Each arc's radius (centre to start), in the order of `built.curves`.
+fn radii(built: &Built) -> Vec<f64> {
+    let doc = &built.ed.doc;
+    built
+        .curves
+        .iter()
+        .filter_map(|&id| match doc.get(id).map(|e| e.kind) {
+            Some(drift_core::EntityKind::Arc { center, start, .. }) => Some(
+                doc.point(center)
+                    .unwrap()
+                    .distance(doc.point(start).unwrap()),
+            ),
+            _ => None,
+        })
+        .collect()
+}
+
 /// One drag of #377's censuses, as a line: refusals, whether it committed, arcs collapsed,
-/// how far the farthest point went, the exit counts, and every point's end position (exact,
-/// so two builds compare bit for bit).
+/// how far the farthest point went, the exit counts, each arc's radius before and after
+/// (`radii`, for the binding drag rule: a drag that goes while a radius changes is one to
+/// check), and every point's end position (exact, so two builds compare bit for bit).
 fn census_line(head: &str, built: &mut Built, ids: &[EntityId], off: DVec2, steps: u32) {
+    let before = radii(built);
     let _ = drift_solver::exits::take();
     let run = drag(built, ids, off, steps);
     let counts = exits();
@@ -196,13 +215,18 @@ fn census_line(head: &str, built: &mut Built, ids: &[EntityId], off: DVec2, step
         .zip(&run.end)
         .map(|(p, q)| p.distance(*q))
         .fold(0.0, f64::max);
+    let radii: String = before
+        .iter()
+        .zip(radii(built))
+        .map(|(a, b)| format!("{a:?}>{b:?};"))
+        .collect();
     let ends: String = run
         .end
         .iter()
         .map(|p| format!("{:?},{:?};", p.x, p.y))
         .collect();
     println!(
-        "{head} refused {} committed {} collapsed {} far {far:.6e} drag {:.6e} {counts} | {ends}",
+        "{head} refused {} committed {} collapsed {} far {far:.6e} drag {:.6e} {counts} radii {radii} | {ends}",
         run.refused,
         run.committed,
         collapsed_arcs(built),

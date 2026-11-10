@@ -1,6 +1,6 @@
-"""Read the solver bar's census logs (docs/solver-audit.md, section 5, items 2 and 3).
+"""Read the solver bar's census logs (docs/solver-audit.md, section 5, items 2, 3 and 7).
 
-    python scripts/solver-bar/analyse.py similarity DIR [VARIANT,...]
+    python scripts/solver-bar/analyse.py similarity DIR [BASE_VARIANT,PR_VARIANT,...]
     python scripts/solver-bar/analyse.py census BASE_DIR [PR_DIR]
 
 `similarity`: DIR holds `<variant>-*.txt`, the `A ...` lines of
@@ -9,14 +9,23 @@ drags per place, failures (a different number of refused frames or a different c
 `rdiff`, or an end more than 1e-6 of the sketch's size off the origin's, mapped), drags that
 broke a property (`ERR`), sketches that couldn't be committed there (`BUILD`), how the
 solver's component solves ended, and how failures go with patience, cap and damping exits.
-Variants default to `main`. It also reads the audit's raw logs (E:\\Drift\\solver-audit-logs,
-`census2`), whose lines also carry the rows' conditioning at each exit (`sig`, `sb`).
+Variants default to `main`. With two or more, each is also compared with the first by
+(case, place): newly failing, newly passing, ok -> ERR, ok -> BUILD, and pairs missing; exit
+status 1 if a variant is missing pairs the first has, or broke a property the first didn't.
+It also reads the audit's raw logs (E:\\Drift\\solver-audit-logs, `census2`), whose lines
+also carry the rows' conditioning at each exit (`sig`, `sb`).
 
 `census`: each DIR holds `<place>.txt`, the `C ...` lines of `drag_props::census::drag_census`
 or `drag_census_seeded` at one place each (the file name is the place). Alone, it counts per
-place: drags, drags with a refused frame (stops), drags not committed, ERR and BUILD. With
-PR_DIR, it compares the two builds drag by drag at each place: every new stop
-(went -> stop), every stop that now goes, every commit that changed, and ends that moved.
+place: drags, stops (drags with a refused frame), drags not committed, ERR, BUILD, drags
+ending with a collapsed arc, and, for the binding drag rule, drags that went while an arc's
+radius changed and drags that grew a radius. With PR_DIR, it prints both builds' counts at
+each place and compares them drag by drag: cases missing from the PR's census (or only in
+it), drags that broke a property (ok -> ERR) or no longer build, new stops (went -> stop),
+stops that now go, split by whether an arc's radius changed as it went (a kept radius never
+may), stops whose number of refused frames changed, commits that changed, arcs that now
+collapse or no longer do, and ends that moved; each listed by case. Exit status 1 if a
+place or a case is missing from PR_DIR, or a drag broke a property it didn't on BASE.
 """
 
 import collections
@@ -125,6 +134,8 @@ def similarity(d, variants):
             s = sum(ex) or 1
             return ", ".join(f"{NAMES[i]} {100 * ex[i] / s:.2f}%" for i in range(5)) + f" of {sum(ex)}"
 
+        # (Shares of every component solve in the drag frames of the drags run there: the
+        # origin row pools the origin's drags and the three scales'.)
         print("drag solves' exits, at the origin (id and scales): " + exits(lambda t: t in ("id", "s0.1", "s3.7", "s10")))
         for t in ("x1m", "x100m", "x1km"):
             print(f"drag solves' exits, {t}: " + exits(lambda tt, t=t: tt == t))
@@ -159,12 +170,55 @@ def similarity(d, variants):
             print(f"of {len(fail)} drags failing similarity, {100 * sum(fail) / len(fail):.1f}% had a "
                   f"patience, cap or damping exit (in it or its origin twin), against "
                   f"{100 * sum(ok) / max(len(ok), 1):.1f}% of {len(ok)} passing")
-        worst = sorted(((r["rel"], c, t) for (c, t), r in R.items()
-                        if not r["err"] and t in PLACES and failing(r)), reverse=True)
-        print("failing drags (case place): " + " ".join(f"{c} {t}" for _, c, t in sorted(worst, key=lambda x: (x[2], x[1]))))
+        worst = sorted((t, c) for (c, t), r in R.items() if not r["err"] and t in PLACES and failing(r))
+        print("failing drags (case place): " + " ".join(f"{c} {t}" for t, c in worst))
+    return compare_similarity(data, variants)
 
 
-CEN = re.compile(r"C (\d+)(.*?)(?: (BUILD)$| ERR(.*)$| refused (\d+) committed (\S+) collapsed (\d+) far (\S+) drag (\S+) (.*?) \| (.*)$)")
+def compare_similarity(data, variants):
+    """Each variant after the first against the first, (case, place) by (case, place); the
+    exit status."""
+    status = 0
+    A = data[variants[0]]
+    for v in variants[1:]:
+        B = data[v]
+        lists = collections.defaultdict(list)
+        for key in sorted(set(A) | set(B)):
+            a, b = A.get(key), B.get(key)
+            if b is None:
+                lists["missing"].append(key)
+                continue
+            if a is None:
+                lists["only"].append(key)
+                continue
+            if not a["err"] and b["err"] and not b["build"]:
+                lists["ok -> ERR"].append(key)
+            if not a["build"] and b["build"]:
+                lists["ok -> BUILD"].append(key)
+            if key[1] not in PLACES or a["err"] or b["err"]:
+                continue
+            if failing(b) and not failing(a):
+                lists["newly failing"].append(key)
+            elif failing(a) and not failing(b):
+                lists["newly passing"].append(key)
+        print(f"\n=== {v} against {variants[0]}, by (case, place)")
+        for name, label in (("newly failing", "newly failing"), ("newly passing", "newly passing"),
+                            ("ok -> ERR", "ok -> ERR"), ("ok -> BUILD", "ok -> BUILD"),
+                            ("missing", f"missing in {v}"), ("only", f"only in {v}")):
+            keys = lists[name]
+            print(f"{label}: {len(keys)}" + (": " + " ".join(f"{c} {t}" for c, t in keys) if keys else ""))
+        if lists["missing"] or lists["ok -> ERR"]:
+            status = 1
+            print(f"INCOMPLETE OR BROKEN: {v} is missing pairs or broke a property where {variants[0]} didn't.")
+    return status
+
+
+CEN = re.compile(
+    r"C (\d+)(.*?)(?: (BUILD)$| ERR(.*)$| refused (\d+) committed (\S+) collapsed (\d+) far (\S+) "
+    r"drag (\S+) (.*?)(?: radii (\S*))? \| (.*)$)"
+)
+# An arc's radius counts as changed past this share of itself (or of 1 mm, if smaller).
+RADIUS_BAR = 1e-9
 
 
 def load_census(f):
@@ -181,10 +235,25 @@ def load_census(f):
             elif m[5] is None:
                 rows[case] = dict(kind="err")
             else:
-                pts = [tuple(map(float, p.split(","))) for p in m[11].split(";") if p]
+                pts = [tuple(map(float, p.split(","))) for p in m[12].split(";") if p]
+                radii = [tuple(map(float, r.split(">"))) for r in (m[11] or "").split(";") if r]
                 rows[case] = dict(kind="ok", refused=int(m[5]), committed=m[6] == "true",
-                                  collapsed=int(m[7]), far=float(m[8]), pts=pts, **stats(m[10]))
+                                  collapsed=int(m[7]), far=float(m[8]), pts=pts, radii=radii,
+                                  has_radii=m[11] is not None, **stats(m[10]))
     return rows
+
+
+def radius_changed(r):
+    """Whether an arc's radius changed over the drag; None if the line doesn't say."""
+    if not r["has_radii"]:
+        return None
+    return any(abs(b - a) > RADIUS_BAR * max(1.0, a) for a, b in r["radii"])
+
+
+def radius_grew(r):
+    if not r["has_radii"]:
+        return None
+    return any(b - a > RADIUS_BAR * max(1.0, a) for a, b in r["radii"])
 
 
 def distance(place):
@@ -200,42 +269,111 @@ def places(d):
     return sorted(names, key=distance)
 
 
+COUNTS = ("drags", "stops", "not committed", "ERR", "BUILD", "collapsed",
+          "went, a radius changed", "a radius grew")
+
+
+def counts(R):
+    """One build's counts at one place, in the order of COUNTS."""
+    ok = [r for r in R.values() if r["kind"] == "ok"]
+    return [
+        len(ok),
+        sum(r["refused"] > 0 for r in ok),
+        sum(not r["committed"] for r in ok),
+        sum(r["kind"] == "err" for r in R.values()),
+        sum(r["kind"] == "build" for r in R.values()),
+        sum(r["collapsed"] > 0 for r in ok),
+        sum(r["refused"] == 0 and bool(radius_changed(r)) for r in ok),
+        sum(bool(radius_grew(r)) for r in ok),
+    ]
+
+
+CHANGES = ("missing in PR", "only in PR", "ok -> ERR", "ok -> BUILD", "went -> stop",
+           "stop -> went, radii kept", "stop -> went, a radius changed",
+           "stop, refusals changed", "commit changed", "collapse changed", "ends moved >1e-9")
+
+NOTE = (
+    "stops: drags with a refused frame. collapsed: drags ending with an arc crushed or closed. "
+    "went, a radius changed: drags that refused no frame while an arc's radius changed by more "
+    f"than {RADIUS_BAR} of itself; a drag of an arc's own end may change its radius, a kept "
+    "radius may not (the binding drag rule), so each such case is one to check. "
+    "a radius grew: drags ending with an arc's radius larger than it began."
+)
+
+
 def census(base, pr):
-    print("| place | drags | stops (a refused frame) | not committed | ERR | BUILD |" + (" went -> stop | stop -> went | commit changed | ends moved >1e-9 |" if pr else ""))
-    print("|---|---|---|---|---|---|" + ("---|---|---|---|" if pr else ""))
+    """Print the table; the exit status."""
+    if not pr:
+        print("| place | " + " | ".join(COUNTS) + " |")
+        print("|---|" + "---|" * len(COUNTS))
+        for p in places(base):
+            row = counts(load_census(os.path.join(base, p + ".txt")))
+            print(f"| {p} | " + " | ".join(map(str, row)) + " |")
+        print("\n" + NOTE)
+        return 0
+    status = 0
+    print("| place | build | " + " | ".join(COUNTS) + " | " + " | ".join(CHANGES) + " |")
+    print("|---|---|" + "---|" * (len(COUNTS) + len(CHANGES)))
     detail = []
-    for p in places(base):
-        A = load_census(os.path.join(base, p + ".txt"))
-        ok = [r for r in A.values() if r["kind"] == "ok"]
-        row = (f"| {p} | {len(ok)} | {sum(r['refused'] > 0 for r in ok)} | "
-               f"{sum(not r['committed'] for r in ok)} | {sum(r['kind'] == 'err' for r in A.values())} | "
-               f"{sum(r['kind'] == 'build' for r in A.values())} |")
-        if pr:
-            f = os.path.join(pr, p + ".txt")
-            B = load_census(f) if os.path.exists(f) else {}
-            ws = sw = cc = mv = 0
-            for c, a in sorted(A.items()):
-                b = B.get(c)
-                if not b or a["kind"] != "ok" or b["kind"] != "ok":
-                    if b and a["kind"] != b["kind"]:
-                        detail.append(f"{p} case {c}: {a['kind']} -> {b['kind']}")
-                    continue
-                if a["refused"] == 0 and b["refused"] > 0:
-                    ws += 1
-                    detail.append(f"{p} case {c}: went -> stop ({b['refused']} frames refused)")
-                elif a["refused"] > 0 and b["refused"] == 0:
-                    sw += 1
-                    detail.append(f"{p} case {c}: stop -> went")
-                if a["committed"] != b["committed"]:
-                    cc += 1
-                    detail.append(f"{p} case {c}: committed {a['committed']} -> {b['committed']}")
-                d = max((math.hypot(x[0] - y[0], x[1] - y[1]) for x, y in zip(a["pts"], b["pts"])), default=0.0)
-                if d > 1e-9 * max(1.0, a["far"]):
-                    mv += 1
-            row += f" {ws} | {sw} | {cc} | {mv} |"
-        print(row)
+    for p in places(base) + [q for q in places(pr) if q not in places(base)]:
+        fa, fb = os.path.join(base, p + ".txt"), os.path.join(pr, p + ".txt")
+        if not (os.path.exists(fa) and os.path.exists(fb)):
+            print(f"| {p} | **{'PR' if os.path.exists(fa) else 'BASE'} has no census here** |")
+            status = 1
+            continue
+        A, B = load_census(fa), load_census(fb)
+        n = collections.Counter()
+
+        def note(key, c, text):
+            n[key] += 1
+            detail.append(f"{p} case {c}: {text}")
+
+        for c in sorted(set(A) | set(B)):
+            a, b = A.get(c), B.get(c)
+            if b is None:
+                note("missing in PR", c, "missing in PR")
+                continue
+            if a is None:
+                note("only in PR", c, "only in PR")
+                continue
+            if a["kind"] != b["kind"]:
+                key = {("ok", "err"): "ok -> ERR", ("ok", "build"): "ok -> BUILD"}.get((a["kind"], b["kind"]))
+                if key:
+                    note(key, c, key)
+                else:
+                    detail.append(f"{p} case {c}: {a['kind']} -> {b['kind']}")
+                continue
+            if a["kind"] != "ok":
+                continue
+            if a["refused"] == 0 and b["refused"] > 0:
+                note("went -> stop", c, f"went -> stop ({b['refused']} frames refused)")
+            elif a["refused"] > 0 and b["refused"] == 0:
+                if radius_changed(b) is False:
+                    note("stop -> went, radii kept", c, "stop -> went, radii kept")
+                else:
+                    note("stop -> went, a radius changed", c,
+                         "stop -> went with an arc's radius changed: check the binding drag rule")
+            elif a["refused"] != b["refused"]:
+                note("stop, refusals changed", c, f"stop, {a['refused']} -> {b['refused']} frames refused")
+            if a["committed"] != b["committed"]:
+                note("commit changed", c, f"committed {a['committed']} -> {b['committed']}")
+            if (a["collapsed"] > 0) != (b["collapsed"] > 0):
+                note("collapse changed", c, f"collapsed arcs {a['collapsed']} -> {b['collapsed']}")
+            d = max((math.hypot(x[0] - y[0], x[1] - y[1]) for x, y in zip(a["pts"], b["pts"])), default=0.0)
+            if len(a["pts"]) != len(b["pts"]) or d > 1e-9 * max(1.0, a["far"]):
+                note("ends moved >1e-9", c, f"end moved {d:.3e}")
+        if n["missing in PR"] or n["ok -> ERR"]:
+            status = 1
+        print(f"| {p} | BASE | " + " | ".join(map(str, counts(A))) + " |" + " |" * len(CHANGES))
+        print(f"| {p} | PR | " + " | ".join(map(str, counts(B))) + " | "
+              + " | ".join(str(n[k]) for k in CHANGES) + " |")
     for line in detail:
         print("  " + line)
+    print("\n" + NOTE)
+    if status:
+        print("\nINCOMPLETE OR BROKEN: the PR's census is missing a place or cases, or a drag broke "
+              "a property it didn't on BASE.")
+    return status
 
 
 def main():
@@ -244,9 +382,8 @@ def main():
     if len(sys.argv) < 3 or sys.argv[1] not in ("similarity", "census"):
         sys.exit(__doc__)
     if sys.argv[1] == "similarity":
-        similarity(sys.argv[2], sys.argv[3].split(",") if len(sys.argv) > 3 else ["main"])
-    else:
-        census(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None)
+        sys.exit(similarity(sys.argv[2], sys.argv[3].split(",") if len(sys.argv) > 3 else ["main"]))
+    sys.exit(census(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None))
 
 
 if __name__ == "__main__":

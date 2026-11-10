@@ -1618,9 +1618,10 @@ fn newton(
     // refused step raises λ from that small floor by `nu`, doubling each time: nine decades
     // back cost about seven refused steps.)
     let mut fold_scale = 1.0f64;
-    // (Test-only: how the loop below ended, if it runs out; see `exits`.)
+    // (Test-only: how the loop below ended, if it runs out, and after how many iterations;
+    // see `exits`.)
     #[cfg(feature = "exit-counts")]
-    let mut exit = exits::Exit::Cap;
+    let (mut exit, mut ran) = (exits::Exit::Cap, MAX_ITERATIONS);
     for iteration in 0..MAX_ITERATIONS {
         let rows_hold = converged(&res, values);
         let at_rest = !dragging || last_moved <= still_at(values, tol, yard);
@@ -1843,7 +1844,7 @@ fn newton(
         let Some((mut delta, soft_delta, fold_delta)) = solved else {
             #[cfg(feature = "exit-counts")]
             {
-                exit = exits::Exit::NoStep;
+                (exit, ran) = (exits::Exit::NoStep, iteration);
             }
             break;
         };
@@ -2003,14 +2004,14 @@ fn newton(
             if lambda > 1e12 * max_diag {
                 #[cfg(feature = "exit-counts")]
                 {
-                    exit = exits::Exit::Damping;
+                    (exit, ran) = (exits::Exit::Damping, iteration);
                 }
                 break;
             }
         }
     }
     #[cfg(feature = "exit-counts")]
-    exits::record(exit, dragging, MAX_ITERATIONS);
+    exits::record(exit, dragging, ran);
     let converged_at_cap = converged(&res, values);
     ComponentOutcome {
         converged: converged_at_cap,

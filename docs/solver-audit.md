@@ -329,6 +329,23 @@ not time.
 7. **The binding drag rule:** a drag that kept radii can't follow stops at the last valid shape;
    radii are never grown. Checked by `held_shapes::` and the census's stop classes.
 
+PR 0 puts the bar in `scripts/solver-bar/` (its README runs all seven). **Known gaps, from PR
+0's review, to close before PR 3 or PR 4 is judged:**
+- The heavy matrix and the censuses draw from one generator (`plan()`). It never draws Angle,
+  Radius, Diameter, FixRadius, Symmetric, Collinear, Concentric, Coradial, Smooth, Corner,
+  EqualDistance, H/V distances, PointLineDistance, circles or ellipses. PR 4 re-lowers Angle,
+  and a radius dimension is what a kept radius meets most. A second generator, with its own
+  seed so today's case numbers stay valid, adds at least Angle, Radius/Diameter, Symmetric and
+  Collinear.
+- No check sees an arc flip. A drag that carries an arc's end past its start turns a short arc
+  into a near-full circle with every row still met. The second generator's properties add an
+  arc-sweep continuity check.
+- The similarity census translates and scales but never turns. Rotation, where libm's sin and
+  cos come in, is covered only by the heavy similarity property.
+- Item 7 in the census is a flag to check, not a verdict. A drag that goes while an arc's
+  radius changes may be the user dragging that arc's own end. The census lists each one, and
+  each must be traced.
+
 ### PR 0: the bar as code (tests only)
 - Commit the similarity census as an ignored test, the exit-reason counters as test-only
   instrumentation, and `analyse.py` as a script.

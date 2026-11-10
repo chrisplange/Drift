@@ -3,7 +3,8 @@ name: Solver bar
 # The solver's acceptance bar on Linux (docs/solver-audit.md, section 5, item 6, and decision
 # 9): the heavy drag matrix and the ignored pins on ubuntu, where libm's sin, cos and atan2
 # differ from Windows' and macOS' by the ulps that decide a drag at a fold. Nightly, by hand,
-# and on any pull request that touches the solver, the drag code or this bar.
+# and on any pull request that touches the solver, what it is built on, the editor that calls
+# it, or this bar.
 
 on:
   schedule:
@@ -12,12 +13,16 @@ on:
   pull_request:
     paths:
       - "crates/drift-solver/**"
-      - "crates/drift-edit/src/editor/drag.rs"
-      - "crates/drift-edit/src/editor/solve.rs"
+      - "crates/drift-core/**"
+      - "crates/drift-edit/src/editor/**"
       - "crates/drift-edit/src/drag_props.rs"
       - "crates/drift-edit/src/drag_props/**"
+      - "Cargo.lock"
       - "scripts/solver-bar/**"
       - ".github/workflows/solver-bar.yml"
+
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -30,28 +35,49 @@ env:
 jobs:
   heavy:
     name: Heavy drag matrix and pins (ubuntu)
-    runs-on: ubuntu-latest
+    # (Pinned, so a nightly that turns red names a change in the code, not in the runner's
+    # libm; the summary prints glibc's and rustc's versions.)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Versions
+        run: |
+          {
+            echo "### Toolchain"
+            echo
+            echo "- $(rustc -V)"
+            echo "- $(ldd --version | head -1)"
+            echo
+          } | tee -a "$GITHUB_STEP_SUMMARY"
       # 14 properties x seeds 1-20, release, --exact. Fails on a failure scripts/solver-bar/
-      # expected.txt doesn't list for Linux; the table goes to the job summary.
+      # expected.txt doesn't list for Linux, and on a listed one that passes; the table goes
+      # to the job summary.
       - name: Heavy matrix
         run: python3 scripts/solver-bar/heavy.py --jobs 4 --out target/solver-bar/heavy
       # The ignored pins (#280's), reported, not judged: each solver PR names the pins it
-      # un-ignores, and a pin that changes on Linux alone shows here.
-      - name: Pins (report only)
+      # un-ignores, and a pin that changes on Linux alone shows here. Fails only if the pins
+      # didn't run (fewer than the 7 there are).
+      - name: Pins
         if: always()
         run: |
+          mkdir -p target/solver-bar
           cargo test --release -p drift-edit --lib drag_props::seeds:: -- --ignored --test-threads=4 \
             > target/solver-bar/pins.txt 2>&1 || true
+          grep -E '^test .* \.\.\. (ok|FAILED)$' target/solver-bar/pins.txt > target/solver-bar/pins-lines.txt || true
           {
             echo "### Ignored pins (Linux)"
             echo
-            grep -E '^test .* \.\.\. (ok|FAILED)$' target/solver-bar/pins.txt \
-              | sed -E 's/^test drag_props::seeds::(.*) \.\.\. (.*)$/- `\1`: \2/'
+            sed -E 's/^test drag_props::seeds::(.*) \.\.\. (.*)$/- `\1`: \2/' target/solver-bar/pins-lines.txt
           } | tee -a "$GITHUB_STEP_SUMMARY"
+          ran=$(wc -l < target/solver-bar/pins-lines.txt)
+          if [ "$ran" -lt 7 ]; then
+            echo "::error::only $ran of the 7 pins ran"
+            tail -50 target/solver-bar/pins.txt
+            exit 1
+          fi
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4

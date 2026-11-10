@@ -691,10 +691,11 @@ fn explained(result: Result<(), TestCaseError>) -> Result<(), TestCaseError> {
 /// max(1, |c|max).
 ///
 /// Midpoints are checked directly too: each Midpoint relation's point at its line's middle,
-/// to the same bar. (`unmet` reads those rows already, unless a lowering takes them over; a
-/// line's hidden midpoint, the other structural row, is read from the line's ends whenever a
-/// system is built, never stored, so it always holds. Ellipses' rows are not checked: no drag
-/// sketch has an ellipse.)
+/// to the same bar. (`unmet` reads those rows already, unless a lowering takes them over;
+/// `MidpointOf`, a point midway between two points, is left to `unmet`, which reads its
+/// rows. A line's hidden midpoint, the other structural row, is read from the line's ends
+/// whenever a system is built, never stored, so it always holds. Ellipses' rows are not
+/// checked: no drag sketch has an ellipse.)
 fn broken(doc: &drift_core::Document, lowering: Option<&drift_solver::Lowering>) -> Option<String> {
     let unmet = drift_solver::unmet_with(doc, SLACK, lowering);
     let mut off_rows = Vec::new();
@@ -787,10 +788,9 @@ fn the_drag_check_sees_structural_rows() {
 
         doc.set_point(m, at + DVec2::new(30.0, 0.5)).unwrap();
         let off = broken(&doc, None).expect("a midpoint off its line's middle");
-        assert!(
-            off.contains("midpoint") || off.contains("relations unmet"),
-            "{off}"
-        );
+        // (Its relation's row reports it too, as `unmet` reads it without a lowering; the
+        // direct check is the one that names it.)
+        assert!(off.contains("midpoint"), "{off}");
     }
 }
 

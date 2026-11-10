@@ -453,7 +453,10 @@ impl ShownEnds {
 }
 
 impl ItemLook {
-    /// Entities hidden (handles not showing, a tool's preview standing in for them).
+    /// Entities hidden (handles not showing, a tool's preview standing in for them). Only
+    /// a debug build's check reads it (`frame_items`), so a release build has none: a
+    /// release test build with `-D warnings` (the solver bar's) would fail on dead code.
+    #[cfg(debug_assertions)]
     pub(crate) fn hidden(&self) -> &BTreeSet<EntityId> {
         &self.hidden
     }

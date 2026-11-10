@@ -53,7 +53,8 @@ pub struct ExitCounts {
     pub drag: [u64; 5],
     /// Every other solve, indexed as [`Exit::ALL`].
     pub other: [u64; 5],
-    /// Iterations the drag solves ran, summed.
+    /// Iterations the drag solves ran, summed (for a no-step or damping exit, the iteration
+    /// it broke at; `ComponentOutcome::iterations` reports the cap for those).
     pub drag_iterations: u64,
     /// Iterations the other solves ran, summed.
     pub other_iterations: u64,

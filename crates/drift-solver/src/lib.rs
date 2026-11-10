@@ -490,7 +490,6 @@ impl Frame {
             .fold(0.0f64, f64::max);
         let (middle, size) = drawn_extent(sys, groups, values, drawn);
         let size = size.max(asked);
-        let bar = Bar::new(size, largest, tol);
         let mut moved = Vec::new();
         if size.is_finite() && size > 0.0 && middle.is_finite() {
             let grid = size.log2().floor().exp2();
@@ -507,6 +506,7 @@ impl Frame {
                 }
             }
         }
+        let bar = Bar::new(size, largest, tol);
         Self { moved, bar }
     }
 
@@ -2598,54 +2598,6 @@ fn newton(
             .filter(|((f, r), s)| **s > 0.0 && f.abs() > row_tolerance(sys, **r, bar.get(), values))
             .map(|((_, r), s)| row_tolerance(sys, *r, bar.get(), values) * s)
             .fold(f64::INFINITY, f64::min);
-        // A drag that can't land: on a refused step, the least-change Gauss–Newton step of the
-        // rest of the geometry, the dragged and carried held where they are, brings the rows no
-        // more than the finest bar.get() of those still off closer. Only the dragged and carried could
-        // meet them, and they give way only at the pace their weight allows: a crawl to the cap
-        // that ends as unfinished anyway. So it ends here, a conflict of the rows with the
-        // drag's targets (what PR 5 of the solver audit makes of them, exact).
-        if refused && dragging && pinned.iter().any(|p| *p) {
-            back_normal.clear();
-            let mut rhs = vec![Dd::default(); n];
-            for (row, f) in scaled_jac.iter().zip(&scaled_res) {
-                for (k, &(c1, g1)) in row.iter().enumerate() {
-                    if pinned[c1] {
-                        continue;
-                    }
-                    rhs[c1] = rhs[c1].add_product(-g1, *f);
-                    for &(c2, g2) in &row[..=k] {
-                        if !pinned[c2] {
-                            back_normal.add_product(c1, c2, g1, g2);
-                        }
-                    }
-                }
-            }
-            let mu = MIN_CHANGE * max_diag_of(&back_normal);
-            let shift: Vec<f64> = mobility
-                .iter()
-                .zip(&pinned)
-                .map(|(m, pinned)| if *pinned { 1.0 } else { mu / m })
-                .collect();
-            if let Some(factor) = back_normal.factor(&shift) {
-                let step = factor.solve_refined(&rhs);
-                let held = scaled_jac
-                    .iter()
-                    .zip(&scaled_res)
-                    .map(|(row, f)| {
-                        (f + row
-                            .iter()
-                            .filter(|(c, _)| !pinned[*c])
-                            .map(|&(c, g)| g * step[c])
-                            .sum::<f64>())
-                        .powi(2)
-                    })
-                    .sum::<f64>()
-                    .sqrt();
-                if before.sqrt() - held <= finest && held > finest {
-                    return finish(Stop::Conflict, iteration + 1, false, wandered, false);
-                }
-            }
-        }
         // A least-squares stationary point with the rows off: the step brings them no more
         // than the finest bar.get() of the rows still off closer, and by its linearisation they
         // still wouldn't hold. Every further step is smaller still (λ only grows on a refused
@@ -2831,10 +2783,15 @@ fn run(sys: &mut System, options: &SolveOptions, iterate: bool) -> (SolveReport,
         }
         any_bar = any_bar.max(bar.length);
         let converged = if iterate {
-            // (The component's length bar at other values in its frame: its size there, its
-            // floor and cap as it began.)
+            // (The component's length bar at other values in its frame: its size there,
+            // measured on the values as they would be stored, as `Frame::enter` measured it, so
+            // the two agree to the bit where nothing moved; its floor and cap as it began.)
             let bar_now = |values: &[f64]| {
-                let (_, size) = drawn_extent(sys, &groups, values, &drawn);
+                let mut stored = values.to_vec();
+                for &(g, _, shift) in &frame.moved {
+                    stored[g] += shift;
+                }
+                let (_, size) = drawn_extent(sys, &groups, &stored, &drawn);
                 let mut length = Bar::new(size.max(asked), 0.0, tol).length.max(bar.floor);
                 if let Some(cap) = options.bar_cap {
                     length = length.min(cap).max(bar.floor);

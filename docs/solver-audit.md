@@ -25,11 +25,12 @@ re-derives frames and floors by hand around the solver (`landed`, `breaks_held_s
 
 Also found: **main can't commit 551 of 10,561 random sketches placed 1 km from the origin**
 (44 at 100 m). Their relations hold. With a local frame on every solve, all of them commit.
+Filed as #387.
 
 The proposal is six gated PRs (section 5). Together they delete the near/far hinge, the patience
 rule, the cap-as-conflict test, fallback (b), the landing passes, the halving ladders, the fold
 and length tries and their budgets, and the speed thresholds. They keep the binding drag rule.
-Section 6 lists the decisions only you can make.
+Section 6 lists the nine decisions; the user took all of them, as recommended, on 2026-11-10.
 
 ---
 
@@ -90,7 +91,7 @@ Commands, scripts and raw logs: `E:\Drift\solver-audit-logs\` (`census.sh`, `cen
 | **#352** | Merged equal points start from their mean, which rounds | Numerics hygiene, independent of the hypotheses | Code: `system.rs` ~1209 divides a sum by the count | PR 1 |
 | **#343** | Drag property tests can't see structural rows | Test gap: `unmet` skips rows no relation owns | Code: `lib.rs` ~589 `let Some(id) = row.source else { continue }` | PR 0 |
 | **#347** | Active element through relations lowered onto wall faces | Not the solver: the editor's relation-adding policy, and blocked by #313 | — | Out of scope; stays blocked |
-| **#295** | "Flaky" `face_dimensions_hold_through_drags` | **Not flaky and not the solver.** The 4 "join flipped" seeds fail on every run, on main and on `lfa` alike: walls' join bookkeeping (`drag_joins`, tees re-read at step 5 of a 1.3 to 1.5 m drag). The 2 "face relation" seeds no longer fail on main | Replays of the six saved `cc` lines | Walls fix, outside this plan (decision 7) |
+| **#295** | "Flaky" `face_dimensions_hold_through_drags` | **Not flaky and not the solver.** The 4 "join flipped" seeds fail on every run, on main and on `lfa` alike: walls' join bookkeeping (`drag_joins`, tees re-read at step 5 of a 1.3 to 1.5 m drag). The 2 "face relation" seeds no longer fail on main | Replays of the six saved `cc` lines | Walls fix, outside this plan (decision 7; relabelled walls, batch 2) |
 | **#187** | Record what each heuristic protects; keep a corpus | Meta | Section 3 is the record; PR 0 is the corpus | PR 0 |
 
 ## 2. Every ignored or pinned drag test, mapped to a root cause
@@ -174,7 +175,7 @@ What this says:
   relations hold. Derived, not traced case by case: angle rows are held to a fixed 1e-12 (a
   sine), but a 10 mm line whose ends are stored to 1.2e-10 mm has its direction known only to
   about 1e-11, so the rows can't be met, and the commit fails as a conflict. `lfa` commits all of
-  them. No issue covers this yet (decision 8).
+  them. Filed as #387 (decision 8).
 
 ### (b) Heuristic stopping: holds, and it is the main cause
 
@@ -451,34 +452,45 @@ Heavy matrix, 14 properties × seeds 1–20, release, `--exact` (`heavy.sh`):
 
 ---
 
-## 6. Decisions only you can make
+## 6. Decisions
+
+All nine were taken by the user on 2026-11-10, each as recommended (LOG.md).
 
 1. **Adopt this direction and keep the patch freeze.** No more solver or drag patches outside
    this sequence; `solver-audit` issues stay paused until the PR that closes them.
    *Recommendation:* yes. Every rule added since #94 moved the failures rather than removing them.
+   **Decided 2026-11-10: as recommended.**
 2. **The tolerance.** One bar, a fixed share of each part's size, in place of 1e-12 of the
    coordinates. *Recommendation:* 1e-9 × A/4: 2.5 picometres on a 10 mm part, 0.25 nm on a 1 m
    one, far below anything drawn or exported. It is what the probe measured. 1e-10 would work out
    to about 100,000 part-sizes; 1e-12 does not work far out at all.
+   **Decided 2026-11-10: as recommended.**
 3. **"Far out unchanged" (P2 from #377).** PR 2 changes far-out results on purpose.
    *Recommendation:* replace P2 with "the same drag at any size and place, to about a million
    part-sizes from the origin".
+   **Decided 2026-11-10: as recommended.**
 4. **Held radii in a drag: hard or soft.** Today they are a soft preference, and a drag is
-   refused only when it doesn't land and one moves more than 10× as fast as the pointer. In a continuation they can
-   be held exactly, and the drag stops where it can't keep them, which is the binding rule read
-   literally. That stops some drags that today let a held radius drift slowly.
-   *Recommendation:* hard for radii. Hanging lines stay soft (carried at their length where
-   possible), with the crushed-line stop kept.
+   refused only when it doesn't land and one moves more than 10× as fast as the pointer. In a
+   continuation they can be held exactly, and the drag stops where it can't keep them, which is
+   the binding rule read literally. That stops some drags that today let a held radius drift
+   slowly. *Recommendation:* hard for radii. Hanging lines stay soft (carried at their length
+   where possible), with the crushed-line stop kept.
+   **Decided 2026-11-10: as recommended.**
 5. **#350: commits keep shapes.** *Recommendation:* yes, as PR 6, after PR 3, with a before/after.
+   **Decided 2026-11-10: as recommended.**
 6. **#377's accepted costs (D3: 12338's 19 mm, 19595, the seeded fold churn; the hinge PQ2).**
    *Recommendation:* treat them as superseded by PR 2. They were costs of the hinge, and the
    hinge goes.
+   **Decided 2026-11-10: as recommended.**
 7. **#295 out of `solver-audit`.** It is deterministic walls bookkeeping, not a flaky solver
    test. *Recommendation:* relabel it as a walls bug. The walls PR that fixes it adds the four
    saved seeds to the regression file as its proof (adding them before the fix would turn main
    red).
+   **Decided 2026-11-10: as recommended.** Done: #295 is relabelled walls and batch 2.
 8. **File the 1 km commit refusal as an issue.** "A sketch whose relations hold can't be
    committed 1 km out (551 of 10,561 random sketches; 44 at 100 m)". *Recommendation:* file it,
-   closed by PR 2. (Not posted: issue comments and new issues wait for your OK.)
+   closed by PR 2.
+   **Decided 2026-11-10: as recommended.** Done: filed as #387.
 9. **Linux in the bar.** *Recommendation:* run the heavy matrix and the pins on ubuntu in a
    scheduled job (#187's step 4), so platform round-off is seen before a merge, not after.
+   **Decided 2026-11-10: as recommended.**

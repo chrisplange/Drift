@@ -167,7 +167,7 @@ point {at}; line {from, to}; polyline {points, closed}; rectangle {corner, width
 polygon {center, radius, sides, rotation} (regular, on a construction circle); circle {center, radius}; \
 arc {center, start, end} (counter-clockwise) or {start, through, end}; ellipse {center, major (end of the major semi-axis), minor_radius}; \
 bezier {from, c1, c2, to}. Positions are [x, y] or existing point ids; equal coordinates share one point, so shapes join. \
-Lines within 1 degree of level or plumb get horizontal/vertical relations (auto_relations). Returns the new ids by role (a rectangle's sides bottom/right/top/left and corners).",
+Lines within 3 degrees of level or plumb get horizontal/vertical relations (auto_relations). Returns the new ids by role (a rectangle's sides bottom/right/top/left and corners).",
             schema: object(
                 json!({
                     "items": { "type": "array", "items": { "type": "object", "properties": {

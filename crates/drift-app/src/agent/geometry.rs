@@ -7,9 +7,6 @@ use serde_json::{Map, Value, json};
 use super::args;
 use super::{Res, Session};
 
-/// Lines within this many degrees of level or plumb get a horizontal or vertical relation.
-const AXIS_DEGREES: f64 = 1.0;
-
 /// Where points go, sharing one point per location (within this batch, and with the
 /// drawing's existing points when joining).
 struct Points {
@@ -88,12 +85,8 @@ impl Build<'_> {
                 self.doc.point(a).unwrap_or_default(),
                 self.doc.point(b).unwrap_or_default(),
             );
-            let d = pb - pa;
-            let slope = AXIS_DEGREES.to_radians().tan();
-            if d.y.abs() <= slope * d.x.abs() {
-                self.relations.push(Constraint::Horizontal { line: id });
-            } else if d.x.abs() <= slope * d.y.abs() {
-                self.relations.push(Constraint::Vertical { line: id });
+            if let Some(relation) = drift_core::rules::axis_relation(id, pb - pa) {
+                self.relations.push(relation);
             }
         }
         Ok(id)

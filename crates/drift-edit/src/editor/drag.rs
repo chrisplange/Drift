@@ -1241,16 +1241,13 @@ impl Editor {
         if ok && frame.wandered < WANDERED {
             return true;
         }
-        // (Its size as the farthest point from its middle: the same however it's turned. Each
-        // place once: points at one place, a line's end held on another point, are one point
-        // of the part, and counted twice they moved its middle and with it its steps.)
-        let mut places: Vec<DVec2> = start.points.iter().map(|&(_, p)| p).collect();
-        places.sort_unstable_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
-        places.dedup();
-        let middle = places.iter().sum::<DVec2>() / places.len().max(1) as f64;
-        let size = places
+        // (Its size as the farthest point from its middle: the same however it's turned.)
+        let middle =
+            start.points.iter().map(|&(_, p)| p).sum::<DVec2>() / start.points.len().max(1) as f64;
+        let size = start
+            .points
             .iter()
-            .map(|p| p.distance(middle))
+            .map(|&(_, p)| p.distance(middle))
             .fold(0.0, f64::max);
         let whole = offset.length();
         // (At most 16 of them: a small part dragged a long way needn't crawl.)

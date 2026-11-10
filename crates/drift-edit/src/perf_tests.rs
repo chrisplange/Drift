@@ -2008,12 +2008,11 @@ fn a_refused_drag_on_a_big_part_takes_at_most_seven_solves_a_frame() {
 }
 
 /// The same drag without the chain (`perf_drag_refused`'s "refused drag, 0 free bars") stays
-/// bounded too (Fable's review of PR 2): at most 31 solves a frame, where main took 14. The
-/// part alone is small, and its two points at one place now count once in the size its steps
-/// are read from (`Editor::drag_from_start`), so its retake ladder takes smaller steps; about
-/// 2.5 ms a frame more. For PR 3 (or PR 5's continuation) to bring down.
+/// bounded too (Fable's review of PR 2): at most 22 solves a frame, where main took 14 (about
+/// 1 ms a frame more: the part alone is small, and its retake ladder runs further). For PR 3
+/// to bring down.
 #[test]
-fn a_refused_drag_on_a_small_part_takes_at_most_31_solves_a_frame() {
+fn a_refused_drag_on_a_small_part_takes_at_most_22_solves_a_frame() {
     let (mut ed, ids) = held_on_an_arc(0, false, true, 315.0);
     let dragged: Vec<drift_solver::Param> = ed
         .doc
@@ -2027,7 +2026,7 @@ fn a_refused_drag_on_a_small_part_takes_at_most_31_solves_a_frame() {
         assert!(!ed.drag(&ids, v(0.0, -18.003814381075802), &dragged));
         most = most.max(ed.drag_solves);
     }
-    assert!(most <= 31, "{most} solves a frame");
+    assert!(most <= 22, "{most} solves a frame");
     ed.doc.rollback();
 }
 

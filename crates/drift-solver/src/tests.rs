@@ -2439,3 +2439,67 @@ fn points_along_an_arc_are_where_its_sweep_puts_them() {
         }
     }
 }
+
+/// `perturbed_satisfiable_sketches_converge`'s case (found on PR 3's first build): two lines,
+/// an angle between them, one held level and the other at its length, perturbed. The solve
+/// made the part smaller than it found it, and met a length to the bar of the part as it began
+/// (2.6e-8) but not to the bar of the part it left (1.8e-8): it said converged, and an analysis
+/// of what it wrote didn't. Where the rows hold, they hold to the bar of the part as the solve
+/// leaves it too.
+#[test]
+fn a_solve_meets_its_rows_to_the_bar_of_the_part_it_leaves() {
+    let lines = [
+        (
+            v(-28.378556904668084, 47.597436465750185),
+            v(-42.155417575703346, -42.88459243062352),
+        ),
+        (
+            v(35.08954722651572, 18.460477892333355),
+            v(-9.420305891181714, 43.701294748700576),
+        ),
+    ];
+    let noise = [
+        v(0.0, 0.0),
+        v(0.0, 0.0),
+        v(0.7641452099225248, 0.0),
+        v(0.0, -0.8852777965278507),
+    ];
+    let mut doc = Document::new();
+    let mut ends = Vec::new();
+    let mut ls = Vec::new();
+    for (a, b) in lines {
+        let pa = doc.add_point(a);
+        let pb = doc.add_point(b);
+        ls.push(doc.add_line(pa, pb).unwrap());
+        ends.push((pa, pb));
+    }
+    let probe = Constraint::Angle {
+        a: ls[0],
+        b: ls[1],
+        degrees: 0.0,
+    };
+    let deg = measure(&doc, &probe).unwrap();
+    doc.add_constraint(Constraint::Angle {
+        a: ls[0],
+        b: ls[1],
+        degrees: deg,
+    })
+    .unwrap();
+    let (a, b) = ends[1];
+    let value = doc.point(a).unwrap().distance(doc.point(b).unwrap());
+    doc.add_constraint(Constraint::Distance { a, b, value })
+        .unwrap();
+    let (a, b) = ends[0];
+    let (pa, pb) = (doc.point(a).unwrap(), doc.point(b).unwrap());
+    doc.set_point(b, DVec2::new(pb.x, pa.y)).unwrap();
+    doc.add_constraint(Constraint::Horizontal { line: ls[0] })
+        .unwrap();
+    for (k, (a, b)) in ends.iter().enumerate() {
+        for (p, n) in [(*a, noise[2 * k]), (*b, noise[2 * k + 1])] {
+            let at = doc.point(p).unwrap() + n * 2.0;
+            doc.set_point(p, at).unwrap();
+        }
+    }
+    assert!(solved(&mut doc).converged);
+    assert!(analyze(&doc).converged);
+}

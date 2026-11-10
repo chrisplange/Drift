@@ -381,6 +381,73 @@ fn along_arc(center: DVec2, start: DVec2, end: DVec2) -> [DVec2; 3] {
     [half(a, middle), middle, half(middle, b)].map(|d| center + d * r)
 }
 
+/// How far what `groups` draw is across, and its middle (see [`Frame::enter`]): their points
+/// (each point an arc only centres on left out), an arc's ends and points along it, and each
+/// circle's reach, at `values`.
+fn drawn_extent(sys: &System, groups: &[usize], values: &[f64], drawn: &Drawn) -> (DVec2, f64) {
+    let group = |p: Param| sys.param_index.get(&p).map(|&i| sys.group_of[i]);
+    let value = |p: Param| group(p).map(|g| values[g]);
+    let mut ids: Vec<(EntityId, bool)> = Vec::new();
+    let mut radii: Vec<EntityId> = Vec::new();
+    for &g in groups {
+        for &i in &sys.groups[g].members {
+            match sys.params[i] {
+                Param::X(id) | Param::Y(id) => ids.push((id, false)),
+                Param::MidX(id) | Param::MidY(id) => ids.push((id, true)),
+                Param::Radius(id) => radii.push(id),
+            }
+        }
+    }
+    radii.sort_unstable();
+    radii.dedup();
+    // (One point per pair of groups: points that substitution merged, a point held on
+    // another, are one point of the component, however many entities they were.)
+    let mut pairs: Vec<(usize, usize)> = ids
+        .iter()
+        .filter(|&&(id, mid)| mid || !sys.centres_only.contains(&id))
+        .filter_map(|&(id, mid)| {
+            let (x, y) = if mid {
+                (Param::MidX(id), Param::MidY(id))
+            } else {
+                (Param::X(id), Param::Y(id))
+            };
+            Some((group(x)?, group(y)?))
+        })
+        .collect();
+    pairs.sort_unstable();
+    pairs.dedup();
+    let mut points: Vec<DVec2> = pairs
+        .iter()
+        .map(|&(x, y)| DVec2::new(values[x], values[y]))
+        .collect();
+    let mut arcs: Vec<usize> = groups
+        .iter()
+        .filter_map(|g| drawn.arcs_by_group.get(g))
+        .flatten()
+        .copied()
+        .collect();
+    arcs.sort_unstable();
+    arcs.dedup();
+    let point = |id: EntityId| Some(DVec2::new(value(Param::X(id))?, value(Param::Y(id))?));
+    for a in arcs {
+        let [c, s, e] = sys.arcs[a];
+        if let (Some(c), Some(s), Some(e)) = (point(c), point(s), point(e)) {
+            points.extend(along_arc(c, s, e).into_iter().filter(|p| p.is_finite()));
+        }
+    }
+    let circles: Vec<(Option<DVec2>, f64)> = radii
+        .iter()
+        .filter_map(|&id| {
+            let center = drawn
+                .centres
+                .get(&id)
+                .and_then(|&c| Some(DVec2::new(value(Param::X(c))?, value(Param::Y(c))?)));
+            Some((center, value(Param::Radius(id))?))
+        })
+        .collect();
+    extent(&points, &circles)
+}
+
 /// A component's own frame (#280, #366, #387): its geometry translated so that its middle is
 /// at the origin, and the [`Bar`] its stops are measured against.
 ///
@@ -417,69 +484,11 @@ impl Frame {
         tol: &Tolerances,
         drawn: &Drawn,
     ) -> Self {
-        let group = |p: Param| sys.param_index.get(&p).map(|&i| sys.group_of[i]);
-        let value = |p: Param| group(p).map(|g| values[g]);
-        let mut ids: Vec<(EntityId, bool)> = Vec::new();
-        let mut radii: Vec<EntityId> = Vec::new();
-        let mut largest = 0.0f64;
-        for &g in groups {
-            largest = largest.max(values[g].abs());
-            for &i in &sys.groups[g].members {
-                match sys.params[i] {
-                    Param::X(id) | Param::Y(id) => ids.push((id, false)),
-                    Param::MidX(id) | Param::MidY(id) => ids.push((id, true)),
-                    Param::Radius(id) => radii.push(id),
-                }
-            }
-        }
-        radii.sort_unstable();
-        radii.dedup();
-        // (One point per pair of groups: points that substitution merged, a point held on
-        // another, are one point of the component, however many entities they were.)
-        let mut pairs: Vec<(usize, usize)> = ids
+        let largest = groups
             .iter()
-            .filter(|&&(id, mid)| mid || !sys.centres_only.contains(&id))
-            .filter_map(|&(id, mid)| {
-                let (x, y) = if mid {
-                    (Param::MidX(id), Param::MidY(id))
-                } else {
-                    (Param::X(id), Param::Y(id))
-                };
-                Some((group(x)?, group(y)?))
-            })
-            .collect();
-        pairs.sort_unstable();
-        pairs.dedup();
-        let mut points: Vec<DVec2> = pairs
-            .iter()
-            .map(|&(x, y)| DVec2::new(values[x], values[y]))
-            .collect();
-        let mut arcs: Vec<usize> = groups
-            .iter()
-            .filter_map(|g| drawn.arcs_by_group.get(g))
-            .flatten()
-            .copied()
-            .collect();
-        arcs.sort_unstable();
-        arcs.dedup();
-        let point = |id: EntityId| Some(DVec2::new(value(Param::X(id))?, value(Param::Y(id))?));
-        for a in arcs {
-            let [c, s, e] = sys.arcs[a];
-            if let (Some(c), Some(s), Some(e)) = (point(c), point(s), point(e)) {
-                points.extend(along_arc(c, s, e).into_iter().filter(|p| p.is_finite()));
-            }
-        }
-        let circles: Vec<(Option<DVec2>, f64)> = radii
-            .iter()
-            .filter_map(|&id| {
-                let center = drawn
-                    .centres
-                    .get(&id)
-                    .and_then(|&c| Some(DVec2::new(value(Param::X(c))?, value(Param::Y(c))?)));
-                Some((center, value(Param::Radius(id))?))
-            })
-            .collect();
-        let (middle, size) = extent(&points, &circles);
+            .map(|&g| values[g].abs())
+            .fold(0.0f64, f64::max);
+        let (middle, size) = drawn_extent(sys, groups, values, drawn);
         let size = size.max(asked);
         let bar = Bar::new(size, largest, tol);
         let mut moved = Vec::new();
@@ -1758,6 +1767,9 @@ struct ComponentOutcome {
     wandered: usize,
     /// A kept radius that the free geometry could change was left off: see `newton`.
     unkept: bool,
+    /// The length bar it was solved to: the component's, or tighter where the solve made the
+    /// part smaller.
+    bar: f64,
 }
 
 /// How a component's solve ended (see `newton`).
@@ -1819,10 +1831,13 @@ fn newton(
     shapes: &[usize],
     values: &mut [f64],
     bar: Bar,
+    bar_now: &dyn Fn(&[f64]) -> f64,
     dragging: bool,
     across: f64,
     fold: bool,
 ) -> ComponentOutcome {
+    // (The bar only ever tightens within a solve: see where the rows first hold.)
+    let bar = std::cell::Cell::new(bar);
     let n = comp.unknowns.len();
     let col_of: HashMap<usize, usize> = comp
         .unknowns
@@ -1843,7 +1858,7 @@ fn newton(
     let converged = |res: &[f64], values: &[f64]| {
         res.iter()
             .zip(&comp.rows)
-            .all(|(f, r)| f.abs() <= row_tolerance(sys, *r, bar, values))
+            .all(|(f, r)| f.abs() <= row_tolerance(sys, *r, bar.get(), values))
     };
 
     let ((mut res, mut jac), mut own) = evaluate_with_own(sys, &comp.rows, values, &col_of);
@@ -1968,7 +1983,8 @@ fn newton(
             let ((trial_res, trial_jac), trial_own) =
                 evaluate_with_own(sys, &comp.rows, trial, &col_of);
             let left: Vec<f64> = trial_res.iter().zip(target).map(|(f, t)| f - t).collect();
-            let holds = |k: usize| left[k].abs() <= row_tolerance(sys, comp.rows[k], bar, trial);
+            let holds =
+                |k: usize| left[k].abs() <= row_tolerance(sys, comp.rows[k], bar.get(), trial);
             if (0..left.len()).all(holds) {
                 return Some(((trial_res, trial_jac), trial_own));
             }
@@ -2041,7 +2057,7 @@ fn newton(
             shapes.iter().zip(free).any(|(shape, free)| {
                 *free
                     && shape.offset(value).is_some_and(|(_, off)| {
-                        off.abs() > met_within(shape.params(), value, bar.length)
+                        off.abs() > met_within(shape.params(), value, bar.get().length)
                     })
             })
         })
@@ -2049,14 +2065,14 @@ fn newton(
     let finish = |exit: Stop, iteration: usize, converged: bool, wandered: usize, unkept: bool| {
         if dbg_on() {
             eprintln!(
-                "END {} it {iteration} n {n} conv {converged} unkept {unkept} wandered {wandered} bar {:.3e}",
+                "END {} it {iteration} n {n} conv {converged} unkept {unkept} wandered {wandered} bar.get() {:.3e}",
                 match exit {
                     Stop::Settled => "settled",
                     Stop::Conflict => "conflict",
                     Stop::Cap => "cap",
                     Stop::NoStep => "nostep",
                 },
-                bar.length
+                bar.get().length
             );
         }
         #[cfg(feature = "exit-counts")]
@@ -2077,6 +2093,7 @@ fn newton(
             iterations: iteration,
             wandered,
             unkept: converged && unkept,
+            bar: bar.get().length,
         }
     };
     for iteration in 0..MAX_ITERATIONS {
@@ -2098,14 +2115,28 @@ fn newton(
         if !res.iter().all(|f| f.is_finite()) || !jac.iter().flatten().all(|(_, g)| g.is_finite()) {
             return finish(Stop::NoStep, iteration, false, wandered, false);
         }
-        let rows_hold = converged(&res, values);
+        let mut rows_hold = converged(&res, values);
+        // Where the rows hold, they hold to the bar of the part as the solve leaves it too, as
+        // an analysis of what it writes reads it: a solve that moves the geometry can make the
+        // part smaller than the solve found it, and a row met to the bar it began with would
+        // then be off to the drawing's own (`perturbed_satisfiable_sketches_converge`).
+        if rows_hold {
+            let now = bar_now(values);
+            if now < bar.get().length {
+                bar.set(Bar {
+                    length: now,
+                    ..bar.get()
+                });
+                rows_hold = converged(&res, values);
+            }
+        }
         // The shapes kept: arcs' radii, lines' lengths and directions, each as how far off
         // it is and the gradient of that over its columns.
         let value = |p: usize| values[sys.group_of[p]];
         let radii_met = shapes.iter().zip(&is_radius).all(|(shape, is_radius)| {
             !is_radius
                 || shape.offset(value).is_none_or(|(_, off)| {
-                    off.abs() <= met_within(shape.params(), value, bar.length)
+                    off.abs() <= met_within(shape.params(), value, bar.get().length)
                 })
         });
         let soft_terms: Vec<(Vec<(usize, f64)>, f64)> = shapes
@@ -2131,14 +2162,17 @@ fn newton(
         // step isn't exact, and the same drag would come out differently on the same sketch
         // at another size (#94). Scaled, every row counts as the distance it is off by.
         let row_scale = row_scales(&jac, &own, |k| {
-            res[k].abs() <= row_tolerance(sys, comp.rows[k], bar, values)
+            res[k].abs() <= row_tolerance(sys, comp.rows[k], bar.get(), values)
         });
         let (scaled_jac, scaled_res) = scaled_rows(&jac, &res, &row_scale);
         let before = scaled_norm2(&res, &row_scale);
 
         if rows_hold {
             // The second stage: the preferences, among the rows' solutions.
-            if soft_terms.iter().all(|(_, off)| off.abs() <= bar.length) {
+            if soft_terms
+                .iter()
+                .all(|(_, off)| off.abs() <= bar.get().length)
+            {
                 return finish(
                     Stop::Settled,
                     iteration,
@@ -2249,12 +2283,12 @@ fn newton(
             let mut v = project(&r);
             let mut rv = dot(&r, &v);
             // Stationary: the shapes' projected gradient, in the weighted metric, is below the
-            // bar. (Not while a kept radius is off, nor with the fold steps, which finish only
+            // bar.get(). (Not while a kept radius is off, nor with the fold steps, which finish only
             // where every shape is met: at a fold a shape's gradient vanishes where it can
             // still be met, and only what the step can still gain says so (see below). A
             // drag's kept radii are held, not only preferred: where they can be met, they are,
             // and a drag whose radii can't follow stops (`Editor::breaks_held_shape`).)
-            if rv <= 0.0 || (!fold && radii_met && rv <= bar.length * bar.length) {
+            if rv <= 0.0 || (!fold && radii_met && rv <= bar.get().length * bar.get().length) {
                 return finish(
                     Stop::Settled,
                     iteration,
@@ -2297,7 +2331,7 @@ fn newton(
                 r.iter_mut().zip(&hp).for_each(|(r, h)| *r += alpha * h);
                 v = project(&r);
                 let rv_next = dot(&r, &v);
-                if rv_next.max(0.0).sqrt() <= bar.length {
+                if rv_next.max(0.0).sqrt() <= bar.get().length {
                     break;
                 }
                 let beta = rv_next / rv;
@@ -2312,7 +2346,7 @@ fn newton(
                     .collect();
                 phi_now - phi(&terms)
             };
-            if promised <= bar.length * bar.length {
+            if promised <= bar.get().length * bar.get().length {
                 return finish(
                     Stop::Settled,
                     iteration,
@@ -2324,8 +2358,8 @@ fn newton(
             let stepped = distance(&x, &x).sqrt();
             if dbg_on() {
                 eprintln!(
-                    "S2 it {iteration} n {n} phi {phi_now:.6e} rv {rv:.3e} promised {promised:.3e} stepped {stepped:.6e} radius {radius:.3e} bar {:.3e}",
-                    bar.length
+                    "S2 it {iteration} n {n} phi {phi_now:.6e} rv {rv:.3e} promised {promised:.3e} stepped {stepped:.6e} radius {radius:.3e} bar.get() {:.3e}",
+                    bar.get().length
                 );
             }
             // The trial, back onto the rows: minimum-change Newton steps (the weighted
@@ -2370,7 +2404,7 @@ fn newton(
                 }
                 None => radius = stepped / 4.0,
             }
-            if radius <= bar.length {
+            if radius <= bar.get().length {
                 return finish(
                     Stop::Settled,
                     iteration + 1,
@@ -2420,20 +2454,22 @@ fn newton(
         // step that swings the focus far and the rest a hair, where only the rest can meet the
         // rows, is as far off its linearisation as any: #349's chain, a relation's focus among
         // bars held at their lengths). The dragged and carried keep their weight in it too:
-        // they are where the user put them, and a damped step doesn't move them either.
+        // they are where the user put them, and a damped step doesn't move them either. (Damped
+        // as a distance like the rest, a drag that can't land would let them give way, and land
+        // nowhere near where they were asked to be: `held_shapes::`' refused drags then go.)
         let shift: Vec<f64> = mobility
             .iter()
             .zip(&pinned)
             .map(|(m, pinned)| mu * fold_scale / m + if *pinned { lambda / m } else { lambda })
             .collect();
-        let refuse = |lambda: &mut f64, nu: &mut f64| {
+        let refuse = |lambda: &mut f64, nu: &mut f64, fold_scale: f64| {
             *lambda = lambda.max(1e-6 * max_diag * fold_scale) * *nu;
             *nu *= 2.0;
         };
         let Some(factor) = normal.factor(&shift) else {
             // (Not numerically positive definite at this damping: a step refused.)
             wandered += 1;
-            refuse(&mut lambda, &mut nu);
+            refuse(&mut lambda, &mut nu, fold_scale);
             continue;
         };
         let delta = factor.solve_refined(&rhs);
@@ -2448,7 +2484,7 @@ fn newton(
         // after frame (census case 2432). It is one its linearisation got badly wrong too.
         if moved(&delta) > across {
             wandered += 1;
-            refuse(&mut lambda, &mut nu);
+            refuse(&mut lambda, &mut nu, fold_scale);
             continue;
         }
         let mut trial = values.to_vec();
@@ -2529,7 +2565,12 @@ fn newton(
             if plain_gain < WANDERING_GAIN {
                 wandered += 1;
             }
-            if fold && dragging && soft_terms.iter().all(|(_, off)| off.abs() <= bar.length) {
+            if fold
+                && dragging
+                && soft_terms
+                    .iter()
+                    .all(|(_, off)| off.abs() <= bar.get().length)
+            {
                 fold_scale = fold_scale.min((after.sqrt() / across).min(1.0));
             }
             values.copy_from_slice(&trial);
@@ -2544,21 +2585,71 @@ fn newton(
             if lands {
                 continue;
             }
-        } else {
-            wandered += 1;
-            refuse(&mut lambda, &mut nu);
         }
-        // A least-squares stationary point with the rows off: the step brings them no more
-        // than the finest bar of the rows still off closer, and by its linearisation they
-        // still wouldn't hold. Every further step is smaller still (λ only grows on a refused
-        // step), so the rows are as near as they get: a conflict, or the round-off floor.
+        let refused = !(after < before || lands);
+        if refused {
+            wandered += 1;
+            refuse(&mut lambda, &mut nu, fold_scale);
+        }
         let finest = res
             .iter()
             .zip(&comp.rows)
             .zip(&row_scale)
-            .filter(|((f, r), s)| **s > 0.0 && f.abs() > row_tolerance(sys, **r, bar, values))
-            .map(|((_, r), s)| row_tolerance(sys, *r, bar, values) * s)
+            .filter(|((f, r), s)| **s > 0.0 && f.abs() > row_tolerance(sys, **r, bar.get(), values))
+            .map(|((_, r), s)| row_tolerance(sys, *r, bar.get(), values) * s)
             .fold(f64::INFINITY, f64::min);
+        // A drag that can't land: on a refused step, the least-change Gauss–Newton step of the
+        // rest of the geometry, the dragged and carried held where they are, brings the rows no
+        // more than the finest bar.get() of those still off closer. Only the dragged and carried could
+        // meet them, and they give way only at the pace their weight allows: a crawl to the cap
+        // that ends as unfinished anyway. So it ends here, a conflict of the rows with the
+        // drag's targets (what PR 5 of the solver audit makes of them, exact).
+        if refused && dragging && pinned.iter().any(|p| *p) {
+            back_normal.clear();
+            let mut rhs = vec![Dd::default(); n];
+            for (row, f) in scaled_jac.iter().zip(&scaled_res) {
+                for (k, &(c1, g1)) in row.iter().enumerate() {
+                    if pinned[c1] {
+                        continue;
+                    }
+                    rhs[c1] = rhs[c1].add_product(-g1, *f);
+                    for &(c2, g2) in &row[..=k] {
+                        if !pinned[c2] {
+                            back_normal.add_product(c1, c2, g1, g2);
+                        }
+                    }
+                }
+            }
+            let mu = MIN_CHANGE * max_diag_of(&back_normal);
+            let shift: Vec<f64> = mobility
+                .iter()
+                .zip(&pinned)
+                .map(|(m, pinned)| if *pinned { 1.0 } else { mu / m })
+                .collect();
+            if let Some(factor) = back_normal.factor(&shift) {
+                let step = factor.solve_refined(&rhs);
+                let held = scaled_jac
+                    .iter()
+                    .zip(&scaled_res)
+                    .map(|(row, f)| {
+                        (f + row
+                            .iter()
+                            .filter(|(c, _)| !pinned[*c])
+                            .map(|&(c, g)| g * step[c])
+                            .sum::<f64>())
+                        .powi(2)
+                    })
+                    .sum::<f64>()
+                    .sqrt();
+                if before.sqrt() - held <= finest && held > finest {
+                    return finish(Stop::Conflict, iteration + 1, false, wandered, false);
+                }
+            }
+        }
+        // A least-squares stationary point with the rows off: the step brings them no more
+        // than the finest bar.get() of the rows still off closer, and by its linearisation they
+        // still wouldn't hold. Every further step is smaller still (λ only grows on a refused
+        // step), so the rows are as near as they get: a conflict, or the round-off floor.
         if before.sqrt() - model.max(0.0).sqrt() <= finest && model.max(0.0).sqrt() > finest {
             let rows_hold = converged(&res, values);
             return finish(
@@ -2740,16 +2831,30 @@ fn run(sys: &mut System, options: &SolveOptions, iterate: bool) -> (SolveReport,
         }
         any_bar = any_bar.max(bar.length);
         let converged = if iterate {
+            // (The component's length bar at other values in its frame: its size there, its
+            // floor and cap as it began.)
+            let bar_now = |values: &[f64]| {
+                let (_, size) = drawn_extent(sys, &groups, values, &drawn);
+                let mut length = Bar::new(size.max(asked), 0.0, tol).length.max(bar.floor);
+                if let Some(cap) = options.bar_cap {
+                    length = length.min(cap).max(bar.floor);
+                }
+                length
+            };
             let outcome = newton(
                 sys,
                 comp,
                 &shapes,
                 &mut values,
                 bar,
+                &bar_now,
                 !options.dragged.is_empty(),
                 across,
                 options.fold,
             );
+            for &g in &comp.unknowns {
+                bars[g] = outcome.bar;
+            }
             report.iterations = report.iterations.max(outcome.iterations);
             report.wandered = report.wandered.max(outcome.wandered);
             // (A drag's: its kept radii are held where the free geometry can keep them.)

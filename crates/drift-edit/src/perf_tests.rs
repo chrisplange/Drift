@@ -793,6 +793,31 @@ fn perf_drag_refused() {
         let most = solves.iter().max().copied().unwrap_or(0);
         println!("  solves per frame: most {most}; {refused} of 20 frames refused");
     }
+    // (Since PR 3 the lines' drag above lands where it was refused, its solve finishing: the
+    // refused drag is e13's, whose kept radii can't follow.)
+    for (chain, what) in [
+        (0, "refused drag (radii), 0 free bars"),
+        (2_000, "refused drag (radii), 2000 free bars"),
+    ] {
+        let (mut ed, ids) = cannot_keep_its_radii(chain);
+        let dragged: Vec<drift_solver::Param> = ids
+            .iter()
+            .flat_map(|&p| drift_solver::Param::point(p))
+            .collect();
+        ed.doc.begin();
+        let mut solves = Vec::new();
+        let mut refused = 0;
+        let r = time(20, |_| {
+            if !ed.drag(&ids, TWO_ARCS_DRAG, &dragged) {
+                refused += 1;
+            }
+            solves.push(ed.drag_solves);
+        });
+        ed.doc.rollback();
+        report(&format!("{what} (per frame)"), r);
+        let most = solves.iter().max().copied().unwrap_or(0);
+        println!("  solves per frame: most {most}; {refused} of 20 frames refused");
+    }
 }
 
 /// The torture sketch plus what makes a drawing heavy without changing often: a large
@@ -1983,51 +2008,73 @@ fn perf_select_tool_moves() {
     }
 }
 
-/// A refused drag on a big part costs what it always has (#280, #377): `perf_drag_refused`'s
-/// refused drag with a 1000 mm chain of free bars takes at most 7 solves a frame before it is
-/// refused. A drag's patience cut whose rows don't hold to a thousandth of the bar is
-/// unfinished (fallback (b)); counted as converged, those cuts send the frame down its ladder
-/// of retakes (18 solves a frame).
-#[test]
-fn a_refused_drag_on_a_big_part_takes_at_most_seven_solves_a_frame() {
-    let (mut ed, ids) = held_on_an_arc(1_000, false, true, 315.0);
-    let dragged: Vec<drift_solver::Param> = ed
-        .doc
-        .defining_points(ids)
-        .into_iter()
-        .flat_map(drift_solver::Param::point)
-        .collect();
-    ed.doc.begin();
-    let mut most = 0;
-    for _ in 0..3 {
-        assert!(!ed.drag(&ids, v(0.0, -18.003814381075802), &dragged));
-        most = most.max(ed.drag_solves);
+/// e13's sketch (#280): two arcs sharing an end, the first's centre fixed, with `chain` free
+/// bars hanging from the second's start; its dragged centre, and that centre's whole drag
+/// ([`TWO_ARCS_DRAG`]). Past 3.73 of it the arcs' circles stop meeting, so the move can't keep
+/// both kept radii, and is refused: since PR 3, the refused drag of these lines (f3's sketch,
+/// [`held_on_an_arc`], lands now that its solve finishes).
+fn cannot_keep_its_radii(chain: usize) -> (Editor, [EntityId; 1]) {
+    let mut doc = Document::new();
+    doc.begin();
+    let p = [
+        v(0.0, 0.0),
+        v(8.0, 0.0),
+        v(2.3431457505076203, -5.65685424949238),
+        v(-9.656854249492381, -5.65685424949238),
+        v(-1.1715728752538102, -14.142135623730951),
+    ]
+    .map(|q| doc.add_point(q));
+    doc.add_arc(p[1], p[0], p[2]).unwrap();
+    doc.add_arc(p[3], p[4], p[2]).unwrap();
+    doc.add_constraint(Constraint::Fix {
+        point: p[1],
+        at: v(8.0, 0.0),
+    })
+    .unwrap();
+    let mut last = p[4];
+    for k in 0..chain {
+        let next = doc.add_point(v(-1.1715728752538102, -15.142135623730951 - k as f64));
+        doc.add_line(last, next).unwrap();
+        last = next;
     }
-    assert!(most <= 7, "{most} solves a frame");
-    ed.doc.rollback();
+    doc.commit("Two arcs");
+    (Editor::new(doc), [p[3]])
 }
 
-/// The same drag without the chain (`perf_drag_refused`'s "refused drag, 0 free bars") stays
-/// bounded too (Fable's review of PR 2): at most 22 solves a frame, where main took 14 (about
-/// 1 ms a frame more: the part alone is small, and its retake ladder runs further). For PR 3
-/// to bring down.
-#[test]
-fn a_refused_drag_on_a_small_part_takes_at_most_22_solves_a_frame() {
-    let (mut ed, ids) = held_on_an_arc(0, false, true, 315.0);
-    let dragged: Vec<drift_solver::Param> = ed
-        .doc
-        .defining_points(ids)
-        .into_iter()
-        .flat_map(drift_solver::Param::point)
+/// [`cannot_keep_its_radii`]'s drag.
+const TWO_ARCS_DRAG: DVec2 = DVec2::new(0.0, -8.147331698170428);
+
+/// A refused drag's solves a frame, the most of three frames, with `chain` free bars.
+fn refused_solves(chain: usize) -> u32 {
+    let (mut ed, ids) = cannot_keep_its_radii(chain);
+    let dragged: Vec<drift_solver::Param> = ids
+        .iter()
+        .flat_map(|&p| drift_solver::Param::point(p))
         .collect();
     ed.doc.begin();
     let mut most = 0;
     for _ in 0..3 {
-        assert!(!ed.drag(&ids, v(0.0, -18.003814381075802), &dragged));
+        assert!(!ed.drag(&ids, TWO_ARCS_DRAG, &dragged));
         most = most.max(ed.drag_solves);
     }
-    assert!(most <= 22, "{most} solves a frame");
     ed.doc.rollback();
+    most
+}
+
+/// A refused drag on a big part stays cheap (#280, #377): [`cannot_keep_its_radii`] with a
+/// 1000 mm chain of free bars takes at most 9 solves a frame before it is refused.
+#[test]
+fn a_refused_drag_on_a_big_part_takes_at_most_nine_solves_a_frame() {
+    let most = refused_solves(1_000);
+    assert!(most <= 9, "{most} solves a frame");
+}
+
+/// The same drag without the chain stays bounded too: at most 30 solves a frame (the part
+/// alone is small, and its retake ladder runs further).
+#[test]
+fn a_refused_drag_on_a_small_part_takes_at_most_30_solves_a_frame() {
+    let most = refused_solves(0);
+    assert!(most <= 30, "{most} solves a frame");
 }
 
 /// The solver bar's tiled sketch (#365, #377; `docs/solver-audit.md`, section 5, item 5): 200

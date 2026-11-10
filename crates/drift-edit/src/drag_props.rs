@@ -1957,18 +1957,36 @@ fn never_finishes() -> (Sketch, DVec2) {
     (sketch, p(0.0, -18.003814381075802))
 }
 
-/// #281: a move whose solve doesn't finish even in its smallest steps is refused, leaving
+/// e13's sketch (`two_arcs_one_fixed`) with `bars` free bars hanging from the second arc's
+/// start, and its dragged centre: past the 3.73 of [`TWO_ARCS_DRAG`] where the arcs' circles
+/// stop meeting, every solve leaves a kept radius off that the free geometry could change, so
+/// none finishes, at any step size past that.
+fn cannot_keep_its_radii(bars: usize) -> (Built, [EntityId; 1]) {
+    let mut sketch = two_arcs_one_fixed();
+    let mut last = 4;
+    for k in 0..bars {
+        let next = sketch.points.len();
+        let below = sketch.points[4] + DVec2::new(0.0, -1.0 - k as f64);
+        sketch.points.push(below);
+        sketch.curves.push(Curve::Line(last, next));
+        last = next;
+    }
+    let built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let ids = [built.points[3]];
+    (built, ids)
+}
+
+/// #281: a move whose solve doesn't finish past a point is refused in one call, leaving
 /// everything where it was, and pushes nothing along (a solve left part way says nothing of
-/// what turns).
+/// what turns). (f3's sketch, `never_finishes`, was this case until PR 3, when its solve
+/// began to finish.)
 #[test]
 fn a_move_that_never_finishes_is_refused_pushing_nothing() {
-    let (sketch, offset) = never_finishes();
-    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
-    let ids = [built.curves[1], built.curves[4]];
+    let (mut built, ids) = cannot_keep_its_radii(0);
     let dragged = dragged_by(&built.ed, &ids);
     let before = built.positions();
     built.ed.doc.begin();
-    assert!(!built.ed.drag(&ids, offset, &dragged));
+    assert!(!built.ed.drag(&ids, TWO_ARCS_DRAG, &dragged));
     assert!(
         !built.ed.drag_pushed(),
         "a refused frame pushed curves along"
@@ -1978,25 +1996,15 @@ fn a_move_that_never_finishes_is_refused_pushing_nothing() {
 }
 
 /// #281: a frame whose steps don't finish spends at most
-/// `UNFINISHED_WORK` (`editor/drag.rs`) on smaller steps (each such solve runs
-/// to the solver's iteration cap over the whole part), then one solve for each step it still
+/// `UNFINISHED_WORK` (`editor/drag.rs`) on smaller steps, then one solve for each step it still
 /// tries (the whole move, the first half at each of a stepped step's 5 depths): not tens of
-/// them. With 300 bars hanging from it, one of f3's unfinished solves spends it all.
+/// them. With 300 bars hanging from it, the move that can't keep its radii.
 #[test]
 fn a_big_part_that_cannot_finish_spends_its_budget_only() {
-    let (mut sketch, offset) = never_finishes();
-    let mut last = 6;
-    for k in 0..300 {
-        let next = sketch.points.len();
-        sketch.points.push(DVec2::new(15.0, -1.0 - f64::from(k)));
-        sketch.curves.push(Curve::Line(last, next));
-        last = next;
-    }
-    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
-    let ids = [built.curves[1], built.curves[4]];
+    let (mut built, ids) = cannot_keep_its_radii(300);
     let dragged = dragged_by(&built.ed, &ids);
     built.ed.doc.begin();
-    assert!(!built.ed.drag(&ids, offset, &dragged));
+    assert!(!built.ed.drag(&ids, TWO_ARCS_DRAG, &dragged));
     let unfinished = built.ed.drag_unfinished;
     assert!(
         unfinished <= 1 + 6,
@@ -2160,28 +2168,45 @@ fn held_a_diameter_apart() -> (Sketch, DVec2) {
 }
 
 /// #282: two lines whose ends are held on an arc a diameter apart, moved together. The arc's
-/// kept radius sits on a fold there (its centre must be exactly midway), so no solve
-/// finished, at any step size, and the move was refused. The arc they are held on is carried
-/// along whole. (A quarter of the size far from the origin, it goes too, but some of its
+/// kept radius sits on a fold there (its centre must be exactly midway), so before PR 3 no
+/// solve finished, at any step size, and the move was refused. The circle they are held on
+/// goes with them. (A quarter of the size far from the origin, it goes too, but some of its
 /// stalled solves read as finished within the coordinates' tolerance and are kept as they
 /// are: #280, `seeds::e_result_depends_on_size_at_a_fold`.)
 #[test]
-fn a_move_held_on_a_circle_at_a_fold_carries_the_circle_along() {
+fn a_move_held_on_a_circle_at_a_fold_takes_the_circle_along() {
     let (sketch, offset) = held_a_diameter_apart();
     for t in [Similarity::IDENTITY, SMALL] {
         let start = Built::new(&sketch, t).unwrap().positions();
-        let (went, end, pushed) = move_once(&sketch, t, &[1, 2], offset, false, |_| ());
+        let (went, end, _) = move_once(&sketch, t, &[1, 2], offset, false, |_| ());
         assert!(went, "refused at scale {}", t.scale);
         if t.scale != 1.0 {
             continue;
         }
-        assert!(pushed, "the arc wasn't carried");
-        for (i, (a, b)) in start.iter().zip(&end).enumerate() {
-            let want = *a + t.vector(offset);
+        // The lines land, and the circle goes with them, its radius kept: its centre midway
+        // between their held ends. (Before PR 3 no solve finished, and the arc was carried
+        // along whole; the solve meets it now, and the arc's own ends move as little as they
+        // can, round the circle.)
+        for i in [3, 4, 5, 6] {
+            let want = start[i] + t.vector(offset);
             assert!(
-                close(*b, want, want.length()),
-                "point {i} ended at {b} instead of {want} at scale {}",
-                t.scale
+                close(end[i], want, want.length()),
+                "point {i} ended at {} instead of {want}",
+                end[i]
+            );
+        }
+        // (Midway to what a radius met to `FOLD_MET` allows at its least: √(2·r·its
+        // tolerance).)
+        let centre = start[1] + t.vector(offset);
+        assert!(
+            end[1].distance(centre) <= (2.0 * 8.0 * 8.0 * drift_solver::FOLD_MET).sqrt(),
+            "centre at {}",
+            end[1]
+        );
+        for i in [0, 2] {
+            assert!(
+                (end[i].distance(end[1]) - 8.0).abs() < 1e-8,
+                "point {i} off the circle"
             );
         }
     }
@@ -2849,10 +2874,14 @@ fn two_arcs_calls(steps: u32) -> u32 {
 }
 
 /// The user's rule for a drag the kept radii can't follow: it stops where the arcs still
-/// meet, as before #282's fold steps; it never grows the radii to go on.
+/// meet; it never grows the radii to go on. The arcs' circles stop meeting 3.73 of the way
+/// down (the centres 20 apart, the radii 8 and 12): in 16 calls of 0.509 the 7th is the last
+/// that keeps both radii, in 4 calls of 2.04 the 1st. (Before PR 3 the 8th and the 2nd went
+/// too, a radius growing while the solve's crawl stopped short of saying so; now a kept radius
+/// the free geometry could change but can't meet stops the drag: see `newton`.)
 #[test]
 fn a_drag_the_kept_radii_cannot_follow_still_stops() {
-    assert_eq!([1, 4, 16].map(two_arcs_calls), [0, 2, 8]);
+    assert_eq!([1, 4, 16].map(two_arcs_calls), [0, 1, 7]);
 }
 
 /// Moving `picked` of `sketch` by `offset` in one call, with the curves holding its dragged
@@ -2886,22 +2915,26 @@ fn move_with_folds(
 }
 
 /// #282: a pinned part is never tried with the fold steps: f3's sketch with its arc's far
-/// end fixed, whose move can't be made, is refused as before and tries them not once.
+/// end fixed tries them not once. (Its move was refused before PR 3, its solve never
+/// finishing; it lands now, the arc through its fixed end and the two dragged points as the
+/// drag dictates.)
 #[test]
 fn a_pinned_part_is_never_tried_with_the_fold_steps() {
     let (sketch, offset) = never_finishes();
-    let (went, _, pushed, folds, _) = move_with_folds(&sketch, &[1, 4], offset, false, false);
-    assert!(!went && !pushed);
+    let (_, _, pushed, folds, _) = move_with_folds(&sketch, &[1, 4], offset, false, false);
+    assert!(!pushed);
     assert_eq!(folds, 0);
 }
 
 /// #282: the two lines held on an arc a diameter apart (its kept radius at a fold), with
-/// nothing carrying the arc: the move goes with the fold steps, lands, and keeps the radius.
+/// nothing carrying the arc: the move goes, lands, and keeps the radius. It took the fold
+/// steps before PR 3; the solve itself meets a kept radius at a fold now, so it goes without
+/// them, and they aren't tried.
 #[test]
-fn a_move_held_at_a_fold_goes_with_the_fold_steps() {
+fn a_move_held_at_a_fold_goes() {
     let (sketch, offset) = held_a_diameter_apart();
     let (went, end, _, folds, _) = move_with_folds(&sketch, &[1, 2], offset, true, false);
-    assert!(went && folds >= 1, "went {went}, tried {folds} times");
+    assert!(went && folds == 0, "went {went}, tried {folds} times");
     let start = Built::new(&sketch, Similarity::IDENTITY)
         .unwrap()
         .positions();
@@ -2915,7 +2948,7 @@ fn a_move_held_at_a_fold_goes_with_the_fold_steps() {
     }
     assert!((end[1].distance(end[2]) - 8.0).abs() < 1e-8);
     let (went, ..) = move_with_folds(&sketch, &[1, 2], offset, true, true);
-    assert!(!went, "it went without the fold steps");
+    assert!(went, "it didn't go without the fold steps");
 }
 
 /// #282: a part too big for a solve that runs to the solver's cap to fit in what a frame may
@@ -3123,7 +3156,9 @@ fn a_try_with_the_fold_steps_that_fails_leaves_the_frame_as_it_was() {
             );
         }
     }
-    assert!(kept > 0 && undone > 0, "{kept} tries kept, {undone} undone");
+    // (Since PR 3 every try of these lands: a failed one, where there is one, is checked
+    // above.)
+    assert!(kept > 0, "{kept} tries kept, {undone} undone");
 }
 
 mod census;

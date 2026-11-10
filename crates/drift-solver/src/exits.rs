@@ -4,42 +4,35 @@
 //! release build of the app has none of it. Counting changes nothing a solve does.
 //!
 //! A census reads [`take`] before and after each drag: the share of solves that end other
-//! than by settling is the audit's hypothesis (b) in numbers.
+//! than by the stop test is the audit's hypothesis (b) in numbers.
 
 use std::cell::Cell;
 
-/// How a component's Newton solve ended.
+/// How a component's solve ended (see `newton`'s two stages).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Exit {
-    /// Its rows held, its kept shapes were met and (in a drag) it had stopped moving.
+    /// The stop test: its rows held, and its kept shapes' projected gradient, or the most a
+    /// step could still gain them, was below the bar.
     Settled,
-    /// Its rows held but it was still moving or a shape still off: cut by `SETTLE_PATIENCE`.
-    Patience,
-    /// It ran to [`crate::MAX_ITERATIONS`].
+    /// Its rows were off at a least-squares stationary point: the best step brought them no
+    /// more than a bar closer (a conflict, judged by rank).
+    Conflict,
+    /// It ran to [`crate::MAX_ITERATIONS`]: the safety net.
     Cap,
-    /// Damping λ passed 1e12 × the normal matrix's largest diagonal.
-    Damping,
-    /// No damping it tried gave a factorable step.
+    /// A residual or gradient wasn't a number.
     NoStep,
 }
 
 impl Exit {
     /// Every exit, in the order [`ExitCounts`] keeps them.
-    pub const ALL: [Exit; 5] = [
-        Exit::Settled,
-        Exit::Patience,
-        Exit::Cap,
-        Exit::Damping,
-        Exit::NoStep,
-    ];
+    pub const ALL: [Exit; 4] = [Exit::Settled, Exit::Conflict, Exit::Cap, Exit::NoStep];
 
     /// A short name (the census's column heading).
     pub fn name(self) -> &'static str {
         match self {
             Exit::Settled => "settled",
-            Exit::Patience => "patience",
+            Exit::Conflict => "conflict",
             Exit::Cap => "cap",
-            Exit::Damping => "damping",
             Exit::NoStep => "nostep",
         }
     }
@@ -50,11 +43,10 @@ impl Exit {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ExitCounts {
     /// Drag solves, indexed as [`Exit::ALL`].
-    pub drag: [u64; 5],
+    pub drag: [u64; 4],
     /// Every other solve, indexed as [`Exit::ALL`].
-    pub other: [u64; 5],
-    /// Iterations the drag solves ran, summed (for a no-step or damping exit, the iteration
-    /// it broke at; `ComponentOutcome::iterations` reports the cap for those).
+    pub other: [u64; 4],
+    /// Iterations the drag solves ran, summed.
     pub drag_iterations: u64,
     /// Iterations the other solves ran, summed.
     pub other_iterations: u64,

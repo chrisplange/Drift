@@ -2462,9 +2462,9 @@ fn crawl_at_the_cap_plan() -> Plan {
 /// A drag census case at the origin: near solves at a fold crawl to a residual 1.4 times the
 /// part-size bar (under today's, which main's solve reads as holding) and stop at the
 /// iteration cap, so the drag ends 1 to 7 µm apart at 0.1×, 1×, 3.7× and 10×, where main
-/// ends the same at every size. Round-off at a fold deciding. See #280.
+/// ends the same at every size. Round-off at a fold deciding. See #280. Passes since PR 3 of
+/// the solver audit: the stop is the preferences' stationarity, not the cap.
 #[test]
-#[ignore = "#280: a fold's crawl cut by the cap at one size, 1-7 um"]
 fn e_result_depends_on_size_crawl_at_the_cap() {
     let plan = crawl_at_the_cap_plan();
     let t = Similarity {
@@ -2511,8 +2511,8 @@ fn no_stall_is_read_as_landed_at_any_size() {
 /// whatever their rows; with a near patience cut off today's bar reported unfinished (which
 /// bounds the work a refused drag on a big part takes), one size's frame is refused. That
 /// is the one gain the rule gives back (also at 10×); main fails it at both. See #280.
+/// Passes since PR 3 of the solver audit, which deletes patience and fallback (b).
 #[test]
-#[ignore = "#280: a patience cut off today's bar at one size only (3.7x, 10x)"]
 fn e_result_depends_on_size_patience_cut_at_one_size() {
     let plan = Plan {
         ops: vec![

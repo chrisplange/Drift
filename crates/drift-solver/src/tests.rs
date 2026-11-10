@@ -269,7 +269,9 @@ fn angle_parallel_and_perpendicular() {
     doc.add_constraint(Constraint::Perpendicular { a: l2, b: l3 })
         .unwrap();
     assert!(solved(&mut doc).converged);
-    assert!((measure(&doc, &angle).unwrap() - 60.0).abs() < 1e-9);
+    // (An angle row holds to the length bar over its shorter line: 1e-9 of a quarter of the
+    // part's size, about 3e-10 rad here.)
+    assert!((measure(&doc, &angle).unwrap() - 60.0).abs() < 1e-7);
     let d2 = doc.point(y).unwrap() - doc.point(o).unwrap();
     let d3 = doc.point(z).unwrap() - doc.point(y).unwrap();
     assert!(d2.dot(d3).abs() < 1e-9 * d2.length() * d3.length());
@@ -659,12 +661,13 @@ fn dimensions_can_measure_to_midpoints() {
     assert_eq!(report.dof, before.map(|n| n - 3));
     let mid = |l| doc.ref_point(l).unwrap();
     let pc = doc.point(c).unwrap();
-    // The point started left of the midpoint and stays on that side.
-    assert!(((pc.x - mid(base).x) + 4.0).abs() < 1e-9);
-    assert!(((pc.y - mid(base).y) - 12.0).abs() < 1e-9);
-    assert!((mid(base).distance(mid(other)) - 25.0).abs() < 1e-9);
+    // The point started left of the midpoint and stays on that side. (To the bar: 1e-9 of a
+    // quarter of the part's size, about 1e-8 here.)
+    assert!(((pc.x - mid(base).x) + 4.0).abs() < 1e-7);
+    assert!(((pc.y - mid(base).y) - 12.0).abs() < 1e-7);
+    assert!((mid(base).distance(mid(other)) - 25.0).abs() < 1e-7);
     for (_, k) in doc.constraints() {
-        assert!((measure(&doc, k).unwrap() - k.value().unwrap()).abs() < 1e-9);
+        assert!((measure(&doc, k).unwrap() - k.value().unwrap()).abs() < 1e-7);
     }
     // Midpoints of lines aren't valid in relations that need real points.
     assert!(
@@ -1395,8 +1398,10 @@ fn drag_points(
 
 /// #282: two points held on an arc a diameter apart, moved together. The arc's kept radius
 /// can be met only with its centre exactly midway between them, its least: a fold, where the
-/// minimum-change step closes about the cube of what is left and the solve runs to its cap.
-/// The fold steps meet it: the circle goes with the points, its radius kept.
+/// old minimum-change step closed about the cube of what was left and the solve ran to its
+/// cap. Now the solve settles where the radius's projected gradient is below the bar (a few
+/// micrometres off at the fold, where that gradient vanishes); with the fold steps, which
+/// finish only where every shape is met, the circle goes with the points, its radius kept.
 #[test]
 fn a_kept_radius_at_a_fold_is_met_with_the_fold_steps() {
     let at = |deg: f64| v(8.0, 0.0) + DVec2::from_angle(deg.to_radians()) * 8.0;
@@ -1414,34 +1419,34 @@ fn a_kept_radius_at_a_fold_is_met_with_the_fold_steps() {
         });
         (doc, arc, c, held)
     };
-    let (mut doc, arc, _, held) = build();
-    let (report, _) = drag_points(&mut doc, &held, v(0.0, -18.0), &[arc], false);
-    assert!(
-        !report.converged,
-        "it finished without the fold steps: {report:?}"
-    );
-    let (mut doc, arc, c, held) = build();
-    let (report, off) = drag_points(&mut doc, &held, v(0.0, -18.0), &[arc], true);
-    assert!(report.converged, "{report:?}");
-    assert!(off == 0.0, "the dragged points landed {off} off");
-    let r = crate::radius_of(&doc, arc).unwrap();
-    assert!((r - 8.0).abs() <= 8.0 * FOLD_MET, "radius {r}");
-    // (Midway between the points to what a radius met that closely allows at its least:
-    // √(2·r·its tolerance).)
-    let centre = doc.point(c).unwrap().distance(v(8.0, -18.0));
-    assert!(
-        centre <= (2.0 * 8.0 * 8.0 * FOLD_MET).sqrt(),
-        "centre {centre} off"
-    );
-    assert!(unmet(&doc, 1e-9).is_empty());
+    for fold in [false, true] {
+        let (mut doc, arc, c, held) = build();
+        let (report, off) = drag_points(&mut doc, &held, v(0.0, -18.0), &[arc], fold);
+        assert!(report.converged, "{report:?}");
+        assert!(off == 0.0, "the dragged points landed {off} off");
+        let r = crate::radius_of(&doc, arc).unwrap();
+        if !fold {
+            assert!((r - 8.0).abs() <= 1e-4, "radius {r}");
+            continue;
+        }
+        assert!((r - 8.0).abs() <= 8.0 * FOLD_MET, "radius {r}");
+        // (Midway between the points to what a radius met that closely allows at its least:
+        // √(2·r·its tolerance).)
+        let centre = doc.point(c).unwrap().distance(v(8.0, -18.0));
+        assert!(
+            centre <= (2.0 * 8.0 * 8.0 * FOLD_MET).sqrt(),
+            "centre {centre} off"
+        );
+        assert!(unmet(&doc, 1e-9).is_empty());
+    }
 }
 
 /// #283 (g14's shape): a point held on a line at its tangent end, moved with the arc's centre
 /// so that it stays exactly a radius from it. The tangent line through it then touches only
 /// there, and the line's end must sit on it: a double root, and the move landed off. With the
-/// fold steps it lands.
+/// two-stage solve (PR 3) it lands, with the fold steps or without.
 #[test]
-fn a_move_held_at_a_tangent_end_lands_with_the_fold_steps() {
+fn a_move_held_at_a_tangent_end_lands() {
     let d = |deg: f64| DVec2::from_angle(deg.to_radians());
     let build = || {
         let mut doc = Document::new();
@@ -1463,27 +1468,24 @@ fn a_move_held_at_a_tangent_end_lands_with_the_fold_steps() {
         (doc, arc, [c, p])
     };
     let delta = v(0.0, 12.725262082906049);
-    let (mut doc, arc, dragged) = build();
-    let (report, off) = drag_points(&mut doc, &dragged, delta, &[arc], false);
-    assert!(
-        !(report.converged && off == 0.0),
-        "it landed without the fold steps: {report:?}"
-    );
-    let (mut doc, arc, dragged) = build();
-    let (report, off) = drag_points(&mut doc, &dragged, delta, &[arc], true);
-    assert!(report.converged, "{report:?}");
-    assert!(off == 0.0, "the dragged points landed {off} off");
-    assert!(unmet(&doc, 1e-9).is_empty());
+    for fold in [false, true] {
+        let (mut doc, arc, dragged) = build();
+        let (report, off) = drag_points(&mut doc, &dragged, delta, &[arc], fold);
+        assert!(report.converged, "{report:?}");
+        assert!(off == 0.0, "the dragged points landed {off} off");
+        assert!(unmet(&doc, 1e-9).is_empty());
+    }
 }
 
 /// The rows' fold alone (move_lands 17's case, nothing kept): a line's midpoint dragged with
 /// an arc ending at the line's end, another dragged line kept as long as that one, and a
 /// point held on both lines where they meet. Moved, the solve converges with the dragged
-/// heavy, but the landing pass (the dragged pinned) has a double root, halves its way in
-/// until the minimum change outweighs what is left, and is refused 0.002 off. With the fold
-/// steps the rows' minimum change comes down as they close, and it lands.
+/// heavy, but the landing pass (the dragged pinned) has a double root, and halved its way in
+/// until the minimum change outweighed what was left, refused 0.002 off. It lands with the
+/// fold steps, where the rows' minimum change comes down as they close, and (PR 3) without
+/// them: the stop is a stationary point of the rows, not a cut.
 #[test]
-fn a_landing_at_a_double_root_of_the_rows_lands_with_the_fold_steps() {
+fn a_landing_at_a_double_root_of_the_rows_lands() {
     let build = || {
         let mut doc = Document::new();
         let p = [
@@ -1530,17 +1532,13 @@ fn a_landing_at_a_double_root_of_the_rows_lands_with_the_fold_steps() {
         (doc, dragged)
     };
     let delta = v(0.0, -14.516466897443614);
-    let (mut doc, dragged) = build();
-    let (report, off) = drag_points(&mut doc, &dragged, delta, &[], false);
-    assert!(
-        report.converged && off > 1e-4,
-        "{report:?}, landed {off} off"
-    );
-    let (mut doc, dragged) = build();
-    let (report, off) = drag_points(&mut doc, &dragged, delta, &[], true);
-    assert!(report.converged, "{report:?}");
-    assert!(off == 0.0, "the dragged points landed {off} off");
-    assert!(unmet(&doc, 1e-9).is_empty());
+    for fold in [false, true] {
+        let (mut doc, dragged) = build();
+        let (report, off) = drag_points(&mut doc, &dragged, delta, &[], fold);
+        assert!(report.converged, "{report:?}");
+        assert!(off == 0.0, "the dragged points landed {off} off");
+        assert!(unmet(&doc, 1e-9).is_empty());
+    }
 }
 
 /// The user's rule for a drag the kept radii can't follow ("stop, as now"): e13's two arcs

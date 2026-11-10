@@ -1453,8 +1453,8 @@ mod broken_geometry {
 
     /// The mixed part: an arc drawn on a point of a part that already conflicts. The solve
     /// names only the old conflicts and puts the arc in their failed part, where it shares
-    /// their misfit: the edit is undone (on main it was kept), even where the arc's own row
-    /// happens to end within its tolerance. And an arc already drawn elsewhere joined to
+    /// their misfit: the edit is undone (on main it was kept), whether or not the arc's own
+    /// row ends within its tolerance. And an arc already drawn elsewhere joined to
     /// that point by a relation: undone (as on main: the relation is a new conflict).
     #[test]
     fn an_arc_joined_to_a_part_that_already_conflicts_is_undone() {
@@ -1474,11 +1474,11 @@ mod broken_geometry {
         let s = ed.doc.add_point(at + v(5.0, 0.0));
         let e = ed.doc.add_point(at + v(0.0, 5.0));
         let arc = ed.doc.add_arc(b, s, e).unwrap();
-        // Solved, the new arc's own row ends within its tolerance: it is refused for being in
-        // the failed part, not for how far the solve left it off.
+        // Solved, the new arc is in the failed part: it is refused for being there, whether or
+        // not the solve's least-squares compromise leaves its own row off.
         let mut solved = ed.doc.clone();
         let report = drift_solver::solve(&mut solved, &drift_solver::SolveOptions::default());
-        assert!(report.exposed.contains(&arc) && !report.broken.contains(&arc));
+        assert!(report.exposed.contains(&arc));
         assert!(!ed.commit("Arc"));
         assert_eq!(
             ed.out.notice.as_deref(),

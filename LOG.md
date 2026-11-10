@@ -21,3 +21,4 @@ One line per decision, approval or merge, newest last. Format: `YYYY-MM-DD | wha
 2026-11-10 | A master Drift Coordinator session now coordinates and automates agents and writes no code; a notes session keeps the records | user
 2026-11-10 | Solver redesign scoped to PR 2, PR 3 and PR 6 of docs/solver-audit.md; PR 1 (#352), PR 4 (#344) and PR 5 (#362) parked as later. After PR 3, work returns to usability and bug batches | user in chat
 2026-11-10 | Solver PR 0 (#389) merged: the acceptance bar is now on main (Linux heavy 277 ok / 3) | user in chat
+2026-11-10 | Solver PR 2 (#391): user accepted the remaining failures: heavy similarity seeds 14 and 17 (PR 3), seed 6 on Linux (PR 4, parked), the e13 arc drag stopping at 29 instead of 32 frames (ignored pin, PR 5, parked) | user in chat

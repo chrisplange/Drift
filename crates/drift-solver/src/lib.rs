@@ -342,16 +342,39 @@ impl Drawn {
 
 /// Points along an arc from `start` counter-clockwise to `end` about `center`, at a quarter,
 /// half and three quarters of its sweep: with its ends, what it reaches as drawn, to within
-/// a few per cent of its radius (a whole circle's sweep where its ends meet).
+/// a few per cent of its radius (a whole circle's sweep where its ends meet). Built from
+/// bisectors of unit vectors, with square roots only: no trigonometry, whose last bits differ
+/// between platforms' maths libraries, and would make a part's size, and so where a drag at a
+/// fold stops, depend on the platform (`tangent_and_parallel` on Linux).
 fn along_arc(center: DVec2, start: DVec2, end: DVec2) -> [DVec2; 3] {
     let (u, w) = (start - center, end - center);
     let r = u.length();
-    let a0 = u.y.atan2(u.x);
-    let mut sweep = w.y.atan2(w.x) - a0;
-    if sweep <= 0.0 {
-        sweep += std::f64::consts::TAU;
-    }
-    [1.0, 2.0, 3.0].map(|k| center + DVec2::from_angle(a0 + k * sweep / 4.0) * r)
+    let unit = |v: DVec2| v / v.length();
+    let (a, b) = (unit(u), unit(w));
+    // The bisector of two directions less than a half turn apart (counter-clockwise from the
+    // first), and the direction a quarter turn on from one.
+    let half = |a: DVec2, b: DVec2| {
+        let sum = a + b;
+        if sum.length() > 1e-12 {
+            unit(sum)
+        } else {
+            a.perp()
+        }
+    };
+    // The arc's middle: on the bisector of its ends' directions, on the side its sweep goes
+    // (a quarter turn on where they are opposite, whichever side rounding puts them; opposite
+    // its start where they meet, a whole circle).
+    let cross = a.perp_dot(b);
+    let middle = if (a + b).length() <= 1e-12 {
+        a.perp()
+    } else if cross > 0.0 {
+        half(a, b)
+    } else if cross < 0.0 {
+        -half(a, b)
+    } else {
+        -a
+    };
+    [half(a, middle), middle, half(middle, b)].map(|d| center + d * r)
 }
 
 /// A component's own frame (#280, #366, #387): its geometry translated so that its middle is

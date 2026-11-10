@@ -2417,3 +2417,27 @@ fn a_far_arc_centre_does_not_coarsen_the_bar() {
         assert!(report.bar < 1e-7, "{radius}: bar {:e}", report.bar);
     }
 }
+
+/// `along_arc`, built from bisectors without trigonometry, puts its points a quarter, half and
+/// three quarters of the way round the arc: checked against angles for sweeps of 10°, 90°,
+/// 180°, 270° and a whole circle, at three starting angles.
+#[test]
+fn points_along_an_arc_are_where_its_sweep_puts_them() {
+    let c = v(3.0, -2.0);
+    let r = 7.0;
+    for start in [0.3f64, 2.0, -2.5] {
+        for sweep in [10.0f64, 90.0, 180.0, 270.0, 360.0] {
+            let sweep = sweep.to_radians();
+            let s = c + DVec2::from_angle(start) * r;
+            let e = c + DVec2::from_angle(start + sweep) * r;
+            let got = along_arc(c, s, e);
+            for (k, p) in got.iter().enumerate() {
+                let want = c + DVec2::from_angle(start + sweep * (k as f64 + 1.0) / 4.0) * r;
+                assert!(
+                    p.distance(want) < 1e-9,
+                    "start {start}, sweep {sweep}: point {k} {p} against {want}"
+                );
+            }
+        }
+    }
+}

@@ -766,13 +766,15 @@ impl DriftApp {
             // (Never over a transform handle: pushed aside so the handle stays in reach. The
             // handles are where the box was last drawn; finding the box here, before the
             // input is handled, would disturb the picked area.)
-            glyph_handles = ui
+            // (Kept as the box in the drawing, so a pan or zoom this frame maps it afresh.)
+            let kept: Option<drift_edit::transform::TransformBox> = ui
                 .ctx()
                 .data(|d| d.get_temp(glyph_keep_clear_id(response.id)))
-                .unwrap_or_default();
-            if !glyph_handles.is_empty() {
+                .flatten();
+            if let Some(frame) = kept {
+                glyph_handles = transform_handle_rects(&frame, &map);
                 glyphs_laid_out = Some(glyphs.clone());
-                annotations::push_glyphs_clear(&mut glyphs, &glyph_handles);
+                annotations::push_glyphs_clear(&mut glyphs, &glyph_handles, map.rect);
             }
             glyphs
         } else {
@@ -1288,13 +1290,16 @@ impl DriftApp {
         }
         self.paint_ghosts(&painter, &map);
         self.paint_check_markers(&painter, &map);
-        let handles = if self.pie.is_none() {
-            let handles = self.paint_transform_box(&painter, &map, &colors, ui.visuals().dark_mode);
+        let shown_box = if self.pie.is_none() {
+            let frame = self.paint_transform_box(&painter, &map, &colors, ui.visuals().dark_mode);
             self.paint_opening_arrows(&painter, &map, &colors);
-            handles
+            frame
         } else {
-            Vec::new()
+            None
         };
+        let handles = shown_box
+            .as_ref()
+            .map_or(Vec::new(), |f| transform_handle_rects(f, &map));
         // Relation glyphs keep clear of the handles as drawn now: pushed afresh from where
         // they were laid out when the handles have changed since (a pick this frame), so
         // they're never drawn over them. Kept for the next frame's layout, which picks.
@@ -1302,11 +1307,11 @@ impl DriftApp {
             std::borrow::Cow::Borrowed(&glyphs[..])
         } else {
             let mut shown = glyphs_laid_out.unwrap_or_else(|| glyphs.clone());
-            annotations::push_glyphs_clear(&mut shown, &handles);
+            annotations::push_glyphs_clear(&mut shown, &handles, map.rect);
             std::borrow::Cow::Owned(shown)
         };
         let keep_clear = glyph_keep_clear_id(response.id);
-        ui.ctx().data_mut(|d| d.insert_temp(keep_clear, handles));
+        ui.ctx().data_mut(|d| d.insert_temp(keep_clear, shown_box));
         if let Some(region) = self.drawing.editor.region() {
             overlay::region_fill(&painter, &map, &region, colors.window.gamma_multiply(0.22));
         }
@@ -1603,18 +1608,15 @@ impl DriftApp {
             .flatten()
     }
 
-    /// Draw the transform box, and say where its handles take the pointer, on screen: a
-    /// square the handle reach across around each scale handle (none when no box shows).
+    /// Draw the transform box, if one shows, and give it back.
     fn paint_transform_box(
         &mut self,
         painter: &egui::Painter,
         map: &ScreenMap,
         colors: &OverlayColors,
         dark: bool,
-    ) -> Vec<egui::Rect> {
-        let Some(frame) = self.transform_box_shown() else {
-            return Vec::new();
-        };
+    ) -> Option<drift_edit::transform::TransformBox> {
+        let frame = self.transform_box_shown()?;
         let pad = PICK_RADIUS / self.drawing.view.camera.scale;
         let b = frame.padded(pad);
         let (a, c) = (map.to_screen(b.min), map.to_screen(b.max));
@@ -1646,7 +1648,7 @@ impl DriftApp {
             let at = map.to_screen(p.raw) + egui::vec2(14.0, -14.0);
             overlay::turn_glyph(painter, at, colors.window);
         }
-        transform_handle_rects(&frame, map)
+        Some(frame)
     }
 
     /// The cursor over a transform handle, or inside a picked area a drag would move.
@@ -1876,8 +1878,9 @@ fn relation_name(kind: GuideKind) -> Option<&'static str> {
     }
 }
 
-/// Where a canvas keeps its transform handles' screen rects for the next frame's relation
-/// glyphs (egui's frame-to-frame memory).
+/// Where a canvas keeps the transform box it drew, for the next frame's relation glyphs to
+/// keep clear of (egui's frame-to-frame memory). (Per canvas: drawing tabs share it, so the
+/// first frame after a tab switch lays out against the other tab's box; paint corrects it.)
 pub(crate) fn glyph_keep_clear_id(canvas: egui::Id) -> egui::Id {
     canvas.with("relation_glyphs_keep_clear")
 }

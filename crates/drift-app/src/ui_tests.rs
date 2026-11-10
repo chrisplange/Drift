@@ -6878,7 +6878,7 @@ fn relation_glyphs_stay_off_the_transform_handles() {
         handles.iter().any(|r| r.intersects(glyphs[0].rect)),
         "the case is real: laid out as before, the glyph covers a handle"
     );
-    push_glyphs_clear(&mut glyphs, &handles);
+    push_glyphs_clear(&mut glyphs, &handles, map.rect);
     for g in &glyphs {
         for r in &handles {
             assert!(

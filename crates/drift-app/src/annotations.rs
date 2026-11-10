@@ -2245,10 +2245,59 @@ pub fn layout_glyphs(doc: &Document, map: &ScreenMap) -> Vec<GlyphLayout> {
 }
 
 /// Push any glyph whose tile meets one of `keep_clear` (on-canvas controls such as transform
-/// handles) along its stack direction, whichever way is shorter, until it clears them and
-/// doesn't land on another glyph. Glyphs clear of the controls stay where they are.
-pub fn push_glyphs_clear(glyphs: &mut [GlyphLayout], keep_clear: &[Rect]) {
+/// handles) along its stack direction, whichever way is shorter, until it clears them; where
+/// it can, it also stays off the other glyphs. Every glyph on screen ends clear of the
+/// controls. Glyphs clear of the controls stay where they are, and glyphs outside `visible`
+/// (the canvas) are left alone.
+///
+/// Cost: one pass over the glyphs, then for each one on a control a short slide that looks
+/// only at the glyphs near it (a grid of cells over those within a few tiles of the
+/// controls), so a dense drawing doesn't cost n². A glyph pushed out past that zone may
+/// land on a glyph beyond it.
+pub fn push_glyphs_clear(glyphs: &mut [GlyphLayout], keep_clear: &[Rect], visible: Rect) {
+    if keep_clear.is_empty() {
+        return;
+    }
     let meets = |a: &Rect, b: &Rect| a.expand(GLYPH_CLEARANCE).intersects(*b);
+    let band = keep_clear
+        .iter()
+        .fold(Rect::NOTHING, |acc, r| acc.union(*r))
+        .expand(GLYPH_CLEARANCE);
+    let on_control = |r: &Rect| r.intersects(band) && keep_clear.iter().any(|h| meets(r, h));
+    let movers: Vec<usize> = (0..glyphs.len())
+        .filter(|&i| glyphs[i].rect.intersects(visible) && on_control(&glyphs[i].rect))
+        .collect();
+    if movers.is_empty() {
+        return;
+    }
+
+    // The glyphs on screen near the controls, by grid cell, to find those near a rect
+    // quickly.
+    const CELL: f32 = GLYPH_SIZE * 2.0;
+    // As many glyphs overlapping one as make a heap.
+    const HEAPED: usize = 8;
+    let zone = band.expand(4.0 * GLYPH_SIZE).intersect(visible);
+    let cells_of = |r: Rect| {
+        let r = r.expand(GLYPH_CLEARANCE);
+        let (x0, y0) = (
+            (r.min.x / CELL).floor() as i32,
+            (r.min.y / CELL).floor() as i32,
+        );
+        let (x1, y1) = (
+            (r.max.x / CELL).floor() as i32,
+            (r.max.y / CELL).floor() as i32,
+        );
+        (y0..=y1).flat_map(move |y| (x0..=x1).map(move |x| (x, y)))
+    };
+    let mut grid: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+    for (i, g) in glyphs.iter().enumerate() {
+        if g.rect.intersects(zone) {
+            for c in cells_of(g.rect) {
+                grid.entry(c).or_default().push(i);
+            }
+        }
+    }
+
     // How far along `d` the tile `r` must go to clear `o` (with the clearance).
     let past = |r: &Rect, o: &Rect, d: Vec2| -> f32 {
         let o = o.expand(GLYPH_CLEARANCE);
@@ -2265,46 +2314,78 @@ pub fn push_glyphs_clear(glyphs: &mut [GlyphLayout], keep_clear: &[Rect]) {
         let ty = axis(d.y, r.min.y, r.max.y, o.min.y, o.max.y);
         tx.min(ty).max(0.0) + 0.01
     };
-    for i in 0..glyphs.len() {
-        if !keep_clear.iter().any(|h| meets(&glyphs[i].rect, h)) {
-            continue;
-        }
-        let start = glyphs[i].rect;
-        let along = glyphs[i].along;
-        let others: Vec<Rect> = glyphs
-            .iter()
-            .enumerate()
-            .filter(|(j, _)| *j != i)
-            .map(|(_, g)| g.rect)
-            .collect();
-        // Slide one way until nothing is in the way; None if it never clears.
-        let slide = |d: Vec2| -> Option<(f32, Rect)> {
-            let (mut t, mut r) = (0.0, start);
-            for _ in 0..64 {
-                let hit = keep_clear
-                    .iter()
-                    .chain(others.iter())
-                    .find(|o| meets(&r, o))
-                    .copied();
-                let Some(o) = hit else {
-                    return Some((t, r));
-                };
-                let step = past(&r, &o, d);
-                if !step.is_finite() {
-                    return None;
-                }
-                t += step;
-                r = start.translate(d * t);
+    // Slide `start` along `d` until nothing `blocking` meets it: how far, and where to. None
+    // if it doesn't clear within the steps allowed.
+    let slide = |start: Rect, d: Vec2, steps: usize, blocking: &dyn Fn(&Rect) -> Option<Rect>| {
+        let (mut t, mut r) = (0.0, start);
+        for _ in 0..steps {
+            let Some(o) = blocking(&r) else {
+                return Some((t, r));
+            };
+            let step = past(&r, &o, d);
+            if !step.is_finite() {
+                return None;
             }
-            None
-        };
-        let best = [along, -along]
-            .into_iter()
-            .filter_map(slide)
-            .min_by(|a, b| a.0.total_cmp(&b.0));
-        if let Some((_, r)) = best {
-            glyphs[i].rect = r;
+            t += step;
+            r = start.translate(d * t);
         }
+        None
+    };
+    let shortest = |found: [Option<(f32, Rect)>; 2]| {
+        found
+            .into_iter()
+            .flatten()
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, r)| r)
+    };
+
+    for i in movers {
+        let (start, along) = (glyphs[i].rect, glyphs[i].along);
+        let handle_at = |r: &Rect| keep_clear.iter().find(|h| meets(r, h)).copied();
+        // Clear of the controls and the other glyphs near it, when a short slide does it...
+        let near = {
+            let (glyphs, grid) = (&*glyphs, &grid);
+            move |r: &Rect| {
+                handle_at(r).or_else(|| {
+                    cells_of(*r)
+                        .filter_map(|c| grid.get(&c))
+                        .flatten()
+                        .filter(|&&j| j != i)
+                        .map(|&j| glyphs[j].rect)
+                        .find(|o| meets(r, o))
+                })
+            }
+        };
+        // (Not where glyphs already lie in a heap: no short slide gets clear of them.)
+        let heaped = {
+            let mut seen = std::collections::HashSet::new();
+            cells_of(start)
+                .filter_map(|c| grid.get(&c))
+                .flatten()
+                .filter(|&&j| j != i && meets(&start, &glyphs[j].rect) && seen.insert(j))
+                .take(HEAPED)
+                .count()
+                >= HEAPED
+        };
+        let tidy = if heaped {
+            None
+        } else {
+            shortest([along, -along].map(|d| slide(start, d, 24, &near)))
+        };
+        // ...else clear of the controls alone (a few steps at most: there are few of them).
+        let to = tidy.or_else(|| {
+            shortest([along, -along].map(|d| slide(start, d, 4 * keep_clear.len() + 4, &handle_at)))
+        });
+        let Some(to) = to else { continue };
+        for c in cells_of(start) {
+            if let Some(v) = grid.get_mut(&c) {
+                v.retain(|&j| j != i);
+            }
+        }
+        for c in cells_of(to) {
+            grid.entry(c).or_default().push(i);
+        }
+        glyphs[i].rect = to;
     }
 }
 
@@ -2317,8 +2398,9 @@ pub fn paint_glyph(
     colors: &AnnotationColors,
 ) {
     let color = colors.color(state);
-    // A solid tile with a hairline edge, so the icon reads on any drawing; framed in the
-    // state's colour when hovered or picked.
+    // A tile with a hairline edge, so the icon reads on any drawing (solid as given; the
+    // canvas's quiet look for unpicked glyphs fades it a little); framed in the state's
+    // colour when hovered or picked.
     painter.rect_filled(rect, 4.0, colors.glyph_background);
     if state == AnnotationState::Normal {
         painter.rect_stroke(
@@ -2895,5 +2977,125 @@ mod tests {
         .unwrap();
         let lines = extension_lines(&painter, &dim);
         assert!(near(lines[0][0], s(-5.0, 40.0)), "{lines:?}");
+    }
+
+    /// `n` glyphs piled at random over `area`, stacking every way, and the eight handle
+    /// squares (12 pt) of a box over the middle of it.
+    fn glyph_pile(n: usize, area: Rect) -> (Vec<GlyphLayout>, Vec<Rect>) {
+        let mut seed = 0x2545_f491_u64;
+        let mut next = move || {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (seed >> 40) as f32 / (1u64 << 24) as f32
+        };
+        let glyphs = (0..n)
+            .map(|i| {
+                let at = pos2(
+                    area.min.x + next() * area.width(),
+                    area.min.y + next() * area.height(),
+                );
+                let turn = next() * TAU32;
+                GlyphLayout {
+                    id: ConstraintId(i as u32),
+                    kind: GlyphKind::Horizontal,
+                    rect: Rect::from_center_size(at, Vec2::splat(GLYPH_SIZE)),
+                    along: vec2(turn.cos(), turn.sin()),
+                }
+            })
+            .collect();
+        let frame = Rect::from_center_size(area.center(), area.size() * 0.5);
+        let handles = [0.0, 0.5, 1.0]
+            .into_iter()
+            .flat_map(|y| [0.0, 0.5, 1.0].map(|x| (x, y)))
+            .filter(|&(x, y)| (x, y) != (0.5, 0.5))
+            .map(|(x, y)| {
+                let at = frame.min + frame.size() * vec2(x, y);
+                Rect::from_center_size(at, Vec2::splat(12.0))
+            })
+            .collect();
+        (glyphs, handles)
+    }
+
+    #[test]
+    fn a_dense_pile_of_glyphs_ends_clear_of_the_handles() {
+        // Zoomed out on a busy drawing: thousands of glyphs on and around the handles.
+        for (n, w, h) in [(5_000, 300.0, 200.0), (20_000, 400.0, 300.0)] {
+            let area = Rect::from_min_size(pos2(100.0, 100.0), vec2(w, h));
+            let (mut glyphs, handles) = glyph_pile(n, area);
+            let before = glyphs.clone();
+            let on = |g: &GlyphLayout| handles.iter().any(|r| g.rect.intersects(*r));
+            assert!(
+                glyphs.iter().filter(|g| on(g)).count() > 100,
+                "{n}: a real pile"
+            );
+            push_glyphs_clear(&mut glyphs, &handles, Rect::EVERYTHING);
+            for (g, was) in glyphs.iter().zip(&before) {
+                assert!(
+                    !on(g),
+                    "{n}: glyph {} still on a handle at {:?}",
+                    g.id,
+                    g.rect
+                );
+                // Glyphs clear of the handles (and the clearance) stay; pushed ones moved
+                // only along their stack direction.
+                let d = g.rect.center() - was.rect.center();
+                let near = |g: &GlyphLayout| {
+                    handles
+                        .iter()
+                        .any(|r| g.rect.expand(GLYPH_CLEARANCE).intersects(*r))
+                };
+                if near(was) {
+                    assert!((d.x * g.along.y - d.y * g.along.x).abs() < 1e-2, "{d:?}");
+                } else {
+                    assert_eq!(g.rect, was.rect);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn glyphs_off_the_canvas_are_left_alone() {
+        let area = Rect::from_min_size(pos2(100.0, 100.0), vec2(300.0, 200.0));
+        let (mut glyphs, handles) = glyph_pile(2_000, area);
+        let before = glyphs.clone();
+        // A canvas that ends left of the box's middle.
+        let visible = Rect::from_min_max(pos2(-1000.0, -1000.0), pos2(250.0, 1000.0));
+        push_glyphs_clear(&mut glyphs, &handles, visible);
+        for (g, was) in glyphs.iter().zip(&before) {
+            if !was.rect.intersects(visible) {
+                assert_eq!(g.rect, was.rect);
+            } else {
+                assert!(!handles.iter().any(|r| g.rect.intersects(*r)));
+            }
+        }
+    }
+
+    /// The cost of keeping a big pile of glyphs off the handles (a perf baseline: run with
+    /// `cargo test -p drift-app --release -- --ignored glyph_push_baseline --nocapture`).
+    #[test]
+    #[ignore]
+    fn glyph_push_baseline() {
+        for (n, w, h) in [
+            (5_000, 1600.0, 900.0),
+            (5_000, 300.0, 200.0),
+            (20_000, 400.0, 300.0),
+        ] {
+            let area = Rect::from_min_size(pos2(100.0, 100.0), vec2(w, h));
+            let (glyphs, handles) = glyph_pile(n, area);
+            let on = glyphs
+                .iter()
+                .filter(|g| handles.iter().any(|r| g.rect.intersects(*r)))
+                .count();
+            let runs = 20;
+            let t = std::time::Instant::now();
+            for _ in 0..runs {
+                let mut g = glyphs.clone();
+                push_glyphs_clear(&mut g, &handles, Rect::EVERYTHING);
+                std::hint::black_box(&g);
+            }
+            let ms = t.elapsed().as_secs_f64() * 1000.0 / runs as f64;
+            eprintln!("{n} glyphs over {w}x{h} pt, {on} on handles: {ms:.3} ms a push");
+        }
     }
 }

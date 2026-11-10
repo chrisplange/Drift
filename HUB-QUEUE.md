@@ -29,7 +29,7 @@ After PR 0: PR 1 (#352) may go at any time, then PR 2. One solver PR in review a
 | H-3 | #242 | Auto horizontal/vertical window widened to 3° for sketched lines | #380 | 2026-11-10 |
 | — | #386 | Solver audit: root causes and redesign plan; all nine decisions accepted (LOG.md) | #386 | 2026-11-10 |
 
-The trial is over: self-merge of `auto` tasks is on. #264 and #337 are still open on GitHub after their PRs merged; close them.
+The trial is over: self-merge of `auto` tasks is on. #264 stays open for its follow-up (Shift+D with no pointer, or on a locked layer). #337 is still open after its PRs merged; close it.
 
 ## Batches (issue labels, 2026-11-10)
 

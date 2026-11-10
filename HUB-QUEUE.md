@@ -16,9 +16,11 @@ Last updated 2026-11-10.
 
 | ID | Issue | Task | Done when | Files | Tier | Status | PR | Session |
 |---|---|---|---|---|---|---|---|---|
-| H-4 | #343, #187 (corpus half) | Solver redesign PR 0: the bar as code, tests only (`docs/solver-audit.md` §5) | Similarity census committed as an ignored test; exit-reason counters as test-only instrumentation; `analyse.py` committed; drag properties check structural rows (an arc's end on its circle, midpoints); main's numbers for all seven parts of the bar recorded in the PR; nothing deleted | `crates/drift-solver/` (tests and test-only instrumentation), `crates/drift-edit/` `drag_props.rs` and `drag_props/`, `tools/analyse.py` | gated | running | | solver-pr0 |
+| H-5 | #366, #387, #280 (five pins) | Solver redesign PR 2: one frame, one bar (`docs/solver-audit.md` §5) | Every solve runs each component in its own frame with one bar (1e-9 × A/4); the editor reads the bar from the solver; the listed constants deleted; similarity failures ≤ 0.1 % at 100 m and ≤ 0.3 % at 1 km; no sketch refused at commit for being far out; the acceptance bar's seven parts recorded in the PR | `crates/drift-solver/`, `crates/drift-edit/` editor `solve.rs`, `drag.rs` and their tests | gated | running | | solver-pr2 |
+| H-6 | #349, #351 | Solver redesign PR 3: a principled stop | Two-stage solve (relations, then preferences in their null space); conflict judged by rank, not the cap; the listed heuristics deleted; under 0.5 % of component solves end other than by the stop test; every census drag that fails similarity traced; perf baselines held | `crates/drift-solver/`, `crates/drift-edit/` editor `solve.rs`, `drag.rs` and their tests | gated | next (after H-5) | | |
+| H-7 | #350, #284 (commit side) | Solver redesign PR 6: commits keep shapes | Commits keep line lengths and directions and arc radii where the relations leave room, ranked below relations and named geometry; before/after on the relation-adding census (#333's corpus) in the PR | `crates/drift-solver/`, `crates/drift-edit/` editor `solve.rs` and its tests | gated | next (after H-6) | | |
 
-After PR 0: PR 1 (#352) may go at any time, then PR 2. One solver PR in review at a time.
+Solver scope is PRs 2, 3 and 6 only. PR 1 (#352), PR 4 (#344) and PR 5 (#362) are parked as `later`. After PR 3, work returns to the usability and bug batches. One solver PR in review at a time.
 
 ## Done
 
@@ -27,6 +29,7 @@ After PR 0: PR 1 (#352) may go at any time, then PR 2. One solver PR in review a
 | H-1 | #264 | Shift+D then Esc leaves no copy stacked on the original (smoke test) | #379 | 2026-11-10 |
 | H-2 | #337 | Relation glyphs 18 pt and kept off the transform handles | #382, review fixes #385 | 2026-11-10 |
 | H-3 | #242 | Auto horizontal/vertical window widened to 3° for sketched lines | #380 | 2026-11-10 |
+| H-4 | #343, #187 (corpus half) | Solver redesign PR 0: the acceptance bar as code, tests only (Linux heavy 277 ok / 3) | #389 | 2026-11-10 |
 | — | #386 | Solver audit: root causes and redesign plan; all nine decisions accepted (LOG.md) | #386 | 2026-11-10 |
 
 The trial is over: self-merge of `auto` tasks is on. #264 stays open for its follow-up (Shift+D with no pointer, or on a locked layer). #337 is still open after its PRs merged; close it.
@@ -38,5 +41,5 @@ Work a batch at a time, up to 5 issues, in this order: papercuts, flaky tests, p
 - **batch-1** (papercuts): #367, #338, #326, #306, #245
 - **batch-2** (flaky tests): #368, #353, #297, #296, #295 (walls join bug, not solver; its fix adds the four saved seeds)
 - **batch-3** (big-drawing perf): #373, #372, #371, #370, #285, #253
-- **solver-audit** (closed only by the redesign PRs 0–6): #387, #366, #362, #352, #351, #350, #349, #347 (blocked by #313), #344, #343, #280, #187
-- **later**: #369, #345, #314, #313, #307, #305, #291, #290, #289, #244, #243, #231, #183
+- **solver-audit** (closed only by the redesign PRs 2, 3 and 6): #387, #366, #351, #350, #349, #347 (blocked by #313), #280, #187
+- **later**: #352, #344, #362 (parked solver PRs 1, 4 and 5; still labelled solver-audit), #369, #345, #314, #313, #307, #305, #291, #290, #289, #244, #243, #231, #183

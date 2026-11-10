@@ -1721,15 +1721,20 @@ fn tangent_and_parallel_plan() -> Plan {
 /// (`drag_is_invariant_under_similarity_heavy`, seed 3's own shrunk case on a561c30.)
 ///
 /// Re-ignored by #381 for failing on Ubuntu only: a fold amplified an ulp of libm into a stop
-/// decision. Passes since PR 2 of the solver audit (its probe: 0 of 39 nudged copies refuse
-/// differently, against 21 of 39 on main). **Not size-free in general:** at 0.3× and 3.7× it
-/// still differed before PR 2. The frame's 8th
+/// decision. Un-ignored by PR 2 of the solver audit and re-ignored there for the same reason:
+/// the drag ends on one of two branches some 0.15 mm apart, chosen by its last bits. With its
+/// offset nudged by -6..+6 ulps in x and -3, 0, +3 in y, 8 of the 39 copies end on the other
+/// branch at one size (Windows, PR 2's final build; 15 of 39 at an earlier PR 2 build, about
+/// 21 on main by the audit's probe), and glibc's libm lands on one of them: a branch at a
+/// fold, for PR 3's stop or PR 4's fold awareness. **Not size-free in general:** at 0.3× and
+/// 3.7× it still differed before PR 2. The frame's 8th
 /// solve reaches the same scaled state at both sizes; once its rows hold, the rows' step
 /// from a round-off residual, amplified by the fold's near-singular Jacobian (some 2,300 ε
 /// of the coordinates), is above the part-size bar at one size (it runs to patience) and
 /// below it at the other (it settles). Round-off at a fold, not a yardstick; similarity 3
 /// still fails for it.
 #[test]
+#[ignore = "#280: a branch at a fold chosen by the last bits, 8 of 39 ulp nudges (Windows); fails on Linux (libm). PR 3/PR 4"]
 fn e_result_depends_on_size_tangent_and_parallel() {
     let plan = tangent_and_parallel_plan();
     let t = Similarity {

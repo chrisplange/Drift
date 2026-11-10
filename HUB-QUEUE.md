@@ -16,7 +16,7 @@ Last updated 2026-11-10.
 
 | ID | Issue | Task | Done when | Files | Tier | Status | PR | Session |
 |---|---|---|---|---|---|---|---|---|
-| H-4 | #343, #187 (corpus half) | Solver redesign PR 0: the bar as code, tests only (`docs/solver-audit.md` §5) | Similarity census committed as an ignored test; exit-reason counters as test-only instrumentation; `analyse.py` committed; drag properties check structural rows (an arc's end on its circle, midpoints); main's numbers for all seven parts of the bar recorded in the PR; nothing deleted | `crates/drift-solver/` (tests and test-only instrumentation), `crates/drift-edit/` `drag_props.rs` and `drag_props/`, `tools/analyse.py` | gated | offered (waits for the user's go) | | |
+| H-4 | #343, #187 (corpus half) | Solver redesign PR 0: the bar as code, tests only (`docs/solver-audit.md` §5) | Similarity census committed as an ignored test; exit-reason counters as test-only instrumentation; `analyse.py` committed; drag properties check structural rows (an arc's end on its circle, midpoints); main's numbers for all seven parts of the bar recorded in the PR; nothing deleted | `crates/drift-solver/` (tests and test-only instrumentation), `crates/drift-edit/` `drag_props.rs` and `drag_props/`, `tools/analyse.py` | gated | running | | solver-pr0 |
 
 After PR 0: PR 1 (#352) may go at any time, then PR 2. One solver PR in review at a time.
 

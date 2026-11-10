@@ -11,4 +11,6 @@ What went wrong and the rule that came out of it. Add one when a review, revert 
 | 2026-11-04 | Long-lived reviewers anchored on old rulings and grew 36 GB targets | One fresh reviewer per PR; delete its target after merge |
 | 2026-10-30 | Tests asserting wall-clock budgets fail on a busy machine (#368) | No hard wall-clock asserts in normal tests; perf budgets live in ignored baselines |
 | 2026-11-10 | A dependency bump (#381) failed the Third-party notices job | After any Cargo.lock change, run `python scripts/notices.py` and commit THIRD-PARTY-NOTICES.txt in the same PR |
+| 2026-11-09 | Hub started by another session could not start worker/reviewer sessions; each became a card the user had to click | Start the hub from the user's own chat (or expect cards); say so in the first report |
+| 2026-11-10 | New RUSTSEC advisories turned main's cargo deny red overnight with no code change, blocking every PR's "CI green" gate | Before starting a batch, check main's last CI run; if red, report it and get a fix task queued first |
 | 2026-10-27 | Vague tasks caused rework | Every task has a checkable Done when before it runs |

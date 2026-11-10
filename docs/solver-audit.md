@@ -91,7 +91,7 @@ Commands, scripts and raw logs: `E:\Drift\solver-audit-logs\` (`census.sh`, `cen
 | **#352** | Merged equal points start from their mean, which rounds | Numerics hygiene, independent of the hypotheses | Code: `system.rs` ~1209 divides a sum by the count | PR 1 |
 | **#343** | Drag property tests can't see structural rows | Test gap: `unmet` skips rows no relation owns | Code: `lib.rs` ~589 `let Some(id) = row.source else { continue }` | PR 0 |
 | **#347** | Active element through relations lowered onto wall faces | Not the solver: the editor's relation-adding policy, and blocked by #313 | — | Out of scope; stays blocked |
-| **#295** | "Flaky" `face_dimensions_hold_through_drags` | **Not flaky and not the solver.** The 4 "join flipped" seeds fail on every run, on main and on `lfa` alike: walls' join bookkeeping (`drag_joins`, tees re-read at step 5 of a 1.3 to 1.5 m drag). The 2 "face relation" seeds no longer fail on main | Replays of the six saved `cc` lines | Walls fix, outside this plan (decision 7; relabelled walls, batch 2) |
+| **#295** | "Flaky" `face_dimensions_hold_through_drags` | **Not flaky and not the solver.** The 4 "join flipped" seeds fail on every run, on main and on `lfa` alike: walls' join bookkeeping (`drag_joins`, tees re-read at step 5 of a 1.3 to 1.5 m drag). The 2 "face relation" seeds no longer fail on main | Replays of the six saved `cc` lines | Walls fix, outside this plan (decision 7; relabelled `drawing` + `batch-2`, the repo has no walls label) |
 | **#187** | Record what each heuristic protects; keep a corpus | Meta | Section 3 is the record; PR 0 is the corpus | PR 0 |
 
 ## 2. Every ignored or pinned drag test, mapped to a root cause
@@ -486,7 +486,7 @@ All nine were taken by the user on 2026-11-10, each as recommended (LOG.md).
    test. *Recommendation:* relabel it as a walls bug. The walls PR that fixes it adds the four
    saved seeds to the regression file as its proof (adding them before the fix would turn main
    red).
-   **Decided 2026-11-10: as recommended.** Done: #295 is relabelled walls and batch 2.
+   **Decided 2026-11-10: as recommended.** Done: #295 is relabelled `drawing` + `batch-2` (the repo has no walls label).
 8. **File the 1 km commit refusal as an issue.** "A sketch whose relations hold can't be
    committed 1 km out (551 of 10,561 random sketches; 44 at 100 m)". *Recommendation:* file it,
    closed by PR 2.

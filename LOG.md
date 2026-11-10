@@ -15,6 +15,6 @@ One line per decision, approval or merge, newest last. Format: `YYYY-MM-DD | wha
 2026-11-10 | Solver audit decision 4: held radii are held exactly in a drag (stop where they can't be kept); hanging lines stay soft, crushed-line stop kept | user in chat
 2026-11-10 | Solver audit decision 5: commits keep shapes (#350), as the redesign's PR 6, after PR 3, with a before/after | user in chat
 2026-11-10 | Solver audit decision 6: #377's accepted costs (D3, the hinge PQ2) are superseded by the redesign's PR 2 | user in chat
-2026-11-10 | Solver audit decision 7: #295 is a walls bug, not solver; relabelled walls + batch 2; its fix adds the four saved seeds | user in chat
+2026-11-10 | Solver audit decision 7: #295 is a walls bug, not solver; relabelled drawing + batch-2 (no walls label); its fix adds the four saved seeds | user in chat
 2026-11-10 | Solver audit decision 8: file the 1 km commit refusal; filed as #387, closed by the redesign's PR 2 | user in chat
 2026-11-10 | Solver audit decision 9: the heavy matrix and the pins run on ubuntu in a scheduled job (#187 step 4) | user in chat

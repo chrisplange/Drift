@@ -749,6 +749,9 @@ impl DriftApp {
         } else {
             Vec::new()
         };
+        // The handles glyphs were kept clear of, and the glyphs before that.
+        let mut glyph_handles: Vec<egui::Rect> = Vec::new();
+        let mut glyphs_laid_out = None;
         let glyphs = if self.show_relations {
             let mut glyphs = annotations::layout_glyphs(&self.drawing.editor.doc, &map);
             // (Not on walls' centrelines unless the wall is picked.)
@@ -759,6 +762,17 @@ impl DriftApp {
                     doc.constraint(g.id)
                         .is_none_or(|c| !c.entities().any(|e| hidden.contains(&e)))
                 });
+            }
+            // (Never over a transform handle: pushed aside so the handle stays in reach. The
+            // handles are where the box was last drawn; finding the box here, before the
+            // input is handled, would disturb the picked area.)
+            glyph_handles = ui
+                .ctx()
+                .data(|d| d.get_temp(glyph_keep_clear_id(response.id)))
+                .unwrap_or_default();
+            if !glyph_handles.is_empty() {
+                glyphs_laid_out = Some(glyphs.clone());
+                annotations::push_glyphs_clear(&mut glyphs, &glyph_handles);
             }
             glyphs
         } else {
@@ -1274,14 +1288,29 @@ impl DriftApp {
         }
         self.paint_ghosts(&painter, &map);
         self.paint_check_markers(&painter, &map);
-        if self.pie.is_none() {
-            self.paint_transform_box(&painter, &map, &colors, ui.visuals().dark_mode);
+        let handles = if self.pie.is_none() {
+            let handles = self.paint_transform_box(&painter, &map, &colors, ui.visuals().dark_mode);
             self.paint_opening_arrows(&painter, &map, &colors);
-        }
+            handles
+        } else {
+            Vec::new()
+        };
+        // Relation glyphs keep clear of the handles as drawn now: pushed afresh from where
+        // they were laid out when the handles have changed since (a pick this frame), so
+        // they're never drawn over them. Kept for the next frame's layout, which picks.
+        let shown_glyphs = if handles == glyph_handles {
+            std::borrow::Cow::Borrowed(&glyphs[..])
+        } else {
+            let mut shown = glyphs_laid_out.unwrap_or_else(|| glyphs.clone());
+            annotations::push_glyphs_clear(&mut shown, &handles);
+            std::borrow::Cow::Owned(shown)
+        };
+        let keep_clear = glyph_keep_clear_id(response.id);
+        ui.ctx().data_mut(|d| d.insert_temp(keep_clear, handles));
         if let Some(region) = self.drawing.editor.region() {
             overlay::region_fill(&painter, &map, &region, colors.window.gamma_multiply(0.22));
         }
-        self.paint_annotations(&painter, &map, &dims, &glyphs, ui.visuals().dark_mode);
+        self.paint_annotations(&painter, &map, &dims, &shown_glyphs, ui.visuals().dark_mode);
         self.paint_temp_dims(&painter, &map, &temps, ui.visuals().dark_mode);
         self.paint_view_crops(&painter, &map, ui.visuals().dark_mode);
         // A dragged dimension snapped level with another: a guide between them.
@@ -1491,8 +1520,8 @@ impl DriftApp {
         // Relation badges are quiet at rest, and at full strength on the picked geometry or
         // under the pointer, so they don't crowd the drawing.
         let quiet = AnnotationColors {
-            normal: colors.normal.gamma_multiply(0.6),
-            glyph_background: colors.glyph_background.gamma_multiply(0.55),
+            normal: colors.normal.gamma_multiply(0.85),
+            glyph_background: colors.glyph_background.gamma_multiply(0.9),
             ..colors
         };
         let selection = &self.drawing.editor.selection;
@@ -1574,15 +1603,17 @@ impl DriftApp {
             .flatten()
     }
 
+    /// Draw the transform box, and say where its handles take the pointer, on screen: a
+    /// square the handle reach across around each scale handle (none when no box shows).
     fn paint_transform_box(
         &mut self,
         painter: &egui::Painter,
         map: &ScreenMap,
         colors: &OverlayColors,
         dark: bool,
-    ) {
+    ) -> Vec<egui::Rect> {
         let Some(frame) = self.transform_box_shown() else {
-            return;
+            return Vec::new();
         };
         let pad = PICK_RADIUS / self.drawing.view.camera.scale;
         let b = frame.padded(pad);
@@ -1615,6 +1646,7 @@ impl DriftApp {
             let at = map.to_screen(p.raw) + egui::vec2(14.0, -14.0);
             overlay::turn_glyph(painter, at, colors.window);
         }
+        transform_handle_rects(&frame, map)
     }
 
     /// The cursor over a transform handle, or inside a picked area a drag would move.
@@ -1842,4 +1874,27 @@ fn relation_name(kind: GuideKind) -> Option<&'static str> {
         GuideKind::Tangent(_) => Some("Tangent"),
         GuideKind::Aligned => None,
     }
+}
+
+/// Where a canvas keeps its transform handles' screen rects for the next frame's relation
+/// glyphs (egui's frame-to-frame memory).
+pub(crate) fn glyph_keep_clear_id(canvas: egui::Id) -> egui::Id {
+    canvas.with("relation_glyphs_keep_clear")
+}
+
+/// Where a transform box's handles take the pointer, on screen: a square the handle reach
+/// across around each scale handle (the drawn square is 7 pt).
+pub(crate) fn transform_handle_rects(
+    frame: &drift_edit::transform::TransformBox,
+    map: &ScreenMap,
+) -> Vec<egui::Rect> {
+    let pad = PICK_RADIUS / map.camera.scale;
+    let half = (drift_edit::transform::handle_reach(PICK_RADIUS) as f32).max(3.5);
+    frame
+        .scale_handles(pad)
+        .into_iter()
+        .map(|(_, at)| {
+            egui::Rect::from_center_size(map.to_screen(at), egui::Vec2::splat(2.0 * half))
+        })
+        .collect()
 }

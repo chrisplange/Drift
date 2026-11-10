@@ -23,7 +23,17 @@ const DEFAULT_OFFSET_PT: f64 = 28.0;
 pub const RELIEF_PT: f32 = 12.0;
 /// How far around a dimension's text a click still lands on it (points).
 pub const TEXT_REACH: f32 = 6.0;
-const GLYPH_SIZE: f32 = 15.0;
+/// A relation glyph's tile, on screen (points).
+pub const GLYPH_SIZE: f32 = 18.0;
+/// How far a glyph stands off a line: the tile's edge the same 5.5 pt off it at any tile
+/// size, so a bigger tile grows away from the geometry, not onto it.
+const GLYPH_OFF_LINE: f32 = GLYPH_SIZE / 2.0 + 5.5;
+/// How far a glyph stands off a point (or a circle's edge), along each axis: likewise.
+const GLYPH_OFF_POINT: f32 = GLYPH_SIZE / 2.0 + 4.5;
+/// The tile size the glyph icons were drawn for; they scale with the tile.
+const GLYPH_ICON_BASE: f32 = 15.0;
+/// The space kept between a glyph pushed aside and what it was pushed off (points).
+const GLYPH_CLEARANCE: f32 = 2.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AnnotationState {
@@ -2096,6 +2106,8 @@ pub struct GlyphLayout {
     pub id: ConstraintId,
     pub kind: GlyphKind,
     pub rect: Rect,
+    /// The way glyphs on the same entity stack (a unit vector on screen).
+    pub along: Vec2,
 }
 
 /// Lay out a glyph for every relation (dimensions are drawn separately). Relations between
@@ -2113,6 +2125,7 @@ pub fn layout_glyphs(doc: &Document, map: &ScreenMap) -> Vec<GlyphLayout> {
             id,
             kind,
             rect: Rect::from_center_size(center, Vec2::splat(GLYPH_SIZE)),
+            along,
         });
     };
     // Glyphs for a line sit beside its midpoint and stack along it.
@@ -2126,9 +2139,11 @@ pub fn layout_glyphs(doc: &Document, map: &ScreenMap) -> Vec<GlyphLayout> {
         if n.y > 0.0 {
             n = -n; // prefer above
         }
-        Some((pa + (pb - pa) * 0.5 + n * 13.0, u))
+        Some((pa + (pb - pa) * 0.5 + n * GLYPH_OFF_LINE, u))
     };
-    let point_base = |point: EntityId| p(point).map(|q| (q + vec2(12.0, -12.0), vec2(1.0, 0.0)));
+    let point_base = |point: EntityId| {
+        p(point).map(|q| (q + vec2(GLYPH_OFF_POINT, -GLYPH_OFF_POINT), vec2(1.0, 0.0)))
+    };
 
     for (id, c) in doc.constraints() {
         use GlyphKind::*;
@@ -2138,9 +2153,12 @@ pub fn layout_glyphs(doc: &Document, map: &ScreenMap) -> Vec<GlyphLayout> {
             }
             Constraint::Vertical { line } => place(line, line_base(line), id, Vertical, &mut out),
             Constraint::HorizontalPoints { a, b } | Constraint::VerticalPoints { a, b } => {
-                let base = p(a)
-                    .zip(p(b))
-                    .map(|(pa, pb)| (pa + (pb - pa) * 0.5 + vec2(0.0, -12.0), vec2(1.0, 0.0)));
+                let base = p(a).zip(p(b)).map(|(pa, pb)| {
+                    (
+                        pa + (pb - pa) * 0.5 + vec2(0.0, -GLYPH_OFF_POINT),
+                        vec2(1.0, 0.0),
+                    )
+                });
                 let kind = if matches!(c, Constraint::HorizontalPoints { .. }) {
                     Horizontal
                 } else {
@@ -2172,7 +2190,10 @@ pub fn layout_glyphs(doc: &Document, map: &ScreenMap) -> Vec<GlyphLayout> {
                                 drift_solver::radius_of(doc, e).unwrap_or(0.0) * map.camera.scale;
                             (
                                 map.to_screen(w)
-                                    + vec2(r as f32 * 0.7 + 12.0, -(r as f32) * 0.7 - 12.0),
+                                    + vec2(
+                                        r as f32 * 0.7 + GLYPH_OFF_POINT,
+                                        -(r as f32) * 0.7 - GLYPH_OFF_POINT,
+                                    ),
                                 vec2(1.0, 0.0),
                             )
                         }),
@@ -2184,8 +2205,12 @@ pub fn layout_glyphs(doc: &Document, map: &ScreenMap) -> Vec<GlyphLayout> {
             | Constraint::FixX { point, .. }
             | Constraint::FixY { point, .. } => place(point, point_base(point), id, Fix, &mut out),
             Constraint::FixRadius { curve, .. } => {
-                let base = center_of(doc, curve)
-                    .map(|w| (map.to_screen(w) + vec2(12.0, 12.0), vec2(1.0, 0.0)));
+                let base = center_of(doc, curve).map(|w| {
+                    (
+                        map.to_screen(w) + vec2(GLYPH_OFF_POINT, GLYPH_OFF_POINT),
+                        vec2(1.0, 0.0),
+                    )
+                });
                 place(curve, base, id, Fix, &mut out);
             }
             Constraint::Coincident { a, .. } => place(a, point_base(a), id, Coincident, &mut out),
@@ -2198,9 +2223,12 @@ pub fn layout_glyphs(doc: &Document, map: &ScreenMap) -> Vec<GlyphLayout> {
             // Beside the middle of each distance.
             Constraint::EqualDistance { a, b, c, d } => {
                 for (e, f) in [(a, b), (c, d)] {
-                    let base = p(e)
-                        .zip(p(f))
-                        .map(|(pe, pf)| (pe + (pf - pe) * 0.5 + vec2(0.0, -12.0), vec2(1.0, 0.0)));
+                    let base = p(e).zip(p(f)).map(|(pe, pf)| {
+                        (
+                            pe + (pf - pe) * 0.5 + vec2(0.0, -GLYPH_OFF_POINT),
+                            vec2(1.0, 0.0),
+                        )
+                    });
                     place(e, base, id, Equal, &mut out);
                 }
             }
@@ -2216,6 +2244,70 @@ pub fn layout_glyphs(doc: &Document, map: &ScreenMap) -> Vec<GlyphLayout> {
     out
 }
 
+/// Push any glyph whose tile meets one of `keep_clear` (on-canvas controls such as transform
+/// handles) along its stack direction, whichever way is shorter, until it clears them and
+/// doesn't land on another glyph. Glyphs clear of the controls stay where they are.
+pub fn push_glyphs_clear(glyphs: &mut [GlyphLayout], keep_clear: &[Rect]) {
+    let meets = |a: &Rect, b: &Rect| a.expand(GLYPH_CLEARANCE).intersects(*b);
+    // How far along `d` the tile `r` must go to clear `o` (with the clearance).
+    let past = |r: &Rect, o: &Rect, d: Vec2| -> f32 {
+        let o = o.expand(GLYPH_CLEARANCE);
+        let axis = |d: f32, lo: f32, hi: f32, olo: f32, ohi: f32| {
+            if d > 1e-4 {
+                (ohi - lo) / d
+            } else if d < -1e-4 {
+                (olo - hi) / d
+            } else {
+                f32::INFINITY
+            }
+        };
+        let tx = axis(d.x, r.min.x, r.max.x, o.min.x, o.max.x);
+        let ty = axis(d.y, r.min.y, r.max.y, o.min.y, o.max.y);
+        tx.min(ty).max(0.0) + 0.01
+    };
+    for i in 0..glyphs.len() {
+        if !keep_clear.iter().any(|h| meets(&glyphs[i].rect, h)) {
+            continue;
+        }
+        let start = glyphs[i].rect;
+        let along = glyphs[i].along;
+        let others: Vec<Rect> = glyphs
+            .iter()
+            .enumerate()
+            .filter(|(j, _)| *j != i)
+            .map(|(_, g)| g.rect)
+            .collect();
+        // Slide one way until nothing is in the way; None if it never clears.
+        let slide = |d: Vec2| -> Option<(f32, Rect)> {
+            let (mut t, mut r) = (0.0, start);
+            for _ in 0..64 {
+                let hit = keep_clear
+                    .iter()
+                    .chain(others.iter())
+                    .find(|o| meets(&r, o))
+                    .copied();
+                let Some(o) = hit else {
+                    return Some((t, r));
+                };
+                let step = past(&r, &o, d);
+                if !step.is_finite() {
+                    return None;
+                }
+                t += step;
+                r = start.translate(d * t);
+            }
+            None
+        };
+        let best = [along, -along]
+            .into_iter()
+            .filter_map(slide)
+            .min_by(|a, b| a.0.total_cmp(&b.0));
+        if let Some((_, r)) = best {
+            glyphs[i].rect = r;
+        }
+    }
+}
+
 /// Draw a relation glyph: a small badge with a vector icon.
 pub fn paint_glyph(
     painter: &egui::Painter,
@@ -2225,22 +2317,25 @@ pub fn paint_glyph(
     colors: &AnnotationColors,
 ) {
     let color = colors.color(state);
-    // Quiet by default: a soft tile without a border; framed when hovered or picked.
-    painter.rect_filled(rect, 4.0, colors.glyph_background.gamma_multiply(0.9));
-    if state != AnnotationState::Normal {
+    // A solid tile with a hairline edge, so the icon reads on any drawing; framed in the
+    // state's colour when hovered or picked.
+    painter.rect_filled(rect, 4.0, colors.glyph_background);
+    if state == AnnotationState::Normal {
+        painter.rect_stroke(
+            rect,
+            4.0,
+            Stroke::new(1.0, color.gamma_multiply(0.35)),
+            StrokeKind::Inside,
+        );
+    } else {
         painter.rect_stroke(rect, 4.0, Stroke::new(1.0, color), StrokeKind::Inside);
     }
+    // The icons were drawn for a 15 pt tile; they scale with it.
+    let k = rect.width() / GLYPH_ICON_BASE;
     let c = rect.center();
-    let s = Stroke::new(
-        1.3,
-        if state == AnnotationState::Normal {
-            color.gamma_multiply(0.85)
-        } else {
-            color
-        },
-    );
+    let s = Stroke::new(1.5, color);
     let line = |a: (f32, f32), b: (f32, f32)| {
-        painter.line_segment([c + vec2(a.0, a.1), c + vec2(b.0, b.1)], s);
+        painter.line_segment([c + vec2(a.0, a.1) * k, c + vec2(b.0, b.1) * k], s);
     };
     match kind {
         GlyphKind::Horizontal => line((-4.5, 0.0), (4.5, 0.0)),
@@ -2264,29 +2359,33 @@ pub fn paint_glyph(
             line((-1.5, 4.4), (1.5, 4.4));
         }
         GlyphKind::Coincident => {
-            painter.circle_stroke(c, 3.5, s);
-            painter.circle_filled(c, 1.2, color);
+            painter.circle_stroke(c, 3.5 * k, s);
+            painter.circle_filled(c, 1.2 * k, color);
         }
         GlyphKind::Midpoint => {
             line((-5.0, 3.0), (5.0, 3.0));
             painter.add(egui::Shape::convex_polygon(
-                vec![c + vec2(0.0, -3.5), c + vec2(3.2, 2.0), c + vec2(-3.2, 2.0)],
+                vec![
+                    c + vec2(0.0, -3.5) * k,
+                    c + vec2(3.2, 2.0) * k,
+                    c + vec2(-3.2, 2.0) * k,
+                ],
                 color,
                 Stroke::NONE,
             ));
         }
         GlyphKind::Tangent => {
-            painter.circle_stroke(c + vec2(0.0, 1.2), 3.3, s);
+            painter.circle_stroke(c + vec2(0.0, 1.2) * k, 3.3 * k, s);
             line((-5.0, -2.1), (5.0, -2.1));
         }
         GlyphKind::Concentric => {
-            painter.circle_stroke(c, 4.6, s);
-            painter.circle_stroke(c, 2.0, s);
+            painter.circle_stroke(c, 4.6 * k, s);
+            painter.circle_stroke(c, 2.0 * k, s);
         }
         GlyphKind::Coradial => {
-            painter.circle_stroke(c, 4.6, s);
+            painter.circle_stroke(c, 4.6 * k, s);
             line((0.0, 0.0), (3.3, -3.3));
-            painter.circle_filled(c, 1.1, color);
+            painter.circle_filled(c, 1.1 * k, color);
         }
         GlyphKind::Collinear => {
             line((-5.0, 3.5), (-1.2, 0.8));
@@ -2294,13 +2393,13 @@ pub fn paint_glyph(
         }
         GlyphKind::OnCurve => {
             let arc: Vec<Pos2> = (0..=8)
-                .map(|k| {
-                    let a = (200.0 + 140.0 * k as f32 / 8.0).to_radians();
-                    c + vec2(0.0, 5.5) + vec2(a.cos(), a.sin()) * 6.0
+                .map(|i| {
+                    let a = (200.0 + 140.0 * i as f32 / 8.0).to_radians();
+                    c + vec2(0.0, 5.5) * k + vec2(a.cos(), a.sin()) * 6.0 * k
                 })
                 .collect();
             painter.add(egui::Shape::line(arc, s));
-            painter.circle_filled(c + vec2(0.0, -0.5), 1.8, color);
+            painter.circle_filled(c + vec2(0.0, -0.5) * k, 1.8 * k, color);
         }
         GlyphKind::Symmetric => {
             line((0.0, -5.0), (0.0, 5.0));
@@ -2312,13 +2411,13 @@ pub fn paint_glyph(
             line((-5.0, 4.5), (-5.0, 0.0));
             line((0.0, -5.0), (4.5, -5.0));
             let arc: Vec<Pos2> = (0..=6)
-                .map(|k| {
-                    let a = (180.0 + 90.0 * k as f32 / 6.0).to_radians();
-                    c + vec2(0.0, 0.0) + vec2(a.cos(), a.sin()) * 5.0
+                .map(|i| {
+                    let a = (180.0 + 90.0 * i as f32 / 6.0).to_radians();
+                    c + vec2(a.cos(), a.sin()) * 5.0 * k
                 })
                 .collect();
             painter.add(egui::Shape::line(arc, s));
-            painter.circle_filled(c + vec2(-5.0, -5.0), 1.6, color);
+            painter.circle_filled(c + vec2(-5.0, -5.0) * k, 1.6 * k, color);
         }
     }
 }

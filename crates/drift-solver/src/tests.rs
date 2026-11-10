@@ -358,7 +358,7 @@ fn measure_reports_angles_modulo_180() {
 /// Dense (reference) and sparse rank analyses of every component of `doc` must agree.
 fn assert_rank_analyses_agree(doc: &Document) -> Result<(), TestCaseError> {
     let sys = System::build(doc, &[], &Tolerances::default(), None);
-    let (comps, _) = components(&sys, &Tolerances::default());
+    let (comps, _) = components(&sys, &Tolerances::default(), Yardstick::TODAY);
     let values: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
     for comp in &comps {
         let n = comp.unknowns.len();
@@ -1381,6 +1381,8 @@ fn drag_points(
             dragged: points.iter().flat_map(|&p| Param::point(p)).collect(),
             radii,
             fold,
+            // (As a drag frame's solve is: judged by the part's size near the origin.)
+            drag_part: true,
             ..Default::default()
         },
     );
@@ -2114,5 +2116,232 @@ fn meets_within_holds_angle_rows_to_the_solvers_own_tolerance() {
             meets_within(&doc, &scope, &relations, None, None, slack),
             "{at} out: the part fails at slack {slack:e}"
         );
+    }
+}
+
+/// A part 10 across, `out` from the origin along both axes: its two points, its line.
+fn part_out(doc: &mut Document, out: f64) -> (EntityId, EntityId, EntityId) {
+    let a = doc.add_point(v(out, out));
+    let b = doc.add_point(v(out + 10.0, out));
+    let l = doc.add_line(a, b).unwrap();
+    (a, b, l)
+}
+
+/// The hand-over (#280): a drag's solve is judged by the part's size while that size's bar,
+/// tol·A/4, stays 64 ε of the part's largest coordinate above zero (|c|max ≤ 17.6 A), and by
+/// today's coordinate-relative bar beyond. A 10 mm part whose largest coordinate is 16 times
+/// its size is near (a quarter of 10); at 20 times it is far. The frame's size, when given,
+/// is the one read.
+#[test]
+fn a_drag_solve_is_near_within_its_hand_over_and_far_beyond() {
+    let tol = Tolerances::default();
+    for (ratio, near) in [(16.0, true), (17.5, true), (17.7, false), (20.0, false)] {
+        let mut doc = Document::new();
+        doc.begin();
+        part_out(&mut doc, ratio * 10.0 - 10.0);
+        let sys = System::build(&doc, &[], &tol, None);
+        let values: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
+        let (yard, size) = Yardstick::for_drag(&sys, &values, None, &tol);
+        assert!((size - 10.0).abs() < 1e-9, "{ratio}: size {size}");
+        assert_eq!(yard.near(), near, "{ratio}");
+        if near {
+            assert!((yard.scale(1e9) - 2.5).abs() < 1e-12, "{ratio}");
+        } else {
+            assert_eq!(yard.scale(ratio * 10.0), ratio * 10.0, "{ratio}");
+        }
+        // (The frame's size, when given: a part read as 1 across at the frame's start is far.)
+        let (frame, _) = Yardstick::for_drag(&sys, &values, Some(1.0), &tol);
+        assert!(!frame.near(), "{ratio}");
+    }
+}
+
+/// Far from the origin a drag's solve is today's, bit for bit (the user's "far out
+/// unchanged"): two lines held square, one end dragged, 20 part-sizes, 100 m and 1 km out,
+/// solved as a drag and with every stop forced to today's, give the same coordinates to the
+/// bit. (Near the origin, the same comparison is free to differ.)
+#[test]
+fn a_far_drag_solve_is_todays_bit_for_bit() {
+    for out in [190.0, 1e5, 1e6] {
+        let build = || {
+            let mut doc = Document::new();
+            doc.begin();
+            let (a, b, l) = part_out(&mut doc, out);
+            let c = doc.add_point(v(out + 1.0, out + 9.0));
+            let m = doc.add_line(a, c).unwrap();
+            doc.add_constraint(Constraint::Perpendicular { a: l, b: m })
+                .unwrap();
+            doc.set_point(b, v(out + 9.0, out + 3.0)).unwrap();
+            (doc, b)
+        };
+        let ((mut drag, b), (mut today, _)) = (build(), build());
+        let options = SolveOptions {
+            dragged: Param::point(b).to_vec(),
+            drag_part: true,
+            ..Default::default()
+        };
+        let r = solve(&mut drag, &options);
+        let t = solve_judged(&mut today, &options, true);
+        assert_eq!(r.converged, t.converged, "{out}");
+        for ((id, e), (_, f)) in drag.iter().zip(today.iter()) {
+            if let (EntityKind::Point(p), EntityKind::Point(q)) = (e.kind, f.kind) {
+                assert_eq!(
+                    (p.x.to_bits(), p.y.to_bits()),
+                    (q.x.to_bits(), q.y.to_bits()),
+                    "{out}: {id:?}"
+                );
+            }
+        }
+    }
+}
+
+/// `unmet` and `meets_within` read today's bar whatever a drag's solve reads: a point held on
+/// a 1 mm line through the origin and left 3e-12 off it is unmet at a slack of 1e-12 (its
+/// coordinates are under 1 mm), in a drawing whose 100 mm part would give a drag's near solve
+/// a bar of 2.5e-11.
+#[test]
+fn unmet_and_meets_within_read_todays_bar() {
+    let mut doc = Document::new();
+    doc.begin();
+    let a = doc.add_point(v(-50.0, 0.0));
+    let b = doc.add_point(v(50.0, 0.0));
+    let l = doc.add_line(a, b).unwrap();
+    let c = doc.add_point(v(-0.5, 0.0));
+    let d = doc.add_point(v(0.5, 0.0));
+    let m = doc.add_line(c, d).unwrap();
+    let q = doc.add_point(v(0.0, 3e-12));
+    let on = doc
+        .add_constraint(Constraint::PointOnCurve { point: q, curve: m })
+        .unwrap();
+    assert!(unmet(&doc, 1e-12).contains(&on));
+    assert!(unmet_with(&doc, 1e-12, None).contains(&on));
+    let scope: HashSet<EntityId> = [a, b, l, c, d, m, q].into_iter().collect();
+    assert!(!meets_within(
+        &doc,
+        &scope,
+        &relations(&doc, None),
+        None,
+        None,
+        1e-12
+    ));
+}
+
+/// A later solve of a frame reads the frame's size but its own coordinates: given the frame's
+/// size 10, a solve whose part still sits 16 sizes out is near, and one whose geometry a try
+/// has carried 20 sizes out is far (today's bar), never near against the frame's start.
+#[test]
+fn a_later_solve_that_has_moved_past_the_hand_over_is_far() {
+    let tol = Tolerances::default();
+    for (ratio, near) in [(16.0, true), (20.0, false)] {
+        let mut doc = Document::new();
+        doc.begin();
+        // (Its own size is 1, so only the frame's 10 can make it near.)
+        let a = doc.add_point(v(ratio * 10.0 - 1.0, 0.0));
+        let b = doc.add_point(v(ratio * 10.0, 0.0));
+        doc.add_line(a, b).unwrap();
+        let sys = System::build(&doc, &[], &tol, None);
+        let values: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
+        let (yard, size) = Yardstick::for_drag(&sys, &values, Some(10.0), &tol);
+        assert_eq!(size, 10.0);
+        assert_eq!(yard.near(), near, "{ratio}");
+    }
+}
+
+/// No stall is read as landed: a drag's solve near the origin whose rows can't hold (a
+/// triangle held to sides 10, 3 and 3, which no triangle has) is never reported converged,
+/// however its iterations end (the cap, or the damping giving up), at 0.1×, 1× and 10× and
+/// shifted near the origin, where every one of its solves is judged by the part's size.
+#[test]
+fn a_near_drag_solve_whose_rows_cannot_hold_is_never_converged() {
+    let tol = Tolerances::default();
+    for (scale, at) in [
+        (1.0, v(0.0, 0.0)),
+        (0.1, v(0.0, 0.0)),
+        (10.0, v(0.0, 0.0)),
+        (1.0, v(40.0, -40.0)),
+    ] {
+        let mut doc = Document::new();
+        doc.begin();
+        let p = [v(0.0, 0.0), v(10.0, 0.0), v(5.0, 2.0)].map(|q| doc.add_point(at + q * scale));
+        for (i, j, d) in [(0, 1, 10.0), (1, 2, 3.0), (2, 0, 3.0)] {
+            doc.add_constraint(Constraint::Distance {
+                a: p[i],
+                b: p[j],
+                value: d * scale,
+            })
+            .unwrap();
+        }
+        let sys = System::build(&doc, &[], &tol, None);
+        let values: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
+        assert!(Yardstick::for_drag(&sys, &values, None, &tol).0.near());
+        doc.set_point(p[2], at + v(5.0, 2.5) * scale).unwrap();
+        let report = solve(
+            &mut doc,
+            &SolveOptions {
+                dragged: Param::point(p[2]).to_vec(),
+                drag_part: true,
+                ..Default::default()
+            },
+        );
+        assert!(!report.converged, "{scale}× about {at}: {report:?}");
+    }
+}
+
+/// A solve that isn't one part's drag frame (a commit's, or one over several parts, holding
+/// dragged points) is today's, bit for bit, wherever it is: a part near the origin dragged
+/// alongside an unrelated part, solved as a commit holds its points and with every stop
+/// forced to today's, gives the same coordinates to the bit, and isn't reported near. (The
+/// same solve as a drag frame's is judged by the part's size.)
+#[test]
+fn a_solve_that_is_not_a_drag_frames_is_todays_bit_for_bit() {
+    let build = || {
+        let mut doc = Document::new();
+        doc.begin();
+        part_out(&mut doc, 40.0);
+        let p = [
+            v(0.0, 0.0),
+            v(20.0, 0.0),
+            v(0.0, 12.0),
+            v(5.0, 7.0),
+            v(-6.0, 9.0),
+        ]
+        .map(|q| doc.add_point(q));
+        let l0 = doc.add_line(p[0], p[1]).unwrap();
+        let l1 = doc.add_line(p[0], p[2]).unwrap();
+        doc.add_line(p[3], p[4]).unwrap();
+        doc.add_constraint(Constraint::Midpoint {
+            point: p[3],
+            line: l1,
+        })
+        .unwrap();
+        doc.add_constraint(Constraint::Perpendicular { a: l0, b: l1 })
+            .unwrap();
+        doc.set_point(p[4], v(-9.0, 4.0)).unwrap();
+        (doc, p[4])
+    };
+    let ((mut commit, q), (mut today, _), (mut part, _)) = (build(), build(), build());
+    let options = SolveOptions {
+        dragged: Param::point(q).to_vec(),
+        ..Default::default()
+    };
+    let r = solve(&mut commit, &options);
+    let t = solve_judged(&mut today, &options, true);
+    assert_eq!(r.converged, t.converged);
+    assert!(!r.drag_near);
+    let p = solve(
+        &mut part,
+        &SolveOptions {
+            drag_part: true,
+            ..options.clone()
+        },
+    );
+    assert!(p.drag_near, "the part's own drag solve is near");
+    for ((id, e), (_, f)) in commit.iter().zip(today.iter()) {
+        if let (EntityKind::Point(a), EntityKind::Point(b)) = (e.kind, f.kind) {
+            assert_eq!(
+                (a.x.to_bits(), a.y.to_bits()),
+                (b.x.to_bits(), b.y.to_bits()),
+                "{id:?}"
+            );
+        }
     }
 }

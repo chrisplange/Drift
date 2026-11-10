@@ -370,14 +370,14 @@ fn analyze_parts(
             entry(&mut parts, rep).redundant.push(c);
         }
     }
-    let (comps, constant_rows) = crate::components(sys, tol);
+    let (comps, constant_rows) = crate::components(sys, tol, crate::Yardstick::TODAY);
     let values: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
     let mut failed_rows: Vec<usize> = Vec::new();
     for &r in &constant_rows {
         let res = sys.rows[r]
             .equation
             .eval(&|p| values[sys.group_of[p]], &mut Vec::new());
-        if res.abs() > crate::row_tolerance(sys, r, &values, tol) {
+        if res.abs() > crate::row_tolerance(sys, r, &values, tol, crate::Yardstick::TODAY) {
             failed_rows.push(r);
         } else if let Some(rep) = row_cluster(r) {
             entry(&mut parts, rep).dependent += 1;
@@ -385,11 +385,9 @@ fn analyze_parts(
     }
     for comp in &comps {
         let (res, _) = crate::evaluate(sys, &comp.rows, &values, &HashMap::new());
-        if res
-            .iter()
-            .zip(&comp.rows)
-            .any(|(f, r)| f.abs() > crate::row_tolerance(sys, *r, &values, tol))
-        {
+        if res.iter().zip(&comp.rows).any(|(f, r)| {
+            f.abs() > crate::row_tolerance(sys, *r, &values, tol, crate::Yardstick::TODAY)
+        }) {
             failed_rows.extend(&comp.rows);
         }
     }
@@ -407,7 +405,15 @@ fn analyze_parts(
             let Part {
                 exposed, broken, ..
             } = p;
-            crate::exposed_and_broken(sys, &[r], &values, tol, exposed, broken);
+            crate::exposed_and_broken(
+                sys,
+                &[r],
+                &values,
+                tol,
+                exposed,
+                broken,
+                crate::Yardstick::TODAY,
+            );
         }
     }
     for p in parts.values_mut() {

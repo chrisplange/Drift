@@ -381,6 +381,10 @@ struct DragFrame<'a> {
     wandered: usize,
     /// A step pushed curves along.
     pushed: bool,
+    /// The part's size as the frame's first solve read it (`SolveReport::drag_size`): every
+    /// later solve of the frame (its retakes, steps and tries) is judged against it, not
+    /// against wherever a try has flung the geometry (#280).
+    size: Option<f64>,
 }
 
 impl Editor {
@@ -557,6 +561,7 @@ impl Editor {
                 length_slack: length_slack(&part.start),
                 wandered: 0,
                 pushed: false,
+                size: None,
             };
             // (Every frame tries one solve first, even where the last one wandered: skipping
             // it would make where the drag is depend on the way there.)
@@ -1770,9 +1775,23 @@ impl Editor {
                 relations: Some(frame.relations.clone()),
                 touching: Some(frame.touching.clone()),
                 fold: frame.fold,
+                drag_part: true,
+                drag_size: frame.size,
                 ..Default::default()
             },
         );
+        if frame.size.is_none() {
+            frame.size = report.drag_size;
+        }
+        #[cfg(test)]
+        if let Some(sizes) = &mut self.drag_sizes {
+            sizes.push((
+                report.drag_size,
+                report.drag_near,
+                report.drag_cut_short,
+                report.drag_capped_loose,
+            ));
+        }
         frame.wandered = frame.wandered.max(report.wandered);
         let unfinished = self.unfinished(&report);
         if unfinished {

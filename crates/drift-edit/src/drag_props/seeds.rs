@@ -914,18 +914,8 @@ fn o_free_move_refused_at_a_fold() {
     explained(free_moves_go(&plan, &pick, offset, steps)).unwrap();
 }
 
-/// E (#280 A2): two dragged points held on an arc a diameter apart (f3's shape), so the arc's
-/// centre has no first-order way to move: a kept radius at a fold. The solve's rows and the
-/// kept radius both close like 1/k. At the move's last step, the 1× solve reaches the
-/// iteration cap with its rows at 1.02 times the tolerance (unfinished, so the arc is carried
-/// whole); at ¼ size far out the rows hold within the coordinates' looser tolerance and
-/// `SETTLE_PATIENCE` ends the solve at iteration 13 (kept reshaped); 0.02 apart. The
-/// tolerance goes with where the drawing is (round-off), so a solve that closes slowly holds
-/// at one place and not at another (also similarity 6, 16, 17 and 18). See #280.
-/// (`drag_is_invariant_under_similarity_heavy`, seed 20, shrunk with #282's carry.)
-#[test]
-#[ignore = "#280 A2: a stalled solve reads as finished at one size only (a fold)"]
-fn e_result_depends_on_size_at_a_fold() {
+/// e_result_depends_on_size_at_a_fold's case: its sketch, pick, move and steps.
+fn at_a_fold_case() -> (Plan, Pick, DVec2, u32) {
     let plan = Plan {
         ops: vec![
             Op::Arc {
@@ -965,6 +955,24 @@ fn e_result_depends_on_size_at_a_fold() {
     let pick = Pick::Curves(10360524982465828250);
     let offset = DVec2::new(17.645954621075454, 15.209813272136655);
     let steps = 1;
+    (plan, pick, offset, steps)
+}
+
+/// E (#280 A2): two dragged points held on an arc a diameter apart (f3's shape), so the arc's
+/// centre has no first-order way to move: a kept radius at a fold. The solve's rows and the
+/// kept radius both close like 1/k. At the move's last step, the 1× solve reaches the
+/// iteration cap with its rows at 1.02 times the tolerance (unfinished, so the arc is carried
+/// whole); at ¼ size far out the rows hold within the coordinates' looser tolerance and
+/// `SETTLE_PATIENCE` ends the solve at iteration 13 (kept reshaped); 0.02 apart. The
+/// tolerance goes with where the drawing is (round-off), so a solve that closes slowly holds
+/// at one place and not at another (also similarity 6, 16, 17 and 18). See #280.
+/// (`drag_is_invariant_under_similarity_heavy`, seed 20, shrunk with #282's carry.)
+///
+/// Passes since a drag's solve near the origin judges every stop against the part's size
+/// (the solver's `Yardstick`): both sizes now stop at the same iteration.
+#[test]
+fn e_result_depends_on_size_at_a_fold() {
+    let (plan, pick, offset, steps) = at_a_fold_case();
     let t = Similarity {
         scale: 0.25,
         turn: 0.0,
@@ -1118,14 +1126,8 @@ fn c_no_drag_moves_a_free_end() {
     explained(r).unwrap();
 }
 
-/// E (#280 A3): an arc tangent to a line, a fixed point: the scaled drag lands elsewhere.
-/// The solve wanders (#103) and `SETTLE_PATIENCE` ends it still moving, wherever round-off
-/// has it by then; no decision of the drag differs between the two sizes. What
-/// `drag_is_invariant_under_similarity_heavy` seed 5 shrinks to once #277's case (pinned
-/// above, `i_hanging_end_depends_on_size`) is fixed; also similarity 14 and 15's mechanism.
-#[test]
-#[ignore = "#280 A3: a wandering solve cut by SETTLE_PATIENCE (similarity 5)"]
-fn e_result_depends_on_size_after_277() {
+/// e_result_depends_on_size_after_277's case: its sketch, pick, move and steps.
+fn after_277_case() -> (Plan, Pick, DVec2, u32) {
     let plan = Plan {
         ops: vec![
             Op::Step {
@@ -1169,6 +1171,22 @@ fn e_result_depends_on_size_after_277() {
     let pick = Pick::Curves(2970465637109295241);
     let offset = DVec2::new(0.0, -15.38195792032203);
     let steps = 1;
+    (plan, pick, offset, steps)
+}
+
+/// E (#280 A3): an arc tangent to a line, a fixed point: the scaled drag lands elsewhere.
+/// The solve wanders (#103) and `SETTLE_PATIENCE` ends it still moving, wherever round-off
+/// has it by then; no decision of the drag differs between the two sizes. What
+/// `drag_is_invariant_under_similarity_heavy` seed 5 shrinks to once #277's case (pinned
+/// above, `i_hanging_end_depends_on_size`) is fixed; also similarity 14 and 15's mechanism.
+///
+/// Passes since a near drag solve judges its stops against the part's size and, once its
+/// rows hold, no longer lets the round-off gain steer the damping (both the solver's
+/// `Yardstick`): the patience cut then falls at the same point at both sizes. Without the
+/// damping part it still fails.
+#[test]
+fn e_result_depends_on_size_after_277() {
+    let (plan, pick, offset, steps) = after_277_case();
     let t = Similarity {
         scale: 0.25,
         turn: 0.0,
@@ -1564,8 +1582,13 @@ fn e_result_depends_on_size_arc_ends_meet_scale_and_shift() {
 /// sits on its target to the bit and `land` skips its pass; at the other it is an ulp off and
 /// the landing pass closes the rest: 6e-5 apart. No relations at all.
 /// (`drag_is_invariant_under_similarity_heavy`, seed 19.)
+///
+/// Still fails, by design: the ¼-size copy is a 0.55 mm part 29 mm out, some 54 times its
+/// own size from the origin, so its solves are "far" (the solver's `Yardstick`) and run
+/// today's code line for line, while the 1× copy is near. The far copy's result is main's,
+/// bit for bit.
 #[test]
-#[ignore = "#280 A3: a patience-cut solve, then land skipped on bit-equality at one size"]
+#[ignore = "#280: a band pair: one copy near the origin, the other far (today's solve)"]
 fn e_result_depends_on_size_patience_and_landing() {
     let plan = Plan {
         ops: vec![Op::Arc {
@@ -1600,8 +1623,12 @@ fn e_result_depends_on_size_patience_and_landing() {
 /// solutions the solve picks between by round-off (rows with a double root: a tangent line
 /// through a point at the circle's own radius). See #280.
 /// (`drag_is_invariant_under_similarity_heavy`, seed 11, after #280's A1.)
+///
+/// Still fails, by design: the ¼-size copy sits 351 mm out, some 50 times its own size from
+/// the origin, so its solves are "far" (the solver's `Yardstick`) and keep today's code: main
+/// crushes the arc there, as before, while the 1× copy (near) keeps it.
 #[test]
-#[ignore = "#280 A2: one size's solve crushes an arc, the other's keeps it"]
+#[ignore = "#280: a band pair: one copy near the origin, the other far (today's solve)"]
 fn e_result_depends_on_size_crushed_at_one_size() {
     let plan = Plan {
         ops: vec![
@@ -1659,15 +1686,9 @@ fn e_result_depends_on_size_crushed_at_one_size() {
     .unwrap();
 }
 
-/// E (#280): an arc, a line tangent to it and one parallel to that, a point fixed, a line
-/// moved at ¼ size turned 232°: the step is halved for turning the arc; at depth 5 one half's
-/// solve converges at ¼ size but stops unfinished at 1× (the coordinates' tolerance again),
-/// and from there the two take different halvings and carries. See #280.
-/// (`drag_is_invariant_under_similarity_heavy`, seed 3's own shrunk case on a561c30.)
-#[test]
-#[ignore = "#280 A2: a step's solve finishes at one size only"]
-fn e_result_depends_on_size_tangent_and_parallel() {
-    let plan = Plan {
+/// `e_result_depends_on_size_tangent_and_parallel`'s sketch.
+fn tangent_and_parallel_plan() -> Plan {
+    Plan {
         ops: vec![
             Op::Arc {
                 from: 0,
@@ -1691,7 +1712,25 @@ fn e_result_depends_on_size_tangent_and_parallel() {
         extras: (0..48).map(|i| i == 0).collect(),
         fix: Some(2),
         length: None,
-    };
+    }
+}
+
+/// E (#280): an arc, a line tangent to it and one parallel to that, a point fixed, a line
+/// moved at ¼ size turned 232°: the step is halved for turning the arc; at depth 5 one half's
+/// solve converges at ¼ size but stops unfinished at 1× (the coordinates' tolerance again),
+/// and from there the two take different halvings and carries. See #280.
+/// (`drag_is_invariant_under_similarity_heavy`, seed 3's own shrunk case on a561c30.)
+///
+/// Passes at this similarity since near drag solves judge their stops against the part's
+/// size. **Not size-free in general:** at 0.3× and 3.7× it still differs. The frame's 8th
+/// solve reaches the same scaled state at both sizes; once its rows hold, the rows' step
+/// from a round-off residual, amplified by the fold's near-singular Jacobian (some 2,300 ε
+/// of the coordinates), is above the part-size bar at one size (it runs to patience) and
+/// below it at the other (it settles). Round-off at a fold, not a yardstick; similarity 3
+/// still fails for it.
+#[test]
+fn e_result_depends_on_size_tangent_and_parallel() {
+    let plan = tangent_and_parallel_plan();
     let t = Similarity {
         scale: 0.25,
         turn: 232.08152175323588,
@@ -2179,4 +2218,508 @@ fn a_solves_leftover_far_out_is_not_taken_for_a_stretch() {
     for (k, (a, b)) in with.iter().zip(&without).enumerate() {
         assert_eq!(a, b, "frame {}: differs from the drag with no try", k + 1);
     }
+}
+
+/// #280: near the origin a drag gives the same result at other sizes and turns too, not only
+/// at the similarity its pin was found at: `at_a_fold`'s and `after_277`'s cases at 0.3×,
+/// 3.7×, turned 37°, at 2× turned 113° and shifted, and at 0.1× shifted. Each fails without
+/// the size-free yardstick (`after_277`'s also without its damping part).
+#[test]
+fn size_free_near_the_origin_at_other_similarities() {
+    let ts = [
+        Similarity {
+            scale: 0.3,
+            turn: 0.0,
+            shift: DVec2::ZERO,
+        },
+        Similarity {
+            scale: 3.7,
+            turn: 0.0,
+            shift: DVec2::ZERO,
+        },
+        Similarity {
+            scale: 1.0,
+            turn: 37.0,
+            shift: DVec2::ZERO,
+        },
+        Similarity {
+            scale: 2.0,
+            turn: 113.0,
+            shift: DVec2::new(-300.0, 200.0),
+        },
+        Similarity {
+            scale: 0.1,
+            turn: 0.0,
+            shift: DVec2::new(40.0, -40.0),
+        },
+    ];
+    for (name, (plan, pick, offset, steps)) in [
+        ("at_a_fold", at_a_fold_case()),
+        ("after_277", after_277_case()),
+    ] {
+        for t in ts {
+            if let Err(e) = invariant(&plan, &pick, offset, steps, t) {
+                panic!("{name} at {t:?}: {e}");
+            }
+        }
+    }
+}
+
+/// Similarity 4's shrunk case: an arc whose centre a 14 mm drag of two curves flings metres
+/// away. Main flings it in exact proportion at every size (8.8 m at 1×), so the property held;
+/// a near solve flings it less (0.68 m at 1×) but not in proportion (also at 3.7×, both copies
+/// near), and the ¼ copy, 305 mm out (38 part-sizes), is far and main's bit for bit. Round-off
+/// at a degenerate fold, and a band pair. See #280.
+#[test]
+#[ignore = "#280: round-off at a degenerate fold (and a band pair at ¼ size, 305 mm out)"]
+fn e_result_depends_on_size_flung_centre() {
+    let plan = Plan {
+        ops: vec![
+            Op::Arc {
+                from: 0,
+                angle: 5,
+                radius: 0,
+                sweep: 2,
+                ccw: false,
+            },
+            Op::Tangent {
+                arc: 0,
+                end: false,
+                forward: false,
+                len: 0,
+            },
+            Op::OnLine {
+                line: 0,
+                at: 0,
+                angle: 11,
+                len: 0,
+            },
+            Op::Step {
+                from: 38,
+                angle: 10,
+                len: 2,
+            },
+        ],
+        extras: vec![false; 48],
+        fix: Some(7),
+        length: None,
+    };
+    let t = Similarity {
+        scale: 0.25,
+        turn: 0.0,
+        shift: DVec2::new(0.0, 305.4097759673246),
+    };
+    let offset = DVec2::new(13.614670273256806, -4.64045524551462);
+    explained(invariant(
+        &plan,
+        &Pick::Curves(6110175917806659770),
+        offset,
+        1,
+        t,
+    ))
+    .unwrap();
+}
+
+/// A drag census case 1 m from the origin whose part sits 17.1 times its own size out, just
+/// inside where drag solves stop being judged by the part's size: on its last frame the near
+/// solve lands a deformed member of the shape's family (points moving 0.06 to 13.8 mm) where
+/// main, and the same drag at the origin, carry the part rigidly 18.9 mm with the pointer: a
+/// branch choice at the edge, not a stall (holding its capped solve changes nothing). See
+/// #280.
+#[test]
+#[ignore = "#280: a branch choice at the hand-over (17.1 part-sizes out), 19 mm on the last frame"]
+fn e_result_depends_on_size_at_the_hand_over() {
+    let plan = Plan {
+        ops: vec![
+            Op::Step {
+                from: 60,
+                angle: 3,
+                len: 0,
+            },
+            Op::Arc {
+                from: 45,
+                angle: 5,
+                radius: 0,
+                sweep: 2,
+                ccw: true,
+            },
+            Op::Step {
+                from: 51,
+                angle: 0,
+                len: 2,
+            },
+            Op::Arc {
+                from: 13,
+                angle: 5,
+                radius: 2,
+                sweep: 4,
+                ccw: false,
+            },
+            Op::Step {
+                from: 7,
+                angle: 8,
+                len: 0,
+            },
+            Op::OnArc {
+                arc: 18,
+                at: 9,
+                angle: 5,
+                len: 1,
+            },
+        ],
+        extras: vec![
+            true, false, true, false, false, false, false, true, false, false, false, false, false,
+            false, false, false, false, false, false, false, false, false, false, false, false,
+            true, false, false, true, false, true, false, false, false, false, true, false, true,
+            false, true, true, false, false, false, false, false, false, false,
+        ],
+        fix: None,
+        length: Some(57),
+    };
+    let t = Similarity {
+        scale: 1.0,
+        turn: 0.0,
+        shift: DVec2::new(707.0, 707.0),
+    };
+    let offset = DVec2::new(-13.261484784801961, -13.40162004384744);
+    explained(invariant(
+        &plan,
+        &Pick::Curves(17952534259162593868),
+        offset,
+        5,
+        t,
+    ))
+    .unwrap();
+}
+
+/// `e_result_depends_on_size_crawl_at_the_cap`'s sketch.
+fn crawl_at_the_cap_plan() -> Plan {
+    Plan {
+        ops: vec![
+            Op::Arc {
+                from: 57,
+                angle: 16,
+                radius: 2,
+                sweep: 0,
+                ccw: true,
+            },
+            Op::Arc {
+                from: 31,
+                angle: 15,
+                radius: 0,
+                sweep: 2,
+                ccw: true,
+            },
+            Op::Step {
+                from: 41,
+                angle: 22,
+                len: 2,
+            },
+            Op::Tangent {
+                arc: 6,
+                end: true,
+                forward: true,
+                len: 3,
+            },
+            Op::Arc {
+                from: 1,
+                angle: 7,
+                radius: 1,
+                sweep: 3,
+                ccw: true,
+            },
+            Op::Tangent {
+                arc: 52,
+                end: true,
+                forward: false,
+                len: 0,
+            },
+            Op::Arc {
+                from: 14,
+                angle: 7,
+                radius: 2,
+                sweep: 0,
+                ccw: true,
+            },
+        ],
+        extras: vec![
+            true, false, false, true, true, false, false, true, false, true, false, true, false,
+            true, false, false, true, true, false, false, true, true, false, false, false, true,
+            false, false, true, false, false, false, true, false, false, false, false, false,
+            false, true, false, false, true, false, false, true, true, true,
+        ],
+        fix: None,
+        length: None,
+    }
+}
+
+/// A drag census case at the origin: near solves at a fold crawl to a residual 1.4 times the
+/// part-size bar (under today's, which main's solve reads as holding) and stop at the
+/// iteration cap, so the drag ends 1 to 7 µm apart at 0.1×, 1×, 3.7× and 10×, where main
+/// ends the same at every size. Round-off at a fold deciding. See #280.
+#[test]
+#[ignore = "#280: a fold's crawl cut by the cap at one size, 1-7 um"]
+fn e_result_depends_on_size_crawl_at_the_cap() {
+    let plan = crawl_at_the_cap_plan();
+    let t = Similarity {
+        scale: 3.7,
+        turn: 0.0,
+        shift: DVec2::ZERO,
+    };
+    let offset = DVec2::new(-15.45277997518099, 2.1188318980890206);
+    explained(invariant(
+        &plan,
+        &Pick::Curves(4751599557133155727),
+        offset,
+        15,
+        t,
+    ))
+    .unwrap();
+}
+
+/// Every solve of a drag frame is judged against one part size, the part's as the frame
+/// began (`DragFrame::size`: the part as the frame's first solve starts from it, the dragged
+/// points at their targets, never a retake's), however its retakes and steps fling the
+/// geometry:
+/// `tangent_and_parallel`'s drag, whose one frame takes dozens of solves (the arc flung to
+/// metres mid-try), reads one size in every solve. (Read per solve, its sizes ran from 7 mm to
+/// 610 m within the frame, each judged "near" by its own.)
+#[test]
+fn every_solve_of_a_frame_reads_the_frames_size() {
+    let sketch = tangent_and_parallel_plan().sketch().unwrap();
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let ids = Pick::Curves(9929081795026096183).ids(&built);
+    let dragged: Vec<Param> = built
+        .ed
+        .doc
+        .defining_points(ids.iter().copied())
+        .into_iter()
+        .flat_map(Param::point)
+        .collect();
+    // The part as the frame's first solve starts from it: the dragged points moved by the
+    // frame's offset, the rest where the frame found them. Twice its farthest point from its
+    // points' middle (it has arcs, no circles), as the solver's `drawing_across` reads it.
+    let offset = DVec2::new(15.457267808482761, -17.270854180887095);
+    let moved: std::collections::HashSet<EntityId> = built
+        .ed
+        .doc
+        .defining_points(ids.iter().copied())
+        .into_iter()
+        .collect();
+    let points: Vec<DVec2> = built
+        .ed
+        .doc
+        .iter()
+        .filter(|(_, e)| e.kind.is_point())
+        .map(|(id, _)| {
+            built.ed.doc.point(id).unwrap()
+                + if moved.contains(&id) {
+                    offset
+                } else {
+                    DVec2::ZERO
+                }
+        })
+        .collect();
+    let middle = points.iter().sum::<DVec2>() / points.len() as f64;
+    let start = 2.0
+        * points
+            .iter()
+            .map(|p| p.distance(middle))
+            .fold(0.0, f64::max);
+    built.ed.doc.begin();
+    built.ed.drag_sizes = Some(Vec::new());
+    built.ed.drag(
+        &ids,
+        DVec2::new(15.457267808482761, -17.270854180887095),
+        &dragged,
+    );
+    let sizes: Vec<Option<f64>> = built
+        .ed
+        .drag_sizes
+        .as_ref()
+        .unwrap()
+        .iter()
+        .map(|s| s.0)
+        .collect();
+    assert!(sizes.len() >= 3, "only {} solves", sizes.len());
+    assert!(
+        sizes[0].is_some_and(|a| (a - start).abs() <= 1e-12 * start),
+        "{:?}, the starting part {start}",
+        sizes[0]
+    );
+    assert!(sizes.iter().all(|a| *a == sizes[0]), "{sizes:?}");
+}
+
+/// No stall is read as landed, at any size: the drag of `crawl_at_the_cap`, whose near solves
+/// crawl at a fold and stop at the iteration cap a hair off the part-size bar (15 times in its
+/// frames), at 0.1×, 1× and 10× about the origin. Every frame that goes meets every relation,
+/// and every refused one changes nothing (`drag`'s own checks). Counting such a capped solve
+/// as converged would let frames go with their relations unmet, and this fails.
+#[test]
+fn no_stall_is_read_as_landed_at_any_size() {
+    let sketch = crawl_at_the_cap_plan().sketch().unwrap();
+    for scale in [0.1, 1.0, 10.0] {
+        let t = Similarity {
+            scale,
+            turn: 0.0,
+            shift: DVec2::ZERO,
+        };
+        let mut built = Built::new(&sketch, t).unwrap();
+        let ids = Pick::Curves(4751599557133155727).ids(&built);
+        let offset = t.vector(DVec2::new(-15.45277997518099, 2.1188318980890206));
+        if let Err(e) = drag(&mut built, &ids, offset, 15) {
+            panic!("{scale}×: {e}");
+        }
+    }
+}
+
+/// A drag census case 10 m from the origin, its part some 100 times its own size out, so
+/// every solve of every frame is far and today's: none is judged by the part's size, not
+/// even the landing pass of a frame's first solve after its run has flung a point some
+/// 0.9 m (read afresh there, the flung geometry measured 889 mm, a "near" part). It reads the
+/// size its run began with.
+#[test]
+fn a_landing_pass_reads_the_size_its_solve_began_with() {
+    let plan = Plan {
+        ops: vec![
+            Op::OnLine {
+                line: 45,
+                at: 0,
+                angle: 10,
+                len: 1,
+            },
+            Op::Arc {
+                from: 27,
+                angle: 10,
+                radius: 0,
+                sweep: 0,
+                ccw: true,
+            },
+            Op::Step {
+                from: 38,
+                angle: 1,
+                len: 3,
+            },
+            Op::OnLine {
+                line: 8,
+                at: 2,
+                angle: 15,
+                len: 2,
+            },
+            Op::Tangent {
+                arc: 29,
+                end: false,
+                forward: true,
+                len: 1,
+            },
+            Op::Step {
+                from: 48,
+                angle: 19,
+                len: 3,
+            },
+            Op::Tangent {
+                arc: 3,
+                end: false,
+                forward: false,
+                len: 2,
+            },
+        ],
+        extras: vec![
+            false, true, false, false, false, false, false, true, true, false, true, true, false,
+            true, false, false, true, false, false, true, false, true, false, true, false, true,
+            true, false, false, false, true, false, true, false, true, false, false, true, true,
+            true, false, true, false, true, false, true, false, false,
+        ],
+        fix: None,
+        length: None,
+    };
+    let sketch = plan.sketch().unwrap();
+    let t = Similarity {
+        scale: 1.0,
+        turn: 0.0,
+        shift: DVec2::new(7071.0, 7071.0),
+    };
+    let mut built = Built::new(&sketch, t).unwrap();
+    let ids = Pick::Curves(9750649514805135734).ids(&built);
+    built.ed.drag_sizes = Some(Vec::new());
+    drag(
+        &mut built,
+        &ids,
+        DVec2::new(0.6120504876783168, -14.22643746812479),
+        16,
+    )
+    .unwrap();
+    let sizes = built.ed.drag_sizes.as_ref().unwrap();
+    assert!(!sizes.is_empty());
+    assert!(
+        sizes.iter().all(|(_, near, _, _)| !near),
+        "a solve judged near: {sizes:?}"
+    );
+}
+
+/// Similarity seed 15's shrunk case at 3.7×, near the origin at both sizes: a frame refused
+/// at one size and not the other. It passed with near patience cuts counted as converged
+/// whatever their rows; with a near patience cut off today's bar reported unfinished (which
+/// bounds the work a refused drag on a big part takes), one size's frame is refused. That
+/// is the one gain the rule gives back (also at 10×); main fails it at both. See #280.
+#[test]
+#[ignore = "#280: a patience cut off today's bar at one size only (3.7x, 10x)"]
+fn e_result_depends_on_size_patience_cut_at_one_size() {
+    let plan = Plan {
+        ops: vec![
+            Op::Step {
+                from: 0,
+                angle: 7,
+                len: 0,
+            },
+            Op::Arc {
+                from: 0,
+                angle: 6,
+                radius: 0,
+                sweep: 3,
+                ccw: false,
+            },
+            Op::Tangent {
+                arc: 0,
+                end: true,
+                forward: true,
+                len: 2,
+            },
+            Op::Tangent {
+                arc: 0,
+                end: true,
+                forward: false,
+                len: 0,
+            },
+            Op::Step {
+                from: 5,
+                angle: 6,
+                len: 1,
+            },
+            Op::Arc {
+                from: 53,
+                angle: 2,
+                radius: 1,
+                sweep: 1,
+                ccw: true,
+            },
+        ],
+        extras: (0..48).map(|i| i == 1).collect(),
+        fix: Some(0),
+        length: Some(45),
+    };
+    let t = Similarity {
+        scale: 3.7,
+        turn: 0.0,
+        shift: DVec2::ZERO,
+    };
+    let offset = DVec2::new(-0.5016234454192522, -6.8859008828541945);
+    explained(invariant(
+        &plan,
+        &Pick::Curves(16880784305534777784),
+        offset,
+        10,
+        t,
+    ))
+    .unwrap();
 }

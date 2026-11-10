@@ -1906,3 +1906,118 @@ mod a_stalled_relation {
         );
     }
 }
+
+mod drag_size {
+    use drift_core::{Constraint, DVec2};
+    use drift_solver::Param;
+
+    use super::*;
+
+    fn v(x: f64, y: f64) -> DVec2 {
+        DVec2::new(x, y)
+    }
+
+    /// A 10 mm line kept to its length, one end held level (`FixY`), the other dragged 40
+    /// frames away from the origin, from 16 to about 20 times its size out: across the
+    /// hand-over (17.6 part-sizes, where its solves stop being judged by its size and become
+    /// today's) every frame goes and lands where the same drag does at the origin, to 1e-9 of
+    /// a millimetre: no jump where the regime changes. (A guard.)
+    #[test]
+    fn a_drag_across_the_hand_over_moves_on_continuously() {
+        let run = |out: f64| {
+            let mut ed = Editor::default();
+            ed.doc.begin();
+            let a = ed.doc.add_point(v(out, out));
+            let b = ed.doc.add_point(v(out + 6.0, out + 8.0));
+            ed.doc.add_line(a, b).unwrap();
+            ed.doc
+                .add_constraint(Constraint::Distance { a, b, value: 10.0 })
+                .unwrap();
+            ed.doc
+                .add_constraint(Constraint::FixY { point: a, y: out })
+                .unwrap();
+            assert!(ed.commit("Sketch"));
+            ed.doc.begin();
+            let dragged = Param::point(b).to_vec();
+            (1..=40)
+                .map(|k| {
+                    assert!(
+                        ed.drag(&[b], v(1.0, -0.05), &dragged),
+                        "{out}: frame {k} refused"
+                    );
+                    [ed.doc.point(a).unwrap(), ed.doc.point(b).unwrap()].map(|p| p - v(out, out))
+                })
+                .collect::<Vec<_>>()
+        };
+        let (near, across) = (run(0.0), run(150.0));
+        for (k, (p, q)) in near.iter().zip(&across).enumerate() {
+            for (p, q) in p.iter().zip(q) {
+                assert!(
+                    p.distance(*q) <= 1e-9,
+                    "frame {}: {p} at the origin, {q} out",
+                    k + 1
+                );
+            }
+        }
+    }
+
+    /// "Stop, as now" at any size: a fully held triangle (three lengths, a corner fixed, a
+    /// side level) can't follow a drag of its free corner: no frame moves anything, and the
+    /// frames go or are refused alike at 0.1×, 1× and 10× and shifted near the origin. A solve
+    /// whose rows can't hold is never read as one that landed. (A guard.)
+    #[test]
+    fn a_held_shape_refuses_a_drag_alike_at_every_size() {
+        let mut patterns = Vec::new();
+        for (scale, at) in [
+            (1.0, DVec2::ZERO),
+            (0.1, DVec2::ZERO),
+            (10.0, DVec2::ZERO),
+            (1.0, v(40.0, -40.0)),
+        ] {
+            let mut ed = Editor::default();
+            ed.doc.begin();
+            let p = [v(0.0, 0.0), v(30.0, 0.0), v(12.0, 20.0)]
+                .map(|q| ed.doc.add_point(at + q * scale));
+            let ab = ed.doc.add_line(p[0], p[1]).unwrap();
+            ed.doc.add_line(p[1], p[2]).unwrap();
+            ed.doc.add_line(p[2], p[0]).unwrap();
+            for (i, j) in [(0, 1), (1, 2), (2, 0)] {
+                let value = ed
+                    .doc
+                    .point(p[i])
+                    .unwrap()
+                    .distance(ed.doc.point(p[j]).unwrap());
+                ed.doc
+                    .add_constraint(Constraint::Distance {
+                        a: p[i],
+                        b: p[j],
+                        value,
+                    })
+                    .unwrap();
+            }
+            ed.doc
+                .add_constraint(Constraint::Fix { point: p[0], at })
+                .unwrap();
+            ed.doc
+                .add_constraint(Constraint::Horizontal { line: ab })
+                .unwrap();
+            assert!(ed.commit("Sketch"));
+            ed.doc.begin();
+            let dragged = Param::point(p[2]).to_vec();
+            let before: Vec<DVec2> = p.iter().map(|q| ed.doc.point(*q).unwrap()).collect();
+            let mut went = Vec::new();
+            for k in 1..=5 {
+                went.push(ed.drag(&[p[2]], v(3.0, 2.0) * scale, &dragged));
+                let now: Vec<DVec2> = p.iter().map(|q| ed.doc.point(*q).unwrap()).collect();
+                for (q, r) in now.iter().zip(&before) {
+                    assert!(
+                        q.distance(*r) <= 1e-9 * scale,
+                        "{scale}× about {at}, frame {k} moved"
+                    );
+                }
+            }
+            patterns.push(went);
+        }
+        assert!(patterns.iter().all(|w| *w == patterns[0]), "{patterns:?}");
+    }
+}

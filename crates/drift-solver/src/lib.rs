@@ -130,6 +130,17 @@ pub struct SolveOptions {
     /// other solve is as it was. (A drag takes these steps only as a last resort, where its
     /// move can always land: see `Editor::drag`.)
     pub fold: bool,
+    /// This is one connected part's solve in a drag's frame (`Editor::drag`): only such a
+    /// solve may be judged by the part's size near the origin (see the solver's
+    /// `Yardstick`). Every other solve, a commit's or one over several parts among them, is
+    /// judged as it always was.
+    pub drag_part: bool,
+    /// With [`drag_part`](Self::drag_part): the part's size as the frame's first solve read
+    /// it ([`SolveReport::drag_size`]), so that every solve of one frame (its retakes,
+    /// landing passes and tries) judges itself against one size, not against wherever a try
+    /// has flung the geometry. `None`: the solve's own size, read where it starts. (How a drag's solve uses it: near the origin every stop is
+    /// judged against a quarter of this size; see the solver's `Yardstick`.)
+    pub drag_size: Option<f64>,
 }
 
 /// How completely an entity's position is determined by constraints.
@@ -194,6 +205,95 @@ pub struct SolveReport {
     pub dof: Option<usize>,
     /// Per-entity definition state (with [`SolveOptions::analyze`]).
     pub definitions: HashMap<EntityId, Definition>,
+    /// For a drag frame's solve ([`SolveOptions::drag_part`]): the part's size it was judged
+    /// against (see [`SolveOptions::drag_size`]), for the frame's later solves to read.
+    pub drag_size: Option<f64>,
+    /// Some pass of the solve (its run or a landing pass) was judged by the part's size, near
+    /// the origin, rather than as solves always were.
+    pub drag_near: bool,
+    /// How many of its near components were cut by `SETTLE_PATIENCE` still moving, with
+    /// their rows holding only the part-size bar and not today's: each is reported unfinished,
+    /// not converged (see the solver's `Yardstick`).
+    pub drag_cut_short: usize,
+    /// How many of its near components ran to the iteration cap and were counted converged
+    /// with their rows holding the part-size bar but not today's (the looseness a size-free
+    /// bar allows near the origin; not cut short).
+    pub drag_capped_loose: usize,
+}
+
+/// What "small enough" is measured against: how far off a row may be and still hold, how
+/// far a step may move and still be no move, how far off a kept shape may be and still be
+/// met.
+///
+/// Every solve but one kind reads these against the coordinates involved, tol·max(1, |c|),
+/// as it always has. That makes the same drag finish at different iterations at different
+/// sizes and places, and where a solve is cut mid-crawl (at a fold, or by
+/// `SETTLE_PATIENCE`) its result moves with the drawing (#280). So a drag's solve that is
+/// **near** the origin measures every one of them against a quarter of the part's size, A/4,
+/// the same however big the part is or wherever it sits: its iterations, and so where it is
+/// cut, are then the same at every size and place.
+///
+/// **Near** is decided once per solve: the part's size A (see [`SolveOptions::drag_size`],
+/// else [`drawing_across`] with circles counted) gives a bar of tol·A/4, and that bar must
+/// stay at least [`NEAR_FLOOR`] ε above the largest coordinate of the part's points, where a
+/// residual's round-off sits:
+///
+/// tol·A/4 ≥ 64 ε |c|max  ⇔  |c|max ≤ 17.6 A   (tol = 1e-12)
+///
+/// **Far** from that (a part more than about 17.6 times its own size from the origin) the
+/// solve is today's, line for line: the size-free bar would sit below what its residuals can
+/// reach, and the user's answer for such drags was "far out unchanged". 64 ε is not derived:
+/// it is the widest floor the drag census showed solves reach (ρ 16, 64, 256 measured; at 16
+/// the census gained new stops 1–3 m out, at 256 most of the fix was lost), and one census
+/// drag at 17.1 part-sizes still stalled at 175 ε. It is the floor the editor already treats
+/// as round-off (`breaks_held_shape`, the length try's slack).
+///
+/// Near the origin the bar is looser than today's for rows within A/4 of the origin (a part
+/// over 4 mm across), and tighter for rows farther out: tol/4 of the part's size either way.
+/// Non-drag solves, and [`unmet`] and [`meets_within`], always read today's.
+#[derive(Clone, Copy, Debug)]
+struct Yardstick {
+    /// A/4 in a near drag solve; `None` for today's, tol·max(1, |c|).
+    quarter: Option<f64>,
+}
+
+/// See [`Yardstick`]: the size-free bar must stay this many ε of the part's largest coordinate
+/// above zero for a drag's solve to be judged by the part's size.
+const NEAR_FLOOR: f64 = 64.0;
+
+impl Yardstick {
+    /// Today's: every test against the coordinates it reads.
+    const TODAY: Self = Self { quarter: None };
+
+    /// A drag's solve over `sys` from `values`: near or far as [`Yardstick`] says. `size` is
+    /// the part's size read at the frame's start, if known; otherwise the solve's own.
+    fn for_drag(sys: &System, values: &[f64], size: Option<f64>, tol: &Tolerances) -> (Self, f64) {
+        let a = size.unwrap_or_else(|| drawing_across(sys, values, true));
+        let largest = sys
+            .params
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| matches!(p, Param::X(_) | Param::Y(_)))
+            .map(|(i, _)| values[sys.group_of[i]].abs())
+            .fold(0.0, f64::max);
+        let near =
+            a.is_finite() && a > 0.0 && tol.length * a / 4.0 >= NEAR_FLOOR * f64::EPSILON * largest;
+        (
+            Self {
+                quarter: near.then_some(a / 4.0),
+            },
+            a,
+        )
+    }
+
+    fn near(&self) -> bool {
+        self.quarter.is_some()
+    }
+
+    /// The scale a length test reads, for coordinates of magnitude `c`.
+    fn scale(&self, c: f64) -> f64 {
+        self.quarter.unwrap_or(c.max(1.0))
+    }
 }
 
 /// The most iterations a component's Newton solve runs.
@@ -243,6 +343,12 @@ pub const FOLD_MET: f64 = 1e-9;
 /// Solve the document's constraints in place. Changes go through the document's normal edit
 /// methods, so they are recorded by an open transaction.
 pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
+    solve_judged(doc, options, false)
+}
+
+/// [`solve`]; with `today`, every stop is today's whatever the drag ([`Yardstick::TODAY`]),
+/// for the tests to compare a far drag's solve with.
+fn solve_judged(doc: &mut Document, options: &SolveOptions, today: bool) -> SolveReport {
     let mut sys = System::build_in(
         doc,
         &options.dragged,
@@ -347,9 +453,9 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
     } else {
         Vec::new()
     };
-    let mut report = run(&mut sys, options, true);
+    let (mut report, yard) = run(&mut sys, options, true, today, None);
     if report.converged {
-        report = land(&mut sys, options, &targets, report);
+        report = land(&mut sys, options, &targets, report, today);
     }
     // With the fold steps, finished means everything met: the relations, every rank landed
     // exactly where it was asked (`land` pins them so), and every kept shape. Otherwise
@@ -359,7 +465,7 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
             .iter()
             .flatten()
             .all(|&(g, v)| sys.groups[g].value == v);
-        if !(report.converged && landed && kept_met(&sys, &options.tolerances)) {
+        if !(report.converged && landed && kept_met(&sys, &options.tolerances, yard)) {
             for (group, v) in sys.groups.iter_mut().zip(entry) {
                 group.value = v;
             }
@@ -383,21 +489,26 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
 
 /// How far off a kept shape over `k` may be and still be met: [`FOLD_MET`] of its length, or
 /// the solver's tolerance at its coordinates where that is looser.
-fn met_within(k: &[usize; 4], value: impl Fn(usize) -> f64, tol: &Tolerances) -> f64 {
-    let scale = k.iter().map(|p| value(*p).abs()).fold(1.0, f64::max);
+fn met_within(
+    k: &[usize; 4],
+    value: impl Fn(usize) -> f64,
+    tol: &Tolerances,
+    yard: Yardstick,
+) -> f64 {
+    let scale = yard.scale(k.iter().map(|p| value(*p).abs()).fold(0.0, f64::max));
     (FOLD_MET * Shape::length(k, &value)).max(tol.length * scale)
 }
 
 /// Whether every kept shape the solve could move is met ([`met_within`]). A shape whose
 /// parameters are all pinned is as the solve found it, and isn't judged.
-fn kept_met(sys: &System, tol: &Tolerances) -> bool {
+fn kept_met(sys: &System, tol: &Tolerances, yard: Yardstick) -> bool {
     let value = |p: usize| sys.groups[sys.group_of[p]].value;
     sys.keep.iter().all(|shape| {
         let k = shape.params();
         k.iter().all(|p| sys.groups[sys.group_of[*p]].fixed)
             || shape
                 .offset(value)
-                .is_none_or(|(_, off)| off.abs() <= met_within(k, value, tol))
+                .is_none_or(|(_, off)| off.abs() <= met_within(k, value, tol, yard))
     })
 }
 
@@ -412,6 +523,7 @@ fn land(
     options: &SolveOptions,
     targets: &[Vec<(usize, f64)>],
     mut report: SolveReport,
+    today: bool,
 ) -> SolveReport {
     let mut pinned: Vec<(usize, f64)> = Vec::new();
     for rank in targets {
@@ -424,7 +536,10 @@ fn land(
             sys.groups[g].value = v;
             sys.groups[g].fixed = true;
         }
-        let landed = run(sys, options, true);
+        // (Judged against the size the solve began with, not wherever its run left the
+        // geometry: a run that flung a point would otherwise make its landing pass a part of
+        // another size.)
+        let (landed, _) = run(sys, options, true, today, report.drag_size);
         for &(g, _) in &pinned {
             sys.groups[g].fixed = false;
         }
@@ -432,6 +547,11 @@ fn land(
             report = SolveReport {
                 iterations: landed.iterations.max(report.iterations),
                 wandered: landed.wandered.max(report.wandered),
+                // (The size the solve began with, not the landing pass's.)
+                drag_size: report.drag_size,
+                drag_near: report.drag_near || landed.drag_near,
+                drag_cut_short: report.drag_cut_short + landed.drag_cut_short,
+                drag_capped_loose: report.drag_capped_loose + landed.drag_capped_loose,
                 ..landed
             };
         } else {
@@ -471,7 +591,9 @@ pub fn unmet_with(
             continue;
         };
         grad.clear();
-        if row.equation.eval(&val, &mut grad).abs() > row_tolerance(&sys, r, &values, &tol) {
+        if row.equation.eval(&val, &mut grad).abs()
+            > row_tolerance(&sys, r, &values, &tol, Yardstick::TODAY)
+        {
             out.insert(id);
         }
     }
@@ -512,7 +634,8 @@ pub fn meets_within(
     (0..sys.rows.len()).all(|r| {
         grad.clear();
         // (False for a residual that isn't a number.)
-        sys.rows[r].equation.eval(&val, &mut grad).abs() <= row_tolerance(&sys, r, &values, &tol)
+        sys.rows[r].equation.eval(&val, &mut grad).abs()
+            <= row_tolerance(&sys, r, &values, &tol, Yardstick::TODAY)
     })
 }
 
@@ -528,7 +651,7 @@ pub fn analyze_with(doc: &Document, lowering: Option<&Lowering>) -> SolveReport 
         ..Default::default()
     };
     let mut sys = System::build(doc, &[], &options.tolerances, lowering);
-    let mut report = run(&mut sys, &options, false);
+    let (mut report, _) = run(&mut sys, &options, false, false, None);
     // (In one order however the relations were found redundant: what an analysis kept
     // cluster by cluster reports too.)
     report.redundant.sort();
@@ -1145,7 +1268,7 @@ struct Component {
 
 /// Split free groups into independent components connected by equations. Rows with no free
 /// unknowns form their own (constant) components.
-fn components(sys: &System, tol: &Tolerances) -> (Vec<Component>, Vec<usize>) {
+fn components(sys: &System, tol: &Tolerances, yard: Yardstick) -> (Vec<Component>, Vec<usize>) {
     let n = sys.groups.len();
     let mut parent = UnionFind::new(n);
     let mut constant_rows = Vec::new();
@@ -1174,7 +1297,7 @@ fn components(sys: &System, tol: &Tolerances) -> (Vec<Component>, Vec<usize>) {
     // free end has no equation left, and would otherwise not be solved for at all. (Only
     // one that is off: a rigid move of a big sketch has thousands that aren't.)
     let value = |p: usize| sys.groups[sys.group_of[p]].value;
-    let scale = |k: &[usize; 4]| k.iter().map(|p| value(*p).abs()).fold(1.0, f64::max);
+    let scale = |k: &[usize; 4]| yard.scale(k.iter().map(|p| value(*p).abs()).fold(0.0, f64::max));
     let mut soft_roots: Vec<usize> = Vec::new();
     for shape in &sys.keep {
         let k = shape.params();
@@ -1225,18 +1348,19 @@ fn components(sys: &System, tol: &Tolerances) -> (Vec<Component>, Vec<usize>) {
     (comps, constant_rows)
 }
 
-/// Residual tolerance for one row, given the magnitude of the coordinates involved.
-fn row_tolerance(sys: &System, r: usize, values: &[f64], tol: &Tolerances) -> f64 {
+/// Residual tolerance for one row: an angle's (a sine, the same at any size), or a length's
+/// against the coordinates involved or the part's size ([`Yardstick`]).
+fn row_tolerance(sys: &System, r: usize, values: &[f64], tol: &Tolerances, yard: Yardstick) -> f64 {
     let eq = &sys.rows[r].equation;
     if eq.is_angular() {
         tol.angle
     } else {
-        let scale = eq
+        let c = eq
             .params()
             .into_iter()
             .map(|p| values[sys.group_of[p]].abs())
-            .fold(1.0, f64::max);
-        tol.length * scale
+            .fold(0.0, f64::max);
+        tol.length * yard.scale(c)
     }
 }
 
@@ -1353,6 +1477,12 @@ fn scaled_norm2(res: &[f64], scales: &[f64]) -> f64 {
 
 struct ComponentOutcome {
     converged: bool,
+    /// Cut by `SETTLE_PATIENCE` in a near drag solve with its rows off today's bar, so
+    /// reported unfinished.
+    cut_short: bool,
+    /// Ran to the cap in a near drag solve, converged on the part-size bar with its rows off
+    /// today's ([`SolveReport::drag_capped_loose`]).
+    capped_loose: bool,
     iterations: usize,
     /// Steps on the way to the relations that its linearisation badly mispredicted (or that
     /// were refused): see [`SolveReport::wandered`].
@@ -1363,7 +1493,9 @@ struct ComponentOutcome {
 ///
 /// `dragging` is a drag's solve (the landing passes too, where the dragged parameters are
 /// pinned): there the solve goes on until nothing moves, not only until the rows hold.
-/// `fold`: take the fold steps (see [`SolveOptions::fold`]).
+/// `fold`: take the fold steps (see [`SolveOptions::fold`]). `yard`: what its stops are
+/// measured against ([`Yardstick`]).
+#[allow(clippy::too_many_arguments)]
 fn newton(
     sys: &System,
     comp: &Component,
@@ -1372,6 +1504,7 @@ fn newton(
     dragging: bool,
     across: f64,
     fold: bool,
+    yard: Yardstick,
 ) -> ComponentOutcome {
     let n = comp.unknowns.len();
     let m = comp.rows.len();
@@ -1389,7 +1522,7 @@ fn newton(
     let converged = |res: &[f64], values: &[f64]| {
         res.iter()
             .zip(&comp.rows)
-            .all(|(f, r)| f.abs() <= row_tolerance(sys, *r, values, tol))
+            .all(|(f, r)| f.abs() <= row_tolerance(sys, *r, values, tol, yard))
     };
 
     let ((mut res, mut jac), mut own) = evaluate_with_own(sys, &comp.rows, values, &col_of);
@@ -1485,11 +1618,28 @@ fn newton(
     let mut fold_scale = 1.0f64;
     for iteration in 0..MAX_ITERATIONS {
         let rows_hold = converged(&res, values);
-        let at_rest = !dragging || last_moved <= still_at(values, tol);
+        let at_rest = !dragging || last_moved <= still_at(values, tol, yard);
         if rows_hold {
             if (settled && at_rest) || settling >= SETTLE_PATIENCE {
+                // A patience cut leaves a preference mid-crawl, the solve still moving. In a
+                // near drag solve the rows "hold" against the part's size, which near the
+                // origin can be looser than today's bar, and counted as converged there a cut
+                // that is still moving sends a frame that will be refused anyway down its
+                // ladder of retakes (a part 1 m across: 18 solves a frame in place of 7). So, to
+                // bound that work, a near patience cut counts as converged only where its rows
+                // also hold at today's bar. A cost measure on patience cuts alone: a solve that
+                // settled, or that ran to the cap with its rows met at the part-size bar, keeps
+                // the part's size (F2's size-relative looseness); far solves are today's anyway.
+                let cut_short = !(settled && at_rest)
+                    && yard.near()
+                    && dragging
+                    && !res.iter().zip(&comp.rows).all(|(f, r)| {
+                        f.abs() <= row_tolerance(sys, *r, values, tol, Yardstick::TODAY)
+                    });
                 return ComponentOutcome {
-                    converged: true,
+                    converged: !cut_short,
+                    cut_short,
+                    capped_loose: false,
                     iterations: iteration,
                     wandered,
                 };
@@ -1514,12 +1664,14 @@ fn newton(
             .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| {
                 (lo.min(*v), hi.max(*v))
             });
-        let still = tol.length * hi.abs().max(lo.abs()).max(1.0);
+        let still = tol.length * yard.scale(hi.abs().max(lo.abs()));
         if soft_terms.iter().all(|(_, _, off)| off.abs() <= still) {
             settled = true;
             if rows_hold && at_rest {
                 return ComponentOutcome {
                     converged: true,
+                    cut_short: false,
+                    capped_loose: false,
                     iterations: iteration,
                     wandered,
                 };
@@ -1534,7 +1686,7 @@ fn newton(
         // differently on the same sketch at another size (#94). Scaled, every row counts as
         // the distance it is off by.
         let row_scale = row_scales(&jac, &own, |k| {
-            res[k].abs() <= row_tolerance(sys, comp.rows[k], values, tol)
+            res[k].abs() <= row_tolerance(sys, comp.rows[k], values, tol, yard)
         });
         let (scaled_jac, scaled_res) = scaled_rows(&jac, &res, &row_scale);
         normal.clear();
@@ -1591,7 +1743,7 @@ fn newton(
                 kept.push((
                     grad,
                     off,
-                    met_within(k, value, tol),
+                    met_within(k, value, tol, yard),
                     Shape::length(k, value),
                 ));
             }
@@ -1807,7 +1959,16 @@ fn newton(
                 settled = moved.max(rows_moved) <= still;
                 last_moved = last_moved.max(moved);
             }
-            lambda *= (1.0 - (2.0 * gain - 1.0).powi(3)).max(1.0 / 3.0);
+            // Once the rows hold, what is left of a step's gain is a ratio of round-off-sized
+            // residuals, and following it would let round-off steer the damping, and with it
+            // how fast a kept shape closes before `SETTLE_PATIENCE` cuts it: in a near drag
+            // solve that would make where the cut falls depend on the drawing's size again.
+            // There λ falls as for a perfect step instead.
+            if yard.near() && dragging && rows_hold {
+                lambda /= 3.0;
+            } else {
+                lambda *= (1.0 - (2.0 * gain - 1.0).powi(3)).max(1.0 / 3.0);
+            }
             nu = 2.0;
             if lambda < 1e-12 * max_diag * fold_scale {
                 lambda = 0.0;
@@ -1823,8 +1984,17 @@ fn newton(
             }
         }
     }
+    let converged_at_cap = converged(&res, values);
     ComponentOutcome {
-        converged: converged(&res, values),
+        converged: converged_at_cap,
+        cut_short: false,
+        capped_loose: converged_at_cap
+            && yard.near()
+            && dragging
+            && !res
+                .iter()
+                .zip(&comp.rows)
+                .all(|(f, r)| f.abs() <= row_tolerance(sys, *r, values, tol, Yardstick::TODAY)),
         iterations: MAX_ITERATIONS,
         wandered,
     }
@@ -1997,15 +2167,15 @@ fn drawing_across(sys: &System, values: &[f64], circles: bool) -> f64 {
     }
 }
 
-/// A move below this, at the scale of the coordinates, is no move at all (the length
-/// tolerance, as `row_tolerance` takes it).
-fn still_at(values: &[f64], tol: &Tolerances) -> f64 {
+/// A move below this, at the scale of the coordinates or the part ([`Yardstick`]), is no move
+/// at all (the length tolerance, as `row_tolerance` takes it).
+fn still_at(values: &[f64], tol: &Tolerances, yard: Yardstick) -> f64 {
     let (lo, hi) = values
         .iter()
         .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| {
             (lo.min(*v), hi.max(*v))
         });
-    tol.length * hi.abs().max(lo.abs()).max(1.0)
+    tol.length * yard.scale(hi.abs().max(lo.abs()))
 }
 
 /// Whether none of `rows` belongs to a constraint (see [`SolveReport::unsourced_failure`]).
@@ -2024,6 +2194,7 @@ pub(crate) fn exposed_and_broken(
     tol: &Tolerances,
     exposed: &mut Vec<EntityId>,
     broken: &mut Vec<EntityId>,
+    yard: Yardstick,
 ) {
     for &r in rows {
         let Some(owner) = sys.rows[r].owner else {
@@ -2034,21 +2205,38 @@ pub(crate) fn exposed_and_broken(
             .equation
             .eval(&|p| values[sys.group_of[p]], &mut Vec::new());
         // (False for a residual that isn't a number: then it is broken.)
-        let met = res.abs() <= row_tolerance(sys, r, values, tol);
+        let met = res.abs() <= row_tolerance(sys, r, values, tol, yard);
         if !met {
             broken.push(owner);
         }
     }
 }
 
-fn run(sys: &mut System, options: &SolveOptions, iterate: bool) -> SolveReport {
+/// One pass of the solve over `sys`, with the [`Yardstick`] it was judged against.
+/// `size`, if given, is the part's size to judge by in place of `options.drag_size`.
+fn run(
+    sys: &mut System,
+    options: &SolveOptions,
+    iterate: bool,
+    today: bool,
+    size: Option<f64>,
+) -> (SolveReport, Yardstick) {
     let tol = &options.tolerances;
     let mut report = SolveReport {
         conflicts: sys.conflicts.clone(),
         redundant: sys.redundant.clone(),
         ..Default::default()
     };
-    let (comps, constant_rows) = components(sys, tol);
+    let yard = if !options.drag_part || options.dragged.is_empty() || today {
+        Yardstick::TODAY
+    } else {
+        let values: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
+        let (yard, size) = Yardstick::for_drag(sys, &values, size.or(options.drag_size), tol);
+        report.drag_size = Some(size);
+        report.drag_near = yard.near();
+        yard
+    };
+    let (comps, constant_rows) = components(sys, tol, yard);
     let mut values: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
     let mut failed_rows: Vec<usize> = Vec::new();
 
@@ -2056,7 +2244,7 @@ fn run(sys: &mut System, options: &SolveOptions, iterate: bool) -> SolveReport {
         let res = sys.rows[r]
             .equation
             .eval(&|p| values[sys.group_of[p]], &mut Vec::new());
-        if res.abs() > row_tolerance(sys, r, &values, tol) {
+        if res.abs() > row_tolerance(sys, r, &values, tol, yard) {
             failed_rows.push(r);
             report.unsourced_failure |= sys.rows[r].source.is_none();
         } else {
@@ -2075,9 +2263,12 @@ fn run(sys: &mut System, options: &SolveOptions, iterate: bool) -> SolveReport {
                 !options.dragged.is_empty(),
                 across,
                 options.fold,
+                yard,
             );
             report.iterations = report.iterations.max(outcome.iterations);
             report.wandered = report.wandered.max(outcome.wandered);
+            report.drag_cut_short += usize::from(outcome.cut_short);
+            report.drag_capped_loose += usize::from(outcome.capped_loose);
             if !outcome.converged {
                 failed_rows.extend(&comp.rows);
                 report.unsourced_failure |= unsourced(sys, &comp.rows);
@@ -2086,7 +2277,7 @@ fn run(sys: &mut System, options: &SolveOptions, iterate: bool) -> SolveReport {
             let col_of = HashMap::new();
             let (res, _) = evaluate(sys, &comp.rows, &values, &col_of);
             for (f, r) in res.iter().zip(&comp.rows) {
-                if f.abs() > row_tolerance(sys, *r, &values, tol) {
+                if f.abs() > row_tolerance(sys, *r, &values, tol, yard) {
                     failed_rows.extend(&comp.rows);
                     report.unsourced_failure |= unsourced(sys, &comp.rows);
                     break;
@@ -2112,6 +2303,7 @@ fn run(sys: &mut System, options: &SolveOptions, iterate: bool) -> SolveReport {
         tol,
         &mut report.exposed,
         &mut report.broken,
+        yard,
     );
     for list in [&mut report.exposed, &mut report.broken] {
         list.sort_unstable();
@@ -2122,7 +2314,7 @@ fn run(sys: &mut System, options: &SolveOptions, iterate: bool) -> SolveReport {
     if options.analyze {
         analyze_dof(sys, &comps, &values, &failed_rows, &mut report);
     }
-    report
+    (report, yard)
 }
 
 /// Reduced row echelon form of the equilibrated Jacobian, with its pivot columns. Used as the
@@ -2299,7 +2491,7 @@ pub fn free_directions_with(
 ) -> HashMap<EntityId, Freedom> {
     let options = SolveOptions::default();
     let sys = System::build(doc, &[], &options.tolerances, lowering);
-    let (comps, _) = components(&sys, &options.tolerances);
+    let (comps, _) = components(&sys, &options.tolerances, Yardstick::TODAY);
     let values: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
     // Null-space basis vectors, as group → component, indexed by the groups they touch.
     let mut basis: Vec<BTreeMap<usize, f64>> = Vec::new();

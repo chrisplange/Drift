@@ -67,6 +67,9 @@ pub struct System {
     /// lengths and directions. Not equations, one preference in the minimum-change step,
     /// ranked below the relations (see `newton`).
     pub keep: Vec<Shape>,
+    /// Per group, the length bar the last solve measured its component against (`run`; zero
+    /// for a group no component solved): what a kept shape over it is met to.
+    pub bars: Vec<f64>,
 }
 
 /// A shape to keep where the relations leave it open (see [`System::keep`]).
@@ -1252,6 +1255,7 @@ impl System {
             redundant,
             entities,
             keep: keep_shape,
+            bars: Vec::new(),
         }
     }
 

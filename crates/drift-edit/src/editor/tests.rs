@@ -465,7 +465,8 @@ mod editing {
         assert_eq!(ed.active_variant(), None);
         let large = ed.save_variant("Large");
         ed.apply_variant(small).unwrap();
-        assert!((length(&ed, a, b) - 25.0).abs() < 1e-9);
+        // (Within the solver's bar: a billionth of a quarter of the sketch's size.)
+        assert!((length(&ed, a, b) - 25.0).abs() < 1e-7);
         assert_eq!(ed.active_variant(), Some(small));
         // Ghost geometry of the other variant.
         let ghost = ed.variant_geometry(large).unwrap();
@@ -1857,13 +1858,14 @@ mod a_stalled_relation {
                     pos(center).distance(pos(start)),
                     pos(center).distance(pos(end)),
                 );
-                // (Within the solver's tolerance: 1e-12 of the largest coordinate.)
+                // (Within the solver's bar: a billionth of a quarter of the part's size, so
+                // within a billionth of its largest coordinate.)
                 let size = [center, start, end]
                     .iter()
                     .map(|&q| pos(q).abs().max_element())
                     .fold(1.0, f64::max);
                 assert!(
-                    (r0 - r1).abs() <= 2e-12 * size,
+                    (r0 - r1).abs() <= 1e-9 * size,
                     "{scale}× about {at}: an arc's ends {r0} and {r1} from its centre"
                 );
             }
@@ -1918,10 +1920,10 @@ mod drag_size {
     }
 
     /// A 10 mm line kept to its length, one end held level (`FixY`), the other dragged 40
-    /// frames away from the origin, from 16 to about 20 times its size out: across the
-    /// hand-over (17.6 part-sizes, where its solves stop being judged by its size and become
-    /// today's) every frame goes and lands where the same drag does at the origin, to 1e-9 of
-    /// a millimetre: no jump where the regime changes. (A guard.)
+    /// frames away from the origin, from 16 to about 20 times its size out: across where
+    /// #377's solves stopped being judged by the part's size (17.6 part-sizes; gone since PR
+    /// 2 of the solver audit) every frame goes and lands where the same drag does at the
+    /// origin, to 1e-9 of a millimetre. (A guard.)
     #[test]
     fn a_drag_across_the_hand_over_moves_on_continuously() {
         let run = |out: f64| {

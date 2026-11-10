@@ -1020,9 +1020,10 @@ fn a_line_ending_on_a_curve_stays_on_it() {
     let EntityKind::Circle { center, radius } = ed.doc.get(circle).unwrap().kind else {
         unreachable!()
     };
-    assert!((radius - 15.0).abs() < 1e-9);
+    // (Within the solver's bar: a billionth of a quarter of the sketch's size.)
+    assert!((radius - 15.0).abs() < 1e-7);
     let from_centre = ed.doc.point(point).unwrap() - ed.doc.point(center).unwrap();
-    assert!((from_centre.length() - 15.0).abs() < 1e-9);
+    assert!((from_centre.length() - 15.0).abs() < 1e-7);
 
     // Without automatic relations the point is only placed there.
     let (mut ed, _) = circle_fixture();
@@ -2686,7 +2687,9 @@ fn a_drawn_circle_takes_a_diameter_dimension() {
         .map(|(id, _)| id)
         .expect("diameter dimension");
     ed.set_dimension(d, 30.0).unwrap();
-    assert_eq!(drift_solver::radius_of(&ed.doc, id), Some(15.0));
+    // (Within the solver's bar: a billionth of a quarter of the circle's size.)
+    let r = drift_solver::radius_of(&ed.doc, id).unwrap();
+    assert!((r - 15.0).abs() < 1e-8, "{r}");
 }
 
 fn rotated_rectangle_fixture() -> (Editor, Vec<EntityId>) {

@@ -59,7 +59,7 @@ jobs:
         run: python3 scripts/solver-bar/heavy.py --jobs 4 --out target/solver-bar/heavy
       # The ignored pins (#280's), reported, not judged: each solver PR names the pins it
       # un-ignores, and a pin that changes on Linux alone shows here. Fails only if the pins
-      # didn't run (fewer than the 7 there are).
+      # didn't run (fewer than the `#[ignore = "#280...` pins seeds.rs has).
       - name: Pins
         if: always()
         run: |
@@ -73,8 +73,9 @@ jobs:
             sed -E 's/^test drag_props::seeds::(.*) \.\.\. (.*)$/- `\1`: \2/' target/solver-bar/pins-lines.txt
           } | tee -a "$GITHUB_STEP_SUMMARY"
           ran=$(wc -l < target/solver-bar/pins-lines.txt)
-          if [ "$ran" -lt 7 ]; then
-            echo "::error::only $ran of the 7 pins ran"
+          pins=$(grep -c '#\[ignore = "#280' crates/drift-edit/src/drag_props/seeds.rs)
+          if [ "$ran" -lt "$pins" ]; then
+            echo "::error::only $ran of the $pins pins ran"
             tail -50 target/solver-bar/pins.txt
             exit 1
           fi

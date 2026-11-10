@@ -778,27 +778,20 @@ fn a_crank_turned_right_round_goes() {
 
 /// The same beside the e13 arcs (#281's case, the conflict in the drag's part): the centre's
 /// drag, scaled down to a thousandth and a millionth of itself and to none, in one frame and in
-/// 64, does beside the old conflict exactly what it does without it.
+/// 64, does beside the old conflict exactly what it does without it: the same drawing with the
+/// conflicting relations taken off (`conflicting_or_not`). (It was compared with e13's arcs
+/// alone, without the line hanging from the fixed point either, which held only while the
+/// drag's step sizes, read from the whole part, happened to make no difference; the part's own
+/// geometry is the drag's to read, and the conflict is what this checks.)
 #[test]
 fn an_old_conflict_beside_a_small_drag_changes_nothing() {
     for scale in [0.0, 1e-6, 1e-3, 1.0] {
         for frames in [1u32, 64] {
-            let (mut ed, (centre, _)) = already_conflicting(|doc, a| {
-                let p = |doc: &mut drift_core::Document, x, y| doc.add_point(DVec2::new(x, y));
-                let p0 = p(doc, 0.0, 0.0);
-                let p2 = p(doc, 2.3431457505076203, -5.65685424949238);
-                let p3 = p(doc, -9.656854249492381, -5.65685424949238);
-                let p4 = p(doc, -1.1715728752538102, -14.142135623730951);
-                doc.add_arc(a, p0, p2).unwrap();
-                doc.add_arc(p3, p4, p2).unwrap();
-                let tip = p(doc, 8.0, 12.0);
-                doc.add_line(a, tip).unwrap();
-                (p3, tip)
-            });
+            let (mut ed, (centre, _)) = already_conflicting(e13_beside);
             let beside = drag_keeping_structure(&mut ed, &[centre], TWO_ARCS_DRAG * scale, frames);
-            let mut built = Built::new(&two_arcs_one_fixed(), Similarity::IDENTITY).unwrap();
-            let ids = [built.points[3]];
-            let alone = drag_keeping_structure(&mut built.ed, &ids, TWO_ARCS_DRAG * scale, frames);
+            let (mut alone, (centre, _)) = conflicting_or_not(false, e13_beside);
+            let alone =
+                drag_keeping_structure(&mut alone, &[centre], TWO_ARCS_DRAG * scale, frames);
             assert_eq!(beside, alone, "{scale} of the drag in {frames}");
         }
     }

@@ -41,8 +41,9 @@ fn length(h: &Harness<'_, DriftApp>, line: EntityId) -> f64 {
     at(h, a).distance(at(h, b))
 }
 
+/// (Within the solver's bar: a billionth of a quarter of the sketch's size.)
 fn close(a: f64, b: f64) -> bool {
-    (a - b).abs() < 1e-9
+    (a - b).abs() < 1e-7
 }
 
 #[test]

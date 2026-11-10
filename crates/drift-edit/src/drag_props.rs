@@ -686,9 +686,10 @@ fn explained(result: Result<(), TestCaseError>) -> Result<(), TestCaseError> {
 
 /// What the geometry doesn't meet as it stands, or `None`: the relations
 /// [`drift_solver::unmet_with`] reads (the rows a relation owns), and the structural rows it
-/// skips (#343), each arc's end on the circle through its start. Each is held to [`SLACK`],
-/// relative to the coordinates involved as `unmet` reads a length row: |off| ≤ SLACK ·
-/// max(1, |c|max).
+/// skips (#343), each arc's end on the circle through its start. `unmet` holds a relation's
+/// rows to [`SLACK`] of a quarter of its component's size, in the component's frame (as a
+/// solve reads them); the structural rows here are held to SLACK relative to the
+/// coordinates involved: |off| ≤ SLACK · max(1, |c|max).
 ///
 /// Midpoints are checked directly too: each Midpoint relation's point at its line's middle,
 /// to the same bar. (`unmet` reads those rows already, unless a lowering takes them over;
@@ -2012,6 +2013,17 @@ fn a_big_part_that_cannot_finish_spends_its_budget_only() {
 fn already_conflicting<T>(
     extra: impl FnOnce(&mut drift_core::Document, EntityId) -> T,
 ) -> (Editor, T) {
+    conflicting_or_not(true, extra)
+}
+
+/// [`already_conflicting`]'s drawing, or with `conflict` false the same drawing without the
+/// length that conflicts (the line still held level and plumb, so solved onto the fixed point
+/// as in the conflicting drawing): what a drag beside the old conflict is compared with, the
+/// same geometry in the same part.
+fn conflicting_or_not<T>(
+    conflict: bool,
+    extra: impl FnOnce(&mut drift_core::Document, EntityId) -> T,
+) -> (Editor, T) {
     let mut doc = drift_core::Document::new();
     doc.begin();
     let a = doc.add_point(DVec2::new(8.0, 0.0));
@@ -2024,18 +2036,37 @@ fn already_conflicting<T>(
         },
         Constraint::Horizontal { line },
         Constraint::Vertical { line },
-        Constraint::Distance { a, b, value: 10.0 },
     ] {
         doc.add_constraint(c).unwrap();
+    }
+    if conflict {
+        doc.add_constraint(Constraint::Distance { a, b, value: 10.0 })
+            .unwrap();
     }
     let out = extra(&mut doc, a);
     doc.commit("Conflicting");
     let ed = Editor::new(doc);
-    assert!(
+    assert_eq!(
         !ed.analysis().conflicts.is_empty(),
-        "the drawing should conflict"
+        conflict,
+        "the drawing should conflict: {conflict}"
     );
     (ed, out)
+}
+
+/// e13's arcs, the first centred on `a` (fixed), and a line hanging from `a`, for
+/// [`conflicting_or_not`]: the second arc's centre, and the line's free end.
+fn e13_beside(doc: &mut drift_core::Document, a: EntityId) -> (EntityId, EntityId) {
+    let p = |doc: &mut drift_core::Document, x, y| doc.add_point(DVec2::new(x, y));
+    let p0 = p(doc, 0.0, 0.0);
+    let p2 = p(doc, 2.3431457505076203, -5.65685424949238);
+    let p3 = p(doc, -9.656854249492381, -5.65685424949238);
+    let p4 = p(doc, -1.1715728752538102, -14.142135623730951);
+    doc.add_arc(a, p0, p2).unwrap();
+    doc.add_arc(p3, p4, p2).unwrap();
+    let tip = p(doc, 8.0, 12.0);
+    doc.add_line(a, tip).unwrap();
+    (p3, tip)
 }
 
 /// A drag in a drawing that already conflicts goes as it did before #281: its solves fail
@@ -2056,27 +2087,15 @@ fn a_drawing_already_in_conflict_still_drags() {
 
 /// #281: an old conflict elsewhere in the part doesn't excuse a solve that broke an arc. The
 /// report names only the old conflicts (the arcs' rows belong to no relation), yet the step
-/// didn't finish: it goes as it does without the conflict. A drag the old conflict alone
+/// didn't finish: it goes as it does without the conflict (the same drawing with the
+/// conflicting relations taken off, [`conflicting_or_not`]). A drag the old conflict alone
 /// fails still goes.
 #[test]
 fn an_old_conflict_does_not_excuse_a_broken_arc() {
-    let (mut ed, (centre, tip)) = already_conflicting(|doc, a| {
-        // e13's arcs, the first centred on the fixed point, and a line hanging from it.
-        let p = |doc: &mut drift_core::Document, x, y| doc.add_point(DVec2::new(x, y));
-        let p0 = p(doc, 0.0, 0.0);
-        let p2 = p(doc, 2.3431457505076203, -5.65685424949238);
-        let p3 = p(doc, -9.656854249492381, -5.65685424949238);
-        let p4 = p(doc, -1.1715728752538102, -14.142135623730951);
-        doc.add_arc(a, p0, p2).unwrap();
-        doc.add_arc(p3, p4, p2).unwrap();
-        let tip = p(doc, 8.0, 12.0);
-        doc.add_line(a, tip).unwrap();
-        (p3, tip)
-    });
+    let (mut ed, (centre, tip)) = already_conflicting(e13_beside);
     let alone = {
-        let mut built = Built::new(&two_arcs_one_fixed(), Similarity::IDENTITY).unwrap();
-        let ids = [built.points[3]];
-        drag_keeping_structure(&mut built.ed, &ids, TWO_ARCS_DRAG, 4)
+        let (mut alone, (centre, _)) = conflicting_or_not(false, e13_beside);
+        drag_keeping_structure(&mut alone, &[centre], TWO_ARCS_DRAG, 4)
     };
     assert_eq!(
         drag_keeping_structure(&mut ed, &[centre], TWO_ARCS_DRAG, 4),

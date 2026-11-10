@@ -58,10 +58,6 @@ const LENGTH_TRY_SOLVES: u32 = 32;
 /// next (a census of drags a kilometre out). #284's lines were off by four tenths.
 const LENGTH_TRY_STRETCH: f64 = 1e-6;
 
-/// The solver's length tolerance, as `drift_solver::Tolerances` has it: what a try at keeping a
-/// length is held to, relative to the part's size (see `Editor::keep_lengths`).
-const LENGTH_TRY_TOLERANCE: f64 = 1e-12;
-
 /// How many times a step that fails or turns the shape is halved before it is refused (or,
 /// where the smallest step turns, the curves it turns are taken to be pushed along).
 const MAX_SPLITS: u32 = 6;
@@ -92,35 +88,6 @@ const LINE_HOLD: f64 = 100.0;
 /// `COLLAPSED_RADIUS`, F1). A drag that can't land stops short of it (see
 /// [`Editor::breaks_held_shape`]).
 const COLLAPSED_LINE: f64 = 1e-6;
-
-/// How closely a try at keeping a length must meet a part's relations, for the part as
-/// `start` has it ([`DragFrame::length_slack`]), as the slack of `drift_solver::meets_within`
-/// (which scales it, row by row, by the size of the row's coordinates, as a solve's own test
-/// does). Where the part lies farther from the origin than a quarter of its size, the solver's
-/// tolerance held to that quarter instead of to the coordinates, so the same at any size and
-/// place; within a quarter of its size of the origin, a solve's own test. Never finer than
-/// 64 ulps of the coordinates, what a residual can still tell from round-off (far out for
-/// the part's size, a part held to its own size would be held finer than that, and a try
-/// would pass or fail by the luck of rounding); that floor is some seventy times finer than a
-/// solve's own test, so the bar is never looser than it anywhere. The size is twice the
-/// farthest of the part's points from their middle; counting circles' reach too would only
-/// make it larger, and the bar looser. `None` for a part of no size (its points all at one
-/// place), which has no line to keep.
-fn length_slack(start: &Geometry) -> Option<f64> {
-    let points = &start.points;
-    let middle = points.iter().map(|&(_, p)| p).sum::<DVec2>() / points.len().max(1) as f64;
-    let size = 2.0
-        * points
-            .iter()
-            .map(|&(_, p)| p.distance(middle))
-            .fold(0.0, f64::max);
-    let farthest = points
-        .iter()
-        .map(|&(_, p)| p.abs().max_element())
-        .fold(1.0, f64::max);
-    (size > 0.0 && size.is_finite())
-        .then(|| (LENGTH_TRY_TOLERANCE * (size / 4.0 / farthest).min(1.0)).max(64.0 * f64::EPSILON))
-}
 
 /// Whether a relation holds geometry where it is, so that the part it is in can't be moved
 /// whole. Every other relation is between the part's own geometry (or a size: a fixed
@@ -373,18 +340,13 @@ struct DragFrame<'a> {
     /// what the drag call's parts before this one left of them.
     length_solves_left: u32,
     length_unfinished_left: usize,
-    /// How closely a try at keeping a length must meet the part's relations (see
-    /// `Editor::keep_lengths`; `None` for a part of no size). Fixed for the drag, from where
-    /// it began.
-    length_slack: Option<f64>,
     /// The most its solves have wandered (see `SolveReport::wandered`).
     wandered: usize,
     /// A step pushed curves along.
     pushed: bool,
-    /// The part's size as the frame's first solve read it (`SolveReport::drag_size`): every
-    /// later solve of the frame (its retakes, steps and tries) is judged against it, not
-    /// against wherever a try has flung the geometry (#280).
-    size: Option<f64>,
+    /// The length bar its last solve was held to (`SolveReport::bar`): what a dragged point
+    /// is judged landed against (`drift_solver::landed_within`).
+    bar: f64,
 }
 
 impl Editor {
@@ -558,15 +520,14 @@ impl Editor {
                 fold_unfinished_left: UNFINISHED_WORK,
                 length_solves_left: length_left.0,
                 length_unfinished_left: length_left.1,
-                length_slack: length_slack(&part.start),
                 wandered: 0,
                 pushed: false,
-                size: None,
+                bar: 0.0,
             };
             // (Every frame tries one solve first, even where the last one wandered: skipping
             // it would make where the drag is depend on the way there.)
             ok = self.drag_from_start(&mut frame, to, &part.start)
-                && !self.breaks_held_shape(part, to);
+                && !self.breaks_held_shape(part, to, frame.bar);
             self.drag_solves += 2 * DRAG_SOLVES + length_left.0
                 - frame.solves_left
                 - frame.fold_solves_left
@@ -1122,27 +1083,27 @@ impl Editor {
     /// doesn't enter.
     ///
     /// Landed: every coordinate of a dragged point that the drag can move is at its target, to
-    /// within a billionth of the offset, or a few ulps of the coordinates where those are
-    /// coarser (both what a solve that lands leaves; neither near any misfit that matters).
-    fn breaks_held_shape(&self, part: &DragPart, offset: DVec2) -> bool {
+    /// within the length bar the frame's last solve was held to (`bar`, read through
+    /// `drift_solver::landed_within`): what a solve that lands leaves, far below any misfit
+    /// that matters.
+    fn breaks_held_shape(&self, part: &DragPart, offset: DVec2, bar: f64) -> bool {
         if part.held_radii.is_empty() && part.held_lines.is_empty() {
             return false;
         }
-        let mut coords = offset.length();
-        let mut miss = 0.0f64;
-        for &(id, start, [free_x, free_y]) in &part.free_dragged {
-            let to = start + offset;
-            coords = coords.max(to.abs().max_element());
-            if let Ok(at) = self.doc.point(id) {
-                let off = at - to;
-                let off = DVec2::new(
-                    if free_x { off.x } else { 0.0 },
-                    if free_y { off.y } else { 0.0 },
-                );
-                miss = miss.max(off.length());
-            }
-        }
-        let landed = miss <= (1e-9 * offset.length()).max(64.0 * f64::EPSILON * coords);
+        let landed = part
+            .free_dragged
+            .iter()
+            .all(|&(id, start, [free_x, free_y])| {
+                let to = start + offset;
+                self.doc.point(id).is_ok_and(|at| {
+                    let off = at - to;
+                    let off = DVec2::new(
+                        if free_x { off.x } else { 0.0 },
+                        if free_y { off.y } else { 0.0 },
+                    );
+                    off.length() <= drift_solver::landed_within(bar, to)
+                })
+            });
         if landed {
             return false;
         }
@@ -1470,8 +1431,8 @@ impl Editor {
     /// is tried once more from `before` with the fold steps, the same steps and carries as
     /// any frame, each solve finishing only where it meets everything. It is kept only if it
     /// goes, lands, keeps every hanging line's length (to `FOLD_MET` of it) and meets every
-    /// relation of the part to [`DragFrame::length_slack`], which is held to the part's size
-    /// and is never looser than a solve's own test. Otherwise the frame is exactly as today's
+    /// relation of the part as a solve holds it (`drift_solver::meets_within`, the solver's
+    /// own bar in the part's frame). Otherwise the frame is exactly as today's
     /// steps left it. So a hanging line swings round to keep its length, where it can,
     /// instead of being stretched. It can't make a drag stop: it only ever replaces a frame
     /// that went with one that went. The try has its own budgets, and isn't made for a part
@@ -1483,9 +1444,6 @@ impl Editor {
         before: &Geometry,
         pushed_before: bool,
     ) {
-        let Some(slack) = frame.length_slack else {
-            return;
-        };
         if self.drag_no_length_try
             || frame.fold
             || frame.length_solves_left == 0
@@ -1537,7 +1495,6 @@ impl Editor {
                 frame.relations,
                 frame.lowering.as_deref(),
                 Some(frame.touching),
-                slack,
             )
         {
             self.drag_length_tries.1 += 1;
@@ -1619,15 +1576,17 @@ impl Editor {
     }
 
     /// Whether the step from `before` left every dragged point where it put it, moved by
-    /// `delta` (to rounding: halves add up to the whole only that closely).
+    /// `delta`, to within the length bar the frame's last solve was held to, read through
+    /// `drift_solver::landed_within` (halves add up to the whole only to rounding, which its
+    /// floor covers).
     fn landed(&self, frame: &DragFrame<'_>, delta: DVec2, before: &Geometry) -> bool {
         before.points.iter().all(|&(id, p)| {
             let to = p + delta;
             !frame.dragged_set.contains(&Param::X(id))
-                || self.doc.point(id).is_ok_and(|at| {
-                    at.distance(to)
-                        <= drift_core::tolerance::same(to.abs().max_element().max(delta.length()))
-                })
+                || self
+                    .doc
+                    .point(id)
+                    .is_ok_and(|at| at.distance(to) <= drift_solver::landed_within(frame.bar, to))
         })
     }
 
@@ -1775,24 +1734,11 @@ impl Editor {
                 relations: Some(frame.relations.clone()),
                 touching: Some(frame.touching.clone()),
                 fold: frame.fold,
-                drag_part: true,
-                drag_size: frame.size,
                 ..Default::default()
             },
         );
-        if frame.size.is_none() {
-            frame.size = report.drag_size;
-        }
-        #[cfg(test)]
-        if let Some(sizes) = &mut self.drag_sizes {
-            sizes.push((
-                report.drag_size,
-                report.drag_near,
-                report.drag_cut_short,
-                report.drag_capped_loose,
-            ));
-        }
         frame.wandered = frame.wandered.max(report.wandered);
+        frame.bar = report.bar;
         let unfinished = self.unfinished(&report);
         if unfinished {
             frame.unfinished_left = frame

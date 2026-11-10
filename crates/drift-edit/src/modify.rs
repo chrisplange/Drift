@@ -2851,8 +2851,10 @@ mod tests {
         ed
     }
 
+    /// (Within the solver's bar: a billionth of a quarter of the sketch's size, which for
+    /// these sketches of up to some 200 mm is under 1e-7.)
     fn close(a: DVec2, b: DVec2) -> bool {
-        a.distance(b) < 1e-9
+        a.distance(b) < 1e-7
     }
 
     /// An editor with lines between the given point pairs; returns the line ids.

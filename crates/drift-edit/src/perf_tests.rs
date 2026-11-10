@@ -1983,17 +1983,13 @@ fn perf_select_tool_moves() {
     }
 }
 
-/// A near patience cut that is still moving, with its rows off today's bar, is never read as
-/// converged (#280): `perf_drag_refused`'s refused drag with a 1000 mm chain of free bars,
-/// near the origin, so its solves are judged by the part's size. This counts **patience
-/// cuts only** (`drag_cut_short`): some of its solves are cut by `SETTLE_PATIENCE` still
-/// moving with their rows inside that size's bar but off today's, and each must be reported
-/// unfinished, so the frame takes the work main takes (at most 7 solves) before it is refused.
-/// Counted as converged, those cuts send the drag down its ladder of retakes (18 solves a
-/// frame). And none of its solves runs to the cap converged on the part-size bar alone
-/// (`drag_capped_loose`).
+/// A refused drag on a big part costs what it always has (#280, #377): `perf_drag_refused`'s
+/// refused drag with a 1000 mm chain of free bars takes at most 7 solves a frame before it is
+/// refused. A drag's patience cut whose rows don't hold to a thousandth of the bar is
+/// unfinished (fallback (b)); counted as converged, those cuts send the frame down its ladder
+/// of retakes (18 solves a frame).
 #[test]
-fn a_near_patience_cut_off_todays_bar_is_never_read_as_landed() {
+fn a_refused_drag_on_a_big_part_takes_at_most_seven_solves_a_frame() {
     let (mut ed, ids) = held_on_an_arc(1_000, false, true, 315.0);
     let dragged: Vec<drift_solver::Param> = ed
         .doc
@@ -2002,23 +1998,11 @@ fn a_near_patience_cut_off_todays_bar_is_never_read_as_landed() {
         .flat_map(drift_solver::Param::point)
         .collect();
     ed.doc.begin();
-    ed.drag_sizes = Some(Vec::new());
     let mut most = 0;
     for _ in 0..3 {
         assert!(!ed.drag(&ids, v(0.0, -18.003814381075802), &dragged));
         most = most.max(ed.drag_solves);
     }
-    let sizes = ed.drag_sizes.take().unwrap();
-    assert!(sizes.iter().all(|s| s.1), "every solve near: {sizes:?}");
-    assert!(
-        sizes.iter().map(|s| s.2).sum::<usize>() > 0,
-        "no patience cut was refused: {sizes:?}"
-    );
-    assert_eq!(
-        sizes.iter().map(|s| s.3).sum::<usize>(),
-        0,
-        "capped loose: {sizes:?}"
-    );
     assert!(most <= 7, "{most} solves a frame");
     ed.doc.rollback();
 }

@@ -1729,6 +1729,7 @@ fn tangent_and_parallel_plan() -> Plan {
 /// below it at the other (it settles). Round-off at a fold, not a yardstick; similarity 3
 /// still fails for it.
 #[test]
+#[ignore = "#280: refused at one size only, on Ubuntu CI by chance (passed on bed7642, failed on 8464d63)"]
 fn e_result_depends_on_size_tangent_and_parallel() {
     let plan = tangent_and_parallel_plan();
     let t = Similarity {

@@ -383,7 +383,7 @@ DEALINGS IN THE FONT SOFTWARE.
 
 
 ============================================================================================
-2. Rust crates (372)
+2. Rust crates (374)
 ============================================================================================
 
 Each crate with its version, the licence its authors declare, the licence Drift uses it
@@ -1491,6 +1491,11 @@ miniz_oxide 0.9.1
     Copyright (c) 2020 Frommi
     https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide
 
+mio 1.2.4
+    Licence: MIT
+    Copyright (c) 2014 Carl Lerche and other MIO contributors
+    https://github.com/tokio-rs/mio
+
 moxcms 0.8.1
     Licence: BSD-3-Clause OR Apache-2.0
     Used under: Apache-2.0
@@ -1863,8 +1868,9 @@ ring 0.17.14
     Copyright 2015-2025 Brian Smith.
     https://github.com/briansmith/ring
 
-rmcp 3.5.1
+rmcp 3.9.0
     Licence: Apache-2.0
+    Copyright (c) 2024-2025 Model Context Protocol a Series of LF Projects, LLC.
     https://github.com/modelcontextprotocol/rust-sdk/
 
 ron 0.12.2
@@ -2162,6 +2168,12 @@ smol_str 0.2.2
     Used under: Apache-2.0
     Copyright the authors: Aleksey Kladov <aleksey.kladov@gmail.com>
     https://github.com/rust-analyzer/smol_str
+
+socket2 0.6.5
+    Licence: MIT OR Apache-2.0
+    Used under: Apache-2.0
+    Copyright (c) 2014 Alex Crichton
+    https://github.com/rust-lang/socket2
 
 spirv 0.4.0+sdk-1.4.341.0
     Licence: Apache-2.0
@@ -2926,7 +2938,7 @@ litrs 1.0.0, lyon_geom 1.0.19, lyon_path 1.0.19, lyon_tessellation 1.0.22, miniz
 objc2-core-foundation 0.3.2, objc2-core-graphics 0.3.2, objc2-metal 0.3.2, objc2-quartz-core
 0.3.2, pastey 0.2.3, pin-project-lite 0.2.17, proc-macro2 1.0.107, profiling 1.0.18, quote
 1.0.47, rand 0.10.3, range-alloc 0.1.5, raw-window-handle 0.6.2, ref-cast 1.0.27,
-ref-cast-impl 1.0.27, rmcp 3.5.1, rstar 0.13.0, rustc-hash 2.1.3, ryu 1.0.23, semver 1.0.28,
+ref-cast-impl 1.0.27, rmcp 3.9.0, rstar 0.13.0, rustc-hash 2.1.3, ryu 1.0.23, semver 1.0.28,
 serde 1.0.229, serde_core 1.0.229, serde_derive 1.0.229, serde_derive_internals 0.30.0,
 serde_json 1.0.151, simdutf8 0.1.5, spirv 0.4.0+sdk-1.4.341.0, syn 2.0.119, syn 3.0.6,
 thiserror 1.0.69, thiserror 2.0.21, thiserror-impl 1.0.69, thiserror-impl 2.0.21, type-map
@@ -3232,7 +3244,7 @@ png 0.18.1, polling 3.11.0, pollster 0.4.0, pollster 1.0.1, renderdoc-sys 1.1.0,
 0.17.14, ron 0.12.2, roxmltree 0.20.0, roxmltree 0.21.1, rustc-hash 1.1.0, rustix 0.38.44,
 rustix 1.1.5, rustls 0.23.46, rustls-native-certs 0.8.5, scoped-tls 1.0.1, scopeguard 1.2.0,
 security-framework 3.7.0, security-framework-sys 2.17.0, smallvec 1.16.2, smol_str 0.2.2,
-stable_deref_trait 1.2.1, unicode-bidi 0.3.18, unicode-normalization 0.1.25,
+socket2 0.6.5, stable_deref_trait 1.2.1, unicode-bidi 0.3.18, unicode-normalization 0.1.25,
 unicode-properties 0.1.4, unicode-segmentation 1.13.3, unicode-width 0.2.2, url 2.5.8, uuid
 1.27.0, wasm-bindgen 0.2.129, wasm-bindgen-futures 0.4.79, wasm-bindgen-macro 0.2.129,
 wasm-bindgen-macro-support 0.2.129, wasm-bindgen-shared 0.2.129, web-sys 0.3.106, weezl
@@ -10231,6 +10243,30 @@ SOFTWARE.
 
 3.75 MIT License (MIT)
 ----------------------
+Used by: mio 1.2.4
+
+Copyright (c) 2014 Carl Lerche and other MIO contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+3.76 MIT License (MIT)
+----------------------
 Used by: nom 7.1.3, nom 8.0.0
 
 Copyright (c) 2014-2019 Geoffroy Couprie
@@ -10254,7 +10290,7 @@ LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-3.76 MIT License (MIT)
+3.77 MIT License (MIT)
 ----------------------
 Used by: oem_cp 2.1.2
 
@@ -10266,7 +10302,7 @@ The above copyright notice and this permission notice shall be included in all c
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-3.77 MIT License (MIT)
+3.78 MIT License (MIT)
 ----------------------
 Used by: ordered-float 5.5.0
 
@@ -10296,7 +10332,7 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
-3.78 MIT License (MIT)
+3.79 MIT License (MIT)
 ----------------------
 Used by: phf 0.11.3, phf_shared 0.11.3
 
@@ -10321,7 +10357,7 @@ COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
 IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-3.79 MIT License (MIT)
+3.80 MIT License (MIT)
 ----------------------
 Used by: quick-xml 0.41.0
 
@@ -10349,7 +10385,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
-3.80 MIT License (MIT)
+3.81 MIT License (MIT)
 ----------------------
 Used by: rfd 0.17.2
 
@@ -10375,7 +10411,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-3.81 MIT License (MIT)
+3.82 MIT License (MIT)
 ----------------------
 Used by: rfd 0.17.2
 
@@ -10401,7 +10437,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-3.82 MIT License (MIT)
+3.83 MIT License (MIT)
 ----------------------
 Used by: schemars 1.2.3
 
@@ -10460,7 +10496,7 @@ fn is_meta_character(c: char) -> bool {
     }
 }
 
-3.83 MIT License (MIT)
+3.84 MIT License (MIT)
 ----------------------
 Used by: schemars 1.2.3, schemars_derive 1.2.3
 
@@ -10486,7 +10522,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-3.84 MIT License (MIT)
+3.85 MIT License (MIT)
 ----------------------
 Used by: simd-adler32 0.3.10
 
@@ -10512,7 +10548,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-3.85 MIT License (MIT)
+3.86 MIT License (MIT)
 ----------------------
 Used by: slab 0.4.12
 
@@ -10542,7 +10578,7 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
-3.86 MIT License (MIT)
+3.87 MIT License (MIT)
 ----------------------
 Used by: smithay-clipboard 0.7.3
 
@@ -10566,7 +10602,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
-3.87 MIT License (MIT)
+3.88 MIT License (MIT)
 ----------------------
 Used by: strict-num 0.1.1
 
@@ -10590,7 +10626,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
-3.88 MIT License (MIT)
+3.89 MIT License (MIT)
 ----------------------
 Used by: synstructure 0.14.0
 
@@ -10602,7 +10638,7 @@ The above copyright notice and this permission notice shall be included in all c
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-3.89 MIT License (MIT)
+3.90 MIT License (MIT)
 ----------------------
 Used by: tiff 0.11.3
 
@@ -10628,7 +10664,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-3.90 MIT License (MIT)
+3.91 MIT License (MIT)
 ----------------------
 Used by: tokio 1.54.1, tokio-util 0.7.20
 
@@ -10654,7 +10690,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-3.91 MIT License (MIT)
+3.92 MIT License (MIT)
 ----------------------
 Used by: tokio-macros 2.7.2
 
@@ -10681,7 +10717,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-3.92 MIT License (MIT)
+3.93 MIT License (MIT)
 ----------------------
 Used by: tracing 0.1.44, tracing-attributes 0.1.31, tracing-core 0.1.36
 
@@ -10711,7 +10747,7 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
-3.93 MIT License (MIT)
+3.94 MIT License (MIT)
 ----------------------
 Used by: tracing-core 0.1.36
 
@@ -10737,7 +10773,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-3.94 MIT License (MIT)
+3.95 MIT License (MIT)
 ----------------------
 Used by: wayland-backend 0.3.17, wayland-client 0.31.15, wayland-cursor 0.31.14,
 wayland-protocols 0.32.13, wayland-protocols-experimental 20250721.0.1,
@@ -10764,7 +10800,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
-3.95 MIT License (MIT)
+3.96 MIT License (MIT)
 ----------------------
 Used by: wayland-csd-frame 0.3.0
 
@@ -10788,7 +10824,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-3.96 MIT License (MIT)
+3.97 MIT License (MIT)
 ----------------------
 Used by: wayland-protocols 0.32.13
 
@@ -10826,7 +10862,7 @@ The above is the version of the MIT "Expat" License used by X.org:
 
     http://cgit.freedesktop.org/xorg/xserver/tree/COPYING
 
-3.97 MIT License (MIT)
+3.98 MIT License (MIT)
 ----------------------
 Used by: xcursor 0.3.11
 
@@ -10852,7 +10888,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-3.98 MIT License (MIT)
+3.99 MIT License (MIT)
 ----------------------
 Used by: xkbcommon-dl 0.4.2
 
@@ -10878,8 +10914,8 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-3.99 MIT License (MIT)
-----------------------
+3.100 MIT License (MIT)
+-----------------------
 Used by: zmij 1.0.23
 
 Permission is hereby granted, free of charge, to any
@@ -10906,7 +10942,7 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
-3.100 Mozilla Public License 2.0 (MPL-2.0)
+3.101 Mozilla Public License 2.0 (MPL-2.0)
 ------------------------------------------
 Used by: acadrust 0.6.6
 
@@ -11285,7 +11321,7 @@ Exhibit B - "Incompatible With Secondary Licenses" Notice
   This Source Code Form is "Incompatible With Secondary Licenses", as
   defined by the Mozilla Public License, v. 2.0.
 
-3.101 SIL Open Font License 1.1 (OFL-1.1)
+3.102 SIL Open Font License 1.1 (OFL-1.1)
 -----------------------------------------
 Used by: epaint_default_fonts 0.36.2
 
@@ -11382,7 +11418,7 @@ DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
 
-3.102 Ubuntu Font Licence v1.0 (Ubuntu-font-1.0)
+3.103 Ubuntu Font Licence v1.0 (Ubuntu-font-1.0)
 ------------------------------------------------
 Used by: epaint_default_fonts 0.36.2
 
@@ -11483,7 +11519,7 @@ DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM OTHER
 DEALINGS IN THE FONT SOFTWARE.
 
-3.103 Unicode License v3 (Unicode-3.0)
+3.104 Unicode License v3 (Unicode-3.0)
 --------------------------------------
 Used by: icu_collections 2.3.0, icu_locale_core 2.3.0, icu_normalizer 2.3.0,
 icu_normalizer_data 2.3.0, icu_properties 2.3.0, icu_properties_data 2.3.0, icu_provider
@@ -11538,7 +11574,7 @@ SPDX-License-Identifier: Unicode-3.0
 Portions of ICU4X may have been adapted from ICU4C and/or ICU4J.
 ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation and others.
 
-3.104 Unicode License v3 (Unicode-3.0)
+3.105 Unicode License v3 (Unicode-3.0)
 --------------------------------------
 Used by: unicode-ident 1.0.26
 
@@ -11582,7 +11618,7 @@ not be used in advertising or otherwise to promote the sale, use or other
 dealings in these Data Files or Software without prior written
 authorization of the copyright holder.
 
-3.105 zlib License (Zlib)
+3.106 zlib License (Zlib)
 -------------------------
 Used by: foldhash 0.2.0
 
@@ -11606,7 +11642,7 @@ the following restrictions:
 
 3. This notice may not be removed or altered from any source distribution.
 
-3.106 zlib License (Zlib)
+3.107 zlib License (Zlib)
 -------------------------
 Used by: slotmap 1.1.1
 

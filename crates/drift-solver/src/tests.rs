@@ -358,7 +358,7 @@ fn measure_reports_angles_modulo_180() {
 
 /// Dense (reference) and sparse rank analyses of every component of `doc` must agree.
 fn assert_rank_analyses_agree(doc: &Document) -> Result<(), TestCaseError> {
-    let sys = System::build(doc, &[], &Tolerances::default(), None);
+    let sys = System::build(doc, &[], None);
     let (comps, _) = components(&sys, &Tolerances::default());
     let values: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
     for comp in &comps {
@@ -2046,7 +2046,7 @@ fn a_value_that_isnt_a_number_is_not_written() {
     let s = doc.add_point(v(10.0, 0.0));
     let e = doc.add_point(v(0.0, 10.0));
     doc.add_arc(c, s, e).unwrap();
-    let mut sys = System::build(&doc, &[], &Tolerances::default(), None);
+    let mut sys = System::build(&doc, &[], None);
     let k = sys.param_index[&Param::X(s)];
     let g = sys.group_of[k];
     sys.groups[g].value = f64::NAN;
@@ -2066,7 +2066,7 @@ fn a_drags_step_limit_counts_how_far_a_circle_reaches() {
         let c = doc.add_point(at);
         doc.add_circle(c, 5.0 * scale).unwrap();
         doc.add_point(at + v(-0.5, 0.0) * scale);
-        let sys = System::build(&doc, &[], &Tolerances::default(), None);
+        let sys = System::build(&doc, &[], None);
         let values: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
         let points = drawing_across(&sys, &values, false);
         let reach = drawing_across(&sys, &values, true);
@@ -2203,14 +2203,14 @@ fn a_frame_round_trips_exactly() {
     let (p, l) = quad(&mut doc, at);
     constrain_rectangle(&mut doc, p, l, at);
     let tol = Tolerances::default();
-    let sys = System::build(&doc, &[], &tol, None);
+    let sys = System::build(&doc, &[], None);
     let (comps, _) = components(&sys, &tol);
     let mut values: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
     let stored = values.clone();
-    let centres = circle_centres(&sys);
+    let drawn = Drawn::of(&sys);
     for comp in &comps {
         let (_, groups, asked) = reach(&sys, &comp.unknowns, &comp.rows);
-        let frame = Frame::enter(&sys, &groups, asked, &mut values, &tol, &centres);
+        let frame = Frame::enter(&sys, &groups, asked, &mut values, &tol, &drawn);
         // (In the frame, the part's coordinates are about its own size.)
         assert!(
             groups.iter().all(|&g| values[g].abs() <= 64.0),
@@ -2380,5 +2380,40 @@ fn a_kept_radius_at_a_fold_is_met_whatever_the_round_off() {
             let r = crate::radius_of(&doc, arc).unwrap();
             assert!((r - 8.0).abs() <= 8.0 * FOLD_MET, "{kx}, {ky}: radius {r}");
         }
+    }
+}
+
+/// A part's size is what it draws (review of PR 2): a nearly straight arc, a 10 mm chord on a
+/// 100 m, 1 km or 10 km radius, with a line from its end held 10 long and drawn 10.003. Its
+/// centre, kilometres off, made the part that far across and the bar coarse enough
+/// (3.75e-3 at 10 km) for the 0.003 misfit to "hold": the commit took no step and left the
+/// line 10.003. Measured by the arc as drawn, the line is solved to its length.
+#[test]
+fn a_far_arc_centre_does_not_coarsen_the_bar() {
+    for radius in [1e5, 1e6, 1e7] {
+        let mut doc = Document::new();
+        let c = doc.add_point(v(5.0, -radius));
+        let y = -radius + (radius * radius - 25.0).sqrt();
+        let s = doc.add_point(v(10.0, y));
+        let e = doc.add_point(v(0.0, y));
+        doc.add_arc(c, s, e).unwrap();
+        let p = doc.add_point(v(-10.003, y));
+        doc.add_line(e, p).unwrap();
+        doc.add_constraint(Constraint::Distance {
+            a: e,
+            b: p,
+            value: 10.0,
+        })
+        .unwrap();
+        let report = solved(&mut doc);
+        assert!(report.converged, "{radius}: {report:?}");
+        let length = doc.point(e).unwrap().distance(doc.point(p).unwrap());
+        assert!(
+            (length - 10.0).abs() < 1e-8,
+            "{radius}: the line is {length}"
+        );
+        // (The part is some 20 mm across: its bar is a billionth of a quarter of that, above
+        // the floor of ulps of the centre's stored coordinates.)
+        assert!(report.bar < 1e-7, "{radius}: bar {:e}", report.bar);
     }
 }

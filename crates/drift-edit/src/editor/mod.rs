@@ -168,6 +168,10 @@ pub struct Editor {
     /// How many entities those solves took in, all told (for the tests: what a frame of a
     /// drag costs).
     pub(crate) drag_solved: usize,
+    /// Each drag solve's bar and the bar of the part as its frame began, in order, once a test
+    /// sets it to `Some` (see `DragFrame::bar`).
+    #[cfg(test)]
+    pub(crate) drag_bars: Option<Vec<f64>>,
     /// The last constraints added: whether they kept the active element where it was, and how
     /// many iterations the solve they were checked with took (for the tests: none, where it
     /// was kept).

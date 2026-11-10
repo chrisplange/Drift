@@ -52,7 +52,8 @@ fn closed_trim_refusal(shape: &Shape, crossings: usize) -> String {
     )
 }
 
-/// How far off a constraint may be and still count as met, relative to the coordinates' size.
+/// How far off a constraint may be and still count as met: a share of a quarter of its part's
+/// size, as `drift_solver::unmet` reads it (a sine, for angles).
 const UNMET: f64 = 1e-7;
 
 /// A crossing this close to a cutting curve's own end (relative to the coordinates' size, at

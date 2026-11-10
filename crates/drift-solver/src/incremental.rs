@@ -278,7 +278,6 @@ fn finish<'a>(
             doc,
             &[],
             &[],
-            &options.tolerances,
             Some(&scope),
             &HashMap::new(),
             None,

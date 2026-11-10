@@ -11,9 +11,9 @@ use std::collections::{HashMap, HashSet};
 use drift_core::polygon::UnionFind;
 use drift_core::{Constraint, ConstraintId, DVec2, Document, EntityId, EntityKind};
 
+use crate::Param;
 use crate::equations::{Equation, Length, Offset};
 use crate::lowering::{Lowered, Lowering};
-use crate::{Param, Tolerances};
 
 /// The stand-in id of a lowering's extras while the system is built (their rows report as
 /// no relation's).
@@ -70,6 +70,13 @@ pub struct System {
     /// Per group, the length bar the last solve measured its component against (`run`; zero
     /// for a group no component solved): what a kept shape over it is met to.
     pub bars: Vec<f64>,
+    /// Every arc in the system, as its centre, start and end: what the solver measures a
+    /// component's size by is the arc as drawn (its ends and points along it), not its centre,
+    /// which for a nearly straight arc lies far off the drawing.
+    pub arcs: Vec<[EntityId; 3]>,
+    /// The points that are only arcs' centres: no line, curve end or other curve's point
+    /// uses them. They count towards no component's size (see [`System::arcs`]).
+    pub centres_only: HashSet<EntityId>,
 }
 
 /// A shape to keep where the relations leave it open (see [`System::keep`]).
@@ -118,6 +125,12 @@ impl Shape {
         }
     }
 }
+
+/// Two fixes on one parameter (or on parameters held equal) agree when their values are this
+/// close, relative to the value (at least 1 mm): the values are as stored or typed, absolute
+/// coordinates, so this is a share of them, as it was before the solve's bar became a share of
+/// a component's size (PR 2 of the solver audit), which has nothing to say about two pins.
+const PINS_AGREE: f64 = 1e-12;
 
 /// Inverse weight for dragged parameters: they barely move, so the rest of the sketch adapts.
 /// The first rank of what stays put (see [`crate::SolveOptions`]).
@@ -267,17 +280,11 @@ fn center_of(doc: &Document, curve: EntityId) -> Option<DVec2> {
 }
 
 impl System {
-    pub fn build(
-        doc: &Document,
-        dragged: &[Param],
-        tol: &Tolerances,
-        lowering: Option<&Lowering>,
-    ) -> Self {
+    pub fn build(doc: &Document, dragged: &[Param], lowering: Option<&Lowering>) -> Self {
         Self::build_in(
             doc,
             dragged,
             &[],
-            tol,
             None,
             &HashMap::new(),
             lowering,
@@ -296,7 +303,6 @@ impl System {
         doc: &Document,
         dragged: &[Param],
         carried: &[Param],
-        tol: &Tolerances,
         scope: Option<&std::collections::HashSet<EntityId>>,
         radii: &HashMap<EntityId, f64>,
         lowering: Option<&Lowering>,
@@ -386,6 +392,20 @@ impl System {
             }
             None => doc.iter().filter(|(id, _)| keep(*id)).collect(),
         };
+        let mut arcs = Vec::new();
+        let mut centres = HashSet::new();
+        let mut drawn = HashSet::new();
+        for &(_, entity) in &in_scope {
+            match entity.kind {
+                EntityKind::Arc { center, start, end } => {
+                    arcs.push([center, start, end]);
+                    centres.insert(center);
+                    drawn.extend([start, end]);
+                }
+                kind => drawn.extend(kind.points()),
+            }
+        }
+        let centres_only: HashSet<EntityId> = centres.difference(&drawn).copied().collect();
         for &(id, entity) in &in_scope {
             entities.push((
                 id,
@@ -477,7 +497,6 @@ impl System {
         let mut rows = Vec::new();
         // Pin a parameter. A second pin on the same parameter (two fixes on one point, as
         // when two fixed points are merged) agrees, or conflicts.
-        let length_tol = tol.length;
         let pin = |fixed: &mut HashMap<usize, (f64, ConstraintId)>,
                    problems: (&mut Vec<ConstraintId>, &mut Vec<ConstraintId>),
                    param: usize,
@@ -485,7 +504,7 @@ impl System {
                    cid: ConstraintId| {
             let (conflicts, redundant) = problems;
             match fixed.get(&param) {
-                Some(&(old, _)) if (old - v).abs() > length_tol * old.abs().max(1.0) => {
+                Some(&(old, _)) if (old - v).abs() > PINS_AGREE * old.abs().max(1.0) => {
                     conflicts.push(cid);
                 }
                 Some(_) => redundant.push(cid),
@@ -1236,7 +1255,7 @@ impl System {
                     if cid.0 == 0 {
                         continue;
                     }
-                    if (other - v).abs() > tol.length * scale {
+                    if (other - v).abs() > PINS_AGREE * scale {
                         conflicts.push(cid);
                     } else if !redundant.contains(&cid) {
                         redundant.push(cid);
@@ -1256,6 +1275,8 @@ impl System {
             entities,
             keep: keep_shape,
             bars: Vec::new(),
+            arcs,
+            centres_only,
         }
     }
 

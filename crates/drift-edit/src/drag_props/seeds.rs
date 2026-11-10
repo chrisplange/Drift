@@ -2567,3 +2567,38 @@ fn e_result_depends_on_size_patience_cut_at_one_size() {
     ))
     .unwrap();
 }
+
+/// No solve of a drag frame is held looser than the frame's first, however its retakes and
+/// steps fling the geometry (`DragFrame::first_bar`, passed as `SolveOptions::bar_cap`; the
+/// guard of #280's `every_solve_of_a_frame_reads_the_frames_size`, restored for PR 2's bars):
+/// `tangent_and_parallel`'s drag, whose one frame takes dozens of solves with its arc flung
+/// to hundreds of metres mid-try. (Read from each solve's own start, its bars ran from 1e-8 to
+/// 1.9e-4, a part 770 m across.)
+#[test]
+fn no_solve_of_a_frame_is_held_looser_than_its_first() {
+    let sketch = tangent_and_parallel_plan().sketch().unwrap();
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let ids = Pick::Curves(9929081795026096183).ids(&built);
+    let dragged: Vec<Param> = built
+        .ed
+        .doc
+        .defining_points(ids.iter().copied())
+        .into_iter()
+        .flat_map(Param::point)
+        .collect();
+    built.ed.doc.begin();
+    built.ed.drag_bars = Some(Vec::new());
+    built.ed.drag(
+        &ids,
+        DVec2::new(15.457267808482761, -17.270854180887095),
+        &dragged,
+    );
+    let bars = built.ed.drag_bars.take().unwrap();
+    assert!(bars.len() >= 10, "only {} solves", bars.len());
+    assert!(
+        bars.iter().all(|&b| b <= bars[0]),
+        "first {:e}, coarsest {:e}",
+        bars[0],
+        bars.iter().copied().fold(0.0, f64::max)
+    );
+}

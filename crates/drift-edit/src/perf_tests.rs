@@ -2007,6 +2007,30 @@ fn a_refused_drag_on_a_big_part_takes_at_most_seven_solves_a_frame() {
     ed.doc.rollback();
 }
 
+/// The same drag without the chain (`perf_drag_refused`'s "refused drag, 0 free bars") stays
+/// bounded too (Fable's review of PR 2): at most 31 solves a frame, where main took 14. The
+/// part alone is small, and its two points at one place now count once in the size its steps
+/// are read from (`Editor::drag_from_start`), so its retake ladder takes smaller steps; about
+/// 2.5 ms a frame more. For PR 3 (or PR 5's continuation) to bring down.
+#[test]
+fn a_refused_drag_on_a_small_part_takes_at_most_31_solves_a_frame() {
+    let (mut ed, ids) = held_on_an_arc(0, false, true, 315.0);
+    let dragged: Vec<drift_solver::Param> = ed
+        .doc
+        .defining_points(ids)
+        .into_iter()
+        .flat_map(drift_solver::Param::point)
+        .collect();
+    ed.doc.begin();
+    let mut most = 0;
+    for _ in 0..3 {
+        assert!(!ed.drag(&ids, v(0.0, -18.003814381075802), &dragged));
+        most = most.max(ed.drag_solves);
+    }
+    assert!(most <= 31, "{most} solves a frame");
+    ed.doc.rollback();
+}
+
 /// The solver bar's tiled sketch (#365, #377; `docs/solver-audit.md`, section 5, item 5): 200
 /// and 1,000 copies of a sketch whose drag always refuses (a line dragged as a curve, its
 /// midpoint carrying a hanging line held equal to a line the move stretches from a fixed

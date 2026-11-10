@@ -148,6 +148,12 @@ pub struct SolveOptions {
     /// other solve is as it was. (A drag takes these steps only as a last resort, where its
     /// move can always land: see `Editor::drag`.)
     pub fold: bool,
+    /// The coarsest length bar any component of this solve may be held to: a drag frame's
+    /// later solves pass the bar its first solve was held to ([`SolveReport::bar`]), so a
+    /// solve that begins from geometry a try has flung (a frame's arc thrown metres out mid-try
+    /// would make a part metres across) is never held looser than the part as the frame began.
+    /// A component's own finer bar stands. `None`: each component's own.
+    pub bar_cap: Option<f64>,
 }
 
 /// How completely an entity's position is determined by constraints.
@@ -212,8 +218,11 @@ pub struct SolveReport {
     pub dof: Option<usize>,
     /// Per-entity definition state (with [`SolveOptions::analyze`]).
     pub definitions: HashMap<EntityId, Definition>,
-    /// The length bar its components were solved to (see `Bar`), the coarsest of them; zero
-    /// for a solve with none. A drag reads whether it landed against it ([`landed_within`]).
+    /// The length bar the components holding a dragged or carried parameter were solved to
+    /// (see `Bar`), the coarsest of them; for a solve with none dragged, the coarsest of all
+    /// its components; zero for a solve with no component. A drag reads whether it landed
+    /// against it ([`landed_within`]), as the solver's own landing test reads each dragged
+    /// parameter's component's bar.
     pub bar: f64,
 }
 
@@ -227,12 +236,17 @@ pub struct SolveReport {
 /// a share of the coordinates involved. So the same drag runs the same iterations, and stops
 /// at the same step, however big the part is and wherever it sits (#280, #366); and a part
 /// far from the origin is held to its own size, not to its coordinates, in a frame where its
-/// angle rows can be met (#387). It never goes below [`FLOOR_ULPS`] ε of the largest stored
+/// angle rows can be met (#387). The component's size is what it draws (see
+/// [`Frame::enter`]). Its length bar never goes below [`FLOOR_ULPS`] ε of the largest stored
 /// value the component reads, what storage rounding leaves between solves: [`BAR`] of a
 /// part's size meets that floor only about a million part-sizes out.
 ///
 /// An angle row keeps its unitless bar, which its frame makes reachable, but read from storage
-/// a line's direction is known only to the floor over its length, so that is its floor.
+/// a line's direction is known only to the floor over its length, so that is its floor. It
+/// takes over from the unitless bar about 560 lengths of the row's shorter line out (5.6 m for
+/// a 10 mm line), and inside a solve too: **an edge in where a solve with angle rows stops,
+/// well inside a million part-sizes**, left for PR 3 of the solver audit (applied only to
+/// stored values, it moved two size-free pins).
 #[derive(Clone, Copy, Debug)]
 struct Bar {
     length: f64,
@@ -293,15 +307,51 @@ fn axis_of(sys: &System, g: usize) -> Option<usize> {
     }
 }
 
-/// Each circle's centre, by the circle (see [`Frame::enter`]).
-fn circle_centres(sys: &System) -> HashMap<EntityId, EntityId> {
-    sys.entities
-        .iter()
-        .filter_map(|(id, shape)| match shape {
-            EntityShape::Curve(points, Some(r)) if r == id => Some((*id, *points.first()?)),
-            _ => None,
-        })
-        .collect()
+/// What a component's size is measured by, found once per pass over a system (see
+/// [`Frame::enter`]): each circle's centre, by the circle, and each arc of
+/// [`System::arcs`], by the groups of its ends.
+struct Drawn {
+    centres: HashMap<EntityId, EntityId>,
+    arcs_by_group: HashMap<usize, Vec<usize>>,
+}
+
+impl Drawn {
+    fn of(sys: &System) -> Self {
+        let centres = sys
+            .entities
+            .iter()
+            .filter_map(|(id, shape)| match shape {
+                EntityShape::Curve(points, Some(r)) if r == id => Some((*id, *points.first()?)),
+                _ => None,
+            })
+            .collect();
+        let mut arcs_by_group: HashMap<usize, Vec<usize>> = HashMap::new();
+        for (a, [_, start, end]) in sys.arcs.iter().enumerate() {
+            for p in [Param::X(*start), Param::X(*end)] {
+                if let Some(&i) = sys.param_index.get(&p) {
+                    arcs_by_group.entry(sys.group_of[i]).or_default().push(a);
+                }
+            }
+        }
+        Self {
+            centres,
+            arcs_by_group,
+        }
+    }
+}
+
+/// Points along an arc from `start` counter-clockwise to `end` about `center`, at a quarter,
+/// half and three quarters of its sweep: with its ends, what it reaches as drawn, to within
+/// a few per cent of its radius (a whole circle's sweep where its ends meet).
+fn along_arc(center: DVec2, start: DVec2, end: DVec2) -> [DVec2; 3] {
+    let (u, w) = (start - center, end - center);
+    let r = u.length();
+    let a0 = u.y.atan2(u.x);
+    let mut sweep = w.y.atan2(w.x) - a0;
+    if sweep <= 0.0 {
+        sweep += std::f64::consts::TAU;
+    }
+    [1.0, 2.0, 3.0].map(|k| center + DVec2::from_angle(a0 + k * sweep / 4.0) * r)
 }
 
 /// A component's own frame (#280, #366, #387): its geometry translated so that its middle is
@@ -325,13 +375,20 @@ impl Frame {
     /// shapes read, each once) into their frame, in `values`. `asked` is the longest length
     /// its rows ask for, which counts towards its size: a line dimensioned at 100 is a part
     /// 100 across once solved, however short it was drawn.
+    ///
+    /// Its size is what it draws: its points (each point an arc only centres on left out), an
+    /// arc's ends and points along it, and each circle's reach. A nearly straight arc with a
+    /// 10 mm chord and a 10 km radius is a part some 10 mm across, not 20 km (counted, its
+    /// centre made the bar a thousand times coarser than the arc's, and a 0.003 mm misfit
+    /// beside it "held"). Its centre still counts towards the floor of ulps: the rows read its
+    /// stored coordinates.
     fn enter(
         sys: &System,
         groups: &[usize],
         asked: f64,
         values: &mut [f64],
         tol: &Tolerances,
-        centres: &HashMap<EntityId, EntityId>,
+        drawn: &Drawn,
     ) -> Self {
         let group = |p: Param| sys.param_index.get(&p).map(|&i| sys.group_of[i]);
         let value = |p: Param| group(p).map(|g| values[g]);
@@ -354,6 +411,7 @@ impl Frame {
         // another, are one point of the component, however many entities they were.)
         let mut pairs: Vec<(usize, usize)> = ids
             .iter()
+            .filter(|&&(id, mid)| mid || !sys.centres_only.contains(&id))
             .filter_map(|&(id, mid)| {
                 let (x, y) = if mid {
                     (Param::MidX(id), Param::MidY(id))
@@ -365,14 +423,30 @@ impl Frame {
             .collect();
         pairs.sort_unstable();
         pairs.dedup();
-        let points: Vec<DVec2> = pairs
+        let mut points: Vec<DVec2> = pairs
             .iter()
             .map(|&(x, y)| DVec2::new(values[x], values[y]))
             .collect();
+        let mut arcs: Vec<usize> = groups
+            .iter()
+            .filter_map(|g| drawn.arcs_by_group.get(g))
+            .flatten()
+            .copied()
+            .collect();
+        arcs.sort_unstable();
+        arcs.dedup();
+        let point = |id: EntityId| Some(DVec2::new(value(Param::X(id))?, value(Param::Y(id))?));
+        for a in arcs {
+            let [c, s, e] = sys.arcs[a];
+            if let (Some(c), Some(s), Some(e)) = (point(c), point(s), point(e)) {
+                points.extend(along_arc(c, s, e).into_iter().filter(|p| p.is_finite()));
+            }
+        }
         let circles: Vec<(Option<DVec2>, f64)> = radii
             .iter()
             .filter_map(|&id| {
-                let center = centres
+                let center = drawn
+                    .centres
                     .get(&id)
                     .and_then(|&c| Some(DVec2::new(value(Param::X(c))?, value(Param::Y(c))?)));
                 Some((center, value(Param::Radius(id))?))
@@ -457,12 +531,12 @@ fn rows_holding(
     tol: &Tolerances,
 ) -> Vec<bool> {
     let mut values: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
-    let centres = circle_centres(sys);
+    let drawn = Drawn::of(sys);
     let mut holds = vec![true; sys.rows.len()];
     let mut grad = Vec::new();
     let mut judge = |unknowns: &[usize], rows: &[usize], values: &mut [f64]| {
         let (_, groups, asked) = reach(sys, unknowns, rows);
-        let frame = Frame::enter(sys, &groups, asked, values, tol, &centres);
+        let frame = Frame::enter(sys, &groups, asked, values, tol, &drawn);
         for &r in rows {
             grad.clear();
             let res = sys.rows[r]
@@ -538,7 +612,6 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
         doc,
         &options.dragged,
         &options.carried,
-        &options.tolerances,
         options.scope.as_deref(),
         &options.radii,
         options.lowering.as_deref(),
@@ -775,7 +848,7 @@ pub fn unmet_with(
         length: slack,
         angle: slack,
     };
-    let sys = System::build(doc, &[], &tol, lowering);
+    let sys = System::build(doc, &[], lowering);
     let (comps, constant_rows) = components(&sys, &tol);
     let holds = rows_holding(&sys, &comps, &constant_rows, &tol);
     sys.rows
@@ -802,7 +875,6 @@ pub fn meets_within(
         doc,
         &[],
         &[],
-        &tol,
         Some(scope),
         &HashMap::new(),
         lowering,
@@ -826,7 +898,7 @@ pub fn analyze_with(doc: &Document, lowering: Option<&Lowering>) -> SolveReport 
         analyze: true,
         ..Default::default()
     };
-    let mut sys = System::build(doc, &[], &options.tolerances, lowering);
+    let mut sys = System::build(doc, &[], lowering);
     let (mut report, _) = run(&mut sys, &options, false);
     // (In one order however the relations were found redundant: what an analysis kept
     // cluster by cluster reports too.)
@@ -1698,6 +1770,11 @@ fn newton(
         .iter()
         .map(|g| sys.groups[*g].mobility)
         .collect();
+    // (An angle row's floor over its shorter line holds here too, though after a step the
+    // values are the frame's: a place-dependent stop from some 560 line lengths out, left for
+    // PR 3. Held only to stored values, at the solve's first test, a far solve whose rows
+    // held there by the floor took no step where the same solve near the origin did, and two
+    // size-free pins failed.)
     let converged = |res: &[f64], values: &[f64]| {
         res.iter()
             .zip(&comp.rows)
@@ -1804,9 +1881,12 @@ fn newton(
         let rows_hold = converged(&res, values);
         let at_rest = !dragging || last_moved <= bar.length;
         // A drag's solve held to a [`PATIENCE_SHARE`] of the bar (fallback (b), see below).
+        // (No floor: it is a test of the frame's own values, and floored, it gave way to the
+        // floor some 140 part-sizes out, a hinge in where a patience cut counts.)
         let fine = Bar {
-            length: (PATIENCE_SHARE * bar.length).max(bar.floor),
-            ..bar
+            length: PATIENCE_SHARE * bar.length,
+            angle: bar.angle,
+            floor: 0.0,
         };
         let fine_rows = |res: &[f64], values: &[f64]| {
             res.iter()
@@ -2413,16 +2493,17 @@ fn run(sys: &mut System, options: &SolveOptions, iterate: bool) -> (SolveReport,
     };
     let (comps, constant_rows) = components(sys, tol);
     let mut values: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
-    let centres = circle_centres(sys);
+    let drawn = Drawn::of(sys);
     let mut bars = vec![0.0; sys.groups.len()];
     let mut failed_rows: Vec<usize> = Vec::new();
     let mut failed_components = 0;
+    let (mut dragged_bar, mut any_bar) = (0.0f64, 0.0f64);
     let across = drawing_across(sys, &values, !options.dragged.is_empty());
     let mut grad = Vec::new();
 
     for &r in &constant_rows {
         let (_, groups, asked) = reach(sys, &[], &[r]);
-        let frame = Frame::enter(sys, &groups, asked, &mut values, tol, &centres);
+        let frame = Frame::enter(sys, &groups, asked, &mut values, tol, &drawn);
         grad.clear();
         let res = sys.rows[r]
             .equation
@@ -2445,12 +2526,22 @@ fn run(sys: &mut System, options: &SolveOptions, iterate: bool) -> (SolveReport,
     }
     for comp in &comps {
         let (shapes, groups, asked) = reach(sys, &comp.unknowns, &comp.rows);
-        let frame = Frame::enter(sys, &groups, asked, &mut values, tol, &centres);
+        let mut frame = Frame::enter(sys, &groups, asked, &mut values, tol, &drawn);
+        if let Some(cap) = options.bar_cap {
+            frame.bar.length = frame.bar.length.min(cap).max(frame.bar.floor);
+        }
         let bar = frame.bar;
         for &g in &comp.unknowns {
             bars[g] = bar.length;
         }
-        report.bar = report.bar.max(bar.length);
+        if comp
+            .unknowns
+            .iter()
+            .any(|&g| sys.groups[g].mobility <= system::CARRIED_MOBILITY)
+        {
+            dragged_bar = dragged_bar.max(bar.length);
+        }
+        any_bar = any_bar.max(bar.length);
         let converged = if iterate {
             let outcome = newton(
                 sys,
@@ -2495,6 +2586,11 @@ fn run(sys: &mut System, options: &SolveOptions, iterate: bool) -> (SolveReport,
         sys.groups[g].value = *v;
     }
     sys.bars = bars;
+    report.bar = if dragged_bar > 0.0 {
+        dragged_bar
+    } else {
+        any_bar
+    };
     for &r in &failed_rows {
         if let Some(cid) = sys.rows[r].source
             && !report.conflicts.contains(&cid)
@@ -2695,7 +2791,7 @@ pub fn free_directions_with(
     lowering: Option<&Lowering>,
 ) -> HashMap<EntityId, Freedom> {
     let options = SolveOptions::default();
-    let sys = System::build(doc, &[], &options.tolerances, lowering);
+    let sys = System::build(doc, &[], lowering);
     let (comps, _) = components(&sys, &options.tolerances);
     let values: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
     // Null-space basis vectors, as group → component, indexed by the groups they touch.

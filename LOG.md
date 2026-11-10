@@ -18,3 +18,4 @@ One line per decision, approval or merge, newest last. Format: `YYYY-MM-DD | wha
 2026-11-10 | Solver audit decision 7: #295 is a walls bug, not solver; relabelled drawing + batch-2 (no walls label); its fix adds the four saved seeds | user in chat
 2026-11-10 | Solver audit decision 8: file the 1 km commit refusal; filed as #387, closed by the redesign's PR 2 | user in chat
 2026-11-10 | Solver audit decision 9: the heavy matrix and the pins run on ubuntu in a scheduled job (#187 step 4) | user in chat
+2026-11-10 | A master Drift Coordinator session now coordinates and automates agents and writes no code; a notes session keeps the records | user

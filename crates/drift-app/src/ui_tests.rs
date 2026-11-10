@@ -6832,6 +6832,76 @@ fn transform_handles_on_the_canvas() {
 }
 
 #[test]
+fn relation_glyphs_stay_off_the_transform_handles() {
+    use crate::annotations::{GLYPH_SIZE, layout_glyphs, push_glyphs_clear};
+    use drift_core::Constraint;
+    if !crate::test_gpu::available() {
+        return;
+    }
+    // At the review size (3440 × 1440), so the saved picture is the one to judge it by.
+    let mut h = Harness::builder()
+        .with_size([3440.0, 1440.0])
+        .wgpu_setup(crate::test_gpu::setup())
+        .build_eframe(|cc| DriftApp::new(cc));
+    h.run();
+    // A short horizontal line, picked with a second one under it (a lone line has grips,
+    // not a box): the glyph's usual place, just above the midpoint, is where the transform
+    // box's top handle is.
+    let rel = {
+        let ed = &mut h.state_mut().drawing.editor;
+        ed.doc.begin();
+        let a = ed.doc.add_point(DVec2::new(-3.0, 0.0));
+        let b = ed.doc.add_point(DVec2::new(3.0, 0.0));
+        let line = ed.doc.add_line(a, b).unwrap();
+        let rel = ed
+            .doc
+            .add_constraint(Constraint::Horizontal { line })
+            .unwrap();
+        ed.commit("Setup");
+        let c = ed.doc.add_point(DVec2::new(-3.0, -4.0));
+        let d = ed.doc.add_point(DVec2::new(3.0, -4.0));
+        let under = ed.doc.add_line(c, d).unwrap();
+        ed.selection = [line, under].into_iter().collect();
+        rel
+    };
+    h.run();
+    let map = screen_map(&h);
+    let frame = h.state_mut().drawing.editor.transform_box();
+    let handles = frame.map_or(Vec::new(), |f| {
+        crate::app::view::transform_handle_rects(&f, &map)
+    });
+    assert!(!handles.is_empty(), "the transform box shows");
+    let mut glyphs = layout_glyphs(&h.state().drawing.editor.doc, &map);
+    assert_eq!(glyphs.len(), 1);
+    assert_eq!(glyphs[0].rect.width(), GLYPH_SIZE);
+    assert!(
+        handles.iter().any(|r| r.intersects(glyphs[0].rect)),
+        "the case is real: laid out as before, the glyph covers a handle"
+    );
+    push_glyphs_clear(&mut glyphs, &handles);
+    for g in &glyphs {
+        for r in &handles {
+            assert!(
+                !g.rect.intersects(*r),
+                "glyph {:?} meets handle {r:?}",
+                g.rect
+            );
+        }
+    }
+    save_png("drift_ui_glyphs_off_handles.png", &mut h);
+
+    // The canvas draws and picks the glyph where it was pushed to.
+    let at = glyphs[0].rect.center();
+    h.hover_at(at);
+    h.run();
+    button(&h, at, true);
+    h.run();
+    button(&h, at, false);
+    h.run();
+    assert_eq!(h.state().drawing.selected_constraint, Some(rel));
+}
+
+#[test]
 fn check_sketch_finds_and_fixes_gaps() {
     let Some(mut h) = harness() else { return };
     // A 40 × 30 outline whose last corner misses by 0.3, and a line stopping 0.2 short.

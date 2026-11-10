@@ -3,5 +3,5 @@
 # other failure. Format: <property> <seed> <platforms: all | linux,windows,macos> # why
 drag_is_invariant_under_similarity_heavy 3 all # #280: solver PR 2/3 (audit, Heavy matrix today)
 drag_is_invariant_under_similarity_heavy 4 all # #280: solver PR 2/3 (audit, Heavy matrix today)
-drag_is_invariant_under_similarity_heavy 6 all # #280: solver PR 2/3 (audit, Heavy matrix today)
+drag_is_invariant_under_similarity_heavy 6 windows # #280: solver PR 2/3 (audit, Heavy matrix today). Passes on Linux (glibc libm, PR 0's first ubuntu run); macOS not measured
 drag_is_invariant_under_similarity_heavy 19 all # #280: solver PR 2/3 (audit, Heavy matrix today)

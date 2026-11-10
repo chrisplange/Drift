@@ -49,7 +49,7 @@ jobs:
             echo "### Toolchain"
             echo
             echo "- $(rustc -V)"
-            echo "- $(ldd --version | head -1)"
+            echo "- $(ldd --version | sed -n 1p)"
             echo
           } | tee -a "$GITHUB_STEP_SUMMARY"
       # 14 properties x seeds 1-20, release, --exact. Fails on a failure scripts/solver-bar/

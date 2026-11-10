@@ -1728,7 +1728,15 @@ fn tangent_and_parallel_plan() -> Plan {
 /// of the coordinates), is above the part-size bar at one size (it runs to patience) and
 /// below it at the other (it settles). Round-off at a fold, not a yardstick; similarity 3
 /// still fails for it.
+///
+/// Ignored again (H-5): the pass was round-off's luck, not a fix. Moving the drag's offset or
+/// the turn by a single ulp flips the number of refused frames at either size (14 of 39
+/// one-to-six-ulp nudges disagree, on Windows), and the 1x copy's coordinates come from
+/// `sin`/`cos`/`atan2`, which glibc rounds differently from Windows and macOS: on Linux the
+/// 1x drag refuses no frame where elsewhere it refuses one. It goes with the fold's
+/// round-off above, #280's open part.
 #[test]
+#[ignore = "#280: round-off at a fold; one ulp of the move flips the refused count (Linux differs)"]
 fn e_result_depends_on_size_tangent_and_parallel() {
     let plan = tangent_and_parallel_plan();
     let t = Similarity {

@@ -2345,3 +2345,40 @@ fn a_drag_solve_whose_rows_cannot_hold_is_never_converged() {
         assert!(!report.converged, "{scale}× about {at}: {report:?}");
     }
 }
+
+/// The fold steps meet a kept radius at a fold whatever the round-off (macOS CI, PR 2):
+/// `a_kept_radius_at_a_fold_is_met_with_the_fold_steps`' drag, its offset nudged by up to
+/// 4 ulps either way in x and y, lands and keeps its radius every time. Held to the part's
+/// bar, a fold solve's rows hold sooner than they did against the coordinates, and patience
+/// cut 38 of 289 such nudges mid-crawl until a fold solve was let run on to the patience
+/// share and every kept shape met.
+#[test]
+fn a_kept_radius_at_a_fold_is_met_whatever_the_round_off() {
+    let at = |deg: f64| v(8.0, 0.0) + DVec2::from_angle(deg.to_radians()) * 8.0;
+    for kx in -4i32..=4 {
+        for ky in -4i32..=4 {
+            let mut doc = Document::new();
+            let e = doc.add_point(v(0.0, 0.0));
+            let c = doc.add_point(v(8.0, 0.0));
+            let s = doc.add_point(at(135.0));
+            let arc = doc.add_arc(c, s, e).unwrap();
+            let held = [at(135.0), at(315.0)].map(|p| {
+                let point = doc.add_point(p);
+                doc.add_constraint(Constraint::PointOnCurve { point, curve: arc })
+                    .unwrap();
+                point
+            });
+            let delta = v(
+                f64::from(kx) * f64::EPSILON,
+                -18.0 + f64::from(ky) * 18.0 * f64::EPSILON,
+            );
+            let (report, off) = drag_points(&mut doc, &held, delta, &[arc], true);
+            assert!(
+                report.converged && off == 0.0,
+                "{kx}, {ky}: {report:?}, {off} off"
+            );
+            let r = crate::radius_of(&doc, arc).unwrap();
+            assert!((r - 8.0).abs() <= 8.0 * FOLD_MET, "{kx}, {ky}: radius {r}");
+        }
+    }
+}

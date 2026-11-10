@@ -727,6 +727,8 @@ fn land(
             continue;
         }
         let solved: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
+        // (A pass not kept leaves the bars the solve was held to, as well as its values.)
+        let bars = sys.bars.clone();
         for &(g, v) in &pinned {
             sys.groups[g].value = v;
             sys.groups[g].fixed = true;
@@ -747,6 +749,7 @@ fn land(
             for (group, v) in sys.groups.iter_mut().zip(solved) {
                 group.value = v;
             }
+            sys.bars = bars;
             return report;
         }
     }
@@ -1800,23 +1803,37 @@ fn newton(
     for iteration in 0..MAX_ITERATIONS {
         let rows_hold = converged(&res, values);
         let at_rest = !dragging || last_moved <= bar.length;
+        // A drag's solve held to a [`PATIENCE_SHARE`] of the bar (fallback (b), see below).
+        let fine = Bar {
+            length: (PATIENCE_SHARE * bar.length).max(bar.floor),
+            ..bar
+        };
+        let fine_rows = |res: &[f64], values: &[f64]| {
+            res.iter()
+                .zip(&comp.rows)
+                .all(|(f, r)| f.abs() <= row_tolerance(sys, *r, fine, values))
+        };
+        // With the fold steps a solve finishes only where it meets everything, so patience
+        // doesn't cut one before its rows hold to the patience share and every kept shape is
+        // met: that could only end it unfinished. (Held to a coordinate-relative bar, its rows
+        // went on "unmet" until then, and patience hadn't begun counting.)
+        let fold_open = fold
+            && (!fine_rows(&res, values)
+                || shapes.iter().any(|shape| {
+                    let value = |p: usize| values[sys.group_of[p]];
+                    shape.offset(value).is_some_and(|(_, off)| {
+                        off.abs() > met_within(shape.params(), value, bar.length)
+                    })
+                }));
         if rows_hold {
-            if (settled && at_rest) || settling >= SETTLE_PATIENCE {
+            if (settled && at_rest) || (settling >= SETTLE_PATIENCE && !fold_open) {
                 // Fallback (b) of #377, until PR 3 replaces patience with a stationarity
                 // test: a drag's patience cut leaves a kept shape mid-crawl, the solve still
                 // moving, and counts as converged only where its rows also hold to a
                 // [`PATIENCE_SHARE`] of the bar. Counted as converged, a cut that is still
                 // moving sends a frame that will be refused anyway down its ladder of
                 // retakes (a part 1 m across: 18 solves a frame in place of 7).
-                let cut_short = !(settled && at_rest) && dragging && {
-                    let fine = Bar {
-                        length: (PATIENCE_SHARE * bar.length).max(bar.floor),
-                        ..bar
-                    };
-                    !res.iter()
-                        .zip(&comp.rows)
-                        .all(|(f, r)| f.abs() <= row_tolerance(sys, *r, fine, values))
-                };
+                let cut_short = !(settled && at_rest) && dragging && !fine_rows(&res, values);
                 #[cfg(feature = "exit-counts")]
                 exits::record(
                     if settled && at_rest {

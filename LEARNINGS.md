@@ -10,4 +10,5 @@ What went wrong and the rule that came out of it. Add one when a review, revert 
 | 2026-11-04 | A Fable reviewer silently started on Opus | After starting a reviewer with a model, check its model and set it with set_session_model |
 | 2026-11-04 | Long-lived reviewers anchored on old rulings and grew 36 GB targets | One fresh reviewer per PR; delete its target after merge |
 | 2026-10-30 | Tests asserting wall-clock budgets fail on a busy machine (#368) | No hard wall-clock asserts in normal tests; perf budgets live in ignored baselines |
+| 2026-11-10 | A dependency bump (#381) failed the Third-party notices job | After any Cargo.lock change, run `python scripts/notices.py` and commit THIRD-PARTY-NOTICES.txt in the same PR |
 | 2026-10-27 | Vague tasks caused rework | Every task has a checkable Done when before it runs |

@@ -114,9 +114,15 @@ fn similarity_census() {
             let run = drag(&mut built, &ids, t.vector(off), steps);
             let counts = exits();
             DRAGS.with(|d| d.borrow_mut().clear());
-            let Ok(run) = run else {
-                println!("A {case} {tag} {what} steps {steps} ERR {counts}");
-                continue;
+            let run = match run {
+                Ok(run) => run,
+                Err(e) => {
+                    if std::env::var_os("CENSUS_WHY").is_some() {
+                        eprintln!("ERR {case} {tag}: {e}");
+                    }
+                    println!("A {case} {tag} {what} steps {steps} ERR {counts}");
+                    continue;
+                }
             };
             if tag == "id" {
                 let pts = &run.start;

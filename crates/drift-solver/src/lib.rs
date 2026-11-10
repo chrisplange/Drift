@@ -1,13 +1,18 @@
 //! Geometric constraint solver for Drift.
 //!
 //! [`solve`] adjusts a document's geometry so every constraint holds, moving things as little
-//! as possible: each step solves `(JᵀJ + μ·M⁻¹) Δ = −JᵀF`, which for small μ is the weighted
-//! minimum-norm Gauss–Newton step, with Levenberg–Marquardt damping when progress stalls.
-//! Parameters being dragged are given a heavy weight, so the rest of the sketch adapts around
-//! them. [`analyze`] reports degrees of freedom and which entities are fully defined.
+//! as possible, in two stages per component (see `newton`): first the relations, by
+//! Levenberg–Marquardt steps `(JᵀJ + μ·M⁻¹ + λ·D) Δ = −JᵀF` (for small μ the weighted
+//! minimum-norm Gauss–Newton step, λ a trust region), then, among their solutions, the shapes
+//! a solve keeps, by Gauss–Newton steps projected into the relations' null space. Each stops at
+//! a test, not a count: the relations hold and the shapes are stationary, or the relations
+//! are at a least-squares stationary point (a conflict). Parameters being dragged are given a
+//! heavy weight, so the rest of the sketch adapts around them. [`analyze`] reports degrees of
+//! freedom and which entities are fully defined.
 //!
 //! Pipeline: parameters → substitution (coincident / horizontal / vertical / fix merge or pin
-//! parameters) → equations → independent components → Newton per component → write back.
+//! parameters) → equations → independent components → two-stage solve per component → write
+//! back.
 
 pub mod bench;
 mod equations;
@@ -133,20 +138,19 @@ pub struct SolveOptions {
     /// How each tangency touched where the relations held (see [`touching_ends`]): a drag
     /// finds them once as it begins, and every step keeps them. `None`: from the geometry.
     pub touching: Option<std::rc::Rc<TouchingEnds>>,
-    /// Take the steps that finish a solve stalled at a fold: a kept shape the relations
-    /// leave almost no way to meet (a radius kept where two dragged points pin its arc at
-    /// its least, a line kept as long as the least distance to it), or rows with a double
-    /// root (a tangent line through a point at the circle's own radius). There the
-    /// minimum-change step closes only a sliver of what is left each iteration, and the
-    /// solve runs to its cap. With this set, such a shape is met by a Gauss–Newton step of
-    /// its own, and the rows' minimum-change and damping come down as they close; and the
-    /// solve counts as finished only where it then meets everything: every relation, every
-    /// dragged and carried parameter exactly where it was asked to be, and every kept
-    /// shape (see [`FOLD_MET`]). Anything short of that is reported unfinished, with the
-    /// geometry as it was: a result that keeps a shape only by leaving a dragged point
-    /// behind, or that would grow a radius, is never one of these. Off by default: every
-    /// other solve is as it was. (A drag takes these steps only as a last resort, where its
-    /// move can always land: see `Editor::drag`.)
+    /// Finish a solve at a fold: a kept shape the relations leave almost no way to meet (a
+    /// radius kept where two dragged points pin its arc at its least, a line kept as long as
+    /// the least distance to it), or rows with a double root (a tangent line through a point
+    /// at the circle's own radius). With this set, the rows' minimum change comes down as they
+    /// close, the shapes settle only where the most a step could still gain them is below the
+    /// bar squared (never on their projected gradient alone, which vanishes at a fold where a
+    /// shape can still be met), and the solve counts as finished only where it then meets
+    /// everything: every relation, every dragged and carried parameter exactly where it was
+    /// asked to be, and every kept shape (see [`FOLD_MET`]). Anything short of that is
+    /// reported unfinished, with the geometry as it was: a result that keeps a shape only by
+    /// leaving a dragged point behind, or that would grow a radius, is never one of these.
+    /// Off by default. (A drag takes these steps only as a last resort, where its move can
+    /// always land: see `Editor::drag`.)
     pub fold: bool,
     /// The coarsest length bar any component of this solve may be held to: a drag frame's
     /// later solves pass the bar its first solve was held to ([`SolveReport::bar`]), so a
@@ -201,10 +205,10 @@ pub struct SolveReport {
     /// that isn't a number counts) at the values the solve wrote. A failed part always names
     /// a conflict or a broken entity. Sorted.
     ///
-    /// For showing what is off, not for deciding whether an edit stands: in a failed part a
-    /// solve stops at its iteration cap rather than at the compromise, so how far such a row
-    /// is left off is where it stopped (anywhere from round-off to thousands of times its
-    /// tolerance). The editor judges edits by [`exposed`](Self::exposed) alone.
+    /// For showing what is off, not for deciding whether an edit stands: a failed part's solve
+    /// stops at a least-squares compromise, which shares the misfit among the part's rows as
+    /// the rows' scaling has it, so whether a given row ends within its tolerance says little.
+    /// The editor judges edits by [`exposed`](Self::exposed) alone.
     pub broken: Vec<EntityId>,
     /// Nothing was written: a value wasn't a number, or a solve with the fold steps didn't
     /// finish and put the geometry back. [`broken`](Self::broken) and
@@ -602,11 +606,18 @@ const WANDERING_GAIN: f64 = 0.25;
 /// projects the preferences' steps into the rows' null space (see `newton`).
 const MIN_CHANGE: f64 = 1e-10;
 
-/// With [`SolveOptions::fold`]: a kept shape is met once it is off by no more than this
-/// times its own size (an arc's radius, a line's length), or the solver's tolerance where
-/// that is looser. One off by more gets a Gauss–Newton step of its own; the rows' fold
-/// needs every shape met to begin; and a solve with the fold steps finishes only with
-/// every shape met.
+/// How large a second-order correction may be next to the step it corrects (the most any point
+/// moves in each): no larger. A step's correction is its second-order term; one larger than the
+/// step itself says the step went where its linearisation says nothing, and the correction
+/// would only carry it further off. (Transtrum and Sethna bound a Levenberg–Marquardt step's
+/// geodesic acceleration more tightly, at 0.375 of it; that cuts the corrections that swing a
+/// chain of bars held at their lengths round a joint (#349), and the chain crawls again.)
+const CORRECTION_SHARE: f64 = 1.0;
+
+/// A kept shape is met once it is off by no more than this times its own size (an arc's
+/// radius, a line's length), or the solver's tolerance where that is looser: what a solve
+/// with [`SolveOptions::fold`] must meet every shape to, and a drag's kept radius to (see
+/// `newton`).
 pub const FOLD_MET: f64 = 1e-9;
 
 /// Solve the document's constraints in place. Changes go through the document's normal edit
@@ -1762,6 +1773,11 @@ enum Stop {
     NoStep,
 }
 
+fn dbg_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("DBG_NEWTON").is_some())
+}
+
 /// One component's solve, in two stages (PR 3 of the solver audit).
 ///
 /// **The relations first.** While a row is off its bar, each step is Levenberg–Marquardt on
@@ -1782,8 +1798,9 @@ enum Stop {
 /// (`μ·A⁻¹`, with `A = JᵀJ + μ·M⁻¹`: the weighted projection as μ goes to zero, with the
 /// rows `μ` can't move counted as free), and the trial point is projected back onto the rows
 /// by minimum-change chord steps with the same factor, each at least halving what is left,
-/// until they hold. A trial is kept where the rows hold there and the shapes are nearer; the
-/// region grows where the linearisation was good and shrinks where it wasn't. The dragged and
+/// until they hold. A trial is kept where the rows hold there and the shapes are nearer by at
+/// least a quarter of what the step promised; the region grows where the linearisation was
+/// good and shrinks where it wasn't. The dragged and
 /// carried don't take part: they are where the user put them. The solve has settled where the
 /// shapes' projected gradient (in the weighted metric) is below the bar, or the most the step
 /// could gain is below the bar squared, or the region has shrunk below the bar.
@@ -1830,6 +1847,11 @@ fn newton(
     };
 
     let ((mut res, mut jac), mut own) = evaluate_with_own(sys, &comp.rows, values, &col_of);
+    let dbg_start: Vec<f64> = if dbg_on() {
+        values.to_vec()
+    } else {
+        Vec::new()
+    };
     // Normal matrix N = JᵀJ over the unknowns. Its sparsity is fixed for the component (two
     // unknowns interact when an equation uses both), so build the bandwidth-reduced structure
     // once. Working over unknowns rather than equations keeps a widely shared unknown a single
@@ -1903,8 +1925,8 @@ fn newton(
         if max_diag > 0.0 { max_diag } else { 1.0 }
     };
     // (How far a point moves, not a coordinate: the same however the drawing is turned.)
-    let limit = |delta: &mut Vec<f64>| {
-        let biggest = scales
+    let moved = |delta: &[f64]| {
+        scales
             .iter()
             .map(|cols| {
                 cols.iter()
@@ -1913,12 +1935,7 @@ fn newton(
                     .sum::<f64>()
                     .sqrt()
             })
-            .fold(0.0f64, f64::max);
-        if biggest > across {
-            let k = across / biggest;
-            delta.iter_mut().for_each(|d| *d *= k);
-        }
-        biggest.min(across)
+            .fold(0.0f64, f64::max)
     };
     // Inner products of steps as distances, for the preferences' trust region: how far the
     // linearisation can be trusted is a distance, the same for every point whatever rank of
@@ -2030,6 +2047,18 @@ fn newton(
         })
     };
     let finish = |exit: Stop, iteration: usize, converged: bool, wandered: usize, unkept: bool| {
+        if dbg_on() {
+            eprintln!(
+                "END {} it {iteration} n {n} conv {converged} unkept {unkept} wandered {wandered} bar {:.3e}",
+                match exit {
+                    Stop::Settled => "settled",
+                    Stop::Conflict => "conflict",
+                    Stop::Cap => "cap",
+                    Stop::NoStep => "nostep",
+                },
+                bar.length
+            );
+        }
         #[cfg(feature = "exit-counts")]
         exits::record(
             match exit {
@@ -2051,6 +2080,21 @@ fn newton(
         }
     };
     for iteration in 0..MAX_ITERATIONS {
+        if dbg_on() {
+            let moved = comp
+                .unknowns
+                .iter()
+                .enumerate()
+                .filter(|(c, _)| pinned[*c])
+                .map(|(_, g)| (values[*g] - dbg_start[*g]).abs())
+                .fold(0.0f64, f64::max);
+            let free = comp
+                .unknowns
+                .iter()
+                .map(|g| (values[*g] - dbg_start[*g]).abs())
+                .fold(0.0f64, f64::max);
+            eprintln!("  IT {iteration} pinned moved {moved:.3e} any moved {free:.3e}");
+        }
         if !res.iter().all(|f| f.is_finite()) || !jac.iter().flatten().all(|(_, g)| g.is_finite()) {
             return finish(Stop::NoStep, iteration, false, wandered, false);
         }
@@ -2278,6 +2322,12 @@ fn newton(
                 );
             }
             let stepped = distance(&x, &x).sqrt();
+            if dbg_on() {
+                eprintln!(
+                    "S2 it {iteration} n {n} phi {phi_now:.6e} rv {rv:.3e} promised {promised:.3e} stepped {stepped:.6e} radius {radius:.3e} bar {:.3e}",
+                    bar.length
+                );
+            }
             // The trial, back onto the rows: minimum-change Newton steps (the weighted
             // least-change step as μ goes to zero), each at least halving what the rows are
             // off by, until they hold.
@@ -2286,21 +2336,32 @@ fn newton(
                 trial[*g] += x[c];
             }
             let landed = reproject(&mut trial, &on_the_rows, &pinned, &mut back_normal);
+            // (Brought back by no more than a share of the step: farther, the step went where
+            // the rows' tangent says nothing about them.)
+            let back: Vec<f64> = comp
+                .unknowns
+                .iter()
+                .enumerate()
+                .map(|(c, g)| trial[*g] - values[*g] - x[c])
+                .collect();
+            let landed = landed.filter(|_| moved(&back) <= CORRECTION_SHARE * moved(&x));
             let kept = landed.and_then(|evaluated| {
                 let terms: Vec<f64> = shapes
                     .iter()
                     .filter_map(|shape| Some(shape.offset(|p| trial[sys.group_of[p]])?.1))
                     .collect();
-                let gained = phi_now - phi(&terms);
-                (gained > 0.0).then_some((evaluated, gained))
+                // (Kept where it delivered at least a quarter of what it promised, the
+                // region's own test: a step that gains a sliver of what its linearisation
+                // promised went somewhere the linearisation says nothing about, and taken, it
+                // would slide geometry along a direction the shapes hardly feel, as far as
+                // round-off had it go.)
+                let gain = (phi_now - phi(&terms)) / promised;
+                (gain >= 0.25).then_some((evaluated, gain))
             });
             match kept {
-                Some((((trial_res, trial_jac), trial_own), gained)) => {
-                    let gain = gained / promised;
+                Some((((trial_res, trial_jac), trial_own), gain)) => {
                     if gain > 0.75 && stepped >= 0.99 * radius {
                         radius = (2.0 * radius).min(across);
-                    } else if gain < 0.25 {
-                        radius = stepped / 4.0;
                     }
                     values.copy_from_slice(&trial);
                     res = trial_res;
@@ -2375,14 +2436,20 @@ fn newton(
             refuse(&mut lambda, &mut nu);
             continue;
         };
-        let mut delta = factor.solve_refined(&rhs);
-        // Limit the step so a single iteration can't fling geometry onto another branch: no
-        // further than the drawing is across. (Not the spread of this component's own
-        // unknowns: a lone unknown, such as the free end of a dimension from a fixed point,
-        // has none, and would crawl a millimetre at a time.) A step cut short is one its
-        // linearisation got badly wrong too.
-        if limit(&mut delta) >= across {
+        let delta = factor.solve_refined(&rhs);
+        // The trust region's outer bound: a single iteration can't fling geometry onto another
+        // branch, no further than the drawing is across. (Not the spread of this component's
+        // own unknowns: a lone unknown, such as the free end of a dimension from a fixed
+        // point, has none, and would crawl a millimetre at a time.) A step that goes farther
+        // is refused like one that does worse, and the damping rises until one fits: the step
+        // the region allows is the damped step of its size, which gives up the directions the
+        // rows barely move first, not the long step cut short along its own way, which goes
+        // mostly along them, and walked a part across the drawing to another branch frame
+        // after frame (census case 2432). It is one its linearisation got badly wrong too.
+        if moved(&delta) > across {
             wandered += 1;
+            refuse(&mut lambda, &mut nu);
+            continue;
         }
         let mut trial = values.to_vec();
         for (c, g) in comp.unknowns.iter().enumerate() {
@@ -2392,13 +2459,17 @@ fn newton(
             evaluate_with_own(sys, &comp.rows, &trial, &col_of);
         // (Judged in the step's own scaling of the rows.)
         let mut after = scaled_norm2(&trial_res, &row_scale);
+        // (What the step did by itself: whether it wandered is its linearisation's own say,
+        // corrected or not.)
+        let plain = after;
         // Then onto where its linearisation promised to take the rows: the linearisation is a
         // tangent, so a step that turns geometry (a chain of bars held at their lengths, swung
         // about a joint) leaves every length it turns off at second order, and judged so, the
         // damping would answer with ever smaller steps (#349). Newton's steps from there to
         // the values the step promised take that second order out, so that the step follows
         // the rows round and is judged by what it does to the rows that are off (a second-order
-        // correction). Where they don't close in, the step as it was.
+        // correction). Where they don't close in, or the correction is more than a share of the
+        // step ([`CORRECTION_SHARE`]), the step as it was.
         {
             let promise: Vec<f64> = res
                 .iter()
@@ -2407,7 +2478,14 @@ fn newton(
                 .collect();
             let mut corrected = trial.clone();
             let got = reproject(&mut corrected, &promise, &no_column, &mut back_normal);
-            if let Some(((res2, jac2), own2)) = got {
+            let correction: Vec<f64> = comp
+                .unknowns
+                .iter()
+                .map(|g| corrected[*g] - trial[*g])
+                .collect();
+            if let Some(((res2, jac2), own2)) = got
+                && moved(&correction) <= CORRECTION_SHARE * moved(&delta)
+            {
                 let after2 = scaled_norm2(&res2, &row_scale);
                 if after2 < after
                     || (converged(&res2, &corrected) && !converged(&trial_res, &trial))
@@ -2424,6 +2502,15 @@ fn newton(
             .sum::<f64>();
         let promised = before - model;
         let lands = converged(&trial_res, &trial);
+        if dbg_on() {
+            eprintln!(
+                "S1 it {iteration} n {n} res {:.6e} after {:.6e} model {:.3e} lam {:.3e}",
+                before.sqrt(),
+                after.sqrt(),
+                model.max(0.0).sqrt(),
+                lambda
+            );
+        }
         if after < before || lands {
             // How much of the drop the linearisation promised the step delivered.
             let gain = if promised > 0.0 {
@@ -2431,7 +2518,15 @@ fn newton(
             } else {
                 1.0
             };
-            if gain < WANDERING_GAIN {
+            // (Judged by the step alone: a correction that rescues a step its linearisation
+            // got badly wrong still leaves a solve that went round a fold between solutions,
+            // where a drag should go in smaller steps.)
+            let plain_gain = if promised > 0.0 {
+                (before - plain) / promised
+            } else {
+                1.0
+            };
+            if plain_gain < WANDERING_GAIN {
                 wandered += 1;
             }
             if fold && dragging && soft_terms.iter().all(|(_, off)| off.abs() <= bar.length) {

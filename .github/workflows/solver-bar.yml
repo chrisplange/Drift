@@ -73,7 +73,8 @@ jobs:
             sed -E 's/^test drag_props::seeds::(.*) \.\.\. (.*)$/- `\1`: \2/' target/solver-bar/pins-lines.txt
           } | tee -a "$GITHUB_STEP_SUMMARY"
           ran=$(wc -l < target/solver-bar/pins-lines.txt)
-          pins=$(grep -c '#\[ignore = "#280' crates/drift-edit/src/drag_props/seeds.rs)
+          # (`grep -c` exits 1 on no match: with every pin un-ignored there are none.)
+          pins=$(grep -c '#\[ignore = "#280' crates/drift-edit/src/drag_props/seeds.rs || true)
           if [ "$ran" -lt "$pins" ]; then
             echo "::error::only $ran of the $pins pins ran"
             tail -50 target/solver-bar/pins.txt

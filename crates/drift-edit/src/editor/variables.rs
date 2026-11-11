@@ -50,7 +50,7 @@ impl Editor {
         degenerate_before: &[EntityId],
     ) -> Result<(), EditError> {
         let result = self.apply_parameters().and_then(|()| {
-            let report = self.solve(&[]);
+            let report = self.solve_commit();
             if self.new_conflicts(&report) {
                 Err(EditError::Conflict)
             } else if self.new_degeneracy(degenerate_before) {
@@ -174,13 +174,13 @@ impl Editor {
         let literal = self.doc.units().literal(var.kind, value);
         let _ = self.doc.set_variable_expr(id, &literal);
         let ok = self.apply_parameters().is_ok() && {
-            let report = self.solve(&[]);
+            let report = self.solve_commit();
             !self.new_conflicts(&report) && !self.new_degeneracy(&degenerate_before)
         };
         if !ok {
             let _ = self.doc.set_variable_expr(id, &previous);
             let _ = self.apply_parameters();
-            self.solve(&[]);
+            self.solve_commit();
         }
         self.index.update(&self.doc);
         self.evaluation = params::evaluate(&self.doc);
@@ -376,7 +376,7 @@ impl Editor {
             let _ = copy.doc.set_variable_expr(*var, expr);
         }
         copy.apply_parameters().ok()?;
-        let report = copy.solve(&[]);
+        let report = copy.solve_commit();
         report.converged.then(|| curves(&copy.doc))
     }
 }

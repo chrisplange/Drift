@@ -24,6 +24,8 @@ mod filter;
 #[cfg(test)]
 mod hidden_points_tests;
 mod items;
+#[cfg(test)]
+mod kept_shapes_tests;
 mod layers;
 mod options;
 mod outbox;
@@ -411,7 +413,7 @@ impl Editor {
         // older build edited it.
         editor.doc.begin();
         if editor.apply_parameters().is_ok() {
-            editor.solve(&[]);
+            editor.solve_commit();
         }
         let repaired = editor.repair_walls();
         let offsets_repaired = editor.repair_offsets();

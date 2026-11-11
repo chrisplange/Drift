@@ -129,6 +129,16 @@ pub struct SolveOptions {
     /// it. Where the relations change a length anyway, the preference is let go. Ignored for
     /// lines with a dragged end: dragging an end reshapes its line.
     pub lengths: HashMap<EntityId, f64>,
+    /// What each of [`lengths`](Self::lengths) weighs against the other kept shapes where they
+    /// can't all be met (1 where absent: as much as a radius or a direction). An edit ranks a
+    /// line's length below its direction, and the lengths of what a new relation names lower
+    /// still (see `Editor::kept_shapes`); a drag ranks none.
+    pub length_ranks: HashMap<EntityId, f64>,
+    /// Keep shapes as a relation's solve did before the audit's PR 6: a direction's offset as
+    /// `l·sin θ` (met by a line turned end for end, and smaller for a shorter line), and an
+    /// edit's preference steps not bounded together. Only for an edit that keeping shapes
+    /// would refuse, solved again as before (see `Editor::check_new_constraints`).
+    pub shapes_as_before: bool,
     /// Relations read in the form they are lowered to (see [`Lowering`]).
     pub lowering: Option<std::rc::Rc<Lowering>>,
     /// The relations to solve, when the caller has them already: those of
@@ -694,10 +704,18 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
             let ends = [Param::X(a), Param::Y(a), Param::X(b), Param::Y(b)]
                 .map(|p| sys.param_index.get(&p).copied());
             if let [Some(ax), Some(ay), Some(bx), Some(by)] = ends {
-                sys.keep.push(Shape::Direction([ax, ay, bx, by], u));
+                let length =
+                    Shape::length(&[ax, ay, bx, by], |p| sys.groups[sys.group_of[p]].value);
+                sys.keep.push(Shape::Direction(
+                    [ax, ay, bx, by],
+                    u,
+                    (!options.shapes_as_before).then_some(length),
+                ));
             }
         }
     }
+    sys.keep_rank = vec![1.0; sys.keep.len()];
+    sys.shapes_as_before = options.shapes_as_before;
     let mut lengths: Vec<_> = options.lengths.iter().collect();
     lengths.sort_unstable_by_key(|(id, _)| **id);
     for (&line, &length) in lengths {
@@ -709,6 +727,8 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
                 .map(|p| sys.param_index.get(&p).copied());
             if let [Some(ax), Some(ay), Some(bx), Some(by)] = ends {
                 sys.keep.push(Shape::Distance([ax, ay, bx, by], length));
+                sys.keep_rank
+                    .push(options.length_ranks.get(&line).copied().unwrap_or(1.0));
             }
         }
     }
@@ -1928,6 +1948,22 @@ fn newton(
     // The shapes kept (see below) couple their parameters too.
     // (And which of them are arcs' radii: see the second stage's stop.)
     let is_radius: Vec<bool> = shapes.iter().map(|&s| s < sys.radii_kept).collect();
+    // What each shape weighs in the second stage, where they can't all be met
+    // (`System::keep_rank`: 1 but where the caller ranks a length lower), as a multiple of the
+    // lightest here: the stage's stops read the shapes' offsets as lengths against the bar,
+    // and the lightest are met to it like any (weighed below 1, a shape's projected gradient
+    // would fall below the bar while it was still off by the bar over its weight).
+    let ranks: Vec<f64> = shapes
+        .iter()
+        .map(|&s| sys.keep_rank.get(s).copied().unwrap_or(1.0))
+        .collect();
+    let shape_weights: Vec<f64> = {
+        let lightest = ranks.iter().copied().fold(f64::INFINITY, f64::min);
+        ranks
+            .iter()
+            .map(|r| if lightest < 1.0 { r / lightest } else { *r })
+            .collect()
+    };
     let shapes: Vec<&Shape> = shapes.iter().map(|&s| &sys.keep[s]).collect();
     for shape in &shapes {
         let cols: Vec<usize> = shape
@@ -2089,6 +2125,10 @@ fn newton(
     // (Where the solve began: in a drag, its steps together move no point farther from it than
     // the drawing is across; see the first stage.)
     let entry: Vec<f64> = comp.unknowns.iter().map(|g| values[*g]).collect();
+    // (Where the second stage began: in an edit, the preferences' steps together move no
+    // point farther from it than the drawing is across. The first stage's aren't bounded so:
+    // a dimension typed ten times longer rightly moves geometry far.)
+    let mut preferences_entry: Option<Vec<f64>> = None;
     // Which kept radii the free geometry can change (found where the second stage begins):
     // more than √μ of a radius's gradient, squared in the weighted metric, is left in the rows'
     // null space. (The projection `μ·A⁻¹` leaves μ/σ² of a direction the rows move with
@@ -2160,9 +2200,12 @@ fn newton(
                     off.abs() <= met_within(shape.params(), value, bar.get().length)
                 })
         });
-        let soft_terms: Vec<(Vec<(usize, f64)>, f64)> = shapes
+        // (With each one's weight in the second stage, as its square root (see
+        // `shape_weights`), and its rank in the first.)
+        let (soft_terms, soft_roots): (Vec<(Vec<(usize, f64)>, f64)>, Vec<(f64, f64)>) = shapes
             .iter()
-            .filter_map(|shape| {
+            .zip(shape_weights.iter().zip(&ranks))
+            .filter_map(|(shape, (w, rank))| {
                 let (gradient, off) = shape.offset(value)?;
                 let mut grad: Vec<(usize, f64)> = Vec::with_capacity(4);
                 for (p, g) in shape.params().iter().zip(gradient) {
@@ -2173,9 +2216,9 @@ fn newton(
                         }
                     }
                 }
-                Some((grad, off))
+                Some(((grad, off), (w.sqrt(), *rank)))
             })
-            .collect();
+            .unzip();
         // N = JᵀJ and the right-hand side −JᵀF, with every row scaled to a unit gradient: an
         // angle's residual is a sine and its gradient goes as one over the lines' lengths,
         // a distance's residual is a length and its gradient a unit vector, so unscaled the
@@ -2202,6 +2245,20 @@ fn newton(
                     unkept(&free_radius, values),
                 );
             }
+            if preferences_entry.is_none() {
+                preferences_entry = Some(comp.unknowns.iter().map(|g| values[*g]).collect());
+            }
+            // The shapes as this stage weighs them (see `shape_weights`).
+            let soft_terms: Vec<(Vec<(usize, f64)>, f64)> = soft_terms
+                .iter()
+                .zip(&soft_roots)
+                .map(|((grad, off), &(root, _))| {
+                    (
+                        grad.iter().map(|&(c, g)| (c, root * g)).collect(),
+                        root * off,
+                    )
+                })
+                .collect();
             // A = JᵀJ + μ·M⁻¹ over the columns that take part (the dragged and carried as
             // the identity, apart from the rest).
             normal.clear();
@@ -2430,11 +2487,36 @@ fn newton(
                 .zip(&entry)
                 .map(|(g, e)| trial[*g] - e)
                 .collect();
-            let landed = landed.filter(|_| !dragging || fold || moved(&from_entry) <= across);
+            let from_preferences: Vec<f64> = comp
+                .unknowns
+                .iter()
+                .zip(
+                    preferences_entry
+                        .get_or_insert_with(|| entry.clone())
+                        .iter(),
+                )
+                .map(|(g, e)| trial[*g] - e)
+                .collect();
+            let landed = landed.filter(|_| {
+                if dragging {
+                    fold || moved(&from_entry) <= across
+                } else if sys.shapes_as_before {
+                    true
+                } else {
+                    // (In an edit, from where the preferences' stage began: a preference never
+                    // carries geometry farther than the drawing is across, as a line kept
+                    // square would be, stretched along itself to meet a line it nearly
+                    // parallels.)
+                    moved(&from_preferences) <= across
+                }
+            });
             let kept = landed.and_then(|evaluated| {
                 let terms: Vec<f64> = shapes
                     .iter()
-                    .filter_map(|shape| Some(shape.offset(|p| trial[sys.group_of[p]])?.1))
+                    .zip(&shape_weights)
+                    .filter_map(|(shape, w)| {
+                        Some(w.sqrt() * shape.offset(|p| trial[sys.group_of[p]])?.1)
+                    })
                     .collect();
                 // (Kept where it delivered at least a quarter of what it promised, the
                 // region's own test: a step that gains a sliver of what its linearisation
@@ -2489,12 +2571,13 @@ fn newton(
         // rest of the sketch, where a relation's focus takes up the change, is kept against
         // moving the rest, not against moving the focus: #349's chain, whose bars would
         // otherwise turn rather than move). In the metric only: the second stage meets them.
-        for (grad, _) in &soft_terms {
+        for ((grad, _), &(_, rank)) in soft_terms.iter().zip(&soft_roots) {
             let own = grad
                 .iter()
                 .map(|&(c, _)| 1.0 / mobility[c])
                 .fold(f64::INFINITY, f64::min);
-            let own = if own.is_finite() { own } else { 1.0 };
+            // (A shape a caller ranks lower is kept that much less: see `SolveOptions::length_ranks`.)
+            let own = rank * if own.is_finite() { own } else { 1.0 };
             for (i, &(c1, g1)) in grad.iter().enumerate() {
                 for &(c2, g2) in &grad[..=i] {
                     normal.add_product(c1, c2, mu * KEEP_SHAPE * own * g1, g2);

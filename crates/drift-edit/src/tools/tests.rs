@@ -943,7 +943,9 @@ fn midpoints_can_be_hovered_picked_and_constrained() {
         unreachable!()
     };
     let mid = (ed.doc.point(a).unwrap() + ed.doc.point(b).unwrap()) * 0.5;
-    assert!((ed.doc.point(c).unwrap() - mid).length() < 1e-9);
+    // (To the solver's bar, 1e-9 of a quarter of the part's size, some 30 mm here: where the
+    // solve keeps the lines' shapes it stops there.)
+    assert!((ed.doc.point(c).unwrap() - mid).length() < 1e-9 * 30.0 / 4.0);
     // Esc clears both kinds of selection.
     assert!(sel.cancel(&mut ed));
     assert!(ed.selection.is_empty() && ed.selected_midpoints.is_empty());

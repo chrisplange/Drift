@@ -2086,6 +2086,9 @@ fn newton(
     // The preferences' trust region, as a distance: never wider than the drawing, so one
     // step can't fling geometry across it.
     let mut radius = across;
+    // (Where the solve began: in a drag, its steps together move no point farther from it than
+    // the drawing is across; see the first stage.)
+    let entry: Vec<f64> = comp.unknowns.iter().map(|g| values[*g]).collect();
     // Which kept radii the free geometry can change (found where the second stage begins):
     // more than √μ of a radius's gradient, squared in the weighted metric, is left in the rows'
     // null space. (The projection `μ·A⁻¹` leaves μ/σ² of a direction the rows move with
@@ -2415,6 +2418,19 @@ fn newton(
                 .map(|(c, g)| trial[*g] - values[*g] - x[c])
                 .collect();
             let landed = landed.filter(|_| moved(&back) <= CORRECTION_SHARE * moved(&x));
+            // The region's outer bound holds for the preferences' steps together, not only each
+            // one: each is no wider than the drawing, but many of them could walk a point a
+            // shape barely feels as far as the shape keeps gaining (a direction met by sliding an
+            // end along a line it nearly parallels), and the next solve, measuring the drawing
+            // with that point in it, would let it go farther still (`flung_centre`: kilometres
+            // out on a 20 mm sketch, for one ulp of offset).
+            let from_entry: Vec<f64> = comp
+                .unknowns
+                .iter()
+                .zip(&entry)
+                .map(|(g, e)| trial[*g] - e)
+                .collect();
+            let landed = landed.filter(|_| !dragging || fold || moved(&from_entry) <= across);
             let kept = landed.and_then(|evaluated| {
                 let terms: Vec<f64> = shapes
                     .iter()
@@ -2519,7 +2535,20 @@ fn newton(
         // rows barely move first, not the long step cut short along its own way, which goes
         // mostly along them, and walked a part across the drawing to another branch frame
         // after frame (census case 2432). It is one its linearisation got badly wrong too.
-        if moved(&delta) > across {
+        // (And in a drag, no point farther from where the solve began than that, all its steps
+        // together: a step each no wider than the drawing could still walk a part across it to
+        // another branch, and the next solve, measuring the drawing with it there, go farther
+        // still: `flung_centre`, 21 of 39 one-ulp nudges of its offset thrown 6 to 23 m out
+        // on a 20 mm sketch. A drag's solve begins with its targets in place, so its own way
+        // to them is short; a commit's may rightly go far, a dimension typed ten times longer.)
+        let from_entry: Vec<f64> = comp
+            .unknowns
+            .iter()
+            .zip(&entry)
+            .enumerate()
+            .map(|(c, (g, e))| values[*g] + delta[c] - e)
+            .collect();
+        if moved(&delta) > across || (dragging && !fold && moved(&from_entry) > across) {
             wandered += 1;
             refuse(&mut lambda, &mut nu, fold_scale);
             continue;

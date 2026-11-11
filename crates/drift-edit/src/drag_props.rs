@@ -2914,10 +2914,41 @@ fn move_with_folds(
     out
 }
 
+/// The binding rule on f3's move (#281, #282): the two lines held on its arc, whose far end is
+/// fixed, can only go on by growing the arc through its fixed end, so the drag stops at its
+/// last valid shape, the arc's radius as it was. (PR 3's first build let it go, the arc growing:
+/// its solve finished where it used to crawl to the cap, and only that had stopped it.)
+#[test]
+fn f3s_move_stops_rather_than_grow_its_arc() {
+    let (sketch, offset) = never_finishes();
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let ids = [built.curves[1], built.curves[4]];
+    let arc = built.curves[0];
+    let was = drift_solver::radius_of(&built.ed.doc, arc).unwrap();
+    let start = built.positions();
+    let run = drag(&mut built, &ids, offset, 1).unwrap();
+    assert_eq!((run.refused, built.positions()), (1, start));
+    assert_eq!(drift_solver::radius_of(&built.ed.doc, arc), Some(was));
+    // (And in steps: none that goes grows it.)
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let ids = [built.curves[1], built.curves[4]];
+    let dragged = dragged_by(&built.ed, &ids);
+    built.ed.doc.begin();
+    let mut applied = DVec2::ZERO;
+    for k in 1..=16 {
+        let to = offset * f64::from(k) / 16.0;
+        if built.ed.drag(&ids, to - applied, &dragged) {
+            applied = to;
+        }
+        let r = drift_solver::radius_of(&built.ed.doc, arc).unwrap();
+        assert!(r <= was + 1e-6, "step {k}: radius {was} -> {r}");
+    }
+    built.ed.doc.rollback();
+}
+
 /// #282: a pinned part is never tried with the fold steps: f3's sketch with its arc's far
-/// end fixed tries them not once. (Its move was refused before PR 3, its solve never
-/// finishing; it lands now, the arc through its fixed end and the two dragged points as the
-/// drag dictates.)
+/// end fixed tries them not once (its move is refused: it would grow the arc; see
+/// `f3s_move_stops_rather_than_grow_its_arc`).
 #[test]
 fn a_pinned_part_is_never_tried_with_the_fold_steps() {
     let (sketch, offset) = never_finishes();

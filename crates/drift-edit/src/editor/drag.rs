@@ -532,6 +532,22 @@ impl Editor {
             // it would make where the drag is depend on the way there.)
             ok = self.drag_from_start(&mut frame, to, &part.start)
                 && !self.breaks_held_shape(part, to, frame.bar);
+            // A move of curves in a part nothing pins is never a stop: moving the whole part
+            // along lands every dragged point exactly, meets every relation (none of them holds
+            // the part where it is) and keeps every shape. Where the solve couldn't find a way
+            // (it lands where the least change leads, and from there the kept shapes' stage
+            // can stall at a fold of the rows short of the whole move), that is the frame.
+            if !ok && part.unpinned && !self.drag_no_carry {
+                self.restore_geometry(&part.start);
+                let moved: std::collections::BTreeSet<EntityId> =
+                    part.start.points.iter().map(|&(id, _)| id).collect();
+                for &(id, at) in &part.start.points {
+                    let _ = self.doc.set_point(id, at + to);
+                }
+                self.doc.normalize_arcs_using(&moved);
+                frame.pushed = true;
+                ok = true;
+            }
             self.drag_solves += 2 * DRAG_SOLVES + length_left.0
                 - frame.solves_left
                 - frame.fold_solves_left
@@ -1077,8 +1093,9 @@ impl Editor {
         self.find_held_shapes(part, &locked, &made);
     }
 
-    /// Whether `part`, moved by `offset` from where the drag found it, didn't land and broke a
-    /// shape the drag doesn't move: changed the radius of a held arc or circle by more than
+    /// Whether `part`, moved by `offset` from where the drag found it, grew an arc it doesn't
+    /// move (landed or not), or didn't land and broke a shape the drag doesn't move: changed the
+    /// radius of a held arc or circle by more than
     /// [`SHAPE_HOLD`] times the offset, shortened a held line by more than half [`LINE_HOLD`]
     /// times the offset while moving an end of it more than that times it, or left a held line
     /// at [`COLLAPSED_LINE`] of its length. A frame [`drag`](Self::drag) refuses, so the drag
@@ -1108,6 +1125,24 @@ impl Editor {
                     off.length() <= drift_solver::landed_within(bar, to)
                 })
             });
+        // An arc the drag doesn't move never grows, landed or not: the binding rule (a drag
+        // whose radii can't follow stops at the last valid shape, and radii are never grown).
+        // Since PR 3 a solve that can only land by growing one finishes (f3's move, #281, used
+        // to crawl to the cap and be refused for not finishing), so it is stopped here. Grown
+        // means by more than a solve meets a kept shape to: the bar, or `FOLD_MET` of it.
+        let grew = part.held_radii.iter().any(|&(id, was)| {
+            matches!(
+                self.doc.get(id).map(|e| e.kind),
+                Some(EntityKind::Arc { .. })
+            ) && drift_solver::radius_of(&self.doc, id).is_some_and(|r| {
+                r - was
+                    > (drift_solver::FOLD_MET * was)
+                        .max(drift_solver::landed_within(bar, DVec2::splat(was)))
+            })
+        });
+        if grew {
+            return true;
+        }
         if landed {
             return false;
         }

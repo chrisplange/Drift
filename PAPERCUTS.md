@@ -8,6 +8,7 @@ Areas: canvas, panel, tool, menu, file, other. Status: `open`, `batched #NNN`, `
 
 | Date | Area | Papercut | Status |
 |---|---|---|---|
+| 2026-11-11 | menu | Export has a separate button per format; tidy all export options into menus | open |
 | 2026-11-11 | panel | Text overflows its space in various parts of the UI (places to collect when batched) | open |
 | 2026-11-11 | tool | G (move) should work like CAD: pick a base point first, then the destination, so the geometry doesn't jump to whatever it snaps to; make it a preference | open |
 | 2026-11-11 | canvas | A dimension can't be picked by clicking its extension (witness) lines | open |

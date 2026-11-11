@@ -27,3 +27,4 @@ One line per decision, approval or merge, newest last. Format: `YYYY-MM-DD | wha
 2026-11-11 | Solver PR 3 (#394) merged by the user without the separate Opus/Fable reviews; held arcs never grow in a drag; tangent_and_parallel un-ignored; #349 and #280 closed (all seven #280 pins pass) | user
 2026-11-11 | "Stop the drag" reaffirmed: PR 3 (#394) brought back a whole-part rigid slide when a drag frame fails (rejected 2026-11-03); it is being removed (main-fix) | user
 2026-11-11 | Circles are held like arcs: "radii are never grown" covers circle radii too (main-fix) | user
+2026-11-11 | Dragging a point held on a fixed-centre circle outward past its radius stops the drag, the same as arcs; no circle exemption (confirms gated PR #398) | user

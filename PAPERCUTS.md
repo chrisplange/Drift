@@ -9,7 +9,7 @@ Areas: canvas, panel, tool, menu, file, other. Status: `open`, `batched #NNN`, `
 | Date | Area | Papercut | Status |
 |---|---|---|---|
 | 2026-11-11 | other | A sheet view can't be duplicated together with its drawing entities and annotations in one operation | open |
-| 2026-11-11 | panel | Layer 0 is a DWG/DXF requirement that shows in every drawing; hide it by default, show it only on imported documents that need it, and write an empty layer 0 into every DWG/DXF export | open |
+| 2026-11-11 | panel | Layer 0 is a DWG/DXF requirement that shows in every drawing. New files must never show a layer 0, and a file without one must still open; layer 0 appears only on an imported document or a drawing that already has one. Every DWG/DXF export writes an empty layer 0 | open |
 | 2026-11-11 | menu | Hatches are slow to reach and change; a right-click or fly-out menu to switch a fill's hatch quickly would help | open |
 | 2026-11-11 | tool | There's no way to pick one entity out of several overlapping ones (e.g. click again to cycle, or a pick list) | open |
 | 2026-11-11 | panel | The right-side panels need a whole UX/UI review | open |

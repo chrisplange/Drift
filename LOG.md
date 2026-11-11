@@ -25,3 +25,5 @@ One line per decision, approval or merge, newest last. Format: `YYYY-MM-DD | wha
 2026-11-11 | Solver PR 2 (#391) merged; tangent_and_parallel stays ignored, owned by PR 3 | user
 2026-11-11 | Solver PR 3 (#394) sent back before review: fix the arc growing in f3's drag (binding rule), free-move refusals (seeds 6, 17) and the arc-ends slide. Accepted as is: cap at 0.63 % (fix in parked PR 5), #351 left open (measured ~0.3 s on main and PR 3), active element held while a chain bends (#333) | user in chat
 2026-11-11 | Solver PR 3 (#394) merged by the user without the separate Opus/Fable reviews; held arcs never grow in a drag; tangent_and_parallel un-ignored; #349 and #280 closed (all seven #280 pins pass) | user
+2026-11-11 | "Stop the drag" reaffirmed: PR 3 (#394) brought back a whole-part rigid slide when a drag frame fails (rejected 2026-11-03); it is being removed (main-fix) | user
+2026-11-11 | Circles are held like arcs: "radii are never grown" covers circle radii too (main-fix) | user

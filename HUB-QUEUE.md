@@ -16,6 +16,7 @@ Last updated 2026-11-11.
 
 | ID | Issue | Task | Done when | Files | Tier | Status | PR | Session |
 |---|---|---|---|---|---|---|---|---|
+| H-8 | — | Main green again, plus two drag rules: Linux `held_shapes::a_drag_that_cant_land_doesnt_crush_a_line_it_doesnt_move` and Windows `regions_props` fixed; PR 3's whole-part rigid slide on a failed frame removed ("stop the drag"); circle radii never grown | ubuntu, macOS and Windows CI green on main; a failed drag frame stops, nothing slides; a test shows a held circle's radius never grows in a drag | `crates/drift-solver/`, `crates/drift-edit/` drag code and `drag_props/`, `crates/drift-geom/tests/regions_props.rs` | gated | running (first: red main stops everything) | | main-fix |
 | H-7 | #350, #284 (commit side) | Solver redesign PR 6: commits keep shapes | Commits keep line lengths and directions and arc radii where the relations leave room, ranked below relations and named geometry; before/after on the relation-adding census (#333's corpus) in the PR | `crates/drift-solver/`, `crates/drift-edit/` editor `solve.rs` and its tests | gated | running | | solver-pr6 |
 
 Solver scope is PRs 2, 3 and 6 only; 2 and 3 are merged. PR 1 (#352), PR 4 (#344) and PR 5 (#362) are parked as `later`. After PR 6, work returns to the usability and bug batches; batch-1 waits on its Done when lines from the planning chat.

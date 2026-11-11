@@ -8,6 +8,7 @@ Areas: canvas, panel, tool, menu, file, other. Status: `open`, `batched #NNN`, `
 
 | Date | Area | Papercut | Status |
 |---|---|---|---|
+| 2026-11-11 | canvas | In the sheet view you can't add or edit annotations in sheet space; the user needs this badly (see #369 for note positions) | open |
 | 2026-11-10 | tool | Shift+D with no pointer on the canvas, or on a locked layer, isn't handled well (follow-up to #264) | open |
 | 2026-11-06 | panel | The print-size hint doesn't offer the scale the drawing's sheet views share | batched #367 |
 | 2026-11-03 | canvas | Fill edges look jagged when the fill has no outline | batched #326 |

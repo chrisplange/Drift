@@ -8,6 +8,7 @@ Areas: canvas, panel, tool, menu, file, other. Status: `open`, `batched #NNN`, `
 
 | Date | Area | Papercut | Status |
 |---|---|---|---|
+| 2026-11-11 | tool | G (move) should work like CAD: pick a base point first, then the destination, so the geometry doesn't jump to whatever it snaps to; make it a preference | open |
 | 2026-11-11 | canvas | A dimension can't be picked by clicking its extension (witness) lines | open |
 | 2026-11-11 | tool | Relations are inconsistent about saying they can't be applied: in some cases they refuse, in similar ones they don't (cases to collect when batched; may overlap #349) | open |
 | 2026-11-11 | other | A sheet view can't be duplicated together with its drawing entities and annotations in one operation | open |

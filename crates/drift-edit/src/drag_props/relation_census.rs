@@ -9,7 +9,10 @@
 //!
 //! `CENSUS_N` cases (default 4,000), drawn with their own seed, so the drag censuses' case
 //! numbers stay as they are. `CENSUS_CASE` runs that case alone and prints the drawing before
-//! and after. Each line: `R <case> <kind> <active> <result>`, then (where the
+//! and after; `CENSUS_POS` adds a `P <case>` line of every point's position, to compare two
+//! builds point by point. An `S <case>` line lists the edit's second-stage endings where one
+//! stopped with the shapes' projected gradient still above the bar, or at the cap, and
+//! `S2 TOTAL` sums them (`drift_solver::exits::STAGE2`: the PR 3 review's items 1 and 2). Each line: `R <case> <kind> <active> <result>`, then (where the
 //! relation was added) `mv` how far the farthest point moved, `pts` how many points moved, and
 //! for the lines and the arcs, apart for the geometry the relation names (`n…`: a line counts
 //! if it or one of its ends is named) and the rest
@@ -247,6 +250,7 @@ fn relation_census() {
         TestRng::from_seed(RngAlgorithm::ChaCha, &[33u8; 32]),
     );
     let strategy = (plan(true), add(), any::<u64>(), any::<bool>());
+    let mut total = drift_solver::exits::Stage2Counts::default();
     for case in 0..n {
         let (plan, add, seed, active) = strategy.new_tree(&mut runner).unwrap().current();
         let only: Option<usize> = std::env::var("CENSUS_CASE")
@@ -302,6 +306,7 @@ fn relation_census() {
             }
         };
         show(ed, &format!("before {c:?}, picks {picks:?}"));
+        let _ = drift_solver::exits::take_stage2();
         let result = if let Add::Retype(f) = add {
             // The sketch's own length dimension, or one added at the line's length (moving
             // nothing), then typed.
@@ -329,6 +334,20 @@ fn relation_census() {
             ed.add_picked_constraints(c.type_name(), &[c])
         };
         show(ed, "after");
+        // How the edit's solves' second stages ended: a stall (stopped with the shapes'
+        // projected gradient above the bar) or a cap is printed, case by case.
+        let s2 = drift_solver::exits::take_stage2();
+        for k in 0..7 {
+            total.other[k] += s2.other[k];
+            total.other_stalled[k] += s2.other_stalled[k];
+        }
+        let stalled: u64 = s2.other_stalled.iter().sum();
+        if stalled > 0 || s2.other[6] > 0 {
+            println!(
+                "S {case} {kind} {act} stalled {stalled} cap {} ends {:?} stalls {:?}",
+                s2.other[6], s2.other, s2.other_stalled
+            );
+        }
         let result = match result {
             Ok(_) => "ok".to_owned(),
             Err(e) => format!("{e:?}")
@@ -351,6 +370,16 @@ fn relation_census() {
             }
         }
         let (lines1, arcs1) = shapes(ed);
+        if std::env::var_os("CENSUS_POS").is_some() {
+            let pos: Vec<String> = start_points
+                .iter()
+                .map(|(id, _)| {
+                    let p = ed.doc.point(*id).unwrap();
+                    format!("{:.9},{:.9}", p.x, p.y)
+                })
+                .collect();
+            println!("P {case} {}", pos.join(";"));
+        }
         let (mut nl, mut rl, mut ndl, mut rdl, mut rturn) = (0, 0, 0.0f64, 0.0f64, 0.0f64);
         for ((id, a0, b0), (_, a1, b1)) in lines0.iter().zip(&lines1) {
             let dl = (a1.distance(*b1) - a0.distance(*b0)).abs();
@@ -395,4 +424,10 @@ fn relation_census() {
              rl {rl} rdl {rdl:.6} na {na} nda {nda:.6} ra {ra} rda {rda:.6} rturn {rturn:.4}              col {col}"
         );
     }
+    println!(
+        "S2 TOTAL ends {:?} stalled {:?} ({:?})",
+        total.other,
+        total.other_stalled,
+        drift_solver::exits::STAGE2
+    );
 }

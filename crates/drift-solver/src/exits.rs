@@ -84,3 +84,51 @@ pub(crate) fn record(exit: Exit, dragging: bool, iterations: usize) {
         c.set(n);
     });
 }
+
+/// How the second stage (the preferences, among the rows' solutions) ended, by its stop:
+/// every shape met, stationary (projected gradient below the bar), the most a step could
+/// gain below the bar squared, a step bringing the shapes no more than a bar nearer, the
+/// region below the bar, a factor that failed, the iteration cap.
+pub const STAGE2: [&str; 7] = [
+    "met",
+    "stationary",
+    "promised",
+    "nearer",
+    "region",
+    "factor",
+    "cap",
+];
+
+/// Second-stage endings, drag solves apart from the rest, indexed as [`STAGE2`], and of those
+/// how many stopped with the shapes' projected gradient still above the bar (a stall).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Stage2Counts {
+    pub drag: [u64; 7],
+    pub other: [u64; 7],
+    pub drag_stalled: [u64; 7],
+    pub other_stalled: [u64; 7],
+}
+
+thread_local! {
+    static STAGE2_COUNTS: Cell<Stage2Counts> = Cell::new(Stage2Counts::default());
+}
+
+/// The second-stage counts so far on this thread, reset to zero.
+pub fn take_stage2() -> Stage2Counts {
+    STAGE2_COUNTS.with(|c| c.take())
+}
+
+/// Count one second-stage ending.
+pub(crate) fn record_stage2(stop: usize, dragging: bool, stalled: bool) {
+    STAGE2_COUNTS.with(|c| {
+        let mut n = c.get();
+        if dragging {
+            n.drag[stop] += 1;
+            n.drag_stalled[stop] += u64::from(stalled);
+        } else {
+            n.other[stop] += 1;
+            n.other_stalled[stop] += u64::from(stalled);
+        }
+        c.set(n);
+    });
+}

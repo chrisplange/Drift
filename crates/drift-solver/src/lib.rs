@@ -2197,6 +2197,16 @@ fn newton(
             bar: bar.get().length.max(bar.get().floor),
         }
     };
+    // (Test-only counts of how the second stage ends: see `exits::STAGE2`.)
+    #[cfg(feature = "exit-counts")]
+    let stage2 = |stop: usize, stationary: f64| {
+        let b = bar.get().length;
+        exits::record_stage2(stop, dragging, stationary > b * b);
+    };
+    #[cfg(not(feature = "exit-counts"))]
+    let stage2 = |_: usize, _: f64| {};
+    let mut last_stationary = f64::NAN;
+    let mut in_stage2 = false;
     for iteration in 0..MAX_ITERATIONS {
         if !res.iter().all(|f| f.is_finite()) || !jac.iter().flatten().all(|(_, g)| g.is_finite()) {
             return finish(Stop::NoStep, iteration, false, wandered, false);
@@ -2258,10 +2268,12 @@ fn newton(
 
         if rows_hold {
             // The second stage: the preferences, among the rows' solutions.
+            in_stage2 = true;
             if soft_terms
                 .iter()
                 .all(|(_, off)| off.abs() <= bar.get().length)
             {
+                stage2(0, 0.0);
                 return finish(
                     Stop::Settled,
                     iteration,
@@ -2308,6 +2320,7 @@ fn newton(
             let Some(factor) = normal.factor(&shift) else {
                 // (Positive definite by construction; a factor that fails is round-off
                 // swamping the rows, with nothing a preference's step could rely on.)
+                stage2(5, f64::NAN);
                 return finish(
                     Stop::Settled,
                     iteration,
@@ -2405,9 +2418,11 @@ fn newton(
             // still be met, and only what the step can still gain says so (see below). A
             // drag's kept radii are held, not only preferred: where they can be met, they are,
             // and a drag whose radii can't follow stops (`Editor::breaks_held_shape`).)
+            last_stationary = stationary;
             if rv <= 0.0
                 || (!fold && radii_met && stationary <= bar.get().length * bar.get().length)
             {
+                stage2(1, stationary);
                 return finish(
                     Stop::Settled,
                     iteration,
@@ -2474,6 +2489,14 @@ fn newton(
             if promised <= bar.get().length * bar.get().length
                 || (!fold && nearer <= bar.get().length)
             {
+                stage2(
+                    if promised <= bar.get().length * bar.get().length {
+                        2
+                    } else {
+                        3
+                    },
+                    stationary,
+                );
                 return finish(
                     Stop::Settled,
                     iteration,
@@ -2565,6 +2588,7 @@ fn newton(
                 None => radius = stepped / 4.0,
             }
             if radius <= bar.get().length {
+                stage2(4, stationary);
                 return finish(
                     Stop::Settled,
                     iteration + 1,
@@ -2783,6 +2807,9 @@ fn newton(
                 false,
             );
         }
+    }
+    if in_stage2 && converged(&res, values) {
+        stage2(6, last_stationary);
     }
     finish(
         Stop::Cap,

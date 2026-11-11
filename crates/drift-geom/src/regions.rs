@@ -395,7 +395,8 @@ pub struct RegionTolerance {
     pub snap: f64,
     /// Pieces of curve this short collapse to a point.
     pub min_edge: f64,
-    /// Loops enclosing less than this are numerical noise, not faces.
+    /// Loops enclosing less than this are numerical noise, not faces, unless they enclose more
+    /// than a strip [`snap`](Self::snap) wide along their own outline (see `is_face_area`).
     pub min_area: f64,
 }
 
@@ -1029,14 +1030,19 @@ fn regions_in(curves: &[Shape], tol: &RegionTolerance, prior: &[Region]) -> Vec<
         }
     }
     // Counter-clockwise loops bound regions; clockwise ones are outer boundaries of shapes
-    // (holes when inside a region).
+    // (holes when inside a region). A loop is noise when it encloses no more than `min_area`
+    // or no more than a strip `snap` wide along its outline, whichever is less: rounding
+    // leaves slivers no wider than the snap, and `min_area` alone, a share of the extent
+    // squared, took a small real face far out for noise (a 0.016 mm lens 9.9 m out, in
+    // `faces_move_with_the_drawing`).
     let mut outers: Vec<Loop> = Vec::new();
     let mut boundaries: Vec<Loop> = Vec::new();
     for lp in loops {
         let a = lp.signed_area();
-        if a > tol.min_area {
+        let noise = tol.min_area.min(tol.snap * lp.length());
+        if a > noise {
             outers.push(lp);
-        } else if a < -tol.min_area {
+        } else if a < -noise {
             boundaries.push(lp);
         }
     }

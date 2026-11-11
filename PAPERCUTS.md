@@ -8,7 +8,7 @@ Areas: canvas, panel, tool, menu, file, other. Status: `open`, `batched #NNN`, `
 
 | Date | Area | Papercut | Status |
 |---|---|---|---|
-| 2026-11-11 | panel | Layer 0 is a DWG/DXF requirement that shows in every drawing; hide it by default and show it only on imported documents that need it | open |
+| 2026-11-11 | panel | Layer 0 is a DWG/DXF requirement that shows in every drawing; hide it by default, show it only on imported documents that need it, and write an empty layer 0 into every DWG/DXF export | open |
 | 2026-11-11 | menu | Hatches are slow to reach and change; a right-click or fly-out menu to switch a fill's hatch quickly would help | open |
 | 2026-11-11 | tool | There's no way to pick one entity out of several overlapping ones (e.g. click again to cycle, or a pick list) | open |
 | 2026-11-11 | panel | The right-side panels need a whole UX/UI review | open |

@@ -63,7 +63,8 @@ pub struct Tolerances {
     /// (a length row, a step, a kept shape). Never below [`FLOOR_ULPS`] ulps of the stored
     /// coordinates.
     pub length: f64,
-    /// Angle residual tolerance (a sine).
+    /// Angle residual tolerance (a sine) for an ellipse's tangency. An angle between lines
+    /// holds to [`length`](Self::length) over its shorter line instead (see `Bar`).
     pub angle: f64,
 }
 
@@ -232,8 +233,8 @@ pub struct SolveReport {
 
 /// What a component's stops are measured against: how far off a length row may be and still
 /// hold, how far a step may move and still be no move, how far off a kept shape may be and
-/// still be met (all [`length`](Self::length)), and how far off an angle row, a sine, may be
-/// ([`angle`](Self::angle)).
+/// still be met (all [`length`](Self::length)), and how far off an ellipse's tangency, a sine,
+/// may be ([`angle`](Self::angle)).
 ///
 /// Every solve, a drag's, a commit's or an analysis's, reads one bar per component (see
 /// [`Frame`]): [`Tolerances::length`] of a quarter of the component's size, A/4, in place of
@@ -245,12 +246,12 @@ pub struct SolveReport {
 /// value the component reads, what storage rounding leaves between solves: [`BAR`] of a
 /// part's size meets that floor only about a million part-sizes out.
 ///
-/// An angle row keeps its unitless bar, which its frame makes reachable, but read from storage
-/// a line's direction is known only to the floor over its length, so that is its floor. It
-/// takes over from the unitless bar about 560 lengths of the row's shorter line out (5.6 m for
-/// a 10 mm line), and inside a solve too: **an edge in where a solve with angle rows stops,
-/// well inside a million part-sizes**, left for PR 3 of the solver audit (applied only to
-/// stored values, it moved two size-free pins).
+/// An angle between lines holds to the length bar over its shorter line: its end within the
+/// bar of where the angle puts it (`row_tolerance`). So it is held as every length is, at any
+/// size and place, and its floor is the length bar's (PR 3 of the solver audit). Before, it
+/// kept a unitless 1e-12 floored at the ulps of its stored ends over its shorter line, which
+/// took over some 560 of that line's lengths from the origin, inside a solve too: an edge in
+/// where a solve with angle rows stopped (Opus's 2b on #391).
 #[derive(Clone, Copy, Debug)]
 struct Bar {
     length: f64,
@@ -857,8 +858,8 @@ fn land(
 /// The constraints the geometry doesn't meet as it stands (nothing is moved): those with an
 /// equation off by more than `slack`, as a share of a quarter of its component's size in that
 /// component's frame, as a solve judges it with `slack` for its tolerance (see `Bar`; never
-/// finer than [`FLOOR_ULPS`] ulps of the stored coordinates); a sine within `slack`, for
-/// angles.
+/// finer than [`FLOOR_ULPS`] ulps of the stored coordinates); an angle between lines to that
+/// over its shorter line, and an ellipse's tangency, a sine, within `slack`.
 pub fn unmet(doc: &Document, slack: f64) -> HashSet<ConstraintId> {
     unmet_with(doc, slack, None)
 }
@@ -1788,36 +1789,47 @@ enum Stop {
 /// One component's solve, in two stages (PR 3 of the solver audit).
 ///
 /// **The relations first.** While a row is off its bar, each step is Levenberg–Marquardt on
-/// the rows scaled to unit gradients: `(JᵀJ + μ·M⁻¹ + λ·M⁻¹) Δ = −JᵀF`, weighted by mobility
-/// (`M`, the dragged and carried heavy), with the kept shapes' curvature in the metric as a
-/// preference among the rows' solutions (`μ·KEEP_SHAPE·GᵀG`), and λ a trust region set by how
-/// well each step did what its linearisation promised (Nielsen). It ends where the rows hold,
-/// or at a least-squares stationary point with a row still off: the best step the rows'
-/// linearisation offers brings them no more than their finest bar closer and doesn't make
-/// them hold. That is a conflict, judged by rank (what `μ` leaves unmovable), not by running
-/// out of iterations (#349, #351).
+/// the rows scaled to unit gradients: `(JᵀJ + μ·M⁻¹ + λ·D) Δ = −JᵀF`. The minimum change
+/// `μ·M⁻¹` is weighted by mobility (`M`: the dragged and carried heavy, outside a relation's
+/// focus a thousand times heavier), with the kept shapes' curvature in it as a preference
+/// among the rows' solutions (`μ·KEEP_SHAPE·GᵀG`, each shape as heavy as its points). The
+/// damping `λ·D` is a trust region, a distance (`D` the identity, the dragged and carried kept
+/// heavy), set by how well each step did what its linearisation promised (Nielsen); a step
+/// longer than the drawing is across is refused, so the region's step is the damped one of
+/// that size. Each step is followed by a second-order correction: Newton steps to where its
+/// linearisation promised to take the rows, kept where they leave the rows nearer and move no
+/// point farther than the step did ([`CORRECTION_SHARE`]). The stage ends where the rows hold,
+/// to the bar of the part as the solve found it and as it leaves it, or at a least-squares
+/// stationary point with a row still off: the best step the rows' linearisation offers in the
+/// region brings them no more than their finest bar closer and wouldn't make them hold. That
+/// is a conflict, judged by rank (what `μ` leaves unmovable), not by running out of
+/// iterations (#349, #351).
 ///
 /// **Then the preferences, among the rows' solutions.** Once the rows hold, the kept shapes
 /// (radii, lengths, directions: half the sum of their offsets squared) are minimised over the
-/// rows' null space by a Gauss–Newton step solved by projected conjugate gradients in the
-/// mobility-weighted metric, inside a trust region no wider than the drawing (`across`).
-/// Each conjugate-gradient residual is projected exactly into the null space of the rows
-/// (`μ·A⁻¹`, with `A = JᵀJ + μ·M⁻¹`: the weighted projection as μ goes to zero, with the
-/// rows `μ` can't move counted as free), and the trial point is projected back onto the rows
-/// by minimum-change chord steps with the same factor, each at least halving what is left,
-/// until they hold. A trial is kept where the rows hold there and the shapes are nearer by at
-/// least a quarter of what the step promised; the region grows where the linearisation was
-/// good and shrinks where it wasn't. The dragged and
-/// carried don't take part: they are where the user put them. The solve has settled where the
-/// shapes' projected gradient (in the weighted metric) is below the bar, or the most the step
-/// could gain is below the bar squared, or the region has shrunk below the bar.
+/// rows' null space by a Gauss–Newton step, solved by projected conjugate gradients in the
+/// mobility-weighted metric inside a trust region (a distance, no wider than the drawing,
+/// Steihaug's). Each conjugate-gradient residual is projected exactly into the rows' null
+/// space (`μ·A⁻¹`, with `A = JᵀJ + μ·M⁻¹`: the weighted projection as μ goes to zero, with the
+/// directions `μ` can't move counted as free), and the trial point is brought back onto the
+/// rows by minimum-change Newton steps, each at least halving what is left, moving no point
+/// farther than the step did. A trial is kept where the rows hold there and the shapes are
+/// nearer by at least a quarter of what the step promised; the region grows where the
+/// linearisation was good and shrinks where it wasn't. The dragged and carried don't take
+/// part: they are where the user put them. The solve has settled where the shapes' projected
+/// gradient (in the weighted metric) is below the bar (not while a kept radius is off, nor
+/// with `fold`: at a fold that gradient vanishes where a shape can still be met), or the most
+/// the step could gain is below the bar squared, or the region has shrunk below the bar. A
+/// kept radius the free geometry can change but leaves off is reported (`unkept`): a drag
+/// whose radii can't follow stops (see `run`).
 ///
 /// The iteration cap ([`MAX_ITERATIONS`]) is a safety net, counted (`exits`), not a stop.
 ///
-/// `dragging` is a drag's solve (for the counts). `fold`: a drag's last resort (see
-/// [`SolveOptions::fold`]), where the rows' minimum change comes down as they close, so a
-/// double root of the rows is met rather than stalled a hair from it. `values` are in the
-/// component's frame, `bar` is what its stops are measured against, and `shapes` are the kept
+/// `dragging` is a drag's solve (for the counts, and `fold`). `fold`: a drag's last resort
+/// (see [`SolveOptions::fold`]), where the rows' minimum change comes down as they close, so
+/// a double root of the rows is met rather than stalled a hair from it. `values` are in the
+/// component's frame, `bar` is what its stops are measured against (`bar_now` that bar where
+/// the geometry stands: the bar only ever tightens within a solve), and `shapes` are the kept
 /// shapes over its unknowns ([`reach`]).
 #[allow(clippy::too_many_arguments)]
 fn newton(
@@ -2309,7 +2321,15 @@ fn newton(
                     .collect();
                 phi_now - phi(&terms)
             };
-            if promised <= bar.get().length * bar.get().length {
+            // Settled where the most the step could gain is below the bar squared, or (but
+            // with `fold`, which meets every shape it can) where it would bring the shapes'
+            // offsets, as one length, no more than a bar nearer: at a shape the relations hold
+            // off, a step can gain a sliver of a large misfit (more than the bar squared) while
+            // moving the misfit itself by far less than the bar, and the solve would creep on.
+            let nearer = (2.0 * phi_now).sqrt() - (2.0 * (phi_now - promised).max(0.0)).sqrt();
+            if promised <= bar.get().length * bar.get().length
+                || (!fold && nearer <= bar.get().length)
+            {
                 return finish(
                     Stop::Settled,
                     iteration,

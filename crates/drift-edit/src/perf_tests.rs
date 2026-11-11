@@ -2069,12 +2069,14 @@ fn a_refused_drag_on_a_big_part_takes_at_most_nine_solves_a_frame() {
     assert!(most <= 9, "{most} solves a frame");
 }
 
-/// The same drag without the chain stays bounded too: at most 30 solves a frame (the part
-/// alone is small, and its retake ladder runs further).
+/// The same drag without the chain stays bounded too: at most 72 solves a frame. (The part
+/// alone is small, and its retake ladder runs further: what bounds it is the work its unfinished
+/// solves may spend, `UNFINISHED_WORK`, counted as scope times iterations, and each of those
+/// solves stops at its test in a few iterations, not at the cap.)
 #[test]
-fn a_refused_drag_on_a_small_part_takes_at_most_30_solves_a_frame() {
+fn a_refused_drag_on_a_small_part_takes_at_most_72_solves_a_frame() {
     let most = refused_solves(0);
-    assert!(most <= 30, "{most} solves a frame");
+    assert!(most <= 72, "{most} solves a frame");
 }
 
 /// The solver bar's tiled sketch (#365, #377; `docs/solver-audit.md`, section 5, item 5): 200

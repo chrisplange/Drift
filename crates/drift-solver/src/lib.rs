@@ -1785,11 +1785,6 @@ enum Stop {
     NoStep,
 }
 
-fn dbg_on() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("DBG_NEWTON").is_some())
-}
-
 /// One component's solve, in two stages (PR 3 of the solver audit).
 ///
 /// **The relations first.** While a row is off its bar, each step is Levenberg–Marquardt on
@@ -1862,11 +1857,6 @@ fn newton(
     };
 
     let ((mut res, mut jac), mut own) = evaluate_with_own(sys, &comp.rows, values, &col_of);
-    let dbg_start: Vec<f64> = if dbg_on() {
-        values.to_vec()
-    } else {
-        Vec::new()
-    };
     // Normal matrix N = JᵀJ over the unknowns. Its sparsity is fixed for the component (two
     // unknowns interact when an equation uses both), so build the bandwidth-reduced structure
     // once. Working over unknowns rather than equations keeps a widely shared unknown a single
@@ -2063,18 +2053,6 @@ fn newton(
         })
     };
     let finish = |exit: Stop, iteration: usize, converged: bool, wandered: usize, unkept: bool| {
-        if dbg_on() {
-            eprintln!(
-                "END {} it {iteration} n {n} conv {converged} unkept {unkept} wandered {wandered} bar.get() {:.3e}",
-                match exit {
-                    Stop::Settled => "settled",
-                    Stop::Conflict => "conflict",
-                    Stop::Cap => "cap",
-                    Stop::NoStep => "nostep",
-                },
-                bar.get().length
-            );
-        }
         #[cfg(feature = "exit-counts")]
         exits::record(
             match exit {
@@ -2097,21 +2075,6 @@ fn newton(
         }
     };
     for iteration in 0..MAX_ITERATIONS {
-        if dbg_on() {
-            let moved = comp
-                .unknowns
-                .iter()
-                .enumerate()
-                .filter(|(c, _)| pinned[*c])
-                .map(|(_, g)| (values[*g] - dbg_start[*g]).abs())
-                .fold(0.0f64, f64::max);
-            let free = comp
-                .unknowns
-                .iter()
-                .map(|g| (values[*g] - dbg_start[*g]).abs())
-                .fold(0.0f64, f64::max);
-            eprintln!("  IT {iteration} pinned moved {moved:.3e} any moved {free:.3e}");
-        }
         if !res.iter().all(|f| f.is_finite()) || !jac.iter().flatten().all(|(_, g)| g.is_finite()) {
             return finish(Stop::NoStep, iteration, false, wandered, false);
         }
@@ -2283,7 +2246,7 @@ fn newton(
             let mut v = project(&r);
             let mut rv = dot(&r, &v);
             // Stationary: the shapes' projected gradient, in the weighted metric, is below the
-            // bar.get(). (Not while a kept radius is off, nor with the fold steps, which finish only
+            // bar. (Not while a kept radius is off, nor with the fold steps, which finish only
             // where every shape is met: at a fold a shape's gradient vanishes where it can
             // still be met, and only what the step can still gain says so (see below). A
             // drag's kept radii are held, not only preferred: where they can be met, they are,
@@ -2356,12 +2319,6 @@ fn newton(
                 );
             }
             let stepped = distance(&x, &x).sqrt();
-            if dbg_on() {
-                eprintln!(
-                    "S2 it {iteration} n {n} phi {phi_now:.6e} rv {rv:.3e} promised {promised:.3e} stepped {stepped:.6e} radius {radius:.3e} bar.get() {:.3e}",
-                    bar.get().length
-                );
-            }
             // The trial, back onto the rows: minimum-change Newton steps (the weighted
             // least-change step as μ goes to zero), each at least halving what the rows are
             // off by, until they hold.
@@ -2538,15 +2495,6 @@ fn newton(
             .sum::<f64>();
         let promised = before - model;
         let lands = converged(&trial_res, &trial);
-        if dbg_on() {
-            eprintln!(
-                "S1 it {iteration} n {n} res {:.6e} after {:.6e} model {:.3e} lam {:.3e}",
-                before.sqrt(),
-                after.sqrt(),
-                model.max(0.0).sqrt(),
-                lambda
-            );
-        }
         if after < before || lands {
             // How much of the drop the linearisation promised the step delivered.
             let gain = if promised > 0.0 {
@@ -2599,7 +2547,7 @@ fn newton(
             .map(|((_, r), s)| row_tolerance(sys, *r, bar.get(), values) * s)
             .fold(f64::INFINITY, f64::min);
         // A least-squares stationary point with the rows off: the step brings them no more
-        // than the finest bar.get() of the rows still off closer, and by its linearisation they
+        // than the finest bar of the rows still off closer, and by its linearisation they
         // still wouldn't hold. Every further step is smaller still (λ only grows on a refused
         // step), so the rows are as near as they get: a conflict, or the round-off floor.
         if before.sqrt() - model.max(0.0).sqrt() <= finest && model.max(0.0).sqrt() > finest {

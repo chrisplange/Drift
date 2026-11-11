@@ -258,6 +258,9 @@ struct Bar {
     angle: f64,
     /// [`FLOOR_ULPS`] ε of the largest stored value the component reads.
     floor: f64,
+    /// The length bar without its floor: what a solve holds its own values to once it has
+    /// moved them (see `newton`).
+    share: f64,
 }
 
 impl Bar {
@@ -273,6 +276,7 @@ impl Bar {
             length: share.max(floor),
             angle: tol.angle,
             floor,
+            share,
         }
     }
 }
@@ -1845,6 +1849,20 @@ fn newton(
 ) -> ComponentOutcome {
     // (The bar only ever tightens within a solve: see where the rows first hold.)
     let bar = std::cell::Cell::new(bar);
+    // The floor of ulps is for values read from storage, as they are at the solve's first
+    // test (a solve whose rows hold there writes nothing). Once the solve has moved them, they
+    // are its own values, in the frame, where the bar itself is reachable at any place; held
+    // to the floor there, a solve far out stopped a hair inside it, and storing its result
+    // rounded the rows over it (#377's seeded census, 100 km out).
+    let leave_storage = || {
+        let b = bar.get();
+        if b.share > 0.0 {
+            bar.set(Bar {
+                length: b.length.min(b.share),
+                ..b
+            });
+        }
+    };
     let n = comp.unknowns.len();
     let col_of: HashMap<usize, usize> = comp
         .unknowns
@@ -2083,7 +2101,7 @@ fn newton(
             iterations: iteration,
             wandered,
             unkept: converged && unkept,
-            bar: bar.get().length,
+            bar: bar.get().length.max(bar.get().floor),
         }
     };
     for iteration in 0..MAX_ITERATIONS {
@@ -2375,6 +2393,7 @@ fn newton(
                         radius = (2.0 * radius).min(across);
                     }
                     values.copy_from_slice(&trial);
+                    leave_storage();
                     res = trial_res;
                     jac = trial_jac;
                     own = trial_own;
@@ -2542,6 +2561,7 @@ fn newton(
                 fold_scale = fold_scale.min((after.sqrt() / across).min(1.0));
             }
             values.copy_from_slice(&trial);
+            leave_storage();
             res = trial_res;
             jac = trial_jac;
             own = trial_own;
@@ -2737,6 +2757,7 @@ fn run(sys: &mut System, options: &SolveOptions, iterate: bool) -> (SolveReport,
         let mut frame = Frame::enter(sys, &groups, asked, &mut values, tol, &drawn);
         if let Some(cap) = options.bar_cap {
             frame.bar.length = frame.bar.length.min(cap).max(frame.bar.floor);
+            frame.bar.share = frame.bar.share.min(cap);
         }
         let bar = frame.bar;
         for &g in &comp.unknowns {

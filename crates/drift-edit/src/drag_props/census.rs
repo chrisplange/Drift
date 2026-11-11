@@ -211,9 +211,15 @@ fn census_line(head: &str, built: &mut Built, ids: &[EntityId], off: DVec2, step
     let run = drag(built, ids, off, steps);
     let counts = exits();
     DRAGS.with(|d| d.borrow_mut().clear());
-    let Ok(run) = run else {
-        println!("{head} ERR {counts}");
-        return;
+    let run = match run {
+        Ok(run) => run,
+        Err(e) => {
+            if std::env::var_os("CENSUS_WHY").is_some() {
+                eprintln!("ERR {head}: {e}");
+            }
+            println!("{head} ERR {counts}");
+            return;
+        }
     };
     let far = run
         .start

@@ -12,6 +12,7 @@ Build in release, and run one test per process.
 | 4 | Pins | `cargo test --release -p drift-edit --lib drag_props::seeds:: -- --include-ignored` |
 | 5 | Perf baselines | `cargo test --release -p drift-edit --lib perf_drag_ -- --ignored --nocapture --test-threads=1` (`perf_drag_refused`, `perf_drag_tiles` and the other drag lines), and with `DRIFT_BIG` set to a big drawing, `cargo test --release -p drift-app --lib perf_big::perf_big -- --exact --ignored --nocapture` and the same for `perf_big::perf_big_drag`. Take perf with `-p`: `cargo test --workspace` builds every test exe with the exit counters on |
 | 6 | Linux | the `Solver bar` workflow: items 1 and 4 on ubuntu, nightly and on PRs that touch the solver, drift-core, the editor or the bar |
+| (PR 6) | Relation adding | `drag_props::relation_census::relation_census` (`CENSUS_N` cases, default 4,000; `CENSUS_CASE` replays one, printing the drawing before and after), run on both builds, then `relations.py BASE.txt PR.txt`: relations newly refused (exit 1) or added, and per case what moved and which lengths and radii changed |
 | 7 | The binding drag rule | `drag_props::held_shapes::` (in the normal run), and #377's census: drags that went while an arc's radius changed, radii grown, and in a comparison every stop -> went split by whether a radius changed |
 
 ## Censuses

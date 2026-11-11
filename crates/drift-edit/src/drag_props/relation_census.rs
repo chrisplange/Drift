@@ -8,7 +8,8 @@
 //! ```
 //!
 //! `CENSUS_N` cases (default 4,000), drawn with their own seed, so the drag censuses' case
-//! numbers stay as they are. Each line: `R <case> <kind> <active> <result>`, then (where the
+//! numbers stay as they are. `CENSUS_CASE` runs that case alone and prints the drawing before
+//! and after. Each line: `R <case> <kind> <active> <result>`, then (where the
 //! relation was added) `mv` how far the farthest point moved, `pts` how many points moved, and
 //! for the lines and the arcs, apart for the geometry the relation names (`n…`: a line counts
 //! if it or one of its ends is named) and the rest
@@ -216,8 +217,11 @@ fn constraint(built: &Built, add: Add, seed: u64) -> Option<(Constraint, Vec<Ent
     })
 }
 
+/// A line by id, and its ends.
+type LineEnds = (EntityId, DVec2, DVec2);
+
 /// Each line's ends and each arc's radius, by id.
-fn shapes(ed: &Editor) -> (Vec<(EntityId, DVec2, DVec2)>, Vec<(EntityId, f64)>) {
+fn shapes(ed: &Editor) -> (Vec<LineEnds>, Vec<(EntityId, f64)>) {
     let mut lines = Vec::new();
     let mut arcs = Vec::new();
     for (id, e) in ed.doc.iter() {

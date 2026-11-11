@@ -495,6 +495,38 @@ PR 0 puts the bar in `scripts/solver-bar/` (its README runs all seven). **Known 
 - **Risk:** medium. It changes what moves when a relation is added; it needs a before/after on
   the census of relation adding (#333's corpus).
 
+**PR 6's notes (as built).**
+- **What an edit keeps** (`Editor::kept_shapes`, measured as the geometry stands): every arc its
+  radius and every line its direction; a line its length where keeping it moves nothing else
+  (it hangs from the rest, as in a drag); what a new relation names takes up its change by
+  moving and turning (its lines keep their lengths, not their directions; its arcs take the
+  change in their radii, so #75's fillet still grows inside square lines). A size a dimension
+  sets is the dimension's, not a preference. Keeping every line's length too was tried: a
+  position isn't a preference, so the cheapest way to keep the rest's lengths was to slide the
+  whole sketch (#75's outline moved 10 mm), which breaks "a relation moves what it relates".
+- **Ranks, as weights in the second stage** (`SolveOptions::length_ranks`, normalised so the
+  lightest is 1, so every shape still settles to the bar): a length weighs 1e-3 of a direction
+  or radius, a named line's length 1e-3 of that. A line between two held ends keeps its
+  direction and stretches along itself rather than turn. The first stage's metric weighs them
+  the same way. Weights, not a strict order: where a length must change, the directions and
+  radii beside it give way by about a thousandth of the change (micrometres).
+- **A direction's offset** is `l₀·sin θ` at the length it was kept at, rising to `2·l₀` turned
+  end for end. Main's `l·sin θ` was met by a reversed line (5.2 % of relations added flipped a
+  line) and shrank with the line (a line a relation must turn was collapsed to meet it).
+- **A commit's preference steps are bounded together** by the drawing's size from where the
+  second stage began (the first stage stays unbounded): a line kept square was otherwise
+  stretched 40 km to meet a line it nearly paralleled.
+- **No relation is newly refused.** Where keeping shapes leaves a relation refused (the
+  analysis reading a landing as collapsed or redundant at a special configuration), it is
+  solved again exactly as before (`SolveOptions::shapes_as_before`), as #333 falls back for the
+  active element.
+- **Paths.** Every edit's solve keeps shapes: `commit` (so every tool, MCP call, script and
+  Build Geometry edit), relation adding (`add_constraints`, `add_picked_constraints`, typed
+  sizes), dimension and variable edits, and the solve on opening a drawing. Drag-like solves
+  keep the drag's preferences (PR 5's scope): drag frames, `drag_radius`, `drag_offset`
+  (an offset's distance is solved as a drag of its sides), `rotate_geometry`, and the moves
+  and nudges that go through `drag`.
+
 **Order and parallelism:** PR 0 first. PR 1 at any time. PR 2 next (the biggest measured win).
 Then PR 3. PR 4 can go beside PR 3, since its files are the equations and lowering. PR 5 after
 PR 3 and PR 4. PR 6 after PR 3. One solver PR is in review at a time; the others wait.

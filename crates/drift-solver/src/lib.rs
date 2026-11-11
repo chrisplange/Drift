@@ -550,6 +550,16 @@ fn reach(sys: &System, unknowns: &[usize], rows: &[usize]) -> (Vec<usize>, Vec<u
     let own: HashSet<usize> = unknowns.iter().copied().collect();
     let shapes: Vec<usize> = if own.is_empty() {
         Vec::new()
+    } else if !sys.keep_of_group.is_empty() {
+        // (Through the index: a drawing's every line kept, scanned for each component, would
+        // cost components times shapes.)
+        let mut shapes: Vec<usize> = own
+            .iter()
+            .flat_map(|g| sys.keep_of_group[*g].iter().copied())
+            .collect();
+        shapes.sort_unstable();
+        shapes.dedup();
+        shapes
     } else {
         (0..sys.keep.len())
             .filter(|&s| {
@@ -610,6 +620,10 @@ fn rows_holding(
     }
     holds
 }
+
+/// A kept shape's term in a step: its gradient over the component's columns, and how far off
+/// it is.
+type SoftTerm = (Vec<(usize, f64)>, f64);
 
 /// The most iterations a component's Newton solve runs.
 pub const MAX_ITERATIONS: usize = 100;
@@ -732,6 +746,17 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
             }
         }
     }
+    // Which kept shapes read each group (see `reach`).
+    let mut keep_of_group = vec![Vec::new(); sys.groups.len()];
+    for (s, shape) in sys.keep.iter().enumerate() {
+        for p in shape.params() {
+            let g = sys.group_of[*p];
+            if keep_of_group[g].last() != Some(&s) {
+                keep_of_group[g].push(s);
+            }
+        }
+    }
+    sys.keep_of_group = keep_of_group;
     if !options.focus.is_empty() {
         let focus: HashSet<usize> = options
             .focus
@@ -2202,7 +2227,7 @@ fn newton(
         });
         // (With each one's weight in the second stage, as its square root (see
         // `shape_weights`), and its rank in the first.)
-        let (soft_terms, soft_roots): (Vec<(Vec<(usize, f64)>, f64)>, Vec<(f64, f64)>) = shapes
+        let (soft_terms, soft_roots): (Vec<SoftTerm>, Vec<(f64, f64)>) = shapes
             .iter()
             .zip(shape_weights.iter().zip(&ranks))
             .filter_map(|(shape, (w, rank))| {
@@ -2249,7 +2274,7 @@ fn newton(
                 preferences_entry = Some(comp.unknowns.iter().map(|g| values[*g]).collect());
             }
             // The shapes as this stage weighs them (see `shape_weights`).
-            let soft_terms: Vec<(Vec<(usize, f64)>, f64)> = soft_terms
+            let soft_terms: Vec<SoftTerm> = soft_terms
                 .iter()
                 .zip(&soft_roots)
                 .map(|((grad, off), &(root, _))| {
@@ -2576,7 +2601,8 @@ fn newton(
                 .iter()
                 .map(|&(c, _)| 1.0 / mobility[c])
                 .fold(f64::INFINITY, f64::min);
-            // (A shape a caller ranks lower is kept that much less: see `SolveOptions::length_ranks`.)
+            // (A shape a caller ranks lower is kept that much less: see
+            // `SolveOptions::length_ranks`.)
             let own = rank * if own.is_finite() { own } else { 1.0 };
             for (i, &(c1, g1)) in grad.iter().enumerate() {
                 for &(c2, g2) in &grad[..=i] {

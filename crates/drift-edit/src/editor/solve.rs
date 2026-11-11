@@ -143,14 +143,31 @@ impl Editor {
     /// above all of these.
     pub(crate) fn kept_shapes(&self, turning: &HashSet<EntityId>) -> KeptShapes {
         let mut kept = KeptShapes::default();
+        // Only what the relations reach (through shared points and relations) can move in an
+        // edit's solve: the rest of a big drawing (imported linework, say) is left out, which
+        // changes nothing but what the solve has to look through.
+        let seeds: Vec<EntityId> = self
+            .doc
+            .constraints()
+            .filter(|(id, _)| !self.doc.is_driven(*id))
+            .flat_map(|(_, c)| c.entities().collect::<Vec<_>>())
+            .collect();
+        if seeds.is_empty() {
+            return kept;
+        }
+        let lowering = self.lowering();
+        let reached = drift_solver::connected_with(&self.doc, seeds, lowering.as_deref());
+        let curves: Vec<(EntityId, EntityKind)> = reached
+            .iter()
+            .filter_map(|id| self.doc.get(*id).map(|e| (*id, e.kind)))
+            .filter(|(_, kind)| !kind.is_point())
+            .collect();
         // How many curves use each point, and which points relations name: a line with an
         // end used by it alone, and by no relation, hangs.
         let mut uses: HashMap<EntityId, usize> = HashMap::new();
-        for (_, e) in self.doc.iter() {
-            if !e.kind.is_point() {
-                for p in e.kind.points() {
-                    *uses.entry(p).or_default() += 1;
-                }
+        for (_, kind) in &curves {
+            for p in kind.points() {
+                *uses.entry(p).or_default() += 1;
             }
         }
         let related: HashSet<EntityId> = self
@@ -180,8 +197,8 @@ impl Editor {
                 _ => {}
             }
         }
-        for (id, e) in self.doc.iter() {
-            match e.kind {
+        for &(id, kind) in &curves {
+            match kind {
                 EntityKind::Line { a, b } => {
                     let (Ok(pa), Ok(pb)) = (self.doc.point(a), self.doc.point(b)) else {
                         continue;

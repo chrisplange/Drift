@@ -77,6 +77,9 @@ pub struct System {
     pub keep_rank: Vec<f64>,
     /// Keep shapes as before the audit's PR 6 ([`crate::SolveOptions::shapes_as_before`]).
     pub shapes_as_before: bool,
+    /// Per group, the indices of the [`keep`](Self::keep) shapes over it, in order (empty
+    /// where `solve` hasn't indexed them: `reach` then looks through every shape).
+    pub keep_of_group: Vec<Vec<usize>>,
     /// Per group, the length bar the last solve measured its component against (`run`; zero
     /// for a group no component solved): what a kept shape over it is met to.
     pub bars: Vec<f64>,
@@ -140,7 +143,8 @@ impl Shape {
                 };
                 let d = DVec2::new(bx - ax, by - ay);
                 let length = d.length();
-                if !(length > 0.0) {
+                // (Collapsed, or not a number: no direction to keep.)
+                if length.is_nan() || length <= 0.0 {
                     return None;
                 }
                 let along = d / length;
@@ -1313,6 +1317,7 @@ impl System {
             radii_kept: keep_shape.len(),
             keep_rank: Vec::new(),
             shapes_as_before: false,
+            keep_of_group: Vec::new(),
             keep: keep_shape,
             bars: Vec::new(),
             arcs,

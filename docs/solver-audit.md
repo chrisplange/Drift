@@ -290,7 +290,7 @@ job; "kept" means it stays as a plain design parameter.
 | Angle rows' floor of ulps over their shorter line (`row_tolerance`) | `lib.rs` | PR 2 | Storage rounding of a line's direction far out (#387) | **Settled by PR 3**: an angle between lines holds to the length bar over its shorter line (its end within the bar of where the angle puts it), so it is held as a length is, with the length bar's floor, a million part-sizes out; no edge between. The unitless bar stays for an ellipse's tangency only |
 | A fold solve isn't cut by patience before its rows hold to the patience share and every kept shape is met | `newton` | PR 2 | A fold solve finishes only where it meets everything; at the part's bar its rows hold sooner, and patience cut it mid-crawl (macOS CI) | **Deleted** with patience (PR 3). With `fold`, the shapes settle only where a step could gain them less than the bar squared |
 | `SETTLE_PATIENCE` = 10 | `newton` | #94 | Bounds a kept shape's crawl | **Replaced** (PR 3): a stationarity test of the preferences on the relations' manifold (projected gradient in the weighted metric below the bar, or the step's most gain below the bar squared, or the region below the bar) |
-| `MAX_ITERATIONS` = 100 as the conflict test | `newton` | early | A failing part stops | **Replaced** (PR 3): a least-squares stationary point (the region's best step brings the rows no more than their finest bar closer); the cap stays as a counted safety net. It still ends 0.65 % of the census's drag solves: drags that can't land, their dragged points giving way at their weight (see PR 3's notes) |
+| `MAX_ITERATIONS` = 100 as the conflict test | `newton` | early | A failing part stops | **Replaced** (PR 3): a least-squares stationary point (the region's best step brings the rows no more than their finest bar closer); the cap stays as a counted safety net. It still ends 0.63 % of the census's drag solves: drags that can't land, their dragged points giving way at their weight (see PR 3's notes) |
 | λ > 1e12 × max_diag break; 30-try factor loop | `newton` | early | A step that can't be taken | **Replaced** (PR 3): a factor that fails is a refused step (the damping rises); the stationarity test ends a stalled solve |
 | `still`/`at_rest`/`last_moved` ("a drag's solve isn't over while a step moves") | `newton` | #104 | Stops that depend on size | **Replaced** (PR 3): the frame and bar (PR 2) make the stop size-free, and the preferences' stage settles by stationarity |
 | `FELT_PASSES` = 6, `FELT_ROUND_OFF`, `SECOND_ORDER` = 0.25, the soft step's 4 halvings | `newton` | #94, #103 | Keeping the preferences' step in the relations' null space | **Replaced** (PR 3): a two-stage solve, the relations first, then the preferences by projected conjugate gradients in their null space (projection `μ·A⁻¹`), re-projected onto them by Newton steps |
@@ -400,6 +400,50 @@ PR 0 puts the bar in `scripts/solver-bar/` (its README runs all seven). **Known 
   every drag that crawls today (3 % of solves). Perf is the second risk: #349's chain needs
   thousands of iterations today, so the step itself must get better (trust region, not tiny-μ
   minimum norm), not only the stop.
+
+**PR 3's notes (as built).**
+- **Stage 1** is Levenberg–Marquardt with three changes from main's step. The damping is a
+  distance (the identity), not the mobility weighting: weighted, a step that swings a
+  relation's focus far and the rest a hair is as far off its linearisation as any, and #349's
+  chain crawled. The dragged and carried keep their weight in it: damped as a distance, a drag
+  that can't land lets them give way, and `held_shapes::`' refused drags go. A step longer than
+  the drawing is refused, not cut along its own direction (cut steps walked census case 2432
+  437 mm across a 20 mm part, frame after frame). And each step gets a second-order correction
+  (Newton steps to where its linearisation promised the rows), no larger than the step.
+- **The kept shapes in stage 1's metric** weigh as much as their points (`KEEP_SHAPE` times the
+  least of their points' weights), so under a relation's focus a line of the rest is kept against
+  moving the rest, not against moving the focus.
+- **Stage 2** is Steihaug's projected conjugate gradients in the mobility metric, the projection
+  `μ·A⁻¹` with a refined solve (unrefined, round-off of a millionth of the step lands in the
+  directions nothing feels: case 2911's origin copy 3.4e-3 off its twins). A trial is kept at a
+  gain of a quarter, not any gain (any gain let round-off slide geometry along a direction the
+  shapes hardly feel). It also settles where a step would bring the shapes' offsets, as one
+  length, no more than a bar nearer: "below the bar squared" alone never ends at a shape the
+  relations hold off (a cycle of 1e-12 gains on a misfit of 0.06).
+- **Held radii.** A drag solve that leaves off a kept radius its free geometry can change (more
+  than √μ of its gradient in the rows' null space) is unfinished: the drag stops at the last
+  shape that kept it (e13 stops at 3.73 of its 8.15, where its circles stop meeting). A radius
+  the drag itself dictates follows, as `held_shapes::` has it (a drag that lands may change a
+  radius it doesn't move).
+- **The bar where the solve stands.** Where the rows hold, they hold to the bar of the part as the
+  solve leaves it too: a solve that made the part smaller said converged and an analysis of
+  what it wrote didn't (`perturbed_satisfiable_sketches_converge`: base fails every 5,000-case
+  run; PR 3 none in 15,000). And the floor of ulps judges stored values only: once a solve has
+  moved them, they are its own and reach the unfloored bar (held to the floor, solves 100 km
+  out stopped a hair inside it and rounded over it when stored).
+- **The cap still fires** on 0.63 % of the census's drag solves (main: patience, cap and damping
+  3.4 %). These are drags that can't land: only the dragged points can bring the rows home, and
+  in the region they give way at their weight, about a hundredth a step. On main the same drags
+  end at the cap too, and "unfinished" is what refuses them: the binding rule rests on it. A
+  sharper "can't land" stop (the free geometry's own step leaves the rows off) took the cap to
+  0.28 % but moved where drags at a fold stop between sizes; it was left out. PR 5's exact
+  targets make these a conflict.
+- **Open:** `free_move_is_accepted_heavy` seeds 6 and 17. A large first step keeps the shapes to
+  first order only (its metric), a radius drifts some 3.7 mm at second order on a 13.5 mm move,
+  and the preferences' stage stalls short of the translation at a fold of the rows, where the
+  projection can't tell the rows' slow directions from free ones. Main's interleaved soft step
+  pulled the radius back every iteration. A second-order correction of the kept shapes inside
+  stage 1 is the fix in reach; it isn't in this PR.
 
 ### PR 4: directed relations and fold awareness
 - Parallel, Perpendicular and Angle are lowered with their way round, frozen where they were

@@ -8,6 +8,7 @@ Areas: canvas, panel, tool, menu, file, other. Status: `open`, `batched #NNN`, `
 
 | Date | Area | Papercut | Status |
 |---|---|---|---|
+| 2026-11-11 | tool | There's no way to pick one entity out of several overlapping ones (e.g. click again to cycle, or a pick list) | open |
 | 2026-11-11 | panel | The right-side panels need a whole UX/UI review | open |
 | 2026-11-11 | canvas | How annotations work with the canvas and drawing scale is unintuitive (details to collect when batched; see #369) | open |
 | 2026-11-11 | canvas | An SVG logo shows broken strokes because of how antialiasing is done | open |

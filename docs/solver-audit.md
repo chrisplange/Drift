@@ -438,12 +438,21 @@ PR 0 puts the bar in `scripts/solver-bar/` (its README runs all seven). **Known 
   sharper "can't land" stop (the free geometry's own step leaves the rows off) took the cap to
   0.28 % but moved where drags at a fold stop between sizes; it was left out. PR 5's exact
   targets make these a conflict.
-- **Open:** `free_move_is_accepted_heavy` seeds 6 and 17. A large first step keeps the shapes to
-  first order only (its metric), a radius drifts some 3.7 mm at second order on a 13.5 mm move,
-  and the preferences' stage stalls short of the translation at a fold of the rows, where the
-  projection can't tell the rows' slow directions from free ones. Main's interleaved soft step
-  pulled the radius back every iteration. A second-order correction of the kept shapes inside
-  stage 1 is the fix in reach; it isn't in this PR.
+- **Held arcs never grow** in a drag, landed or not (the binding rule as the user states it):
+  `breaks_held_shape` stops a frame that grows an arc none of whose points the drag moves by
+  more than the bar or `FOLD_MET` of it. Shrinking still goes, as `held_shapes::` has it. This
+  stops f3's move (#281), which PR 3's first build let through, and in #377's random census some
+  160 drags a place that went before (stops 274 → 419).
+- **A free move is never a stop.** A move of curves in a part nothing pins that the solve can't
+  make (it lands where the least change leads, and from there the kept shapes' stage can stall
+  at a fold short of moving the whole part) moves the whole part along instead, which lands every
+  dragged point, meets every relation and keeps every shape exactly
+  (`free_move_is_accepted_heavy` 6 and 17). A second-order correction of the kept shapes inside
+  the first stage was tried first and cost #349's chain.
+- **A drag's steps are bounded together** by the drawing's size at the solve's start (not each
+  alone), in both stages: `flung_centre` threw a point 6 to 23 m out of a 20 mm sketch in 21 of
+  39 one-ulp nudges (and failed on Linux and macOS). Commits are left unbounded, a dimension typed
+  ten times longer moving geometry rightly far.
 
 ### PR 4: directed relations and fold awareness
 - Parallel, Perpendicular and Angle are lowered with their way round, frozen where they were

@@ -22,3 +22,5 @@ One line per decision, approval or merge, newest last. Format: `YYYY-MM-DD | wha
 2026-11-10 | Solver redesign scoped to PR 2, PR 3 and PR 6 of docs/solver-audit.md; PR 1 (#352), PR 4 (#344) and PR 5 (#362) parked as later. After PR 3, work returns to usability and bug batches | user in chat
 2026-11-10 | Solver PR 0 (#389) merged: the acceptance bar is now on main (Linux heavy 277 ok / 3) | user in chat
 2026-11-10 | Solver PR 2 (#391): user accepted the remaining failures: heavy similarity seeds 14 and 17 (PR 3), seed 6 on Linux (PR 4, parked), the e13 arc drag stopping at 29 instead of 32 frames (ignored pin, PR 5, parked) | user in chat
+2026-11-11 | Solver PR 2 (#391) merged; tangent_and_parallel stays ignored, owned by PR 3 | user
+2026-11-11 | Solver PR 3 (#394) sent back before review: fix the arc growing in f3's drag (binding rule), free-move refusals (seeds 6, 17) and the arc-ends slide. Accepted as is: cap at 0.63 % (fix in parked PR 5), #351 left open (measured ~0.3 s on main and PR 3), active element held while a chain bends (#333) | user in chat

@@ -389,9 +389,14 @@ fn along_arc(center: DVec2, start: DVec2, end: DVec2) -> [DVec2; 3] {
 /// How far what `groups` draw is across, and its middle (see [`Frame::enter`]): their points
 /// (each point an arc only centres on left out), an arc's ends and points along it, and each
 /// circle's reach, at `values`.
-fn drawn_extent(sys: &System, groups: &[usize], values: &[f64], drawn: &Drawn) -> (DVec2, f64) {
+fn drawn_extent(
+    sys: &System,
+    groups: &[usize],
+    values: impl Fn(usize) -> f64,
+    drawn: &Drawn,
+) -> (DVec2, f64) {
     let group = |p: Param| sys.param_index.get(&p).map(|&i| sys.group_of[i]);
-    let value = |p: Param| group(p).map(|g| values[g]);
+    let value = |p: Param| group(p).map(&values);
     let mut ids: Vec<(EntityId, bool)> = Vec::new();
     let mut radii: Vec<EntityId> = Vec::new();
     for &g in groups {
@@ -423,7 +428,7 @@ fn drawn_extent(sys: &System, groups: &[usize], values: &[f64], drawn: &Drawn) -
     pairs.dedup();
     let mut points: Vec<DVec2> = pairs
         .iter()
-        .map(|&(x, y)| DVec2::new(values[x], values[y]))
+        .map(|&(x, y)| DVec2::new(values(x), values(y)))
         .collect();
     let mut arcs: Vec<usize> = groups
         .iter()
@@ -493,7 +498,7 @@ impl Frame {
             .iter()
             .map(|&g| values[g].abs())
             .fold(0.0f64, f64::max);
-        let (middle, size) = drawn_extent(sys, groups, values, drawn);
+        let (middle, size) = drawn_extent(sys, groups, |g| values[g], drawn);
         let size = size.max(asked);
         let mut moved = Vec::new();
         if size.is_finite() && size > 0.0 && middle.is_finite() {
@@ -1887,6 +1892,25 @@ fn newton(
     };
 
     let ((mut res, mut jac), mut own) = evaluate_with_own(sys, &comp.rows, values, &col_of);
+    // Nothing to do where the rows already hold and every kept shape is met (most of a big
+    // drawing's components at a commit): settled before any matrix is built.
+    if converged(&res, values)
+        && shapes.iter().all(|&k| {
+            sys.keep[k]
+                .offset(|p| values[sys.group_of[p]])
+                .is_none_or(|(_, off)| off.abs() <= bar.get().length)
+        })
+    {
+        #[cfg(feature = "exit-counts")]
+        exits::record(exits::Exit::Settled, dragging, 0);
+        return ComponentOutcome {
+            converged: true,
+            iterations: 0,
+            wandered: 0,
+            unkept: false,
+            bar: bar.get().length,
+        };
+    }
     // Normal matrix N = JᵀJ over the unknowns. Its sparsity is fixed for the component (two
     // unknowns interact when an equation uses both), so build the bandwidth-reduced structure
     // once. Working over unknowns rather than equations keeps a widely shared unknown a single
@@ -1925,7 +1949,7 @@ fn newton(
     }
     let mut normal = Skyline::new(n, &neighbors);
     // (The rows' matrix where a preference's trial is, to bring it back onto them.)
-    let mut back_normal = Skyline::new(n, &neighbors);
+    let mut back_normal: Option<Skyline> = None;
     // The columns of each point (x, then y) and of each radius, for the scale of the
     // regularisation: the largest diagonal of JᵀJ averaged over a point's two columns. (One
     // column's diagonal alone would turn with the sketch: a row's gradient at a point is a
@@ -1996,7 +2020,7 @@ fn newton(
     let reproject = |trial: &mut Vec<f64>,
                      target: &[f64],
                      fixed: &[bool],
-                     back_normal: &mut Skyline|
+                     back_normal: &mut Option<Skyline>|
      -> Option<(Evaluated, Vec<f64>)> {
         let mut last = f64::INFINITY;
         loop {
@@ -2015,6 +2039,7 @@ fn newton(
                 return None;
             }
             last = off;
+            let back_normal = back_normal.get_or_insert_with(|| Skyline::new(n, &neighbors));
             back_normal.clear();
             let mut rhs = vec![Dd::default(); n];
             for (row, f) in back_jac.iter().zip(&back_res) {
@@ -2212,7 +2237,14 @@ fn newton(
             // an unrefined solve would leave round-off of a millionth of the step in the
             // directions neither the rows nor the shapes move, as much at one size or place as
             // its round-off happened to make it.)
-            let project = |r: &[f64]| {
+            //
+            //
+            // For the stop, twice: once leaves μ/σ² of a direction the rows move with singular
+            // value σ, which where the rows rule a shape out (a hanging line's length an Equal
+            // dictates) is all the shape's gradient there is, and the solve chased it, refused
+            // trial after trial. The projection is idempotent in the weighted metric, so a
+            // second pass changes nothing else and leaves that share squared.
+            let once = |r: &[f64]| {
                 let rhs: Vec<Dd> = r
                     .iter()
                     .zip(&pinned)
@@ -2223,6 +2255,11 @@ fn newton(
                     *v = if *pinned { 0.0 } else { *v * mu };
                 }
                 v
+            };
+            let project = |r: &[f64]| {
+                let v = once(r);
+                let weighted: Vec<f64> = v.iter().zip(&mobility).map(|(v, m)| v / m).collect();
+                once(&weighted)
             };
             // The shapes' Gauss–Newton curvature GᵀG applied to a step.
             let curvature = |p: &[f64]| {
@@ -2258,7 +2295,7 @@ fn newton(
                                 .filter(|(_, pinned)| !**pinned)
                                 .map(|((g, m), _)| g * g * m)
                                 .sum();
-                            *is_radius && dot(&g, &project(&g)) > MIN_CHANGE.sqrt() * whole
+                            *is_radius && dot(&g, &once(&g)) > MIN_CHANGE.sqrt() * whole
                         })
                         .collect(),
                 );
@@ -2273,15 +2310,19 @@ fn newton(
                     r[c] += g * off;
                 }
             }
-            let mut v = project(&r);
+            let mut v = once(&r);
             let mut rv = dot(&r, &v);
+            // (The stop reads the gradient projected twice; the steps, once.)
+            let stationary = dot(&r, &project(&r));
             // Stationary: the shapes' projected gradient, in the weighted metric, is below the
             // bar. (Not while a kept radius is off, nor with the fold steps, which finish only
             // where every shape is met: at a fold a shape's gradient vanishes where it can
             // still be met, and only what the step can still gain says so (see below). A
             // drag's kept radii are held, not only preferred: where they can be met, they are,
             // and a drag whose radii can't follow stops (`Editor::breaks_held_shape`).)
-            if rv <= 0.0 || (!fold && radii_met && rv <= bar.get().length * bar.get().length) {
+            if rv <= 0.0
+                || (!fold && radii_met && stationary <= bar.get().length * bar.get().length)
+            {
                 return finish(
                     Stop::Settled,
                     iteration,
@@ -2322,7 +2363,7 @@ fn newton(
                 }
                 x = next;
                 r.iter_mut().zip(&hp).for_each(|(r, h)| *r += alpha * h);
-                v = project(&r);
+                v = once(&r);
                 let rv_next = dot(&r, &v);
                 if rv_next.max(0.0).sqrt() <= bar.get().length {
                     break;
@@ -2775,12 +2816,14 @@ fn run(sys: &mut System, options: &SolveOptions, iterate: bool) -> (SolveReport,
             // (The component's length bar at other values in its frame: its size there,
             // measured on the values as they would be stored, as `Frame::enter` measured it, so
             // the two agree to the bit where nothing moved; its floor and cap as it began.)
+            let shifts: HashMap<usize, f64> = frame
+                .moved
+                .iter()
+                .map(|&(g, _, shift)| (g, shift))
+                .collect();
             let bar_now = |values: &[f64]| {
-                let mut stored = values.to_vec();
-                for &(g, _, shift) in &frame.moved {
-                    stored[g] += shift;
-                }
-                let (_, size) = drawn_extent(sys, &groups, &stored, &drawn);
+                let stored = |g: usize| values[g] + shifts.get(&g).copied().unwrap_or(0.0);
+                let (_, size) = drawn_extent(sys, &groups, stored, &drawn);
                 let mut length = Bar::new(size.max(asked), 0.0, tol).length.max(bar.floor);
                 if let Some(cap) = options.bar_cap {
                     length = length.min(cap).max(bar.floor);

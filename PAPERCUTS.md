@@ -8,6 +8,7 @@ Areas: canvas, panel, tool, menu, file, other. Status: `open`, `batched #NNN`, `
 
 | Date | Area | Papercut | Status |
 |---|---|---|---|
+| 2026-11-11 | canvas | How annotations work with the canvas and drawing scale is unintuitive (details to collect when batched; see #369) | open |
 | 2026-11-11 | canvas | An SVG logo shows broken strokes because of how antialiasing is done | open |
 | 2026-11-11 | canvas | Geometry on one layer still attaches to geometry on other layers, so vertices and edges merge across layers when you don't expect it (#267 fixed this for Tab chain selection only) | open |
 | 2026-11-11 | menu | The custom scale input box closes when you click in its field to type | open |

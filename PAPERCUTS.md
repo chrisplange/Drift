@@ -8,6 +8,7 @@ Areas: canvas, panel, tool, menu, file, other. Status: `open`, `batched #NNN`, `
 
 | Date | Area | Papercut | Status |
 |---|---|---|---|
+| 2026-11-11 | menu | The custom scale input box closes when you click in its field to type | open |
 | 2026-11-11 | file | An uploaded company logo doesn't stay in Drift; it should persist so it doesn't have to be loaded again | open |
 | 2026-11-11 | tool | Mirror needs a temporary axis (two picked points, no line drawn first); the user has asked for this before and needs it badly | open |
 | 2026-11-11 | canvas | Text notes are edited in a separate text box, which makes multi-line formatting a nightmare; editing should happen live on the canvas | open |

@@ -91,22 +91,33 @@ pub enum Shape {
     Distance([usize; 4], f64),
     /// A line's direction: its ends' x and y, and the unit direction.
     Direction([usize; 4], DVec2),
+    /// A circle's radius: its radius parameter, and the radius.
+    Radius(usize, f64),
 }
 
 impl Shape {
     /// The parameters it is over.
-    pub fn params(&self) -> &[usize; 4] {
+    pub fn params(&self) -> &[usize] {
         match self {
             Shape::Distance(k, _) | Shape::Direction(k, _) => k,
+            Shape::Radius(r, _) => std::slice::from_ref(r),
         }
     }
 
-    /// How long the shape is at `value`, over its parameters `k`: an arc's radius, a
-    /// line's length (a direction's offset is a length too: one end off the line through
-    /// the other).
+    /// How long the distance between two points is at `value`, over their x and y `k`: an
+    /// arc's radius, a line's length (a direction's offset is a length too: one end off the
+    /// line through the other).
     pub fn length(k: &[usize; 4], value: impl Fn(usize) -> f64) -> f64 {
         let [ax, ay, bx, by] = k.map(value);
         (bx - ax).hypot(by - ay)
+    }
+
+    /// How long the shape is at `value` ([`length`](Self::length); a circle's radius).
+    pub fn size(&self, value: impl Fn(usize) -> f64) -> f64 {
+        match self {
+            Shape::Distance(k, _) | Shape::Direction(k, _) => Self::length(k, value),
+            Shape::Radius(r, _) => value(*r).abs(),
+        }
     }
 
     /// How far off the shape is at `value`, as a distance (a direction's: how far one end is
@@ -126,6 +137,8 @@ impl Shape {
                 let [ax, ay, bx, by] = k.map(value);
                 Some(([-u.y, u.x, u.y, -u.x], (bx - ax) * u.y - (by - ay) * u.x))
             }
+            // (The gradient's first entry is the radius's; its parameters are that one.)
+            Shape::Radius(r, r0) => Some(([1.0, 0.0, 0.0, 0.0], value(r) - r0)),
         }
     }
 }
@@ -1173,9 +1186,16 @@ impl System {
 
         // Arcs keep their end on the circle through their start. (Which arcs keep their
         // radius, `solve` decides: dragging an end reshapes the arc, dragging its centre
-        // carries it along.)
+        // carries it along.) Circles given a radius keep it as arcs do (dragging the rim drags
+        // the radius itself, and `solve` lets it go).
         let mut keep_shape = Vec::new();
         for &(id, entity) in &in_scope {
+            if let EntityKind::Circle { .. } = entity.kind
+                && let Some(&r) = radii.get(&id)
+                && let Some(&k) = param_index.get(&Param::Radius(id))
+            {
+                keep_shape.push(Shape::Radius(k, r));
+            }
             if let EntityKind::Arc { center, start, end } = entity.kind {
                 if let Some(&r) = radii.get(&id) {
                     keep_shape.push(Shape::Distance(

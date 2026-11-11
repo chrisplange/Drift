@@ -3153,10 +3153,12 @@ fn a_try_with_the_fold_steps_never_refuses_what_today_takes() {
 }
 
 /// #282: a try with the fold steps that fails leaves the frame exactly as today's steps left
-/// it. Each of 16 lengths of `lands_off`'s move, in one call: where it is tried with the fold
-/// steps, the move either lands (the try was kept) or goes or not and leaves every point (to
-/// the bit), and what it pushed, as it does without the fold steps; and there are tries of
-/// both kinds, the failed ones having moved the geometry before they were undone.
+/// it. Each of 16 lengths of `lands_off`'s move made four times as long, in one call: where it
+/// is tried with the fold steps, the move either lands (the try was kept) or goes or not and
+/// leaves every point (to the bit), and what it pushed, as it does without the fold steps; and
+/// there are tries of both kinds, the failed ones having moved the geometry before they were
+/// undone. (Since PR 3 every try along the move as found lands: four times as long, the later
+/// ones fail.)
 #[test]
 fn a_try_with_the_fold_steps_that_fails_leaves_the_frame_as_it_was() {
     let (sketch, picked, offset) = lands_off();
@@ -3166,7 +3168,7 @@ fn a_try_with_the_fold_steps_that_fails_leaves_the_frame_as_it_was() {
     let dragged = [0, 1, 2, 4, 7, 8, 11];
     let (mut kept, mut undone) = (0, 0);
     for k in 1..=16 {
-        let to = offset * f64::from(k) / 16.0;
+        let to = 4.0 * offset * f64::from(k) / 16.0;
         let with = move_with_folds(&sketch, &picked, to, false, false);
         let without = move_with_folds(&sketch, &picked, to, false, true);
         if with.3 == 0 {
@@ -3187,11 +3189,10 @@ fn a_try_with_the_fold_steps_that_fails_leaves_the_frame_as_it_was() {
             );
         }
     }
-    // (Since PR 3 every try of these lands: a failed one, where there is one, is checked
-    // above.)
-    assert!(kept > 0, "{kept} tries kept, {undone} undone");
+    assert!(kept > 0 && undone > 0, "{kept} tries kept, {undone} undone");
 }
 
 mod census;
 mod held_shapes;
 mod seeds;
+

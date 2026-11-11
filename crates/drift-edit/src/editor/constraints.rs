@@ -388,15 +388,18 @@ impl Editor {
         }
         let focus = self.params_of(named);
         let carried = keep.map_or_else(Vec::new, |k| self.params_of([k].into()));
-        self.solve_settled(&SolveOptions {
-            analyze: keep.is_none(),
-            focus,
-            carried,
-            directions,
-            radii,
-            lowering,
-            ..Default::default()
-        })
+        drift_solver::solve(
+            &mut self.doc,
+            &SolveOptions {
+                analyze: keep.is_none(),
+                focus,
+                carried,
+                directions,
+                radii,
+                lowering,
+                ..Default::default()
+            },
+        )
     }
 
     /// The active element `keep` as new constraints `ids` keep it: only when they name it and
@@ -974,11 +977,14 @@ impl Editor {
             .all(|c| self.doc.add_constraint(*c).is_ok());
         let bad = !added || {
             let lowering = self.lowering();
-            let report = self.solve_settled(&SolveOptions {
-                analyze: true,
-                lowering,
-                ..Default::default()
-            });
+            let report = drift_solver::solve(
+                &mut self.doc,
+                &SolveOptions {
+                    analyze: true,
+                    lowering,
+                    ..Default::default()
+                },
+            );
             self.new_conflicts(&report)
         };
         self.doc.rollback();

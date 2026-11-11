@@ -1732,9 +1732,9 @@ fn tangent_and_parallel_plan() -> Plan {
 /// from a round-off residual, amplified by the fold's near-singular Jacobian (some 2,300 ε
 /// of the coordinates), is above the part-size bar at one size (it runs to patience) and
 /// below it at the other (it settles). Round-off at a fold, not a yardstick; similarity 3
-/// still fails for it.
+/// still fails for it. Since PR 3 the same at both sizes in all 39 nudges (Windows; the nudge
+/// test below runs on every platform).
 #[test]
-#[ignore = "#280: a branch at a fold chosen by the last bits, 8 of 39 ulp nudges (Windows); fails on Linux (libm). PR 3/PR 4"]
 fn e_result_depends_on_size_tangent_and_parallel() {
     let plan = tangent_and_parallel_plan();
     let t = Similarity {
@@ -1751,6 +1751,41 @@ fn e_result_depends_on_size_tangent_and_parallel() {
         t,
     ))
     .unwrap();
+}
+
+/// `tangent_and_parallel`'s drag with its offset nudged by −6…+6 ulps in x and −3, 0, +3 in y
+/// (the audit's nudge test, PR 3 owning it): how many of the 39 differ between the two sizes.
+/// The audit counted 21 on main; PR 2's final build 8 (Windows).
+#[test]
+fn e_result_depends_on_size_tangent_and_parallel_whatever_the_round_off() {
+    let plan = tangent_and_parallel_plan();
+    let t = Similarity {
+        scale: 0.25,
+        turn: 232.08152175323588,
+        shift: DVec2::ZERO,
+    };
+    let base = DVec2::new(15.457267808482761, -17.270854180887095);
+    let ulp = |x: f64, k: i64| f64::from_bits((x.to_bits() as i64 + k) as u64);
+    let mut fails = Vec::new();
+    for dy in [-3i64, 0, 3] {
+        for dx in -6i64..=6 {
+            let offset = DVec2::new(ulp(base.x, dx), ulp(base.y, dy));
+            if let Err(e) = invariant(&plan, &Pick::Curves(9929081795026096183), offset, 1, t) {
+                let m = format!("{e:?}");
+                fails.push(format!("dx {dx} dy {dy}: {}", &m[..m.len().min(200)]));
+            }
+        }
+    }
+    assert!(
+        fails.is_empty(),
+        "{} of 39 nudges differ:
+{}",
+        fails.len(),
+        fails.join(
+            "
+"
+        )
+    );
 }
 
 /// A guard (passes): a point on an arc and a length, dragged in four steps at ¼ size far out.
@@ -2462,9 +2497,9 @@ fn crawl_at_the_cap_plan() -> Plan {
 /// A drag census case at the origin: near solves at a fold crawl to a residual 1.4 times the
 /// part-size bar (under today's, which main's solve reads as holding) and stop at the
 /// iteration cap, so the drag ends 1 to 7 µm apart at 0.1×, 1×, 3.7× and 10×, where main
-/// ends the same at every size. Round-off at a fold deciding. See #280.
+/// ends the same at every size. Round-off at a fold deciding. See #280. Passes since PR 3 of
+/// the solver audit: the stop is the preferences' stationarity, not the cap.
 #[test]
-#[ignore = "#280: a fold's crawl cut by the cap at one size, 1-7 um"]
 fn e_result_depends_on_size_crawl_at_the_cap() {
     let plan = crawl_at_the_cap_plan();
     let t = Similarity {
@@ -2511,8 +2546,8 @@ fn no_stall_is_read_as_landed_at_any_size() {
 /// whatever their rows; with a near patience cut off today's bar reported unfinished (which
 /// bounds the work a refused drag on a big part takes), one size's frame is refused. That
 /// is the one gain the rule gives back (also at 10×); main fails it at both. See #280.
+/// Passes since PR 3 of the solver audit, which deletes patience and fallback (b).
 #[test]
-#[ignore = "#280: a patience cut off today's bar at one size only (3.7x, 10x)"]
 fn e_result_depends_on_size_patience_cut_at_one_size() {
     let plan = Plan {
         ops: vec![
@@ -2605,5 +2640,73 @@ fn no_solve_of_a_frame_is_held_looser_than_its_first() {
         "first {:e}, coarsest {:e}",
         bars[0],
         bars.iter().copied().fold(0.0, f64::max)
+    );
+}
+
+/// `flung_centre`'s drag with its offset nudged by −6…+6 ulps in x and −3, 0, +3 in y (the
+/// audit's nudge test): the same at both sizes in every one. Before the drag solves' steps
+/// were bounded together (PR 3), 21 of the 39 threw a point 6 to 23 m out of a 20 mm sketch in
+/// one copy or the other, and which ones turned on the last bits of the platform's maths
+/// library (it failed on Linux and macOS and passed on Windows).
+#[test]
+fn e_result_depends_on_size_flung_centre_whatever_the_round_off() {
+    let plan = Plan {
+        ops: vec![
+            Op::Arc {
+                from: 0,
+                angle: 5,
+                radius: 0,
+                sweep: 2,
+                ccw: false,
+            },
+            Op::Tangent {
+                arc: 0,
+                end: false,
+                forward: false,
+                len: 0,
+            },
+            Op::OnLine {
+                line: 0,
+                at: 0,
+                angle: 11,
+                len: 0,
+            },
+            Op::Step {
+                from: 38,
+                angle: 10,
+                len: 2,
+            },
+        ],
+        extras: vec![false; 48],
+        fix: Some(7),
+        length: None,
+    };
+    let t = Similarity {
+        scale: 0.25,
+        turn: 0.0,
+        shift: DVec2::new(0.0, 305.4097759673246),
+    };
+    let base = DVec2::new(13.614670273256806, -4.64045524551462);
+    let ulp = |x: f64, k: i64| f64::from_bits((x.to_bits() as i64 + k) as u64);
+    let mut fails = Vec::new();
+    for dy in [-3i64, 0, 3] {
+        for dx in -6i64..=6 {
+            let offset = DVec2::new(ulp(base.x, dx), ulp(base.y, dy));
+            let r = invariant(&plan, &Pick::Curves(6110175917806659770), offset, 1, t);
+            if let Err(e) = r {
+                let m = format!("{e:?}");
+                fails.push(format!("dx {dx} dy {dy}: {}", &m[..m.len().min(200)]));
+            }
+        }
+    }
+    assert!(
+        fails.is_empty(),
+        "{} of 39 nudges differ:
+{}",
+        fails.len(),
+        fails.join(
+            "
+"
+        )
     );
 }

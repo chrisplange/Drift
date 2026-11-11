@@ -36,6 +36,21 @@ import re
 import sys
 
 NAMES = ["settled", "patience", "cap", "damping", "nostep"]
+# Since solver PR 3 the lines carry four exits: the stop test (rows hold, the kept shapes
+# stationary), a conflict (the rows off at a least-squares stationary point), the iteration
+# cap (the safety net) and no step (a residual that isn't a number).
+NAMES_PR3 = ["settled", "conflict", "cap", "nostep", "-"]
+
+
+def names(layout):
+    """The exits' names for lines that carry `layout` of them."""
+    return NAMES_PR3 if layout == 4 else NAMES
+
+
+def off_the_stop_test(ex, layout):
+    """Solves that ended other than by a principled stop: patience, the cap and damping blow-ups
+    before PR 3 (indices 1 to 3), the cap and no step since (2 and 3)."""
+    return sum(ex[2:4]) if layout == 4 else sum(ex[1:4])
 PLACES = ["s0.1", "s3.7", "s10", "x1m", "x100m", "x1km"]
 
 SIM = re.compile(
@@ -50,12 +65,14 @@ def ints(s):
 
 def stats(st):
     """Exit counts and the rest from a line's tail (new and audit formats)."""
-    d = {"ex": [0] * 5, "it": 0, "solves": 0, "oex": [0] * 5, "sig": math.inf, "sb": None}
+    d = {"ex": [0] * 5, "it": 0, "solves": 0, "oex": [0] * 5, "sig": math.inf, "sb": None,
+         "layout": 5}
     for key in ("ex", "oex"):
         m = re.search(rf"(?:^| ){key} (\S+)", st)
         if m:
             v = ints(m[1])
             d[key] = (v + [0] * 5)[:5]
+            d["layout"] = len(v)
     m = re.search(r" it (\d+)", st)
     d["it"] = int(m[1]) if m else 0
     m = re.search(r"solves (\d+)", st)
@@ -126,13 +143,16 @@ def similarity(d, variants):
         if errs:
             print(f"ERR lines (a property broke): {len(errs)}; first: {errs[:30]}")
 
+        layout = next((r["layout"] for r in R.values() if "layout" in r), 5)
+        nm = names(layout)
+
         def exits(where):
             ex = [0] * 5
             for (c, t), r in R.items():
                 if not r["build"] and where(t):
                     ex = [a + b for a, b in zip(ex, r["ex"])]
             s = sum(ex) or 1
-            return ", ".join(f"{NAMES[i]} {100 * ex[i] / s:.2f}%" for i in range(5)) + f" of {sum(ex)}"
+            return ", ".join(f"{nm[i]} {100 * ex[i] / s:.2f}%" for i in range(layout)) + f" of {sum(ex)}"
 
         # (Shares of every component solve in the drag frames of the drags run there: the
         # origin row pools the origin's drags and the three scales'.)
@@ -164,11 +184,12 @@ def similarity(d, variants):
                 r = R.get((c, t))
                 if r is None or r["err"]:
                     continue
-                heur = sum(a["ex"][1:4]) + sum(r["ex"][1:4]) > 0
+                heur = off_the_stop_test(a["ex"], layout) + off_the_stop_test(r["ex"], layout) > 0
                 (fail if failing(r) else ok).append(heur)
         if fail:
-            print(f"of {len(fail)} drags failing similarity, {100 * sum(fail) / len(fail):.1f}% had a "
-                  f"patience, cap or damping exit (in it or its origin twin), against "
+            what = "a cap or no-step" if layout == 4 else "a patience, cap or damping"
+            print(f"of {len(fail)} drags failing similarity, {100 * sum(fail) / len(fail):.1f}% had "
+                  f"{what} exit (in it or its origin twin), against "
                   f"{100 * sum(ok) / max(len(ok), 1):.1f}% of {len(ok)} passing")
         worst = sorted((t, c) for (c, t), r in R.items() if not r["err"] and t in PLACES and failing(r))
         print("failing drags (case place): " + " ".join(f"{c} {t}" for t, c in worst))

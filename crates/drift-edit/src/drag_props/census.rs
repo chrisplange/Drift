@@ -17,7 +17,7 @@
 //!   `CENSUS_RATIO` to place the sketch's middle that many of its own sizes out).
 //!
 //! Every line also carries the solver's exit counts over the drag (`drift_solver::exits`):
-//! `ex` for the drag frames' component solves (settled, patience, cap, damping, no step),
+//! `ex` for the drag frames' component solves (settled, conflict, cap, no step),
 //! `it` their iterations and `solves` their number, `oex` and `oit` the same for every other
 //! solve (the commit's). The random generator and its seed are the ones #365, #377 and the
 //! audit used, so case numbers match theirs.
@@ -49,7 +49,7 @@ fn cases() -> impl FnMut() -> (Plan, Pick, DVec2, u32) {
 /// The solver's exit counts since the last call, as the census lines print them.
 fn exits() -> String {
     let n = drift_solver::exits::take();
-    let csv = |c: &[u64; 5]| c.iter().map(u64::to_string).collect::<Vec<_>>().join(",");
+    let csv = |c: &[u64; 4]| c.iter().map(u64::to_string).collect::<Vec<_>>().join(",");
     format!(
         "ex {} it {} solves {} oex {} oit {}",
         csv(&n.drag),
@@ -114,9 +114,15 @@ fn similarity_census() {
             let run = drag(&mut built, &ids, t.vector(off), steps);
             let counts = exits();
             DRAGS.with(|d| d.borrow_mut().clear());
-            let Ok(run) = run else {
-                println!("A {case} {tag} {what} steps {steps} ERR {counts}");
-                continue;
+            let run = match run {
+                Ok(run) => run,
+                Err(e) => {
+                    if std::env::var_os("CENSUS_WHY").is_some() {
+                        eprintln!("ERR {case} {tag}: {e}");
+                    }
+                    println!("A {case} {tag} {what} steps {steps} ERR {counts}");
+                    continue;
+                }
             };
             if tag == "id" {
                 let pts = &run.start;
@@ -205,9 +211,15 @@ fn census_line(head: &str, built: &mut Built, ids: &[EntityId], off: DVec2, step
     let run = drag(built, ids, off, steps);
     let counts = exits();
     DRAGS.with(|d| d.borrow_mut().clear());
-    let Ok(run) = run else {
-        println!("{head} ERR {counts}");
-        return;
+    let run = match run {
+        Ok(run) => run,
+        Err(e) => {
+            if std::env::var_os("CENSUS_WHY").is_some() {
+                eprintln!("ERR {head}: {e}");
+            }
+            println!("{head} ERR {counts}");
+            return;
+        }
     };
     let far = run
         .start

@@ -452,25 +452,18 @@ fn the_free_end_of_a_chain_turns_to_the_active_bar() {
 }
 
 #[test]
-fn a_relation_the_active_one_cannot_stay_through_is_shared_as_before() {
-    // Two bars near the free end of a long held chain: keeping the second where it is would
-    // swing the whole chain, and that solve doesn't finish; without an active element the
-    // relation is met. The relation is still added, exactly as without it, and undo and
-    // redo take the drawing back and forth exactly.
+fn a_relation_the_active_one_can_stay_through_by_bending_the_chain_keeps_it() {
+    // Two bars near the free end of a long held chain, the second active: it can stay where
+    // it is, the chain bending to meet the relation, so it does (#333's rule). Before PR 3
+    // that solve ran out of iterations, and the relation was shared as with no active element
+    // (the fallback the other tests here still see where keeping can't land). Undo and redo
+    // take the drawing back and forth exactly.
     let (mut ed, lines) = held_chain(500);
     let start = points(&ed);
     relate(&mut ed, &[lines[497], lines[498]], true, "Perpendicular").expect("added");
-    assert_eq!(ed.relation_kept.map(|k| k.0), Some(false));
+    assert_eq!(ed.relation_kept.map(|k| k.0), Some(true));
     let after = points(&ed);
-    let (mut today, lines) = held_chain(500);
-    relate(
-        &mut today,
-        &[lines[497], lines[498]],
-        false,
-        "Perpendicular",
-    )
-    .unwrap();
-    assert_eq!(after, points(&today));
+    assert_eq!(after[498..500], start[498..500]);
     assert!(ed.undo());
     assert_eq!(points(&ed), start);
     assert!(ed.redo());
@@ -616,5 +609,38 @@ fn perf_big_add_relation_active() {
             line += &format!("   {who} {ms:>6.0} ms, added {added:<5} kept {kept:<5}");
         }
         println!("{line}");
+    }
+}
+
+/// Probe (#349): Perpendicular between neighbouring bars of held chains, with the solver's
+/// exits. Run with `--ignored --nocapture`.
+#[test]
+#[ignore = "probe"]
+fn zz_probe_349() {
+    let sizes: Vec<usize> = std::env::var("CHAIN_BARS")
+        .ok()
+        .map(|s| s.split(',').map(|x| x.parse().unwrap()).collect())
+        .unwrap_or_else(|| vec![10, 30, 100, 300, 1000, 2000]);
+    for bars in sizes {
+        for at_k in [bars / 2, bars - 2] {
+            let (mut ed, lines) = held_chain(bars);
+            let _ = drift_solver::exits::take();
+            let t = std::time::Instant::now();
+            let r = relate(
+                &mut ed,
+                &[lines[at_k - 1], lines[at_k]],
+                false,
+                "Perpendicular",
+            );
+            let ms = t.elapsed().as_secs_f64() * 1e3;
+            let st = drift_solver::exits::take();
+            println!(
+                "P349 bars {bars} at {at_k}: {} {ms:.1} ms drag {:?} other {:?} it {}",
+                if r.is_ok() { "added" } else { "REFUSED" },
+                st.drag,
+                st.other,
+                st.other_iterations
+            );
+        }
     }
 }

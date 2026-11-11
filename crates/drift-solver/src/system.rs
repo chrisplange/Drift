@@ -67,6 +67,10 @@ pub struct System {
     /// lengths and directions. Not equations, one preference in the minimum-change step,
     /// ranked below the relations (see `newton`).
     pub keep: Vec<Shape>,
+    /// How many of [`keep`](Self::keep), from the first, are arcs' radii (the rest are lines'
+    /// lengths and directions): a drag's kept radii are held, not only preferred (see
+    /// `newton`'s stop).
+    pub radii_kept: usize,
     /// Per group, the length bar the last solve measured its component against (`run`; zero
     /// for a group no component solved): what a kept shape over it is met to.
     pub bars: Vec<f64>,
@@ -1273,6 +1277,7 @@ impl System {
             conflicts,
             redundant,
             entities,
+            radii_kept: keep_shape.len(),
             keep: keep_shape,
             bars: Vec::new(),
             arcs,

@@ -124,14 +124,21 @@ fn a_radius_it_doesnt_move_stops_the_drag_at_any_offset() {
     }
 }
 
-/// Growth slower than the pointer's tenfold is left as it was: seed 16's drag by a micron goes.
+/// Radii are never grown, however slowly: seed 16's drag by a micron, whose radius grows some
+/// 25 times as fast as the pointer, is refused too. (Before PR 3 growth slower than the
+/// pointer's tenfold went; the user's rule is that a drag never grows an arc it doesn't move.)
+/// The same drag the other way, shrinking it, goes.
 #[test]
-fn slow_radius_growth_still_goes() {
+fn slow_radius_growth_stops_too() {
     let (plan, pick, offset) = seed_16();
     let sketch = plan.sketch().unwrap();
     let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
     let ids = pick.ids(&built);
+    let start = built.positions();
     let run = drag(&mut built, &ids, offset.normalize() * 1e-6, 1).unwrap();
+    assert_eq!((run.refused, built.positions()), (1, start));
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let run = drag(&mut built, &ids, -offset.normalize() * 1e-6, 1).unwrap();
     assert_eq!(run.refused, 0);
 }
 
@@ -387,7 +394,7 @@ fn one_part_that_grows_a_radius_stops_the_whole_drag() {
 }
 
 /// After a refused frame the drag is where the last frame that went left it, nothing pushed:
-/// seed 16 dragged a micron (goes: growth slower than the rule's), then on (refused).
+/// seed 16 dragged a micron back (goes: its radius shrinks), then on (refused: it grows).
 #[test]
 fn a_refused_frame_leaves_the_drag_at_the_last_that_went() {
     let (plan, pick, offset) = seed_16();
@@ -402,7 +409,7 @@ fn a_refused_frame_leaves_the_drag_at_the_last_that_went() {
         .flat_map(Param::point)
         .collect();
     built.ed.doc.begin();
-    let small = offset.normalize() * 1e-6;
+    let small = -offset.normalize() * 1e-6;
     assert!(built.ed.drag(&ids, small, &dragged));
     let after_small = built.positions();
     assert!(!built.ed.drag(&ids, offset, &dragged));

@@ -3,20 +3,6 @@
 
 use super::*;
 
-/// `options` as a commit's solve takes them: what is held (dragged), where (scope), how
-/// walls' relations are read (lowering) and whether to analyse, without the preferences
-/// (carried, focus, kept directions, lengths and radii).
-fn plain(options: &SolveOptions) -> SolveOptions {
-    SolveOptions {
-        dragged: options.dragged.clone(),
-        analyze: options.analyze,
-        tolerances: options.tolerances,
-        scope: options.scope.clone(),
-        lowering: options.lowering.clone(),
-        ..Default::default()
-    }
-}
-
 impl Editor {
     /// The entities a drag of `ids` can move (cached while the make-up is unchanged: see
     /// [`drag_scope_and_parts`](Self::drag_scope_and_parts)).
@@ -78,7 +64,7 @@ impl Editor {
             lowering: self.lowering(),
             ..Default::default()
         };
-        self.solve_settled(&options)
+        drift_solver::solve(&mut self.doc, &options)
     }
 
     pub(crate) fn solve(&mut self, dragged: &[Param]) -> SolveReport {
@@ -87,49 +73,7 @@ impl Editor {
             lowering: self.lowering(),
             ..Default::default()
         };
-        self.solve_settled(&options)
-    }
-
-    /// Solve with `options`, and if that would be refused only for geometry it newly exposed
-    /// ([`stalled`](Self::stalled)), once more from where it stopped as a commit solves (the
-    /// same parameters held, scope and lowering, without `options`' preferences: a relation's
-    /// solve keeps the rest's directions and sizes, which can hold it short of meeting every
-    /// row). The report of the second solve is the one returned. For every solve an edit is
-    /// judged by ([`new_conflicts`](Self::new_conflicts)), never a drag's.
-    pub(crate) fn solve_settled(&mut self, options: &SolveOptions) -> SolveReport {
-        let report = drift_solver::solve(&mut self.doc, options);
-        if self.stalled(&report) {
-            drift_solver::solve(&mut self.doc, &plain(options))
-        } else {
-            report
-        }
-    }
-
-    /// [`solve_settled`](Self::solve_settled) on `doc`, a copy of the drawing being tried.
-    pub(crate) fn solve_settled_on(
-        &self,
-        doc: &mut Document,
-        options: &SolveOptions,
-    ) -> SolveReport {
-        let report = drift_solver::solve(doc, options);
-        if self.stalled(&report) {
-            drift_solver::solve(doc, &plain(options))
-        } else {
-            report
-        }
-    }
-
-    /// Whether `report` would be refused only because it put geometry no failing part held
-    /// before into one (see [`new_conflicts`](Self::new_conflicts)): it failed, wrote its
-    /// result, and names no new conflict. Most such solves only ran out of iterations short
-    /// of meeting everything (#342's census: one more solve from where they stopped meets
-    /// every row), as a commit's own solve after an edit's used to finish them; a solve whose
-    /// part really fails fails again.
-    pub(crate) fn stalled(&self, report: &SolveReport) -> bool {
-        !report.converged
-            && !report.unwritten
-            && !self.new_conflict_named(report)
-            && self.newly_failing(report)
+        drift_solver::solve(&mut self.doc, &options)
     }
 
     /// Relations on walls' faces lowered onto their centrelines, for the solver (None when

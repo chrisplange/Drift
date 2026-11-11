@@ -14,6 +14,7 @@ How Drift work gets done. Short on purpose. If this and another note disagree, t
 - **`LEARNINGS.md`** records what went wrong and the rule that came out of it.
 - **`FEATURES.md`** lists what Drift does, each line pointing to code.
 - **`USER-ACTIONS.md`** lists things only the user can do.
+- **`PAPERCUTS.md`** is the inbox for small usability annoyances, one line each. The hub and workers log papercuts there instead of opening issues; the user can report one in a few words to the coordinator or the notes session. A planned batch groups open papercuts into one issue with a Done when.
 
 ## Rules
 1. **No "Done when", no work.** An issue gets a checkable Done when (a named test, a measured number, or a behaviour you can see) before anyone starts it.

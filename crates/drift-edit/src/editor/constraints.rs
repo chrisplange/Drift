@@ -217,7 +217,7 @@ impl Editor {
             .flat_map(|c| c.entities())
             .collect();
         let keep = self.kept_entity(keep, ids, &named, before);
-        let start = self.doc.clone();
+        let start = self.points_and_circles();
         let mut error = self.solve_new_relations(
             ids,
             &named,
@@ -233,7 +233,7 @@ impl Editor {
         // line), the relations are solved as before, from the geometry as it was, and added
         // if that adds them. So keeping shapes never refuses a relation.
         if error.is_some() {
-            self.put_geometry_back(&start);
+            self.restore_geometry(&start);
             error = self.solve_new_relations(
                 ids,
                 &named,
@@ -265,7 +265,7 @@ impl Editor {
         keep: Option<EntityId>,
         before: &SolveReport,
         degenerate_before: &[EntityId],
-        start: &Document,
+        start: &Geometry,
         shapes: Shapes,
     ) -> Option<EditError> {
         // The active element stays exactly where it is when the relations can be met that
@@ -308,7 +308,7 @@ impl Editor {
         named: &HashSet<EntityId>,
         keep: EntityId,
         degenerate_before: &[EntityId],
-        saved: &Document,
+        saved: &Geometry,
         shapes: Shapes,
     ) -> bool {
         let held = self.doc.defining_points([keep]);
@@ -329,7 +329,7 @@ impl Editor {
             && !self.new_degeneracy(degenerate_before)
             && at(&self.doc) == start;
         if !landed {
-            self.put_geometry_back(saved);
+            self.restore_geometry(saved);
         }
         landed
     }
@@ -358,31 +358,6 @@ impl Editor {
         let named: HashSet<EntityId> = c.entities().collect();
         let ids: Vec<ConstraintId> = id.into_iter().collect();
         self.kept_entity(self.typed_keep(c), &ids, &named, self.analysis())
-    }
-
-    /// Put every point and circle radius back where it is in `saved` (a copy of this document
-    /// taken earlier in the open transaction), as edits in the transaction: what a solve
-    /// writes (the document stays this one, so the caches that follow its changes go on
-    /// following them).
-    fn put_geometry_back(&mut self, saved: &Document) {
-        for (id, e) in saved.iter() {
-            match e.kind {
-                EntityKind::Point(at) => {
-                    if self.doc.point(id).is_ok_and(|p| p != at) {
-                        let _ = self.doc.set_point(id, at);
-                    }
-                }
-                EntityKind::Circle { radius, .. } => {
-                    if let Some(EntityKind::Circle { radius: now, .. }) =
-                        self.doc.get(id).map(|e| e.kind)
-                        && now != radius
-                    {
-                        let _ = self.doc.set_radius(id, radius);
-                    }
-                }
-                _ => {}
-            }
-        }
     }
 
     /// The solve after new constraints `ids`, naming `named`, were added (see
@@ -848,7 +823,7 @@ impl Editor {
         // takes no step).
         if let Some(k) = keep {
             let named: HashSet<EntityId> = current.entities().collect();
-            let saved = self.doc.clone();
+            let saved = self.points_and_circles();
             self.keep_in_place(&[id], &named, k, &degenerate_before, &saved, Shapes::Kept);
         }
         let report = self.solve_commit();
@@ -1122,7 +1097,7 @@ impl Editor {
         // One end stays where it is if it can, as with a dimension (#348).
         if let Some(k) = keep {
             let named: HashSet<EntityId> = c.entities().collect();
-            let saved = self.doc.clone();
+            let saved = self.points_and_circles();
             self.keep_in_place(&[id], &named, k, &degenerate_before, &saved, Shapes::Kept);
         }
         let report = self.solve_commit();

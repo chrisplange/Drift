@@ -146,17 +146,7 @@ impl Editor {
         // Only what the relations reach (through shared points and relations) can move in an
         // edit's solve: the rest of a big drawing (imported linework, say) is left out, which
         // changes nothing but what the solve has to look through.
-        let seeds: Vec<EntityId> = self
-            .doc
-            .constraints()
-            .filter(|(id, _)| !self.doc.is_driven(*id))
-            .flat_map(|(_, c)| c.entities().collect::<Vec<_>>())
-            .collect();
-        if seeds.is_empty() {
-            return kept;
-        }
-        let lowering = self.lowering();
-        let reached = drift_solver::connected_with(&self.doc, seeds, lowering.as_deref());
+        let reached = self.related_reach();
         let curves: Vec<(EntityId, EntityKind)> = reached
             .iter()
             .filter_map(|id| self.doc.get(*id).map(|e| (*id, e.kind)))
@@ -226,6 +216,44 @@ impl Editor {
             }
         }
         kept
+    }
+
+    /// What the driving relations reach through shared points and relations: all an edit's
+    /// solve can move. Kept while the sketch's make-up is the same (moves don't change it).
+    fn related_reach(&self) -> std::rc::Rc<HashSet<EntityId>> {
+        let make_up = self.doc.make_up();
+        if let Some((key, reach)) = &*self.related_reach.borrow()
+            && *key == make_up
+        {
+            return reach.clone();
+        }
+        let seeds: Vec<EntityId> = self
+            .doc
+            .constraints()
+            .filter(|(id, _)| !self.doc.is_driven(*id))
+            .flat_map(|(_, c)| c.entities().collect::<Vec<_>>())
+            .collect();
+        let reach = std::rc::Rc::new(if seeds.is_empty() {
+            HashSet::new()
+        } else {
+            drift_solver::connected_with(&self.doc, seeds, self.lowering().as_deref())
+        });
+        *self.related_reach.borrow_mut() = Some((make_up, reach.clone()));
+        reach
+    }
+
+    /// Where every point is and every circle's radius, to put back
+    /// ([`restore_geometry`](Self::restore_geometry)).
+    pub(super) fn points_and_circles(&self) -> Geometry {
+        let mut out = Geometry::default();
+        for (id, e) in self.doc.iter() {
+            match e.kind {
+                EntityKind::Point(p) => out.points.push((id, p)),
+                EntityKind::Circle { radius, .. } => out.circles.push((id, radius)),
+                _ => {}
+            }
+        }
+        out
     }
 
     /// The shapes a relation's solve kept before the audit's PR 6: the directions of the

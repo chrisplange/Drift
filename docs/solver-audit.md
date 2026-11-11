@@ -501,7 +501,10 @@ PR 0 puts the bar in `scripts/solver-bar/` (its README runs all seven). **Known 
   (it hangs from the rest, as in a drag); what a new relation names takes up its change by
   moving and turning (its lines keep their lengths, not their directions; its arcs take the
   change in their radii, so #75's fillet still grows inside square lines). A size a dimension
-  sets is the dimension's, not a preference. Keeping every line's length too was tried: a
+  sets is the dimension's, not a preference. Only geometry the relations reach is given
+  shapes (an edit's solve can't move the rest): a shape on each of a 70.7k-curve drawing's
+  lines cost a nudge 129 → 362 ms, and with the closure it is level (144 against 151). Keeping
+  every line's length too was tried: a
   position isn't a preference, so the cheapest way to keep the rest's lengths was to slide the
   whole sketch (#75's outline moved 10 mm), which breaks "a relation moves what it relates".
 - **Ranks, as weights in the second stage** (`SolveOptions::length_ranks`, normalised so the

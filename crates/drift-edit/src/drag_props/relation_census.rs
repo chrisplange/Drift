@@ -25,7 +25,7 @@
 use proptest::strategy::{Strategy, ValueTree};
 use proptest::test_runner::{Config, RngAlgorithm, TestRng, TestRunner};
 
-use drift_core::EntityKind;
+use drift_core::{ConstraintId, EntityKind};
 
 use crate::editor::EditError;
 
@@ -241,18 +241,144 @@ fn shapes(ed: &Editor) -> (Vec<LineEnds>, Vec<(EntityId, f64)>) {
     (lines, arcs)
 }
 
-#[test]
-#[ignore = "census: run in release with --ignored --exact --nocapture"]
-fn relation_census() {
-    let n: usize = env_or("CENSUS_N", 4_000);
+/// The census's cases, in order: a sketch's plan, what is added, the picks' seed and whether
+/// the last pick is active.
+fn cases() -> impl FnMut() -> (Plan, Add, u64, bool) {
     let mut runner = TestRunner::new_with_rng(
         Config::default(),
         TestRng::from_seed(RngAlgorithm::ChaCha, &[33u8; 32]),
     );
     let strategy = (plan(true), add(), any::<u64>(), any::<bool>());
+    move || strategy.new_tree(&mut runner).unwrap().current()
+}
+
+/// Add `add` (made into `c`, between `picks`) as the app does: a relation or a new dimension
+/// between the picks, or the sketch's dimension retyped.
+fn apply(
+    ed: &mut Editor,
+    add: Add,
+    c: Constraint,
+    picks: &[EntityId],
+) -> Result<Vec<ConstraintId>, EditError> {
+    if let Add::Retype(f) = add {
+        // The sketch's own length dimension, or one added at the line's length (moving
+        // nothing), then typed.
+        let existing = ed
+            .doc
+            .constraints()
+            .find(|(_, c)| matches!(c, Constraint::Distance { .. }))
+            .map(|(id, c)| (id, *c));
+        let found = match existing {
+            Some(found) => Some(found),
+            None => ed
+                .add_constraints("Length", &[c])
+                .ok()
+                .map(|ids| (ids[0], c)),
+        };
+        match found {
+            None => Err(EditError::Redundant),
+            Some((id, c)) => {
+                let value = c.value().unwrap_or(0.0) * f;
+                ed.set_dimension(id, value)
+            }
+        }
+        .map(|()| Vec::new())
+    } else {
+        let _ = picks;
+        ed.add_picked_constraints(c.type_name(), &[c])
+    }
+}
+
+/// Edits that move geometry far in the census (the PR 3 review's item 3), and two its second
+/// stage stalls in, each added to its sketch shifted by −6…+6 ulps in x and
+/// −3, 0, +3 in y (39 copies, as `e_result_depends_on_size_flung_centre_whatever_the_round_off`
+/// nudges a drag): every copy is added or refused alike, and the copies end within 1e-6 of
+/// the sketch of one another (round-off doesn't pick where an edit lands). How far an edit
+/// moves geometry isn't bounded: a relation or a typed size may rightly move it far; only
+/// the preferences' steps are bounded together.
+#[test]
+fn edits_agree_whatever_the_round_off() {
+    nudged_edits_agree(&[3188, 4561, 2281, 16381]);
+}
+
+/// Two edits whose second stage stops short at a point round-off picks (the PR 3 review's
+/// items 1 and 2: it ends by the "nearer" or region stop with the shapes' projected gradient
+/// still above the bar): case 18502 (a Concentric) lands in three places up to 58 mm apart
+/// across the 39 copies, case 18672 (a Coincident) in two. Main agrees on both, keeping fewer
+/// shapes. For the stage-2 stall's own PR to un-ignore.
+#[test]
+#[ignore = "PR 3 review items 1 and 2: the second stage stalls at a round-off-picked point"]
+fn edits_that_stall_agree_whatever_the_round_off() {
+    nudged_edits_agree(&[18502, 18672]);
+}
+
+/// Each of the census's `cases`, added to its sketch shifted by −6…+6 ulps in x and −3, 0, +3
+/// in y: every copy added or refused alike, and ending within 1e-6 of the sketch of the first.
+fn nudged_edits_agree(cases_wanted: &[usize]) {
+    let mut next = cases();
+    let mut fails = Vec::new();
+    for case in 0..=cases_wanted.iter().copied().max().unwrap() {
+        let (plan, add, seed, active) = next();
+        if !cases_wanted.contains(&case) {
+            continue;
+        }
+        let sketch = plan.sketch().expect("the case builds");
+        let base = DVec2::new(100.0, 100.0);
+        let ulp = |x: f64, k: i64| f64::from_bits((x.to_bits() as i64 + k) as u64);
+        let mut reference: Option<(bool, Vec<DVec2>)> = None;
+        for dy in [-3i64, 0, 3] {
+            for dx in -6i64..=6 {
+                let shift = DVec2::new(ulp(base.x, dx), ulp(base.y, dy));
+                let t = Similarity {
+                    scale: 1.0,
+                    turn: 0.0,
+                    shift,
+                };
+                let mut built = Built::new(&sketch, t).expect("the case builds");
+                let (c, picks) = constraint(&built, add, seed).expect("the case picks");
+                let start: Vec<DVec2> = built.positions();
+                let mid = start.iter().sum::<DVec2>() / start.len() as f64;
+                let size = 2.0 * start.iter().map(|p| p.distance(mid)).fold(0.0, f64::max);
+                let ed = &mut built.ed;
+                ed.selection = picks.iter().copied().collect();
+                ed.set_active(if active { picks.last().copied() } else { None });
+                let added = apply(ed, add, c, &picks).is_ok();
+                let end: Vec<DVec2> = built.positions().iter().map(|p| *p - shift).collect();
+                match &reference {
+                    None => reference = Some((added, end)),
+                    Some((was_added, was)) => {
+                        let off = was
+                            .iter()
+                            .zip(&end)
+                            .map(|(a, b)| a.distance(*b))
+                            .fold(0.0, f64::max);
+                        if *was_added != added || off > 1e-6 * size {
+                            fails.push(format!(
+                                "case {case} dx {dx} dy {dy}: added {added} (first {was_added}), \
+                                 {off:.3e} from the first copy"
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        fails.is_empty(),
+        "{} nudges differ:\n{}",
+        fails.len(),
+        fails.join("\n")
+    );
+}
+
+#[test]
+#[ignore = "census: run in release with --ignored --exact --nocapture"]
+fn relation_census() {
+    let n: usize = env_or("CENSUS_N", 4_000);
+    let mut next = cases();
     let mut total = drift_solver::exits::Stage2Counts::default();
     for case in 0..n {
-        let (plan, add, seed, active) = strategy.new_tree(&mut runner).unwrap().current();
+        let (plan, add, seed, active) = next();
         let only: Option<usize> = std::env::var("CENSUS_CASE")
             .ok()
             .and_then(|v| v.parse().ok());
@@ -307,32 +433,7 @@ fn relation_census() {
         };
         show(ed, &format!("before {c:?}, picks {picks:?}"));
         let _ = drift_solver::exits::take_stage2();
-        let result = if let Add::Retype(f) = add {
-            // The sketch's own length dimension, or one added at the line's length (moving
-            // nothing), then typed.
-            let existing = ed
-                .doc
-                .constraints()
-                .find(|(_, c)| matches!(c, Constraint::Distance { .. }))
-                .map(|(id, c)| (id, *c));
-            let found = match existing {
-                Some(found) => Some(found),
-                None => ed
-                    .add_constraints("Length", &[c])
-                    .ok()
-                    .map(|ids| (ids[0], c)),
-            };
-            match found {
-                None => Err(EditError::Redundant),
-                Some((id, c)) => {
-                    let value = c.value().unwrap_or(0.0) * f;
-                    ed.set_dimension(id, value)
-                }
-            }
-            .map(|()| Vec::new())
-        } else {
-            ed.add_picked_constraints(c.type_name(), &[c])
-        };
+        let result = apply(ed, add, c, &picks);
         show(ed, "after");
         // How the edit's solves' second stages ended: a stall (stopped with the shapes'
         // projected gradient above the bar) or a cap is printed, case by case.
@@ -430,4 +531,77 @@ fn relation_census() {
         total.other_stalled,
         drift_solver::exits::STAGE2
     );
+}
+
+/// [`edits_agree_whatever_the_round_off`] over the census's first `CENSUS_N` cases (default
+/// 4,000), three copies each (−1, 0, +1 ulp in x): prints `N <case> <kind> <act> <off>` for each
+/// case whose copies disagree (added differently, or ending more than 1e-6 of the sketch apart)
+/// and a total.
+#[test]
+#[ignore = "census: run in release with --ignored --exact --nocapture"]
+fn edit_round_off_census() {
+    let n: usize = env_or("CENSUS_N", 4_000);
+    let mut next = cases();
+    let (mut tried, mut differ) = (0, 0);
+    for case in 0..n {
+        let (plan, add, seed, active) = next();
+        let Some(sketch) = plan.sketch() else {
+            continue;
+        };
+        let base = DVec2::new(100.0, 100.0);
+        let ulp = |x: f64, k: i64| f64::from_bits((x.to_bits() as i64 + k) as u64);
+        let mut ends: Vec<(bool, Vec<DVec2>, f64)> = Vec::new();
+        for dx in [-1i64, 0, 1] {
+            let shift = DVec2::new(ulp(base.x, dx), base.y);
+            let t = Similarity {
+                scale: 1.0,
+                turn: 0.0,
+                shift,
+            };
+            let Some(mut built) = Built::new(&sketch, t) else {
+                break;
+            };
+            let Some((c, picks)) = constraint(&built, add, seed) else {
+                break;
+            };
+            let start = built.positions();
+            let mid = start.iter().sum::<DVec2>() / start.len() as f64;
+            let size = 2.0 * start.iter().map(|p| p.distance(mid)).fold(0.0, f64::max);
+            let ed = &mut built.ed;
+            ed.selection = picks.iter().copied().collect();
+            ed.set_active(if active { picks.last().copied() } else { None });
+            let added = apply(ed, add, c, &picks).is_ok();
+            let end = built.positions().iter().map(|p| *p - shift).collect();
+            ends.push((added, end, size));
+        }
+        if ends.len() < 3 || !ends.iter().any(|e| e.0) {
+            continue;
+        }
+        tried += 1;
+        let (a0, e0, size) = &ends[0];
+        let off = ends[1..]
+            .iter()
+            .map(|(a, e, _)| {
+                if a != a0 {
+                    f64::INFINITY
+                } else {
+                    e0.iter()
+                        .zip(e)
+                        .map(|(p, q)| p.distance(*q))
+                        .fold(0.0, f64::max)
+                }
+            })
+            .fold(0.0, f64::max);
+        if off > 1e-6 * size {
+            differ += 1;
+            let kind = format!("{add:?}");
+            let act = if active { "act" } else { "none" };
+            println!(
+                "N {case} {} {act} {:.3e}",
+                kind.split('(').next().unwrap_or("?"),
+                off / size
+            );
+        }
+    }
+    println!("N TOTAL {differ} of {tried} added cases differ");
 }

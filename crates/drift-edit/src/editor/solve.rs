@@ -124,7 +124,8 @@ impl Editor {
     /// stands (the audit's PR 6, #350). The solver meets the relations first and only then,
     /// among their solutions, comes as near these as it can, so a relation that sets a size
     /// or turns a line changes it, and nothing changes that it leaves free:
-    /// - every arc keeps its radius, and every line its direction (the sketch stays square);
+    /// - every arc and circle keeps its radius, and every line its direction (the sketch
+    ///   stays square);
     /// - a line keeps its length where keeping it moves nothing else: where it hangs from the
     ///   rest (an end no other curve and no relation uses, as in a drag). A line between two
     ///   ends the rest of the sketch holds keeps its direction and stretches along itself where
@@ -207,7 +208,11 @@ impl Editor {
                         kept.directions.insert(id, u);
                     }
                 }
-                EntityKind::Arc { .. } if !turning.contains(&id) && !sized_arcs.contains(&id) => {
+                // (Circles too: the solver keeps a circle's radius as it does an arc's once it
+                // reads circles in `SolveOptions::radii`, the main-fix PR after PR 3.)
+                EntityKind::Arc { .. } | EntityKind::Circle { .. }
+                    if !turning.contains(&id) && !sized_arcs.contains(&id) =>
+                {
                     if let Some(r) = drift_solver::radius_of(&self.doc, id) {
                         kept.radii.insert(id, r);
                     }

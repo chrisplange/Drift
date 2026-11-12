@@ -87,7 +87,8 @@ pub(crate) fn record(exit: Exit, dragging: bool, iterations: usize) {
 
 /// How the second stage (the preferences, among the rows' solutions) ended, by its stop: every
 /// shape met; the model's whole step (its minimum among the rows' solutions) within the bar;
-/// the most a step could gain below half the bar squared; that gain below what the shapes'
+/// the most a step could gain below half the bar squared (or a step as wide as the drawing
+/// bringing the offsets no more than a bar nearer); that gain below what the shapes'
 /// offsets can resolve (round-off); the region below the bar; a factor that failed; the
 /// iteration cap. The region and the cap are stalls: the stage stopped without a test saying
 /// the shapes are as near as the rows let them be.

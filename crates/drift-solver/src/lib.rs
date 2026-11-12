@@ -1893,8 +1893,8 @@ enum Stop {
 /// (radii, lengths, directions: half the sum of their offsets squared) are minimised over the
 /// rows' null space by a Gauss–Newton step, solved by projected conjugate gradients in the
 /// mobility-weighted metric inside a trust region (a distance, no wider than the drawing,
-/// Steihaug's), run until the model's minimum or the region's edge. Each conjugate-gradient
-/// residual is projected into the rows' null space (`μ·A⁻¹`, with `A = JᵀJ + μ·M⁻¹`: the
+/// Steihaug's), run until the model's minimum (a step gaining less than the offsets resolve)
+/// or the region's edge. Each conjugate-gradient residual is projected into the rows' null space (`μ·A⁻¹`, with `A = JᵀJ + μ·M⁻¹`: the
 /// weighted projection as μ goes to zero, with the directions `μ` can't move counted as free),
 /// with the rows' part of it taken off and projected again where the projection let a share
 /// of the rows through (Gould, Hribar and Nocedal), and the trial point is brought back onto
@@ -1906,8 +1906,9 @@ enum Stop {
 /// carried don't take part: they are where the user put them. The solve has settled where the
 /// model's whole step (its minimum among the rows' solutions) lies within the bar (not with
 /// `fold`), or, for the model's whole step, the most it could gain is below half the bar
-/// squared or below what the shapes' offsets can resolve; it stops short where the region has
-/// shrunk below the bar (counted a stall, `exits::STAGE2`). A kept radius the free geometry
+/// squared or below what the shapes' offsets can resolve, or a step as wide as the drawing
+/// brings the offsets no more than a bar nearer (not with `fold`); it stops short where the
+/// region has shrunk below the bar (counted a stall, `exits::STAGE2`). A kept radius the free geometry
 /// can change but leaves off is reported (`unkept`): a drag whose radii can't follow stops
 /// (see `run`).
 ///
@@ -2518,13 +2519,26 @@ fn newton(
                     0.0
                 }
             };
+            // What the shapes' offsets can resolve: each is worked out from coordinates as
+            // large as the drawing is across, so carries round-off of a few ulps of that (as
+            // weighed), and half their squares, summed, can't tell a gain below the offsets
+            // times that.
+            let floor = ROUND_OFF_ULPS
+                * f64::EPSILON
+                * across
+                * soft_terms
+                    .iter()
+                    .zip(&soft_roots)
+                    .map(|((_, off), (root, _))| off.abs() * root)
+                    .sum::<f64>();
             // The step, by the conjugate gradients from the projected gradient; what it
             // promises, the model's gain; and whether it is the model's whole step (not cut by
             // the region's edge). They run until the model's minimum is found (their residual
             // at round-off) or the edge, at most a step per shape. (Cut short where the
             // projected residual fell below the bar, a fold's step was lost: there the gradient
             // vanishes as the shape closes, while what it has left to go doesn't:
-            // `free_move_is_accepted_heavy`'s seed 3 stopped with a radius 1.6e-6 off.)
+            // `free_move_is_accepted_heavy`'s seed 3 stopped with a radius 1.6e-6 off. So they
+            // stop on the gain instead, below `floor`.)
             let (x, promised, whole) = {
                 let mut x = vec![0.0; n];
                 let mut hx = vec![0.0; n];
@@ -2535,8 +2549,17 @@ fn newton(
                     let kappa = dot(&p, &hp);
                     let alpha = rv / kappa;
                     let next: Vec<f64> = x.iter().zip(&p).map(|(x, p)| x + alpha * p).collect();
-                    if kappa <= 0.0 || distance(&next, &next) >= radius * radius {
-                        let t = to_edge(&x, &p);
+                    let to_the_edge = kappa <= 0.0 || distance(&next, &next) >= radius * radius;
+                    let t = if to_the_edge { to_edge(&x, &p) } else { alpha };
+                    // (A step that gains less than the offsets can resolve is round-off's: once
+                    // the model's minimum is found, what is left of the residual is round-off,
+                    // in directions the shapes hardly curve, and a step along it went as far as
+                    // the region's edge, wherever round-off pointed, at one size or place and
+                    // not another: `drag_is_invariant_under_similarity_heavy`, every seed.)
+                    if t * rv - 0.5 * t * t * kappa <= floor {
+                        break;
+                    }
+                    if to_the_edge {
                         x.iter_mut().zip(&p).for_each(|(x, p)| *x += t * p);
                         hx.iter_mut().zip(&hp).for_each(|(h, q)| *h += t * q);
                         whole = false;
@@ -2558,18 +2581,6 @@ fn newton(
                 let promised = -(dot(&gradient, &x) + 0.5 * dot(&x, &hx));
                 (x, promised, whole)
             };
-            // What the shapes' offsets can resolve: each is worked out from coordinates as
-            // large as the drawing is across, so carries round-off of a few ulps of that (as
-            // weighed), and half their squares, summed, can't tell a gain below the offsets
-            // times that.
-            let floor = ROUND_OFF_ULPS
-                * f64::EPSILON
-                * across
-                * soft_terms
-                    .iter()
-                    .zip(&soft_roots)
-                    .map(|((_, off), (root, _))| off.abs() * root)
-                    .sum::<f64>();
             // Settled where the model's whole step, its minimum among the rows' solutions,
             // lies within the bar: a distance, the same however the shapes are weighed (the
             // projected gradient read against the bar wasn't, with weights up to 1e6, and at a
@@ -2588,6 +2599,20 @@ fn newton(
             // drag refused.)
             let below_bar = all_of_it && promised <= 0.5 * bar.get().length * bar.get().length;
             let unresolved = all_of_it && promised <= floor;
+            // Or where a step as wide as the drawing, cut by the region's edge, would bring the
+            // offsets, as one length, no more than a bar nearer: the shapes are as near as they
+            // come anywhere in the drawing, on a valley floor they barely feel, and the step
+            // would slide geometry the drawing's width for nothing the bar can tell, as far as
+            // round-off pointed (`drag_is_invariant_under_similarity_heavy`'s seed 15: 42 mm
+            // for 3e-9). (Not where the step is the model's whole one: there the stage closes in
+            // as fast as the model does, and stopped a bar short, a curved row's crawl ended a
+            // step early, census case 21. Nor where refused trials have shrunk the region: a
+            // step it cuts short promises only what fits.)
+            let nearer = !fold && !whole && radius >= across && {
+                let now = (2.0 * phi_now).sqrt();
+                now - (2.0 * (phi_now - promised).max(0.0)).sqrt() <= bar.get().length
+            };
+            let below_bar = below_bar || nearer;
             if within || below_bar || unresolved {
                 stage2(if within {
                     1

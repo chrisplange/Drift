@@ -3,6 +3,7 @@
 //! on paper and undone exactly; the hint when the scale leaves the annotations unreadable.
 
 use drift_core::{AnnotationRef, Constraint, DraftStyle};
+use egui_kittest::kittest::NodeT as _;
 
 use super::*;
 
@@ -266,4 +267,139 @@ fn smoke_annotation_scale_new_text_is_the_drafting_height_at_the_drawing_scale()
     h.state_mut().drawing.editor.prefs.text_height = 5.0;
     h.state_mut().paste("BIGGER", false, 0.0);
     assert!((last_text_height(&h.state().drawing.editor.doc) - 250.0).abs() < 1e-9);
+}
+
+#[test]
+fn smoke_annotation_scale_custom_scale_field_keeps_the_menu_open_to_type() {
+    let Some(mut h) = harness() else { return };
+    // At 1:25, labelled the same in metric and imperial drawings.
+    {
+        let doc = &mut h.state_mut().drawing.editor.doc;
+        let style = doc.draft_style();
+        doc.set_draft_style(DraftStyle {
+            scale: 25.0,
+            ..style
+        });
+    }
+    h.state_mut().show_drawing_settings = true;
+    h.run();
+    h.run();
+    // The drawing scale menu, scrolled into view.
+    h.get_by_value("1:25").scroll_to_me();
+    h.run();
+    h.get_by_value("1:25").click();
+    h.run();
+    let placeholder = "1:37 or 5\" = 1'-0\"";
+    let field = |h: &Harness<'_, DriftApp>| {
+        h.query_all_by_role(egui::accesskit::Role::TextInput)
+            .find(|n| n.accesskit_node().placeholder() == Some(placeholder))
+            .map(|n| n.rect().center())
+    };
+    // The Custom field is at the foot of the menu's list, below its fold.
+    h.query_all_by_role(egui::accesskit::Role::TextInput)
+        .find(|n| n.accesskit_node().placeholder() == Some(placeholder))
+        .expect("the Custom field in the open menu")
+        .scroll_to_me();
+    h.run();
+    h.run();
+    let at = field(&h).expect("the menu is still open");
+    // A click into the field keeps the menu open and the field focused.
+    h.hover_at(at);
+    h.run();
+    button(&h, at, true);
+    h.run();
+    button(&h, at, false);
+    h.run();
+    h.run();
+    assert!(
+        field(&h).is_some(),
+        "the menu closed on a click into its field"
+    );
+    type_text(&mut h, "1:37");
+    h.key_press(Key::Enter);
+    h.run();
+    h.run();
+    assert_eq!(h.state().drawing.editor.doc.draft_style().scale, 37.0);
+    assert!(
+        field(&h).is_none(),
+        "Enter applies the scale and closes the menu"
+    );
+}
+
+/// A 20 m dimensioned plan at 1:1 in view, its sheets showing views at `scales` (one sheet
+/// per scale; none for an empty list).
+fn plan_with_sheet_views(h: &mut Harness<'_, DriftApp>, scales: &[f64]) {
+    {
+        let ed = &mut h.state_mut().drawing.editor;
+        ed.doc.begin();
+        let a = ed.doc.add_point(DVec2::new(0.0, 0.0));
+        let b = ed.doc.add_point(DVec2::new(20_000.0, 0.0));
+        ed.doc.add_line(a, b).unwrap();
+        ed.doc
+            .add_constraint(Constraint::Distance {
+                a,
+                b,
+                value: 20_000.0,
+            })
+            .unwrap();
+        for (k, n) in scales.iter().enumerate() {
+            let crop = drift_core::Bounds {
+                min: DVec2::new(0.0, -1000.0),
+                max: DVec2::new(20_000.0, 1000.0),
+            };
+            let view = ed
+                .doc
+                .add_view(drift_core::View::new(format!("V{k}"), crop, *n));
+            let mut sheet = drift_core::Sheet::new(format!("S{k}"));
+            sheet
+                .viewports
+                .push(drift_core::Viewport::new(view, DVec2::new(200.0, 150.0)));
+            ed.doc.add_sheet(sheet);
+        }
+        ed.commit("Plan");
+    }
+    view(
+        h,
+        DVec2::new(-1000.0, -5000.0),
+        DVec2::new(21_000.0, 5000.0),
+    );
+    h.run();
+    h.run();
+    assert!(h.query_by_label("Set drawing scale…").is_some(), "the hint");
+}
+
+#[test]
+fn smoke_annotation_scale_hint_offers_the_scale_the_sheets_share() {
+    const OFFER: &str = "Set to 1:50 (the scale its sheets use)";
+    // Every sheet view at 1:50: one click sets it, as one undo step, and the hint goes.
+    {
+        let Some(mut h) = harness() else { return };
+        plan_with_sheet_views(&mut h, &[50.0, 50.0]);
+        h.get_by_label(OFFER).click();
+        h.run();
+        h.run();
+        assert_eq!(h.state().drawing.editor.doc.draft_style().scale, 50.0);
+        assert!(h.query_by_label(OFFER).is_none());
+        assert!(h.query_by_label("Set drawing scale…").is_none());
+        undo(&mut h);
+        assert_eq!(h.state().drawing.editor.doc.draft_style().scale, 1.0);
+    }
+    // Views that disagree: the hint as before.
+    {
+        let Some(mut h) = harness() else { return };
+        plan_with_sheet_views(&mut h, &[50.0, 100.0]);
+        assert!(
+            h.query_by_label_contains("the scale its sheets use")
+                .is_none()
+        );
+    }
+    // No views: the hint as before.
+    {
+        let Some(mut h) = harness() else { return };
+        plan_with_sheet_views(&mut h, &[]);
+        assert!(
+            h.query_by_label_contains("the scale its sheets use")
+                .is_none()
+        );
+    }
 }

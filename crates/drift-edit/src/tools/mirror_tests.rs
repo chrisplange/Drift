@@ -205,6 +205,27 @@ fn a_snap_to_a_point_on_a_line_starts_a_temporary_axis() {
 }
 
 #[test]
+fn a_two_point_axis_snaps_to_a_circle_centre_and_ends_on_a_line() {
+    let (mut ed, _) = fixture();
+    ed.doc.begin();
+    let c = ed.doc.add_point(v(0.0, -20.0));
+    ed.doc.add_circle(c, 2.0).unwrap();
+    let a = ed.doc.add_point(v(-1.0, 30.0));
+    let b = ed.doc.add_point(v(1.0, 30.0));
+    ed.doc.add_line(a, b).unwrap();
+    ed.commit("Targets");
+    let mut tool = MirrorTool::default();
+    // Near the circle's centre: the axis starts there, snapped.
+    click(&mut ed, &mut tool, v(0.2, -19.8));
+    assert!(tool.is_busy());
+    // The second point may land on a line: its midpoint snap ends the axis on x = 0.
+    click(&mut ed, &mut tool, v(0.1, 30.1));
+    assert!(!tool.is_busy());
+    assert!(has_point(&ed, v(-2.0, 1.0)), "mirrored about x = 0");
+    assert!(has_point(&ed, v(-5.0, 4.0)), "mirrored about x = 0");
+}
+
+#[test]
 fn nothing_picked_is_explained_and_starts_no_axis() {
     let (mut ed, _) = fixture();
     ed.selection.clear();

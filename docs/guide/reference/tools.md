@@ -77,7 +77,7 @@ and **Explode walls** are in the **Build** menu; **Walls from curves** and
 | **Fillet** | F | Click a corner where two lines or arcs meet (or an existing fillet), move to size it, click to apply; or type the radius. Shift+click several corners, or pick a shape first, and one size rounds them all in one undo step. F again switches to **Chamfer**. |
 | **Chamfer** | F, F | As the fillet, several corners too; type the distance, Tab for a second distance (one corner at a time). |
 | **Offset** | O | Click a curve (its connected chain is taken too), then the side; or type the distance. The result is one offset with one distance that follows its source; drag a piece or type into its dimension to change it; Detach (Inspector) makes plain curves. |
-| **Mirror** | M | Pick geometry or block copies first; then click the line to mirror it about, or click two points anywhere else for a temporary axis (snaps apply, the result previews while you pick the second point, Esc cancels, and no line is left behind). About a line, the copies of curves are held symmetric; block copies are placed mirrored. |
+| **Mirror** | M | Pick geometry or block copies first; then click the line to mirror it about, or click two points for a temporary axis: a point snap (an end, midpoint, centre, crossing or the origin) or empty space starts one, while a click on a line's body uses the line (snaps apply, the result previews while you pick the second point, Esc cancels, and no line is left behind). About a line, the copies of curves are held symmetric; block copies are placed mirrored. |
 
 ## Annotate
 

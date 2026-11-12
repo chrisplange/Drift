@@ -263,8 +263,8 @@ impl Tool for MirrorTool {
 
     fn hint(&self) -> String {
         match self.first {
-            None => "Click a line to mirror the selection about, or click two points for a \
-                     temporary axis (select geometry first with Select)"
+            None => "Click a line to mirror about it, or a point (or empty space) to start an \
+                     axis · select the geometry first with Select"
                 .into(),
             Some(_) => "Click the axis's second point · Esc cancels".into(),
         }

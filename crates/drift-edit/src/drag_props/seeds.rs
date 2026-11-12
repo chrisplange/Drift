@@ -2710,3 +2710,57 @@ fn e_result_depends_on_size_flung_centre_whatever_the_round_off() {
         )
     );
 }
+
+/// A valley floor (fixed with the stage-2 stall PR): midpoints, an on-line point, two equal
+/// pairs and a length. The drag can't keep every length, and the shapes' least misfit lies on
+/// a floor they barely feel: the preferences' first step went the drawing's width (42 mm) for
+/// a gain that brought the offsets 3e-9 nearer, as far as round-off pointed, so the copy at a
+/// quarter the size landed 1.6e-5 elsewhere. The stage now stops where a step as wide as the
+/// drawing comes no more than a bar nearer. (`drag_is_invariant_under_similarity_heavy`,
+/// seed 15.)
+#[test]
+fn valley_floor_slide_depends_on_size() {
+    let plan = Plan {
+        ops: vec![
+            Op::Step {
+                from: 0,
+                angle: 5,
+                len: 0,
+            },
+            Op::Mid {
+                line: 0,
+                angle: 8,
+                len: 2,
+            },
+            Op::Close { from: 9, to: 42 },
+            Op::Mid {
+                line: 55,
+                angle: 7,
+                len: 2,
+            },
+            Op::OnLine {
+                line: 42,
+                at: 1,
+                angle: 6,
+                len: 0,
+            },
+            Op::Close { from: 52, to: 26 },
+        ],
+        extras: {
+            let mut e = vec![false; 48];
+            e[3] = true;
+            e[4] = true;
+            e
+        },
+        fix: None,
+        length: Some(22),
+    };
+    let pick = Pick::Curves(8904937093169638656);
+    let offset = DVec2::new(-19.446019893875484, -12.14606966220385);
+    let t = Similarity {
+        scale: 0.25,
+        turn: 62.868970215172965,
+        shift: DVec2::new(0.0, 0.0),
+    };
+    explained(invariant(&plan, &pick, offset, 1, t)).unwrap();
+}

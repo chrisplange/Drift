@@ -85,22 +85,25 @@ pub(crate) fn record(exit: Exit, dragging: bool, iterations: usize) {
     });
 }
 
-/// How the second stage (the preferences, among the rows' solutions) ended, by its stop:
-/// every shape met, stationary (projected gradient below the bar), the most a step could
-/// gain below the bar squared, a step bringing the shapes no more than a bar nearer, the
-/// region below the bar, a factor that failed, the iteration cap.
+/// How the second stage (the preferences, among the rows' solutions) ended, by its stop: every
+/// shape met; the model's whole step (its minimum among the rows' solutions) within the bar;
+/// the most a step could gain below half the bar squared (or a step as wide as the drawing
+/// bringing the offsets no more than a bar nearer); that gain below what the shapes'
+/// offsets can resolve (round-off); the region below the bar; a factor that failed; the
+/// iteration cap. The region and the cap are stalls: the stage stopped without a test saying
+/// the shapes are as near as the rows let them be.
 pub const STAGE2: [&str; 7] = [
     "met",
-    "stationary",
+    "step",
     "promised",
-    "nearer",
+    "round-off",
     "region",
     "factor",
     "cap",
 ];
 
 /// Second-stage endings, drag solves apart from the rest, indexed as [`STAGE2`], and of those
-/// how many stopped with the shapes' projected gradient still above the bar (a stall).
+/// how many were stalls (the region or the cap).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Stage2Counts {
     pub drag: [u64; 7],
@@ -119,7 +122,8 @@ pub fn take_stage2() -> Stage2Counts {
 }
 
 /// Count one second-stage ending.
-pub(crate) fn record_stage2(stop: usize, dragging: bool, stalled: bool) {
+pub(crate) fn record_stage2(stop: usize, dragging: bool) {
+    let stalled = matches!(STAGE2[stop], "region" | "cap");
     STAGE2_COUNTS.with(|c| {
         let mut n = c.get();
         if dragging {

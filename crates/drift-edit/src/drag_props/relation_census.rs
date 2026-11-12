@@ -11,8 +11,9 @@
 //! numbers stay as they are. `CENSUS_CASE` runs that case alone and prints the drawing before
 //! and after; `CENSUS_POS` adds a `P <case>` line of every point's position, to compare two
 //! builds point by point. An `S <case>` line lists the edit's second-stage endings where one
-//! stopped with the shapes' projected gradient still above the bar, or at the cap, and
-//! `S2 TOTAL` sums them (`drift_solver::exits::STAGE2`: the PR 3 review's items 1 and 2). Each line: `R <case> <kind> <active> <result>`, then (where the
+//! stalled (stopped by the region or the cap, not by a test that the shapes are as near as the
+//! rows let them be), and `S2 TOTAL` sums them (`drift_solver::exits::STAGE2`: the PR 3
+//! review's items 1 and 2). Each line: `R <case> <kind> <active> <result>`, then (where the
 //! relation was added) `mv` how far the farthest point moved, `pts` how many points moved, and
 //! for the lines and the arcs, apart for the geometry the relation names (`n…`: a line counts
 //! if it or one of its ends is named) and the rest
@@ -301,13 +302,15 @@ fn edits_agree_whatever_the_round_off() {
     nudged_edits_agree(&[3188, 4561, 2281, 16381]);
 }
 
-/// Two edits whose second stage stops short at a point round-off picks (the PR 3 review's
-/// items 1 and 2: it ends by the "nearer" or region stop with the shapes' projected gradient
-/// still above the bar): case 18502 (a Concentric) lands in three places up to 58 mm apart
-/// across the 39 copies, case 18672 (a Coincident) in two. Main agrees on both, keeping fewer
-/// shapes. For the stage-2 stall's own PR to un-ignore.
+/// Two edits whose second stage stopped short at a point round-off picked (the PR 3 review's
+/// items 1 and 2): case 18502 (a Concentric) landed in three places up to 58 mm apart across
+/// the 39 copies, case 18672 (a Coincident) in two. In 18502 two lines kept square could keep
+/// their directions only both turned end for end, and a direction read at its kept length fell
+/// towards its infimum as their shared point ran off along one of them: the preferences chased
+/// it until the bound on their steps stopped them, wherever round-off had them reach it. A
+/// direction is read at a length that grows as the line is stretched past its own now, and the
+/// preferences' steps keep to the rows' solutions (the solver audit's stage-2 stall PR).
 #[test]
-#[ignore = "PR 3 review items 1 and 2: the second stage stalls at a round-off-picked point"]
 fn edits_that_stall_agree_whatever_the_round_off() {
     nudged_edits_agree(&[18502, 18672]);
 }
@@ -420,6 +423,188 @@ fn no_edit_leaves_a_sliver() {
     );
 }
 
+/// The census's case `wanted`, built at `t`: the editor with the case's picks made, the
+/// relation or size to add, and the picks.
+fn census_case(wanted: usize, t: Similarity) -> (Built, Add, Constraint, Vec<EntityId>) {
+    let mut next = cases();
+    for _ in 0..wanted {
+        next();
+    }
+    let (plan, add, seed, active) = next();
+    let sketch = plan.sketch().expect("the case builds");
+    let mut built = Built::new(&sketch, t).expect("the case builds");
+    let (c, picks) = constraint(&built, add, seed).expect("the case picks");
+    built.ed.selection = picks.iter().copied().collect();
+    built
+        .ed
+        .set_active(if active { picks.last().copied() } else { None });
+    (built, add, c, picks)
+}
+
+/// Case 2281 (a Collinear between two lines): a line the sketch kept at 45° could keep its
+/// direction only by shrinking to nothing, the relation pushing it back along itself (the
+/// collapse attractor). Kept shapes are preferences, so it turns instead, as Fusion's,
+/// SolidWorks' and Onshape's sketches do (the user's call, 11-12): the relation is added, no
+/// line changes length, and that line turns.
+#[test]
+fn a_line_kept_square_turns_rather_than_collapsing() {
+    let (mut built, add, c, picks) = census_case(2281, Similarity::IDENTITY);
+    let (lines0, _) = shapes(&built.ed);
+    apply(&mut built.ed, add, c, &picks).expect("the Collinear is added");
+    let (lines1, _) = shapes(&built.ed);
+    let report: Vec<String> = lines0
+        .iter()
+        .zip(&lines1)
+        .map(|((id, a0, b0), (_, a1, b1))| {
+            let turn = (*b0 - *a0).angle_to(*b1 - *a1).to_degrees();
+            format!(
+                "{id:?} {} -> {} turned {turn:.3}°",
+                a0.distance(*b0),
+                a1.distance(*b1)
+            )
+        })
+        .collect();
+    for ((_, a0, b0), (_, a1, b1)) in lines0.iter().zip(&lines1) {
+        let (l0, l1) = (a0.distance(*b0), a1.distance(*b1));
+        assert!(
+            (l1 - l0).abs() <= 1e-9 * 43.133,
+            "a line changed length: {report:#?}"
+        );
+    }
+    // The line from (−2.6, −9.7) at −45° (the sketch's third curve) turned.
+    let line = built.curves[2];
+    let (_, a0, b0) = lines0.iter().find(|(id, ..)| *id == line).unwrap();
+    let (_, a1, b1) = lines1.iter().find(|(id, ..)| *id == line).unwrap();
+    let turn = (*b0 - *a0).angle_to(*b1 - *a1).to_degrees().abs();
+    assert!(turn > 10.0, "the line turned {turn}°: {report:#?}");
+}
+
+/// Case 2281 with every point nudged on its own, by −2…+2 ulps in x and in y (100 copies: a
+/// platform's libm and the sketch's own trig differ by an ulp here and there, which the whole
+/// sketch shifted as one, `edits_agree_whatever_the_round_off`, doesn't reach). Before the
+/// direction measure faded a turned-round line's cost out at no length, these landed 13 ways
+/// (with the line left at 1.5 % of itself in some, flipped in others), Linux and macOS on a
+/// different one from Windows: a relation pushing a line back along itself drove it onto the
+/// cliff where turning round cost twice its length, and the solve stalled there wherever
+/// round-off had it. Now every copy is added and lands as the first does, within 1e-6 of the
+/// sketch, no line a sliver and the 45° line turned.
+#[test]
+fn a_line_kept_square_turns_alike_whatever_the_round_off_of_each_point() {
+    let ulp = |x: f64, k: i64| {
+        if x == 0.0 {
+            x
+        } else {
+            f64::from_bits((x.to_bits() as i64 + k) as u64)
+        }
+    };
+    let mut reference: Option<Vec<DVec2>> = None;
+    let mut fails = Vec::new();
+    let mut s: u64 = 0x2281_2281_2281_2281;
+    let mut next = move || {
+        s ^= s << 13;
+        s ^= s >> 7;
+        s ^= s << 17;
+        (s % 5) as i64 - 2
+    };
+    for copy in 0..100 {
+        let (mut built, add, c, picks) = census_case(2281, Similarity::IDENTITY);
+        if copy > 0 {
+            for p in built.points.clone() {
+                let q = built.ed.doc.point(p).unwrap();
+                let (kx, ky) = (next(), next());
+                built
+                    .ed
+                    .doc
+                    .set_point(p, DVec2::new(ulp(q.x, kx), ulp(q.y, ky)))
+                    .unwrap();
+            }
+        }
+        let (lines0, _) = shapes(&built.ed);
+        if apply(&mut built.ed, add, c, &picks).is_err() {
+            fails.push(format!("copy {copy}: refused"));
+            continue;
+        }
+        let (lines1, _) = shapes(&built.ed);
+        for ((id, a0, b0), (_, a1, b1)) in lines0.iter().zip(&lines1) {
+            if a1.distance(*b1) < 1e-3 * a0.distance(*b0) {
+                fails.push(format!("copy {copy}: line {id:?} left a sliver"));
+            }
+        }
+        let line = built.curves[2];
+        let (_, a0, b0) = lines0.iter().find(|(id, ..)| *id == line).unwrap();
+        let (_, a1, b1) = lines1.iter().find(|(id, ..)| *id == line).unwrap();
+        let turn = (*b0 - *a0).angle_to(*b1 - *a1).to_degrees().abs();
+        if turn < 10.0 {
+            fails.push(format!("copy {copy}: the 45° line turned {turn}°"));
+        }
+        let end = built.positions();
+        match &reference {
+            None => reference = Some(end),
+            Some(first) => {
+                let off = first
+                    .iter()
+                    .zip(&end)
+                    .map(|(a, b)| a.distance(*b))
+                    .fold(0.0, f64::max);
+                if off > 1e-6 * 43.133 {
+                    fails.push(format!("copy {copy}: {off:.3e} from the first"));
+                }
+            }
+        }
+    }
+    assert!(fails.is_empty(), "{}", fails.join("\n"));
+}
+
+/// The same edit with that line made Horizontal by the user first (the sketch turned 45° so
+/// it lies level): an explicit Horizontal is a relation, not a preference, so it doesn't give
+/// way. The edit is added with the line still level (it slides along itself instead), and a
+/// relation that could only be met by turning it, a Vertical on it, is refused, moving
+/// nothing.
+#[test]
+fn an_explicit_horizontal_holds_where_a_kept_direction_turns() {
+    let turned = Similarity {
+        scale: 1.0,
+        turn: 45.0,
+        shift: DVec2::ZERO,
+    };
+    let (mut built, add, c, picks) = census_case(2281, turned);
+    let line = built.curves[2];
+    let level = |ed: &Editor| {
+        let EntityKind::Line { a, b } = ed.doc.get(line).unwrap().kind else {
+            unreachable!()
+        };
+        let (a, b) = (ed.doc.point(a).unwrap(), ed.doc.point(b).unwrap());
+        (b.y - a.y).abs() <= 1e-9 * a.distance(b).max(1.0)
+    };
+    assert!(level(&built.ed), "the line lies level as built");
+    let selection = built.ed.selection.clone();
+    built
+        .ed
+        .add_constraints("Horizontal", &[Constraint::Horizontal { line }])
+        .expect("the Horizontal is added, moving nothing");
+    built.ed.selection = selection;
+    let constraints = built.ed.doc.constraints().count();
+    let added = apply(&mut built.ed, add, c, &picks);
+    assert!(level(&built.ed), "the Horizontal held ({added:?})");
+    added.expect("the Collinear is added, the line sliding along itself");
+    assert_eq!(built.ed.doc.constraints().count(), constraints + 1);
+    let before = built.positions();
+    let refused = built
+        .ed
+        .add_constraints("Vertical", &[Constraint::Vertical { line }]);
+    // (Read as collapsing the line: Horizontal and Vertical both hold only at no length.)
+    assert!(
+        matches!(refused, Err(EditError::Conflict | EditError::Degenerate)),
+        "a Vertical on the Horizontal line: {refused:?}"
+    );
+    assert_eq!(
+        built.positions(),
+        before,
+        "the refused Vertical moved nothing"
+    );
+    assert_eq!(built.ed.doc.constraints().count(), constraints + 1);
+}
+
 #[test]
 #[ignore = "census: run in release with --ignored --exact --nocapture"]
 fn relation_census() {
@@ -484,15 +669,15 @@ fn relation_census() {
         let _ = drift_solver::exits::take_stage2();
         let result = apply(ed, add, c, &picks);
         show(ed, "after");
-        // How the edit's solves' second stages ended: a stall (stopped with the shapes'
-        // projected gradient above the bar) or a cap is printed, case by case.
+        // How the edit's solves' second stages ended: a stall (the region or the cap) is
+        // printed, case by case.
         let s2 = drift_solver::exits::take_stage2();
-        for k in 0..7 {
+        for k in 0..drift_solver::exits::STAGE2.len() {
             total.other[k] += s2.other[k];
             total.other_stalled[k] += s2.other_stalled[k];
         }
         let stalled: u64 = s2.other_stalled.iter().sum();
-        if stalled > 0 || s2.other[6] > 0 {
+        if stalled > 0 {
             println!(
                 "S {case} {kind} {act} stalled {stalled} cap {} ends {:?} stalls {:?}",
                 s2.other[6], s2.other, s2.other_stalled

@@ -1349,17 +1349,30 @@ mod circle_drag {
     /// change bigger than the points' spread had every step cut short, so the frame was taken
     /// again in small steps along a path through the centre, and refused for a stretch past it.)
     /// A point on an arc is refused on the centre frame too: the arc would turn (F1), as before.
+    ///
+    /// From 0.5 the far side is past the round's own radius: every frame that would grow it
+    /// past 0.5 is refused, as the drag never grows a radius it doesn't move (the point is held
+    /// on the round, not one of its own), arcs and circles alike (the user's decision of
+    /// 2026-11-11; before it circles grew there and arcs already stopped).
     #[test]
     fn a_point_dragged_across_its_circles_centre_is_refused_only_on_it() {
-        let cases: [(bool, f64, u32, &[u32]); 7] = [
-            (false, 5.0, 20, &[10]),
-            (false, 5.0, 64, &[32]),
-            (false, 5.0, 7, &[]),
-            (false, 5.0, 21, &[]),
-            (false, 0.5, 20, &[]),
-            (false, 0.5, 64, &[]),
-            (true, 5.0, 20, &[10]),
+        let grows = |from: f64, frames: u32| -> Vec<u32> {
+            (1..=frames)
+                .filter(|&k| 5.5 * f64::from(k) / f64::from(frames) - from > from)
+                .collect()
+        };
+        let cases: [(bool, f64, u32, Vec<u32>); 9] = [
+            (false, 5.0, 20, vec![10]),
+            (false, 5.0, 64, vec![32]),
+            (false, 5.0, 7, vec![]),
+            (false, 5.0, 21, vec![]),
+            (false, 0.5, 20, grows(0.5, 20)),
+            (false, 0.5, 64, grows(0.5, 64)),
+            (true, 5.0, 20, vec![10]),
+            (true, 0.5, 20, grows(0.5, 20)),
+            (true, 0.5, 64, grows(0.5, 64)),
         ];
+        assert_eq!(grows(0.5, 20), (4..=20).collect::<Vec<_>>());
         for (arc, from, frames, want) in cases {
             for scale in [0.1, 1.0, 10.0] {
                 for at in [DVec2::ZERO, v(1e5, 1e5), v(1e6, 1e6)] {
@@ -1453,8 +1466,8 @@ mod broken_geometry {
 
     /// The mixed part: an arc drawn on a point of a part that already conflicts. The solve
     /// names only the old conflicts and puts the arc in their failed part, where it shares
-    /// their misfit: the edit is undone (on main it was kept), whether or not the arc's own
-    /// row ends within its tolerance. And an arc already drawn elsewhere joined to
+    /// their misfit: the edit is undone (on main it was kept), even where the arc's own row
+    /// is all but met. And an arc already drawn elsewhere joined to
     /// that point by a relation: undone (as on main: the relation is a new conflict).
     #[test]
     fn an_arc_joined_to_a_part_that_already_conflicts_is_undone() {
@@ -1471,14 +1484,27 @@ mod broken_geometry {
         let before = kinds(&ed);
         ed.doc.begin();
         let at = ed.doc.point(b).unwrap();
-        let s = ed.doc.add_point(at + v(5.0, 0.0));
+        // (Its ends are where its own row needs nothing of the compromise: the conflict moves
+        // its centre from (12, 3) towards (15, 0), along the line of points as far from either
+        // end, so its ends need not follow at all.)
+        let s = ed.doc.add_point(at + v(-5.0, 0.0));
         let e = ed.doc.add_point(at + v(0.0, 5.0));
         let arc = ed.doc.add_arc(b, s, e).unwrap();
-        // Solved, the new arc is in the failed part: it is refused for being there, whether or
-        // not the solve's least-squares compromise leaves its own row off.
+        // Solved, the new arc is in the failed part, its own row off by no more than a
+        // ten-thousandth of the conflict's (each distance 5 off): it is refused for being
+        // there, not for how far the solve left it off. (Not within its tolerance: the solve
+        // stops at a conflict on the step's predicted gain, short of the least-squares point
+        // where a row with free ends of its own is met exactly; PR 5 judges it by rank.)
         let mut solved = ed.doc.clone();
         let report = drift_solver::solve(&mut solved, &drift_solver::SolveOptions::default());
         assert!(report.exposed.contains(&arc));
+        let point = |p| solved.point(p).unwrap();
+        let own = (point(b).distance(point(e)) - point(b).distance(point(s))).abs();
+        let conflict = (point(b).length() - 10.0).abs();
+        assert!(
+            conflict > 4.0 && own < 1e-4 * conflict,
+            "{own} of {conflict}"
+        );
         assert!(!ed.commit("Arc"));
         assert_eq!(
             ed.out.notice.as_deref(),

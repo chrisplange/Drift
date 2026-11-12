@@ -249,3 +249,38 @@ proptest! {
         );
     }
 }
+
+/// `faces_move_with_the_drawing`'s case from main's windows run on 6667e17 (proptest picks new
+/// cases each run): a 6 × 4 rectangle with a unit square on its corner and a circle cutting the
+/// rectangle's far corner, scaled to a tenth and moved 9,891 down. Four faces before; the move
+/// must keep them.
+#[test]
+fn faces_move_with_the_drawing_scaled_far_out() {
+    let line = |a: (f64, f64), b: (f64, f64)| Shape::Line {
+        a: v(a.0, a.1),
+        b: v(b.0, b.1),
+    };
+    let shapes = vec![
+        line((0.0, 1.0), (6.0, 1.0)),
+        line((6.0, 1.0), (6.0, 5.0)),
+        line((6.0, 5.0), (0.0, 5.0)),
+        line((0.0, 5.0), (0.0, 1.0)),
+        line((0.0, 0.0), (1.0, 0.0)),
+        line((1.0, 0.0), (1.0, 1.0)),
+        line((1.0, 1.0), (0.0, 1.0)),
+        line((0.0, 1.0), (0.0, 0.0)),
+        Shape::Circle {
+            center: v(7.0, 7.0),
+            radius: 2.31,
+        },
+    ];
+    let (scale, shift) = (0.1, v(0.0, -9891.394910654653));
+    let f = |p: DVec2| p * scale + shift;
+    let moved: Vec<Shape> = shapes
+        .iter()
+        .map(|s| map_shape(s, &f, scale, 0.0))
+        .collect();
+    let (before, after) = (regions(&shapes), regions(&moved));
+    assert_eq!(before.len(), 4);
+    assert_eq!(after.len(), 4, "{:?}", areas(&after));
+}

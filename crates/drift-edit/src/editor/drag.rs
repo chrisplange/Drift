@@ -313,8 +313,9 @@ struct DragFrame<'a> {
     /// carried along whole when a step can't be made or doesn't land otherwise (see
     /// `Editor::carry_holding`). Empty for a point dragged, or a part something pins.
     holding: &'a [EntityId],
-    /// The circles' radii as the drag began, for judging whether a step crushed one (as
-    /// `Geometry::radii` is for arcs; `Geometry::circles` follows each step, to restore it).
+    /// The circles' radii as the drag began, for the solve to keep and for judging whether a
+    /// step crushed one (as `Geometry::radii` is for arcs; `Geometry::circles` follows each
+    /// step, to restore it).
     start_circles: &'a [(EntityId, f64)],
     /// A move of curves in a part nothing pins: it can always land, every kept radius and
     /// length met (moving the whole part along does it), so a step that can't be made, or
@@ -532,22 +533,6 @@ impl Editor {
             // it would make where the drag is depend on the way there.)
             ok = self.drag_from_start(&mut frame, to, &part.start)
                 && !self.breaks_held_shape(part, to, frame.bar);
-            // A move of curves in a part nothing pins is never a stop: moving the whole part
-            // along lands every dragged point exactly, meets every relation (none of them holds
-            // the part where it is) and keeps every shape. Where the solve couldn't find a way
-            // (it lands where the least change leads, and from there the kept shapes' stage
-            // can stall at a fold of the rows short of the whole move), that is the frame.
-            if !ok && part.unpinned && !self.drag_no_carry {
-                self.restore_geometry(&part.start);
-                let moved: std::collections::BTreeSet<EntityId> =
-                    part.start.points.iter().map(|&(id, _)| id).collect();
-                for &(id, at) in &part.start.points {
-                    let _ = self.doc.set_point(id, at + to);
-                }
-                self.doc.normalize_arcs_using(&moved);
-                frame.pushed = true;
-                ok = true;
-            }
             self.drag_solves += 2 * DRAG_SOLVES + length_left.0
                 - frame.solves_left
                 - frame.fold_solves_left
@@ -1093,12 +1078,12 @@ impl Editor {
         self.find_held_shapes(part, &locked, &made);
     }
 
-    /// Whether `part`, moved by `offset` from where the drag found it, grew an arc it doesn't
-    /// move (landed or not), or didn't land and broke a shape the drag doesn't move: changed the
-    /// radius of a held arc or circle by more than
-    /// [`SHAPE_HOLD`] times the offset, shortened a held line by more than half [`LINE_HOLD`]
-    /// times the offset while moving an end of it more than that times it, or left a held line
-    /// at [`COLLAPSED_LINE`] of its length. A frame [`drag`](Self::drag) refuses, so the drag
+    /// Whether `part`, moved by `offset` from where the drag found it, grew an arc or circle it
+    /// doesn't move, or crushed a held line at #278's pace (both of the next two, landed or
+    /// not), or didn't land and broke a shape the drag doesn't move: changed the radius of a
+    /// held arc or circle by more than [`SHAPE_HOLD`] times the offset, shortened a held line
+    /// by more than half [`LINE_HOLD`] times the offset while moving an end of it more than
+    /// that times it, or left a held line at [`COLLAPSED_LINE`] of its length. A frame [`drag`](Self::drag) refuses, so the drag
     /// stops at the last shape that went. Judged on the frame's result against the drag's start
     /// and the frame's offset from it, not step by step: how the frame's own steps were split
     /// doesn't enter.
@@ -1125,22 +1110,60 @@ impl Editor {
                     off.length() <= drift_solver::landed_within(bar, to)
                 })
             });
-        // An arc the drag doesn't move never grows, landed or not: the binding rule (a drag
-        // whose radii can't follow stops at the last valid shape, and radii are never grown).
-        // Since PR 3 a solve that can only land by growing one finishes (f3's move, #281, used
-        // to crawl to the cap and be refused for not finishing), so it is stopped here. Grown
-        // means by more than a solve meets a kept shape to: the bar, or `FOLD_MET` of it.
+        // An arc or circle the drag doesn't move never grows, landed or not: the binding rule
+        // (a drag whose radii can't follow stops at the last valid shape, and radii are never
+        // grown; circles as arcs, the user's decision of 2026-11-11). Since PR 3 a solve that
+        // can only land by growing one finishes (f3's move, #281, used to crawl to the cap and
+        // be refused for not finishing), so it is stopped here. Grown means by more than a
+        // solve meets a kept shape to: the bar, or `FOLD_MET` of it.
         let grew = part.held_radii.iter().any(|&(id, was)| {
-            matches!(
-                self.doc.get(id).map(|e| e.kind),
-                Some(EntityKind::Arc { .. })
-            ) && drift_solver::radius_of(&self.doc, id).is_some_and(|r| {
+            drift_solver::radius_of(&self.doc, id).is_some_and(|r| {
                 r - was
                     > (drift_solver::FOLD_MET * was)
                         .max(drift_solver::landed_within(bar, DVec2::splat(was)))
             })
         });
         if grew {
+            return true;
+        }
+        // Nor is a line the drag doesn't move crushed to nothing at the pace of #278's escape,
+        // landed or not: shortened to [`COLLAPSED_LINE`] of its length, faster than half
+        // [`LINE_HOLD`] times the offset, an end flung more than that times it (the pin's free
+        // end sliding onto its fixed one). A solve can land that way (the pin at some turns,
+        // where the first step of the relations' stage happens to reach the root where the line
+        // has collapsed, which lands; at most turns it crawls and doesn't), and which root a
+        // step reaches is round-off's to decide (#396's ubuntu run: the pin turned 37° went
+        // there; on Windows it stops). A landed frame that shortens a line at the geometry's own
+        // pace goes as before, even to nothing, and so does one that only settles a start the
+        // relations didn't hold.
+        let most_line = LINE_HOLD * offset.length();
+        let line_state = |&(id, a0, b0): &(EntityId, DVec2, DVec2)| {
+            let Some(EntityKind::Line { a, b }) = self.doc.get(id).map(|e| e.kind) else {
+                return None;
+            };
+            let (Ok(pa), Ok(pb)) = (self.doc.point(a), self.doc.point(b)) else {
+                return None;
+            };
+            Some((
+                a0.distance(b0),
+                pa.distance(pb),
+                pa.distance(a0).max(pb.distance(b0)),
+            ))
+        };
+        // (Judged by how far its ends went, which is at least how much it shortened: a frame
+        // let go never moves a point of a line it shortens fast more than the threshold. The
+        // half only tells a line sliding along itself from one that swings by a lever's own
+        // geometry, not a second limit: a line that shortens by less while an end swings
+        // farther goes, as it always did.)
+        let flung_short =
+            |&(was, now, flung): &(f64, f64, f64)| was - now > most_line / 2.0 && flung > most_line;
+        let crushed = |&(was, now, _): &(f64, f64, f64)| now <= COLLAPSED_LINE * was;
+        if part
+            .held_lines
+            .iter()
+            .filter_map(line_state)
+            .any(|l| flung_short(&l) && crushed(&l))
+        {
             return true;
         }
         if landed {
@@ -1156,23 +1179,11 @@ impl Editor {
             now.is_some_and(|r| (r - was).abs() > most)
         });
         radius_broken
-            || part.held_lines.iter().any(|&(id, a0, b0)| {
-                let Some(EntityKind::Line { a, b }) = self.doc.get(id).map(|e| e.kind) else {
-                    return false;
-                };
-                let (Ok(pa), Ok(pb)) = (self.doc.point(a), self.doc.point(b)) else {
-                    return false;
-                };
-                let (was, now) = (a0.distance(b0), pa.distance(pb));
-                // (Judged by how far its ends went, which is at least how much it shortened: a
-                // frame let go never moves a point of a line it shortens fast more than the
-                // threshold. The half only tells a line sliding along itself from one that
-                // swings by a lever's own geometry, not a second limit: a line that shortens by
-                // less while an end swings farther goes, as it always did.)
-                let flung = pa.distance(a0).max(pb.distance(b0)) > LINE_HOLD * offset.length();
-                (was - now > LINE_HOLD / 2.0 * offset.length() && flung)
-                    || now <= COLLAPSED_LINE * was
-            })
+            || part
+                .held_lines
+                .iter()
+                .filter_map(line_state)
+                .any(|l| flung_short(&l) || crushed(&l))
     }
 
     /// The parts of `parts` that go exactly where they are moved, as one move.
@@ -1765,8 +1776,15 @@ impl Editor {
                 carried: carried.to_vec(),
                 scope: Some(frame.scope.clone()),
                 // Rounds keep their size where the move leaves it open (moving a centre on
-                // its own would otherwise shrink or swell its arc as a first guess).
-                radii: before.radii.clone(),
+                // its own would otherwise shrink or swell its arc as a first guess): arcs and
+                // circles alike, at their size as the drag began (a drag's kept radii are held;
+                // the solve lets go of a circle whose rim is dragged).
+                radii: before
+                    .radii
+                    .iter()
+                    .map(|(&id, &r)| (id, r))
+                    .chain(frame.start_circles.iter().copied())
+                    .collect(),
                 // Lines carried along by a move of curves keep their length the same way.
                 lengths: before.lengths.clone(),
                 lowering: frame.lowering.clone(),

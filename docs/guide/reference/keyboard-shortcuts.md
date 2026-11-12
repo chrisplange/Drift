@@ -85,7 +85,7 @@ does the last command or tool again, as in AutoCAD.
 
 | Key | Command | Does |
 |---|---|---|
-| W | **Wall** | Walls along a centreline: they join the walls they meet. W again: arcs; Space: the other face |
+| W | **Wall** | Walls along a centreline: they join the walls they meet. W again: arcs; Space: orientation |
 | Shift+O | **Door / window** | Doors, windows and openings in walls: hover a wall, click to place. Space: the way it opens; type the offset, Tab: width |
 | I | **Place block** | Place copies of a block from the Blocks tab; R turns, X mirrors |
 
@@ -147,7 +147,7 @@ With no key (use the Annotate menu or the command palette): **Section mark**, **
 | Right-click | Finish a polyline |
 | A / L | In a polyline: switch to a tangent arc, or back to lines, from the last point; drawing walls: an arc or a straight segment next |
 | W | Drawing walls: straight or arc segments |
-| Space | Drawing walls: the other face (Left ↔ Right) |
+| Space | Drawing walls: the orientation (Left → Right → Centre) |
 | Backspace | Drawing walls: take back the last segment |
 | Alt (hold) | Place without snapping (also no perpendicular or tangent snaps) |
 | Esc | Stop typing, cancel the step, or (pressed again) go back to Select |

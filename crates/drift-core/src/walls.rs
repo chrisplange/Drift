@@ -50,7 +50,17 @@ impl Justify {
         }
     }
 
-    /// The other face (Space while drawing); a centred wall stays centred.
+    /// The next orientation for Space while drawing: Left, Right, Centre, then Left
+    /// again. The two faces come first, so one press still flips a face-justified wall.
+    pub fn next(self) -> Self {
+        match self {
+            Justify::Left => Justify::Right,
+            Justify::Right => Justify::Centre,
+            Justify::Centre => Justify::Left,
+        }
+    }
+
+    /// The other face; a centred wall stays centred.
     pub fn flipped(self) -> Self {
         match self {
             Justify::Left => Justify::Right,

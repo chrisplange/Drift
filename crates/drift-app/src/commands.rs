@@ -1928,7 +1928,10 @@ pub(crate) const OTHER_KEYS: &[(&str, &[(&str, &str)])] = &[
                  drawing walls: an arc or a straight segment next",
             ),
             ("W", "Drawing walls: straight or arc segments"),
-            ("Space", "Drawing walls: the other face (Left ↔ Right)"),
+            (
+                "Space",
+                "Drawing walls: the orientation (Left → Right → Centre)",
+            ),
             ("Backspace", "Drawing walls: take back the last segment"),
             (
                 "Alt (hold)",

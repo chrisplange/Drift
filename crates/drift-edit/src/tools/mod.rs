@@ -351,7 +351,7 @@ impl ToolKind {
             ToolKind::Slot => "Straight, centre or arc slot (press U again to switch), then width",
             ToolKind::Wall => {
                 "Walls along a centreline: they join the walls they meet. W again: arcs; Space: \
-                 the other face"
+                 orientation"
             }
             ToolKind::Circle => "Centre, then a point on the circle (or type the diameter)",
             ToolKind::Ellipse => "Centre, one axis end, then the other axis (C again: partial)",

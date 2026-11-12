@@ -70,7 +70,7 @@ one poché. Move the room's wall later and the T follows.
 - Mid-run, **A** makes the next segment an arc and **L** a straight one, as in a polyline.
 - **Click and drag** at the next corner instead of clicking: the segment bends, arriving in the
   direction you pull, as the pen tool pulls a handle.
-- **Space** flips the wall to its other face (Left face ↔ Right face) while you draw.
+- **Space** steps the wall's orientation while you draw: Left face → Right face → Centre, then round again.
 
 ## 4. Walls from lines you already drew
 

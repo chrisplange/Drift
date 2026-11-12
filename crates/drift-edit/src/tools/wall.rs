@@ -1,7 +1,8 @@
 //! Wall: click a centreline point by point (or type lengths and angles), and each segment
 //! becomes part of a run of wall at the tool bar's thickness, justification and poché. W
 //! again (or A / L mid-run) switches between straight and arc segments; a click-drag bends
-//! the next segment, as the pen pulls a handle; Space flips the wall to the other face.
+//! the next segment, as the pen pulls a handle; Space steps the wall's
+//! orientation (left face, right face, centre).
 //! Starting or ending on another wall joins it (on its end: an L; along it: a T), on another
 //! curve stops against it, and back on the start closes a ring. Each segment is one undo
 //! step; Backspace takes the last one back.
@@ -415,12 +416,12 @@ impl Tool for WallTool {
 
     fn hint(&self) -> String {
         if self.corners.is_empty() {
-            "Click where the wall starts (on another wall to join it) · W: arc · Space: other face"
+            "Click where the wall starts (on another wall to join it) · W: arc · Space: orientation"
                 .into()
         } else if self.arc_end.is_some() {
             "Click a point the wall curves through".into()
         } else {
-            "Click the next corner, drag to bend, or type a length · W: arc · Space: other face \
+            "Click the next corner, drag to bend, or type a length · W: arc · Space: orientation \
              · Backspace: undo a segment · Enter: finish"
                 .into()
         }
@@ -515,8 +516,8 @@ impl Tool for WallTool {
     fn key(&mut self, key: ToolKey, _pointer: Option<&Pointer>, ed: &mut Editor) -> bool {
         match key {
             ToolKey::Space => {
-                ed.prefs.wall_justify = ed.prefs.wall_justify.flipped();
-                // The run being drawn flips too (in its last step).
+                ed.prefs.wall_justify = ed.prefs.wall_justify.next();
+                // The run being drawn changes too (in its last step).
                 if let Some(w) = self.wall
                     && let Some(mut wall) = ed.doc.wall(w).cloned()
                     && wall.justify != ed.prefs.wall_justify

@@ -3,6 +3,7 @@
 //! on paper and undone exactly; the hint when the scale leaves the annotations unreadable.
 
 use drift_core::{AnnotationRef, Constraint, DraftStyle};
+use egui_kittest::kittest::NodeT as _;
 
 use super::*;
 
@@ -266,4 +267,61 @@ fn smoke_annotation_scale_new_text_is_the_drafting_height_at_the_drawing_scale()
     h.state_mut().drawing.editor.prefs.text_height = 5.0;
     h.state_mut().paste("BIGGER", false, 0.0);
     assert!((last_text_height(&h.state().drawing.editor.doc) - 250.0).abs() < 1e-9);
+}
+
+#[test]
+fn smoke_annotation_scale_custom_scale_field_keeps_the_menu_open_to_type() {
+    let Some(mut h) = harness() else { return };
+    // At 1:25, labelled the same in metric and imperial drawings.
+    {
+        let doc = &mut h.state_mut().drawing.editor.doc;
+        let style = doc.draft_style();
+        doc.set_draft_style(DraftStyle {
+            scale: 25.0,
+            ..style
+        });
+    }
+    h.state_mut().show_drawing_settings = true;
+    h.run();
+    h.run();
+    // The drawing scale menu, scrolled into view.
+    h.get_by_value("1:25").scroll_to_me();
+    h.run();
+    h.get_by_value("1:25").click();
+    h.run();
+    let placeholder = "1:37 or 5\" = 1'-0\"";
+    let field = |h: &Harness<'_, DriftApp>| {
+        h.query_all_by_role(egui::accesskit::Role::TextInput)
+            .find(|n| n.accesskit_node().placeholder() == Some(placeholder))
+            .map(|n| n.rect().center())
+    };
+    // The Custom field is at the foot of the menu's list, below its fold.
+    h.query_all_by_role(egui::accesskit::Role::TextInput)
+        .find(|n| n.accesskit_node().placeholder() == Some(placeholder))
+        .expect("the Custom field in the open menu")
+        .scroll_to_me();
+    h.run();
+    h.run();
+    let at = field(&h).expect("the menu is still open");
+    // A click into the field keeps the menu open and the field focused.
+    h.hover_at(at);
+    h.run();
+    button(&h, at, true);
+    h.run();
+    button(&h, at, false);
+    h.run();
+    h.run();
+    assert!(
+        field(&h).is_some(),
+        "the menu closed on a click into its field"
+    );
+    type_text(&mut h, "1:37");
+    h.key_press(Key::Enter);
+    h.run();
+    h.run();
+    assert_eq!(h.state().drawing.editor.doc.draft_style().scale, 37.0);
+    assert!(
+        field(&h).is_none(),
+        "Enter applies the scale and closes the menu"
+    );
 }

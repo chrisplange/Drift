@@ -29,6 +29,9 @@ pub(crate) fn scale_menu(
         .selected_text(scale_label(*scale, imperial))
         .width(width)
         .height(460.0)
+        // Not the default close-on-any-click: a click into the Custom field to type would
+        // close the menu. A pick from the list closes it below.
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show_ui(ui, |ui| {
             ui.set_min_width(170.0);
             for (k, group) in scale_list(imperial).into_iter().enumerate() {
@@ -42,6 +45,7 @@ pub(crate) fn scale_menu(
                         .clicked()
                     {
                         *scale = n;
+                        ui.close();
                     }
                 }
             }

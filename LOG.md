@@ -1,5 +1,7 @@
 # Log
 
+**Frozen 2026-11-12.** From now on, a decision is recorded as a comment on the issue it's about. This file keeps the history up to then.
+
 One line per decision, approval or merge, newest last. Format: `YYYY-MM-DD | what | source`. Source is where it came from: "user in chat", "planning chat", "hub", a PR or an issue. Never edit old lines; correct with a new one.
 
 2026-11-04 | Fresh reviewer session per PR, tiered by risk (drag/solver Opus + Fable final; other code Opus 2 steps; papercuts step 2; UI fillers none) | user in chat

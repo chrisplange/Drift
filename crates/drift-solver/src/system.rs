@@ -135,9 +135,14 @@ impl Shape {
     /// [`params`](Self::params) (a unit vector per end for a distance). `None` where the shape
     /// has collapsed (no distance to keep). A direction's offset is the sine of the line's turn
     /// at the length it was kept at, `l₀·sin θ`, while it faces the kept way, rising to `2·l₀`
-    /// turned end for end: the same at any length, so no line is kept square by shrinking it
-    /// (before, `l·sin θ` was: a line a relation must turn was shrunk to nothing to meet its
-    /// direction), and never met reversed.
+    /// turned end for end: the same at any length up to `l₀`, so no line is kept square by
+    /// shrinking it (before, `l·sin θ` was: a line a relation must turn was shrunk to nothing
+    /// to meet its direction), and never met reversed. Stretched past `l₀`, the sine is read at [`kept_at`] the length,
+    /// which grows as the line does (about as `l`, as `l·sin θ` did): read at `l₀` alone, a
+    /// line kept square that no solution lets face its way gained by being stretched without
+    /// end along a line it nearly parallels, the turn's sine falling towards the parallel's,
+    /// and the preferences chased that to wherever they were stopped (a point flung 238 mm
+    /// out on a 49 mm sketch, landing where round-off had it: census case 18502).
     pub fn offset(&self, value: impl Fn(usize) -> f64) -> Option<([f64; 4], f64)> {
         match *self {
             Shape::Distance(k, d0) => {
@@ -164,21 +169,40 @@ impl Shape {
                 let n = DVec2::new(u.y, -u.x);
                 let sine = along.dot(n);
                 let g = (n - along * sine) / length;
-                let (off, g) = if along.dot(u) >= 0.0 {
-                    (l0 * sine, g * l0)
+                let (turn, g) = if along.dot(u) >= 0.0 {
+                    (sine, g)
                 } else {
-                    // Facing the other way: l₀·(2 − |sin|), which meets l₀·sin where the line
-                    // stands square to the kept direction and grows to twice its length turned
-                    // end for end, so the shape always leads back the way it was kept.
+                    // Facing the other way: 2 − |sin|, which meets sin where the line stands
+                    // square to the kept direction and grows to twice its length turned end
+                    // for end, so the shape always leads back the way it was kept.
                     let sign = if sine < 0.0 { -1.0 } else { 1.0 };
-                    (sign * l0 * (2.0 - sine.abs()), -g * l0)
+                    (sign * (2.0 - sine.abs()), -g)
                 };
-                Some(([-g.x, -g.y, g.x, g.y], off))
+                // Read at the length it is kept at (and that length's gradient, along the
+                // line).
+                let (at, grows) = kept_at(length, l0);
+                let g = g * at + along * (turn * grows);
+                Some(([-g.x, -g.y, g.x, g.y], turn * at))
             }
             // (The gradient's first entry is the radius's; its parameters are that one.)
             Shape::Radius(r, r0) => Some(([1.0, 0.0, 0.0, 0.0], value(r) - r0)),
         }
     }
+}
+
+/// The length a kept direction's turn is read at, for a line `length` long kept at `l0`, and
+/// its derivative: `l0` up to `l0` (no line is kept square by shrinking it), then
+/// `l0 + (l − l0)² / (l + l0)`, which leaves `l0` level (its value and slope meet there) and
+/// grows about as `l` far out (see [`Shape::offset`]).
+fn kept_at(length: f64, l0: f64) -> (f64, f64) {
+    if length <= l0 {
+        return (l0, 0.0);
+    }
+    let (past, sum) = (length - l0, length + l0);
+    (
+        l0 + past * past / sum,
+        past * (past + 4.0 * l0) / (sum * sum),
+    )
 }
 
 /// Two fixes on one parameter (or on parameters held equal) agree when their values are this

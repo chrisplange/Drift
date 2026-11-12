@@ -11,8 +11,9 @@
 //! numbers stay as they are. `CENSUS_CASE` runs that case alone and prints the drawing before
 //! and after; `CENSUS_POS` adds a `P <case>` line of every point's position, to compare two
 //! builds point by point. An `S <case>` line lists the edit's second-stage endings where one
-//! stopped with the shapes' projected gradient still above the bar, or at the cap, and
-//! `S2 TOTAL` sums them (`drift_solver::exits::STAGE2`: the PR 3 review's items 1 and 2). Each line: `R <case> <kind> <active> <result>`, then (where the
+//! stalled (stopped by the bound on the preferences' steps, the region or the cap, not by a
+//! test that the shapes are as near as the rows let them be), and `S2 TOTAL` sums them (`drift_solver::exits::STAGE2`: the PR 3
+//! review's items 1 and 2). Each line: `R <case> <kind> <active> <result>`, then (where the
 //! relation was added) `mv` how far the farthest point moved, `pts` how many points moved, and
 //! for the lines and the arcs, apart for the geometry the relation names (`n…`: a line counts
 //! if it or one of its ends is named) and the rest
@@ -301,13 +302,15 @@ fn edits_agree_whatever_the_round_off() {
     nudged_edits_agree(&[3188, 4561, 2281, 16381]);
 }
 
-/// Two edits whose second stage stops short at a point round-off picks (the PR 3 review's
-/// items 1 and 2: it ends by the "nearer" or region stop with the shapes' projected gradient
-/// still above the bar): case 18502 (a Concentric) lands in three places up to 58 mm apart
-/// across the 39 copies, case 18672 (a Coincident) in two. Main agrees on both, keeping fewer
-/// shapes. For the stage-2 stall's own PR to un-ignore.
+/// Two edits whose second stage stopped short at a point round-off picked (the PR 3 review's
+/// items 1 and 2): case 18502 (a Concentric) landed in three places up to 58 mm apart across
+/// the 39 copies, case 18672 (a Coincident) in two. In 18502 two lines kept square could keep
+/// their directions only both turned end for end, and a direction read at its kept length fell
+/// towards its infimum as their shared point ran off along one of them: the preferences chased
+/// it until the bound on their steps stopped them, wherever round-off had them reach it. A
+/// direction is read at a length that grows as the line is stretched past its own now, and the
+/// preferences' steps keep to the rows' solutions (the solver audit's stage-2 stall PR).
 #[test]
-#[ignore = "PR 3 review items 1 and 2: the second stage stalls at a round-off-picked point"]
 fn edits_that_stall_agree_whatever_the_round_off() {
     nudged_edits_agree(&[18502, 18672]);
 }
@@ -484,18 +487,18 @@ fn relation_census() {
         let _ = drift_solver::exits::take_stage2();
         let result = apply(ed, add, c, &picks);
         show(ed, "after");
-        // How the edit's solves' second stages ended: a stall (stopped with the shapes'
-        // projected gradient above the bar) or a cap is printed, case by case.
+        // How the edit's solves' second stages ended: a stall (the bound, the region or the
+        // cap) is printed, case by case.
         let s2 = drift_solver::exits::take_stage2();
-        for k in 0..7 {
+        for k in 0..drift_solver::exits::STAGE2.len() {
             total.other[k] += s2.other[k];
             total.other_stalled[k] += s2.other_stalled[k];
         }
         let stalled: u64 = s2.other_stalled.iter().sum();
-        if stalled > 0 || s2.other[6] > 0 {
+        if stalled > 0 {
             println!(
                 "S {case} {kind} {act} stalled {stalled} cap {} ends {:?} stalls {:?}",
-                s2.other[6], s2.other, s2.other_stalled
+                s2.other[7], s2.other, s2.other_stalled
             );
         }
         let result = match result {

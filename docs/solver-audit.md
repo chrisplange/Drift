@@ -443,12 +443,11 @@ PR 0 puts the bar in `scripts/solver-bar/` (its README runs all seven). **Known 
   more than the bar or `FOLD_MET` of it. Shrinking still goes, as `held_shapes::` has it. This
   stops f3's move (#281), which PR 3's first build let through, and in #377's random census some
   160 drags a place that went before (stops 274 → 419).
-- **A free move is never a stop.** A move of curves in a part nothing pins that the solve can't
-  make (it lands where the least change leads, and from there the kept shapes' stage can stall
-  at a fold short of moving the whole part) moves the whole part along instead, which lands every
-  dragged point, meets every relation and keeps every shape exactly
-  (`free_move_is_accepted_heavy` 6 and 17). A second-order correction of the kept shapes inside
-  the first stage was tried first and cost #349's chain.
+- **A free move whose kept shapes stall stops, like any drag (#398).** PR 3 first moved the whole
+  part along when a free move's stage 2 stalled at a fold. The user ruled that out ("stop the
+  drag", LOG.md 2026-11-11), so #398 removed the whole-part slide: such a move stops at the last
+  valid shape. Free-move seeds 3, 6, 17, 18 and 19 (`free_move_is_accepted_heavy`) are expected
+  failures in `expected.txt` until the stage-2 stall is fixed (#400, or PRs 4/5).
 - **A drag's steps are bounded together** by the drawing's size at the solve's start (not each
   alone), in both stages: `flung_centre` threw a point 6 to 23 m out of a 20 mm sketch in 21 of
   39 one-ulp nudges (and failed on Linux and macOS). Commits are left unbounded, a dimension typed

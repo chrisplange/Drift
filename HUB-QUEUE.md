@@ -2,7 +2,7 @@
 
 What is running or next: 5 rows at most (see `WORKFLOW.md`). GitHub issues are the backlog; the batch labels below say what comes next. The coordinator changes **Status**, **PR** and **Session**; workers and reviewers check each PR against its **Done when**.
 
-Last updated 2026-11-11.
+Last updated 2026-11-12.
 
 ## Rules for a task entry
 
@@ -16,8 +16,8 @@ Last updated 2026-11-11.
 
 | ID | Issue | Task | Done when | Files | Tier | Status | PR | Session |
 |---|---|---|---|---|---|---|---|---|
-| H-8 | — | Main green again, plus two drag rules: Linux `held_shapes::a_drag_that_cant_land_doesnt_crush_a_line_it_doesnt_move` and Windows `regions_props` fixed; PR 3's whole-part rigid slide on a failed frame removed ("stop the drag"); circle radii never grown | ubuntu, macOS and Windows CI green on main; a failed drag frame stops, nothing slides; a test shows a held circle's radius never grows in a drag | `crates/drift-solver/`, `crates/drift-edit/` drag code and `drag_props/`, `crates/drift-geom/tests/regions_props.rs` | gated | in-review (first: red main stops everything) | #398 | main-fix |
-| H-7 | #350, #284 (commit side) | Solver redesign PR 6: commits keep shapes | Commits keep line lengths and directions and arc radii where the relations leave room, ranked below relations and named geometry; before/after on the relation-adding census (#333's corpus) in the PR | `crates/drift-solver/`, `crates/drift-edit/` editor `solve.rs` and its tests | gated | running | | solver-pr6 |
+| H-9 | #349 (PR 3 review items 1 and 2) | Solver stage-2 stall: steps keep to the rows' solutions and stop on the step | Heavy drag matrix matches `expected.txt`; free-move seeds 3, 6, 17, 18, 19 pass again; no perf line slower than main; Linux matches Windows | `crates/drift-solver/` `newton` second stage, `Shape::Direction` | gated | running (draft) | #400 | solver-fix-the-stage-2-s |
+| H-7 | #350, #284 (commit side) | Solver redesign PR 6: commits keep shapes | Commits keep line lengths and directions and arc radii where the relations leave room, ranked below relations and named geometry; before/after on the relation-adding census (#333's corpus) in the PR | `crates/drift-solver/`, `crates/drift-edit/` editor `solve.rs` and its tests | gated | in-review | #399 | solver-pr6 |
 
 Solver scope is PRs 2, 3 and 6 only; 2 and 3 are merged. PR 1 (#352), PR 4 (#344) and PR 5 (#362) are parked as `later`. After PR 6, work returns to the usability and bug batches; batch-1 waits on its Done when lines from the planning chat.
 
@@ -25,6 +25,7 @@ Solver scope is PRs 2, 3 and 6 only; 2 and 3 are merged. PR 1 (#352), PR 4 (#344
 
 | ID | Issue | Task | PR | Merged |
 |---|---|---|---|---|
+| H-8 | — | Main green after PR 3: whole-part slide removed ("stop the drag"), circles held as arcs, Linux `held_shapes` and Windows `regions_props` fixed; free-move seeds 3, 6, 17, 18, 19 now expected failures | #398 | 2026-11-12 |
 | H-1 | #264 | Shift+D then Esc leaves no copy stacked on the original (smoke test) | #379 | 2026-11-10 |
 | H-2 | #337 | Relation glyphs 18 pt and kept off the transform handles | #382, review fixes #385 | 2026-11-10 |
 | H-3 | #242 | Auto horizontal/vertical window widened to 3° for sketched lines | #380 | 2026-11-10 |

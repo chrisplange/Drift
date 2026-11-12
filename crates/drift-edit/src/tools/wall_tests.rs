@@ -787,3 +787,74 @@ fn a_run_starting_backwards_keeps_its_direction() {
     // Left justified along a clockwise arc: the wall is inside it.
     assert!((top_of_faces(&ed) - 50.0).abs() < 1e-9);
 }
+
+/// #338 re-review (R7): trimming away the end segment of a run that tees into a wall at each
+/// end leaves the rest where it was: its new start is free, its far end keeps its tee.
+#[test]
+fn a_run_losing_its_end_segment_lets_that_tee_go() {
+    let mut ed = editor();
+    run(&mut ed, &[v(-50.0, -50.0), v(-50.0, 200.0)]);
+    run(&mut ed, &[v(300.0, -50.0), v(300.0, 200.0)]);
+    let hosts: Vec<WallId> = ed.doc.walls().map(|(id, _)| id).collect();
+    run(
+        &mut ed,
+        &[
+            v(-45.0, 0.0),
+            v(100.0, 0.0),
+            v(100.0, 100.0),
+            v(295.0, 100.0),
+        ],
+    );
+    let w = ed
+        .doc
+        .walls()
+        .map(|(id, _)| id)
+        .find(|w| !hosts.contains(w))
+        .unwrap();
+    let ends = ed.doc.wall(w).unwrap().ends.clone();
+    assert!(ends[0].tee.is_some() && ends[1].tee.is_some());
+    let far = *run_points(&ed, w).last().unwrap();
+    let mut tool = ToolKind::Trim.create();
+    click(&mut ed, tool.as_mut(), v(30.0, 0.0));
+    assert_eq!(
+        run_points(&ed, w),
+        vec![v(100.0, 0.0), v(100.0, 100.0), far]
+    );
+    let now = &ed.doc.wall(w).unwrap().ends;
+    assert_eq!(now[0].tee, None, "the start's tee went with its segment");
+    assert_eq!(now[1].tee.map(|t| t.0), ends[1].tee.map(|t| t.0));
+    assert_rebuilt(&mut ed);
+}
+
+/// #338 re-review (R5): a trim that only shortens a run starting on a clockwise arc keeps the
+/// run's direction, so a Left-justified wall stays on its side.
+#[test]
+fn shortening_a_run_starting_backwards_keeps_its_direction() {
+    let mut ed = editor();
+    ed.prefs.wall_justify = Justify::Left;
+    ed.prefs.wall_arc = true;
+    let mut tool = ToolKind::Wall.create();
+    for at in [v(-50.0, 0.0), v(50.0, 0.0), v(0.0, 50.0)] {
+        click(&mut ed, tool.as_mut(), at);
+    }
+    tool.key(ToolKey::LineNext, None, &mut ed);
+    click(&mut ed, tool.as_mut(), v(50.0, -100.0));
+    tool.handle(Input::Finish, &mut ed);
+    let w = ed.doc.walls().next().unwrap().0;
+    ed.doc.begin();
+    let a = ed.doc.add_point(v(0.0, -60.0));
+    let b = ed.doc.add_point(v(100.0, -60.0));
+    ed.doc.add_line(a, b).unwrap();
+    ed.commit("Line");
+    let top = top_of_faces(&ed);
+    let mut tool = ToolKind::Trim.create();
+    click(&mut ed, tool.as_mut(), v(50.0, -80.0));
+    let points = run_points(&ed, w);
+    assert_eq!(points[0], v(-50.0, 0.0));
+    assert!(points.last().unwrap().distance(v(50.0, -60.0)) < 1e-6);
+    assert!(
+        (top_of_faces(&ed) - top).abs() < 1e-9,
+        "the faces kept their side"
+    );
+    assert_rebuilt(&mut ed);
+}

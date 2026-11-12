@@ -624,11 +624,16 @@ impl Editor {
                     runs_in_order(&own, path.closed, |c| self.live_ends(c)).as_slice(),
                     [r] if r.curves == own && r.closed == path.closed
                 );
-            if !reshaped && !broken && own.len() == path.curves.len() {
+            // A curve gone from the run, even with the rest still end to end (its end
+            // segment trimmed away): the run has lost an end, or more.
+            let before = self.doc.path_before_transaction(wall.centre);
+            let lost = before
+                .as_ref()
+                .is_some_and(|p| p.curves.iter().any(|c| !self.doc.contains(*c)));
+            if !reshaped && !broken && !lost && own.len() == path.curves.len() {
                 self.keep_construction(&own);
                 continue;
             }
-            let before = self.doc.path_before_transaction(wall.centre);
             let pieces: Vec<(Vec<EntityId>, bool)> = if reshaped {
                 chains(&self.doc, &pool)
             } else {
@@ -642,9 +647,10 @@ impl Editor {
             if pieces.is_empty() {
                 continue;
             }
-            let cut = broken || pieces.len() > 1;
-            // The run as it was, to keep each piece's way and the ends that are still its.
-            let was = before.filter(|_| cut).and_then(|p| {
+            let cut = broken || lost || pieces.len() > 1;
+            // The run as it was, to keep each piece's way (whenever it is chained again) and,
+            // when it was cut, the ends that are still each piece's.
+            let was = before.and_then(|p| {
                 let then = |c: EntityId| {
                     self.doc
                         .entity_before_transaction(c)
@@ -676,7 +682,9 @@ impl Editor {
                             _ => curves.reverse(),
                         }
                     }
-                    ends = self.ends_still_at(&curves, closed, was, &wall);
+                    if cut {
+                        ends = self.ends_still_at(&curves, closed, was, &wall);
+                    }
                 }
                 made.push((curves, closed, ends));
             }

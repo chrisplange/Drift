@@ -1,0 +1,85 @@
+name: Tier
+
+# Works out each pull request's merge tier from the paths it changes (.github/tiers.txt via
+# scripts/tier.py) and posts the "Solver review" status (scripts/review_gate.py).
+#
+# Both jobs check out the default branch only, never the pull request's code, so the tier
+# rules and the gate that judge a PR are main's, not the PR's own.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  issue_comment:
+    types: [created, edited, deleted]
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  statuses: write
+
+jobs:
+  tier:
+    name: Tier
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - name: Bootstrap (only until the gate scripts are on main)
+        run: |
+          if [ ! -f scripts/tier.py ]; then
+            git fetch -q --depth=1 origin "$GITHUB_SHA"
+            git checkout FETCH_HEAD -- scripts .github/tiers.txt
+          fi
+      - name: Tier from the changed paths
+        id: tier
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          python3 scripts/tier.py --pr "$PR" --explain --github-output
+      - name: Label (for display only; nothing reads it)
+        # A fork's token can't write labels; the tier still shows in this job's log.
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          TIER: ${{ steps.tier.outputs.tier }}
+        run: |
+          gh label create tier:auto   -R "$GITHUB_REPOSITORY" --color 0e8a16 --description "Merges itself when every required check is green" --force >/dev/null
+          gh label create tier:gated  -R "$GITHUB_REPOSITORY" --color fbca04 --description "Waits for the owner to merge" --force >/dev/null
+          gh label create tier:solver -R "$GITHUB_REPOSITORY" --color d93f0b --description "Gated, and needs the owner's review marker" --force >/dev/null
+          remove=""
+          for t in auto gated solver; do
+            [ "$t" != "$TIER" ] && remove="$remove,tier:$t"
+          done
+          gh pr edit "$PR" -R "$GITHUB_REPOSITORY" --add-label "tier:$TIER" --remove-label "${remove#,}"
+
+  review-gate:
+    name: Review gate
+    # On comment events, only for comments on pull requests.
+    if: github.event_name != 'issue_comment' || github.event.issue.pull_request
+    runs-on: ubuntu-latest
+    concurrency:
+      group: review-gate-${{ github.event.pull_request.number || github.event.issue.number }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - name: Bootstrap (only until the gate scripts are on main)
+        if: github.event_name != 'issue_comment'
+        run: |
+          if [ ! -f scripts/review_gate.py ]; then
+            git fetch -q --depth=1 origin "$GITHUB_SHA"
+            git checkout FETCH_HEAD -- scripts .github/tiers.txt
+          fi
+      - name: Post the Solver review status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number || github.event.issue.number }}
+        run: python3 scripts/review_gate.py

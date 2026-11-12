@@ -1,5 +1,8 @@
 # Drift — Project Plan
 
+> **Only §1–3 (goals, technology choices, architecture) are current.** The rest of this file is
+> history: the backlog is GitHub issues and the way work runs is [WORKFLOW.md](WORKFLOW.md).
+
 A lightweight, GPU-accelerated, precise 2D parametric sketching app with SolidWorks-style
 geometric and dimensional constraints.
 

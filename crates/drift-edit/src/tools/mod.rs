@@ -33,6 +33,8 @@ mod opening;
 #[cfg(test)]
 mod opening_tests;
 mod pen;
+#[cfg(test)]
+mod pick_cycle_tests;
 mod picking;
 mod place_block;
 mod point;
@@ -76,6 +78,12 @@ pub use self::{
     line::LineTool, point::PointTool, rectangle::RectangleTool, select::SelectTool,
     tangent_arc::TangentArcTool, three_point_arc::ThreePointArcTool,
 };
+
+/// How many things a plain Select click could pick under the pointer, one per click there
+/// (see [`crate::pick_cycle`]).
+pub fn select_pick_count(ed: &mut Editor, p: &Pointer) -> usize {
+    picking::candidates_at(ed, p).len()
+}
 
 /// The geometry under the pointer that a temporary dimension's far end can measure to: a
 /// point, or a line (picked at its middle, the line).

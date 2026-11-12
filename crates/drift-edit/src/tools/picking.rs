@@ -233,3 +233,59 @@ pub(super) fn target_at(ed: &mut Editor, p: &Pointer, purpose: Purpose) -> Optio
         None => Pick::Fill(f),
     })
 }
+
+/// Everything a plain Select click could pick under the pointer, one per click on the same
+/// spot (see [`crate::pick_cycle`]): first what a single click picks ([`target_at`]), then the
+/// rest of the geometry (points, then curves, nearest first), sketch texts (smallest first),
+/// the copy of a block, and the fills (topmost first; a wall by its poché), as the filter and
+/// the open group let pick. Two pieces of geometry that would pick the same (members of one
+/// closed group, say) count once.
+pub(super) fn candidates_at(ed: &mut Editor, p: &Pointer) -> Vec<Pick> {
+    let filter = ed.prefs.pick_filter;
+    let scoped = ed.edit_scope().is_some();
+    let mut picks: Vec<Pick> = target_at(ed, p, Purpose::Click).into_iter().collect();
+    {
+        let hidden = ed.hidden_handles();
+        let rule = Rule::select(filter, &hidden, true);
+        let mut seen: BTreeSet<EntityId> = BTreeSet::new();
+        // (Nearest first: each pick passes over the ones before.)
+        while let Some(id) = entity_at(ed, p.raw, p.tolerance, rule, |id| !seen.contains(&id)) {
+            seen.insert(id);
+            picks.push(Pick::Geometry(Target::Entity(id)));
+        }
+    }
+    if !scoped && filter.texts() {
+        picks.extend(ed.texts_at(p.raw, p.tolerance).into_iter().map(Pick::Text));
+    }
+    if !scoped
+        && filter.blocks()
+        && let Some(c) = ed.instance_at(p.raw, p.tolerance)
+    {
+        picks.push(Pick::Copy(c));
+    }
+    if filter.fills() {
+        for f in ed.fills_at(p.raw) {
+            picks.push(match ed.wall_in_fill_at(f, p.raw) {
+                Some(w) => Pick::Wall(w, f),
+                None => Pick::Fill(f),
+            });
+        }
+    }
+    // Once each, and geometry once for what it picks.
+    let mut out: Vec<Pick> = Vec::new();
+    let mut sets: Vec<BTreeSet<EntityId>> = Vec::new();
+    for pick in picks {
+        if out.contains(&pick) {
+            continue;
+        }
+        if let Some(id) = pick.entity() {
+            let set = ed.pick_set(id);
+            if sets.contains(&set) {
+                continue;
+            }
+            sets.push(set);
+        }
+        out.push(pick);
+    }
+    out
+}

@@ -200,9 +200,17 @@ impl DriftApp {
                         .flatten()
                         .map(|k| (id, k))
                 });
-                if crate::app::visibility_ui::shift_click(ui) {
+                let shift = crate::app::visibility_ui::shift_click(ui);
+                if shift {
                     // Added to what is picked, geometry and all.
                     self.toggle_annotation_pick(drift_core::AnnotationRef::Annotation(id));
+                } else if !ui.input(|i| i.modifiers.command)
+                    && let Some(at) = at
+                    && self.click_past_annotation(map, at)
+                {
+                    // Clicked again: the select tool picks what's under the note.
+                    self.drawing.selected_leader = None;
+                    return false;
                 } else {
                     self.drawing.editor.annotation_picks.clear();
                     self.drawing.editor.selected_annotation = Some(id);

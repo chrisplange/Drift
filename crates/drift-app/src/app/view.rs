@@ -6,6 +6,26 @@ use crate::*;
 const EXTENSION_GRIP_REACH: f32 = 6.0;
 
 impl DriftApp {
+    /// A plain Select click at `at` on an annotation (a dimension, relation or note): whether
+    /// it goes on to the next of what is under the pointer there, for the select tool to
+    /// pick, rather than picking the annotation (click again to pick the next; see
+    /// [`drift_edit::pick_cycle`]).
+    pub(crate) fn click_past_annotation(&mut self, map: &ScreenMap, at: egui::Pos2) -> bool {
+        let p = Pointer::new(
+            map.to_world(at),
+            PICK_RADIUS / self.drawing.view.camera.scale,
+        );
+        let ed = &mut self.drawing.editor;
+        let under = drift_edit::tools::select_pick_count(ed, &p);
+        let step = ed.cycle_pick(p.raw, p.tolerance, 1, 1 + under);
+        if step == 0 {
+            return false;
+        }
+        ed.hand_pick_to_tool(step - 1);
+        self.drawing.selected_constraint = None;
+        true
+    }
+
     pub(crate) fn make_pointer(&self, map: &ScreenMap, pos: egui::Pos2, snap: bool) -> Pointer {
         let raw = map.to_world(pos);
         let mut pointer = Pointer::new(raw, PICK_RADIUS / self.drawing.view.camera.scale);
@@ -460,9 +480,17 @@ impl DriftApp {
                     .doc
                     .constraint(id)
                     .is_some_and(|c| c.is_dimension());
+                let plain = !shift && !ui.input(|i| i.modifiers.command);
                 if shift && is_dimension {
                     // Added to what is picked, geometry and all.
                     self.toggle_annotation_pick(drift_core::AnnotationRef::Dimension(id));
+                } else if select
+                    && plain
+                    && let Some(at) = at
+                    && self.click_past_annotation(map, at)
+                {
+                    // Clicked again: the select tool picks what's under the dimension.
+                    return false;
                 } else {
                     self.drawing.editor.annotation_picks.clear();
                     self.drawing.editor.selected_annotation = None;
@@ -866,6 +894,10 @@ impl DriftApp {
             || self.temp_dim_input(ui, &response, &map, &temps, pos)
             || self.annotation_input(ui, &response, &map, &pick_dims, &pick_glyphs, pos)
             || self.view_crop_input(ui, &response, &map, pos, snap);
+        // Away from the last click's spot, click again picks afresh.
+        if let Some(pos) = pos {
+            self.drawing.editor.pick_cycle.pointer_at(map.to_world(pos));
+        }
         if consumed {
             self.drawing.view.pointer = pos.map(|pos| self.make_pointer(&map, pos, snap));
         } else if response.drag_started_by(PointerButton::Primary)
@@ -920,6 +952,12 @@ impl DriftApp {
             }
         }
         self.take_box_pick(&map, &pick_dims, &pick_notes);
+        // A click that didn't step click-again-to-pick-the-next went elsewhere: the next
+        // starts again.
+        self.drawing.editor.pick_cycle.end_frame(
+            response.clicked_by(PointerButton::Primary)
+                || response.drag_started_by(PointerButton::Primary),
+        );
         // With the select tool, right-click opens a menu for what's under the pointer (picking
         // it first, as in Illustrator) or for the view.
         let menu_tool = self.tool.kind() == ToolKind::Select && !self.tool.is_busy();

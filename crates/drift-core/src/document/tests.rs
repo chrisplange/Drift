@@ -87,6 +87,33 @@ mod editing {
         assert_eq!(history.undo_label(), Some("Rectangle"));
     }
 
+    /// A step undone and then forgotten can't be redone, and earlier redo steps stay (#264:
+    /// a Duplicate taken back must not return on Redo).
+    #[test]
+    fn a_forgotten_redo_step_cannot_be_redone() {
+        let mut doc = Document::new();
+        let mut history = History::default();
+        doc.begin();
+        doc.add_point(DVec2::ZERO);
+        history.push(doc.commit("Point"));
+        doc.begin();
+        square(&mut doc);
+        history.push(doc.commit("Duplicate"));
+        let recorded = history.recorded();
+        assert!(history.undo(&mut doc));
+        assert!(history.forget_redo());
+        assert_eq!(history.recorded(), recorded - 1);
+        assert!(!history.can_redo());
+        assert!(!history.redo(&mut doc));
+        assert_eq!(doc.len(), 1, "only the point");
+        assert!(history.undo(&mut doc));
+        assert_eq!(
+            history.redo_label(),
+            Some("Point"),
+            "the step before is still there"
+        );
+    }
+
     #[test]
     fn a_dimension_sets_its_own_style_over_the_drawings() {
         use crate::{AnnotationRef, ArrowStyle, StyleOverride};

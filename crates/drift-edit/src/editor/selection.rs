@@ -928,6 +928,32 @@ impl Editor {
         self.doc.layer_of(id).locked
     }
 
+    /// The locked layer of something picked, if any: curves, block copies, text or fills
+    /// picked before their layer was locked (curves drop out of the selection then, the
+    /// rest stays picked).
+    pub fn picked_locked_layer(&self) -> Option<&drift_core::Layer> {
+        let locked = |layer| self.doc.layer(layer).filter(|l| l.locked);
+        self.selection
+            .iter()
+            .map(|id| self.doc.layer_of(*id))
+            .find(|l| l.locked)
+            .or_else(|| {
+                self.selected_instances
+                    .iter()
+                    .find_map(|id| locked(self.doc.instance(*id)?.layer))
+            })
+            .or_else(|| {
+                self.selected_texts
+                    .iter()
+                    .find_map(|id| locked(self.doc.text(*id)?.layer))
+            })
+            .or_else(|| {
+                self.selected_fills
+                    .iter()
+                    .find_map(|id| locked(self.doc.fill(*id)?.layer))
+            })
+    }
+
     /// Refuse to move curves of which some are on a locked layer (a picked area or hatch
     /// whose outline is locked): says so, and true if it refused.
     pub fn refuse_locked(&mut self, ids: &[EntityId]) -> bool {

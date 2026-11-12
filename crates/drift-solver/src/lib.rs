@@ -113,9 +113,10 @@ pub struct SolveOptions {
     /// Solve only these entities (closed under shared points and constraints; see
     /// [`connected`]): a drag in a big sketch then costs what the dragged part costs.
     pub scope: Option<std::rc::Rc<HashSet<EntityId>>>,
-    /// Arcs and the radii they should keep where they can (typically their sizes before a
-    /// drag moved some points): a move that could go either way follows a round with its
-    /// lines rather than shrinking it. Ignored for arcs with a dragged end.
+    /// Arcs and circles and the radii they should keep where they can (typically their sizes
+    /// before a drag moved some points): a move that could go either way follows a round with
+    /// its lines rather than shrinking it. Ignored for arcs with a dragged end and circles
+    /// with a dragged radius.
     pub radii: HashMap<EntityId, f64>,
     /// Parameters that should take up the change (e.g. the geometry a new relation names):
     /// when set, everything else moves only as far as it has to, so meeting a relation
@@ -707,6 +708,13 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
             sys.keep
                 .retain(|s| !matches!(s, Shape::Distance(k, _) if k.map(Some) == key));
         }
+        if let Some(EntityKind::Circle { .. }) = doc.get(arc).map(|e| e.kind)
+            && let Some(&k) = sys.param_index.get(&Param::Radius(arc))
+            && dragged_groups.contains(&sys.group_of[k])
+        {
+            sys.keep
+                .retain(|s| !matches!(s, Shape::Radius(r, _) if *r == k));
+        }
     }
     sys.radii_kept = sys.keep.len();
     // Sorted, so the preferences' rows come in the same order every run (a hash map's order
@@ -829,8 +837,8 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
 
 /// How far off a kept shape over `k` may be and still be met: [`FOLD_MET`] of its length, or
 /// the length bar it is solved to (`bar`) where that is looser.
-fn met_within(k: &[usize; 4], value: impl Fn(usize) -> f64, bar: f64) -> f64 {
-    (FOLD_MET * Shape::length(k, &value)).max(bar)
+fn met_within(shape: &Shape, value: impl Fn(usize) -> f64, bar: f64) -> f64 {
+    (FOLD_MET * shape.size(&value)).max(bar)
 }
 
 /// Whether every kept shape the solve could move is met ([`met_within`]), each against the
@@ -848,7 +856,7 @@ fn kept_met(sys: &System) -> bool {
         k.iter().all(|p| sys.groups[sys.group_of[*p]].fixed)
             || shape
                 .offset(value)
-                .is_none_or(|(_, off)| off.abs() <= met_within(k, value, bar))
+                .is_none_or(|(_, off)| off.abs() <= met_within(shape, value, bar))
     })
 }
 
@@ -1627,9 +1635,13 @@ fn components(sys: &System, tol: &Tolerances) -> (Vec<Component>, Vec<usize>) {
     // than the bar of the shape's own size, never more than its component's, which a solve
     // then reads.)
     let value = |p: usize| sys.groups[sys.group_of[p]].value;
-    let bar = |k: &[usize; 4]| {
-        let largest = k.iter().map(|p| value(*p).abs()).fold(0.0, f64::max);
-        Bar::new(Shape::length(k, value), largest, tol).length
+    let bar = |shape: &Shape| {
+        let largest = shape
+            .params()
+            .iter()
+            .map(|p| value(*p).abs())
+            .fold(0.0, f64::max);
+        Bar::new(shape.size(value), largest, tol).length
     };
     let mut soft_roots: Vec<usize> = Vec::new();
     for shape in &sys.keep {
@@ -1644,7 +1656,7 @@ fn components(sys: &System, tol: &Tolerances) -> (Vec<Component>, Vec<usize>) {
             parent.join(w[0], w[1]);
         }
         if let Some(&g) = free.first()
-            && off.abs() > bar(k)
+            && off.abs() > bar(shape)
         {
             soft_roots.push(g);
         }
@@ -2170,7 +2182,7 @@ fn newton(
             shapes.iter().zip(free).any(|(shape, free)| {
                 *free
                     && shape.offset(value).is_some_and(|(_, off)| {
-                        off.abs() > met_within(shape.params(), value, bar.get().length)
+                        off.abs() > met_within(shape, value, bar.get().length)
                     })
             })
         })
@@ -2231,9 +2243,9 @@ fn newton(
         let value = |p: usize| values[sys.group_of[p]];
         let radii_met = shapes.iter().zip(&is_radius).all(|(shape, is_radius)| {
             !is_radius
-                || shape.offset(value).is_none_or(|(_, off)| {
-                    off.abs() <= met_within(shape.params(), value, bar.get().length)
-                })
+                || shape
+                    .offset(value)
+                    .is_none_or(|(_, off)| off.abs() <= met_within(shape, value, bar.get().length))
         });
         // (With each one's weight in the second stage, as its square root (see
         // `shape_weights`), and its rank in the first.)

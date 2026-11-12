@@ -190,9 +190,11 @@ fn a_point_fixed_any_way_is_one_the_drag_cant_move() {
 }
 
 /// Seed 16's shape built on a circle (its centre the second line's end, through the fixed
-/// point, tangent there to the first line): a circle's radius is a solver unknown and takes up
-/// the misfit the same way (8 to 55 for a drag of 0.078), and is kept the same way, at the
-/// origin and a kilometre out.
+/// point, tangent there to the first line): a circle's radius is a solver unknown, and before
+/// circles were held as arcs it took up the misfit (8 to 55 for a drag of 0.078). Held, it
+/// never grows, at the origin and a kilometre out: a frame either stops, or goes with the
+/// first line turned about the fixed point and the circle rolled round it at its radius (the
+/// lever's way, `a_lever_still_goes_at_any_advantage`), every relation met.
 #[test]
 fn a_drag_that_cant_land_doesnt_grow_a_circle_it_doesnt_move() {
     for at in [DVec2::ZERO, DVec2::new(1e6, 0.0)] {
@@ -240,8 +242,65 @@ fn a_drag_that_cant_land_doesnt_grow_a_circle_it_doesnt_move() {
                 unreachable!()
             };
             assert!(
-                !went && radius == was,
-                "at {at}, drag {d}: radius {was} -> {radius}"
+                radius <= was,
+                "at {at}, drag {d} (went {went}): radius {was} -> {radius}"
+            );
+            assert_eq!(broken(&ed.doc, None), None, "at {at}, drag {d}");
+        }
+    }
+}
+
+/// A round with its centre fixed at the origin, radius 5, and a free line tangent to it at
+/// y = 5, dragged straight away in 30 frames of 0.1: the line can only follow by growing the
+/// round, and a drag never grows a radius it doesn't move. As an arc and as a circle alike (the
+/// user's decision of 2026-11-11: circles are held as arcs are), every frame is refused and the
+/// radius stays 5, at the origin and a kilometre out. (PR 3 held the arc and let the circle
+/// swell to 8, the line landing at y = 8.)
+#[test]
+fn a_drag_never_grows_a_circle_it_doesnt_move_as_it_never_grows_an_arc() {
+    for at in [DVec2::ZERO, DVec2::new(1e6, 0.0)] {
+        for circle in [false, true] {
+            let v = |x: f64, y: f64| at + DVec2::new(x, y);
+            let mut ed = Editor::default();
+            ed.doc.begin();
+            let c = ed.doc.add_point(v(0.0, 0.0));
+            let round = if circle {
+                ed.doc.add_circle(c, 5.0).unwrap()
+            } else {
+                let a = ed.doc.add_point(v(5.0, 0.0));
+                let b = ed.doc.add_point(v(-5.0, 0.0));
+                ed.doc.add_arc(c, a, b).unwrap()
+            };
+            let l0 = ed.doc.add_point(v(-10.0, 5.0));
+            let l1 = ed.doc.add_point(v(10.0, 5.0));
+            let line = ed.doc.add_line(l0, l1).unwrap();
+            for k in [
+                Constraint::Tangent { a: line, b: round },
+                Constraint::Fix {
+                    point: c,
+                    at: v(0.0, 0.0),
+                },
+            ] {
+                ed.doc.add_constraint(k).unwrap();
+            }
+            assert!(ed.commit("Sketch"));
+            let what = if circle { "circle" } else { "arc" };
+            assert_eq!(drift_solver::radius_of(&ed.doc, round), Some(5.0), "{what}");
+            ed.doc.begin();
+            let dragged: Vec<Param> = ed
+                .doc
+                .defining_points([line])
+                .into_iter()
+                .flat_map(Param::point)
+                .collect();
+            let mut went = 0;
+            for _ in 0..30 {
+                went += u32::from(ed.drag(&[line], DVec2::new(0.0, 0.1), &dragged));
+            }
+            let radius = drift_solver::radius_of(&ed.doc, round).unwrap();
+            assert!(
+                went == 0 && radius == 5.0,
+                "{what} at {at}: {went} of 30 frames went, radius 5 -> {radius}"
             );
         }
     }

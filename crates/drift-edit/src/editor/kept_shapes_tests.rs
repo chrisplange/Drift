@@ -114,3 +114,35 @@ fn a_typed_size_moves_the_side_across_and_keeps_the_outline_square() {
         );
     }
 }
+
+fn circle_radius(ed: &Editor, circle: EntityId) -> f64 {
+    match ed.doc.get(circle).unwrap().kind {
+        EntityKind::Circle { radius, .. } => radius,
+        _ => unreachable!(),
+    }
+}
+
+/// A circle keeps its radius in an edit as an arc does (the main-fix PR's rule for drags,
+/// carried to commits): a slanted line a circle is tangent to made Horizontal moves the
+/// circle with it, and the circle keeps its size.
+#[test]
+fn a_relation_beside_a_circle_keeps_its_radius() {
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let (edge, _, _) = line(&mut ed, v(0.0, 0.0), v(30.0, 3.0));
+    let centre = ed.doc.add_point(v(15.0, 12.0));
+    let circle = ed.doc.add_circle(centre, 10.0).unwrap();
+    ed.doc
+        .add_constraint(Constraint::Tangent { a: edge, b: circle })
+        .unwrap();
+    assert!(ed.commit("Edge and circle"));
+    let radius = circle_radius(&ed, circle);
+    ed.selection = [edge].into_iter().collect();
+    ed.add_picked_constraints("Horizontal", &[Constraint::Horizontal { line: edge }])
+        .unwrap();
+    assert!(
+        (circle_radius(&ed, circle) - radius).abs() < 1e-6 * radius,
+        "radius {radius} -> {}",
+        circle_radius(&ed, circle)
+    );
+}

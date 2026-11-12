@@ -208,8 +208,7 @@ impl Editor {
                         kept.directions.insert(id, u);
                     }
                 }
-                // (Circles too: the solver keeps a circle's radius as it does an arc's once it
-                // reads circles in `SolveOptions::radii`, the main-fix PR after PR 3.)
+                // (Circles too, as the main-fix PR after PR 3 keeps them in drags.)
                 EntityKind::Arc { .. } | EntityKind::Circle { .. }
                     if !turning.contains(&id) && !sized_arcs.contains(&id) =>
                 {

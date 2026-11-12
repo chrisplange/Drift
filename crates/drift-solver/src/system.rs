@@ -102,30 +102,42 @@ pub enum Shape {
     /// measured at (the line's as the solve began; `None`: as before the audit's PR 6, see
     /// [`crate::SolveOptions::shapes_as_before`]).
     Direction([usize; 4], DVec2, Option<f64>),
+    /// A circle's radius: its radius parameter, and the radius.
+    Radius(usize, f64),
 }
 
 impl Shape {
     /// The parameters it is over.
-    pub fn params(&self) -> &[usize; 4] {
+    pub fn params(&self) -> &[usize] {
         match self {
             Shape::Distance(k, _) | Shape::Direction(k, ..) => k,
+            Shape::Radius(r, _) => std::slice::from_ref(r),
         }
     }
 
-    /// How long the shape is at `value`, over its parameters `k`: an arc's radius, a
-    /// line's length.
+    /// How long the distance between two points is at `value`, over their x and y `k`: an
+    /// arc's radius, a line's length (a direction's offset is a length too: one end off the
+    /// line through the other).
     pub fn length(k: &[usize; 4], value: impl Fn(usize) -> f64) -> f64 {
         let [ax, ay, bx, by] = k.map(value);
         (bx - ax).hypot(by - ay)
     }
 
+    /// How long the shape is at `value` ([`length`](Self::length); a circle's radius).
+    pub fn size(&self, value: impl Fn(usize) -> f64) -> f64 {
+        match self {
+            Shape::Distance(k, _) | Shape::Direction(k, ..) => Self::length(k, value),
+            Shape::Radius(r, _) => value(*r).abs(),
+        }
+    }
+
     /// How far off the shape is at `value`, as a distance, and its gradient over
-    /// [`params`](Self::params). `None` where the shape has collapsed (no distance to keep).
-    /// A direction's offset is the sine of the line's turn at the length it was kept at,
-    /// `l₀·sin θ`, while it faces the kept way, rising to `2·l₀` turned end for end: the same
-    /// at any length, so no line is kept square by shrinking it (before, `l·sin θ` was: a
-    /// line a relation must turn was shrunk to nothing to meet its direction), and never met
-    /// reversed.
+    /// [`params`](Self::params) (a unit vector per end for a distance). `None` where the shape
+    /// has collapsed (no distance to keep). A direction's offset is the sine of the line's turn
+    /// at the length it was kept at, `l₀·sin θ`, while it faces the kept way, rising to `2·l₀`
+    /// turned end for end: the same at any length, so no line is kept square by shrinking it
+    /// (before, `l·sin θ` was: a line a relation must turn was shrunk to nothing to meet its
+    /// direction), and never met reversed.
     pub fn offset(&self, value: impl Fn(usize) -> f64) -> Option<([f64; 4], f64)> {
         match *self {
             Shape::Distance(k, d0) => {
@@ -163,6 +175,8 @@ impl Shape {
                 };
                 Some(([-g.x, -g.y, g.x, g.y], off))
             }
+            // (The gradient's first entry is the radius's; its parameters are that one.)
+            Shape::Radius(r, r0) => Some(([1.0, 0.0, 0.0, 0.0], value(r) - r0)),
         }
     }
 }
@@ -1210,9 +1224,16 @@ impl System {
 
         // Arcs keep their end on the circle through their start. (Which arcs keep their
         // radius, `solve` decides: dragging an end reshapes the arc, dragging its centre
-        // carries it along.)
+        // carries it along.) Circles given a radius keep it as arcs do (dragging the rim drags
+        // the radius itself, and `solve` lets it go).
         let mut keep_shape = Vec::new();
         for &(id, entity) in &in_scope {
+            if let EntityKind::Circle { .. } = entity.kind
+                && let Some(&r) = radii.get(&id)
+                && let Some(&k) = param_index.get(&Param::Radius(id))
+            {
+                keep_shape.push(Shape::Radius(k, r));
+            }
             if let EntityKind::Arc { center, start, end } = entity.kind {
                 if let Some(&r) = radii.get(&id) {
                     keep_shape.push(Shape::Distance(

@@ -45,7 +45,7 @@ pub(crate) fn keycaps(ui: &mut egui::Ui, keys: &str) {
 }
 
 /// The windows Esc closes, by their egui ids, frontmost first when egui can't tell.
-const WINDOWS: [&str; 11] = [
+const WINDOWS: [&str; 12] = [
     "unrestored",
     "Licences",
     "About Drift",
@@ -53,6 +53,7 @@ const WINDOWS: [&str; 11] = [
     "Solver benchmark",
     "output_sheets",
     "cad_export",
+    "pdf_placement",
     "import_report",
     "sketch_check",
     "Drawing settings",
@@ -135,6 +136,8 @@ impl DriftApp {
             "output_sheets" => self.drawing.output_dialog.is_some(),
             #[cfg(not(feature = "demo"))]
             "cad_export" => self.cad_dialog,
+            #[cfg(not(feature = "demo"))]
+            "pdf_placement" => self.pdf_place_dialog.is_some(),
             "import_report" => self.drawing.import_report.is_some(),
             "sketch_check" => self.drawing.sketch_check.is_some(),
             "Drawing settings" => self.show_drawing_settings,
@@ -154,6 +157,8 @@ impl DriftApp {
             "output_sheets" => self.drawing.output_dialog = None,
             #[cfg(not(feature = "demo"))]
             "cad_export" => self.cad_dialog = false,
+            #[cfg(not(feature = "demo"))]
+            "pdf_placement" => self.pdf_place_dialog = None,
             "import_report" => self.drawing.import_report = None,
             "sketch_check" => self.drawing.sketch_check = None,
             "Drawing settings" => self.show_drawing_settings = false,
@@ -228,6 +233,8 @@ impl DriftApp {
         self.output_window(ctx);
         #[cfg(not(feature = "demo"))]
         self.cad_window(ctx);
+        #[cfg(not(feature = "demo"))]
+        self.pdf_place_window(ctx);
         #[cfg(feature = "demo")]
         self.demo_note(ctx);
         self.sketch_check_window(ctx);

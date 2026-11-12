@@ -30,6 +30,117 @@ fn drawn(h: &mut Harness<'_, DriftApp>, page: usize) -> usize {
         .count()
 }
 
+/// #245: Export PDF with no sheets asks how to place the drawing: 1:1, labelled with its page
+/// size, or fitted to A3 and labelled with the scale that gives. At 1:1 a 120 x 80 mm plate's
+/// 120 mm side measures 120 mm, on a page of the plate plus a 5 mm margin; fitted, it is
+/// today's A3 sheet. Cancel and Esc close the prompt, exporting nothing; Print asks the same.
+/// A drawing whose 1:1 page is bigger than A0 has Fit chosen to start with.
+#[test]
+fn smoke_pdf_with_no_sheets_asks_and_prints_at_true_scale() {
+    use crate::app::sheets_ui::Output;
+    use crate::output::{PdfPlacement, pdf_page_and_lines, pdf_page_and_longest_line};
+    let Some(mut h) = harness() else { return };
+    view(&mut h, DVec2::new(-10.0, -10.0), DVec2::new(130.0, 90.0));
+    rectangle(&mut h, DVec2::ZERO, DVec2::new(120.0, 80.0), Fill::No);
+    assert!(h.state().drawing.editor.doc.sheets().next().is_none());
+    let open = |h: &mut Harness<'_, DriftApp>| {
+        open_menu(h, "File");
+        h.get_by_label_contains("Export").click();
+        h.run();
+        h.get_by_label("PDF…").click();
+        h.run();
+        h.run();
+    };
+    let kind = |h: &Harness<'_, DriftApp>| h.state().pdf_place_dialog.as_ref().map(|p| p.kind);
+    let choice = |h: &Harness<'_, DriftApp>| h.state().pdf_place_dialog.as_ref().map(|p| p.choice);
+    let labels = |h: &Harness<'_, DriftApp>| {
+        let p = h.state().pdf_place_dialog.as_ref().expect("the prompt");
+        (h.state().true_scale_label(p.page), p.fit.clone())
+    };
+    // File → Export → PDF… asks first, 1:1 chosen.
+    open(&mut h);
+    assert_eq!(kind(&h), Some(Output::Pdf), "PDF with no sheets asks");
+    assert!(h.query_by_label("Export…").is_some());
+    let (one, fit) = labels(&h);
+    assert_eq!(one, "1:1 on a 130 x 90 mm page");
+    assert!(fit.starts_with("Fit to A3 (1:"), "{fit}");
+    assert!(h.query_by_label(&one).is_some() && h.query_by_label(&fit).is_some());
+    assert_eq!(choice(&h), Some(PdfPlacement::TrueScale));
+    h.get_by_label(&fit).click();
+    h.run();
+    assert_eq!(choice(&h), Some(PdfPlacement::Fit));
+    h.get_by_label(&one).click();
+    h.run();
+    assert_eq!(choice(&h), Some(PdfPlacement::TrueScale));
+    save_png("drift_smoke_pdf_placement.png", &mut h);
+    // Cancel, and Esc, close it with nothing exported (no save dialog opened).
+    h.get_by_label("Cancel").click();
+    h.run();
+    assert_eq!(kind(&h), None, "Cancel closes it");
+    assert!(!h.state().files.picker_open(), "nothing exported");
+    open(&mut h);
+    assert_eq!(kind(&h), Some(Output::Pdf));
+    h.key_press(Key::Escape);
+    h.run();
+    h.run();
+    assert_eq!(kind(&h), None, "Esc closes it");
+    assert!(!h.state().files.picker_open(), "nothing exported");
+    // Print (Ctrl+P) asks the same; Cancel prints nothing.
+    h.key_press_modifiers(EguiModifiers::COMMAND, Key::P);
+    h.run();
+    h.run();
+    assert_eq!(kind(&h), Some(Output::Print));
+    assert!(h.query_by_label("Print…").is_some());
+    h.get_by_label("Cancel").click();
+    h.run();
+    assert_eq!(kind(&h), None);
+    assert!(!h.state().files.picker_open());
+    // What each choice writes. 1:1: the plate at full size on a page of its own size.
+    let painter = painter(&h);
+    let pdf = h
+        .state_mut()
+        .placed_pdf_bytes(&painter, PdfPlacement::TrueScale);
+    let (page, longest) = pdf_page_and_longest_line(&pdf);
+    assert!(
+        (longest - 120.0).abs() < 0.01,
+        "the 120 mm side: {longest} mm"
+    );
+    assert!(
+        (page.x - 130.0).abs() < 1.0 && (page.y - 90.0).abs() < 1.0,
+        "the plate plus 5 mm all round: {page}"
+    );
+    // Fit, as before: an A3 sheet at the scale its label gives (1:1 for so small a plate).
+    assert_eq!(fit, "Fit to A3 (1:1)");
+    let fitted = h.state_mut().placed_pdf_bytes(&painter, PdfPlacement::Fit);
+    let (page, lines) = pdf_page_and_lines(&fitted);
+    assert!(
+        (page.x - 420.0).abs() < 0.1 && (page.y - 297.0).abs() < 0.1,
+        "A3: {page}"
+    );
+    assert!(
+        lines.iter().any(|l| (l - 120.0).abs() < 0.01),
+        "the 120 mm side at 1:1 on the sheet: {lines:?}"
+    );
+    // A drawing too big for A0 at 1:1 starts on Fit (1:1 is still there to pick).
+    {
+        let ed = &mut h.state_mut().drawing.editor;
+        ed.doc.begin();
+        let a = ed.doc.add_point(DVec2::new(0.0, 0.0));
+        let b = ed.doc.add_point(DVec2::new(2000.0, 0.0));
+        ed.doc.add_line(a, b).unwrap();
+        ed.commit("Line");
+    }
+    h.run();
+    open(&mut h);
+    let (one, fit) = labels(&h);
+    assert!(one.starts_with("1:1 on a 2010 x "), "{one}");
+    assert!(fit.starts_with("Fit to A3 (1:"), "{fit}");
+    assert_eq!(choice(&h), Some(PdfPlacement::Fit), "bigger than A0: Fit");
+    h.key_press(Key::Escape);
+    h.run();
+    assert_eq!(kind(&h), None);
+}
+
 #[test]
 fn smoke_sheet_with_a_view_title_block_and_export() {
     let Some(mut h) = harness() else { return };

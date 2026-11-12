@@ -116,7 +116,7 @@ handle gives an error and leaves the drawing as it was. See [Underlays and DXF i
 | Import | `.pat` | Hatch patterns: **Parameters → Hatch patterns → Import .pat…**. |
 | Import | `.ttf`, `.otf` | Fonts: **Add a font file…** in any font menu. |
 | Import | SVG | A title-block logo: pick bare paper on a sheet, then **Logo → Choose SVG…** in its **Inspector**. |
-| Export | PDF | Every sheet, true scale; with no sheets, the drawing fitted to A3. Each view holds only what shows through its window. |
+| Export | PDF | Every sheet, true scale. With no sheets, Drift asks how to place the drawing (Print asks the same): 1:1 (true scale) on a page sized to it with a 5 mm margin, its dimensions and notes at paper size (the choice shows the page size), or fitted to A3 (the choice shows the scale that gives). 1:1 is chosen to start with unless its page would be bigger than A0. Each view holds only what shows through its window. |
 | Export | SVG | The current sheet, true scale: a named group per layer (Inkscape layers; Illustrator groups, which **Release to Layers** turns into layers) and joined paths. Each view holds only what shows through its window. |
 | Export | DWG, DXF (AutoCAD 2018) | The model at full size: true curves, layers in true colour with line types and weights, blocks, fills and hatches (with their patterns), text in any script. **File → Export → DWG / DXF…**. See [About DWG and DXF](../tutorials/10-sheets-and-output.md#about-dwg-and-dxf). |
 | Export | DXF (R12) | The same dialog: the model at full size in R12's own entities (lines, circles, arcs and polylines; curves as fine polylines, fills as solid triangles, hatches as lines; text), with layers, line types and blocks but no line weights, for laser cutters, CNC and older software. |

@@ -436,6 +436,110 @@ fn files_round_trip_and_stay_in_the_root() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// #245: the export tool's `placement` for a PDF with no sheets: `fit` (the default, as before)
+/// fits the drawing to an A3 sheet; `true-scale` prints it at 1 : 1 on a page of its size.
+#[test]
+fn a_pdf_with_no_sheets_is_placed_as_asked() {
+    let dir = std::env::temp_dir().join(format!("drift-agent-245-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = Session::new().with_root(dir.clone());
+    ok(
+        &mut s,
+        "add_geometry",
+        json!({ "items": [{ "type": "rectangle", "corner": [0, 0], "width": 120, "height": 80 }] }),
+    );
+    let read =
+        |f: &str| crate::output::pdf_page_and_longest_line(&std::fs::read(dir.join(f)).unwrap());
+    ok(
+        &mut s,
+        "export",
+        json!({ "path": "plate.pdf", "placement": "true-scale" }),
+    );
+    let (page, longest) = read("plate.pdf");
+    assert!(
+        (longest - 120.0).abs() < 0.01,
+        "the 120 mm side: {longest} mm"
+    );
+    assert!(
+        (page.x - 130.0).abs() < 1.0 && (page.y - 90.0).abs() < 1.0,
+        "{page}"
+    );
+    // Fit, by default or by name: today's A3 sheet, the same file either way.
+    ok(&mut s, "export", json!({ "path": "default.pdf" }));
+    ok(
+        &mut s,
+        "export",
+        json!({ "path": "fit.pdf", "placement": "fit" }),
+    );
+    let (page, _) = read("default.pdf");
+    assert!(
+        (page.x - 420.0).abs() < 0.1 && (page.y - 297.0).abs() < 0.1,
+        "A3: {page}"
+    );
+    let bytes = |f: &str| std::fs::read(dir.join(f)).unwrap();
+    assert_eq!(bytes("default.pdf"), bytes("fit.pdf"));
+    // A drawing set to 1:50: at 1:1 its dimension text is paper size, as a drawing set to 1:1
+    // prints it, not 50 times that.
+    let mut text_at = |n: u32| {
+        ok(&mut s, "new_drawing", json!({ "scale": n }));
+        let made = ok(
+            &mut s,
+            "add_geometry",
+            json!({ "items": [{ "type": "rectangle", "corner": [0, 0], "width": 120, "height": 80 }] }),
+        );
+        let bottom = str_at(&made["created"][0], &["sides", "bottom"]).to_owned();
+        ok(
+            &mut s,
+            "add_dimensions",
+            json!({ "dimensions": [{ "type": "length", "line": bottom, "value": 120 }] }),
+        );
+        let file = format!("plate{n}.pdf");
+        ok(
+            &mut s,
+            "export",
+            json!({ "path": file, "placement": "true-scale" }),
+        );
+        let pdf = std::fs::read(dir.join(&file)).unwrap();
+        let (_, longest) = crate::output::pdf_page_and_longest_line(&pdf);
+        assert!((longest - 120.0).abs() < 0.01, "1:{n}: {longest}");
+        let art = drift_io::pdf_import::read_artwork(&pdf, 1, "page").unwrap();
+        let sizes: Vec<f64> = art.texts.iter().map(|t| t.size).collect();
+        assert_eq!(sizes.len(), 1, "the dimension's text: {sizes:?}");
+        (sizes[0], s.editor.doc.draft_style().text_height)
+    };
+    let (at_1, paper) = text_at(1);
+    let (at_50, _) = text_at(50);
+    assert!(
+        (at_50 - at_1).abs() < 0.01,
+        "1:50 prints its text as 1:1 does ({at_1} mm), not at {at_50} mm"
+    );
+    // (The reader gives the font's em, a little more than the style's cap height.)
+    assert!(
+        at_1 > paper && at_1 < 2.0 * paper,
+        "{at_1} mm for {paper} mm text"
+    );
+    // Only a PDF takes it.
+    let e = err(
+        &mut s,
+        "export",
+        json!({ "path": "plate.svg", "placement": "true-scale" }),
+    );
+    assert!(e.contains("placement is for a PDF"), "{e}");
+    let e = err(
+        &mut s,
+        "export",
+        json!({ "path": "x.pdf", "placement": "1:1" }),
+    );
+    assert!(e.contains("fit or true-scale"), "{e}");
+    let e = err(
+        &mut s,
+        "export",
+        json!({ "path": "x.pdf", "placement": "huge" }),
+    );
+    assert!(e.contains("fit or true-scale"), "{e}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_drawings_rules_travel_with_it_and_the_assistants_picking_does_not() {
     let dir = std::env::temp_dir().join(format!("drift-agent-rules-{}", std::process::id()));

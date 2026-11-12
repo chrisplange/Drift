@@ -667,7 +667,13 @@ fn a_drawing_without_sheets_prints_its_dimensions() {
     .unwrap();
     let mut ed = drift_edit::editor::Editor::new(doc);
     let mut patterns = drift_edit::fills::PatternLibrary::default();
-    let pages = crate::output::sheet_pages(&mut ed, &mut patterns, &painter(), "Plan");
+    let pages = crate::output::sheet_pages(
+        &mut ed,
+        &mut patterns,
+        &painter(),
+        "Plan",
+        crate::output::PdfPlacement::Fit,
+    );
     let printed = pages[0].items.iter().any(
         |i| matches!(&i.prim, drift_draft::page::Prim::Text { text, .. } if text.contains("1234")),
     );

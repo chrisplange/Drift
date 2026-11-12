@@ -445,9 +445,7 @@ fn census_case(wanted: usize, t: Similarity) -> (Built, Add, Constraint, Vec<Ent
 /// direction only by shrinking to nothing, the relation pushing it back along itself (the
 /// collapse attractor). Kept shapes are preferences, so it turns instead, as Fusion's,
 /// SolidWorks' and Onshape's sketches do (the user's call, 11-12): the relation is added, no
-/// line changes length by more than a hundredth (on Windows none changes at all; on Linux and
-/// macOS one changes by 1.2e-3 mm, where the solves that keep its direction stop short
-/// differently before it gives way), and that line turns.
+/// line changes length, and that line turns.
 #[test]
 fn a_line_kept_square_turns_rather_than_collapsing() {
     let (mut built, add, c, picks) = census_case(2281, Similarity::IDENTITY);
@@ -469,7 +467,7 @@ fn a_line_kept_square_turns_rather_than_collapsing() {
     for ((_, a0, b0), (_, a1, b1)) in lines0.iter().zip(&lines1) {
         let (l0, l1) = (a0.distance(*b0), a1.distance(*b1));
         assert!(
-            (l1 - l0).abs() <= 1e-2 * l0,
+            (l1 - l0).abs() <= 1e-9 * 43.133,
             "a line changed length: {report:#?}"
         );
     }
@@ -479,6 +477,82 @@ fn a_line_kept_square_turns_rather_than_collapsing() {
     let (_, a1, b1) = lines1.iter().find(|(id, ..)| *id == line).unwrap();
     let turn = (*b0 - *a0).angle_to(*b1 - *a1).to_degrees().abs();
     assert!(turn > 10.0, "the line turned {turn}°: {report:#?}");
+}
+
+/// Case 2281 with every point nudged on its own, by −2…+2 ulps in x and in y (100 copies: a
+/// platform's libm and the sketch's own trig differ by an ulp here and there, which the whole
+/// sketch shifted as one, `edits_agree_whatever_the_round_off`, doesn't reach). Before the
+/// direction measure faded a turned-round line's cost out at no length, these landed 13 ways
+/// (with the line left at 1.5 % of itself in some, flipped in others), Linux and macOS on a
+/// different one from Windows: a relation pushing a line back along itself drove it onto the
+/// cliff where turning round cost twice its length, and the solve stalled there wherever
+/// round-off had it. Now every copy is added and lands as the first does, within 1e-6 of the
+/// sketch, no line a sliver and the 45° line turned.
+#[test]
+fn a_line_kept_square_turns_alike_whatever_the_round_off_of_each_point() {
+    let ulp = |x: f64, k: i64| {
+        if x == 0.0 {
+            x
+        } else {
+            f64::from_bits((x.to_bits() as i64 + k) as u64)
+        }
+    };
+    let mut reference: Option<Vec<DVec2>> = None;
+    let mut fails = Vec::new();
+    let mut s: u64 = 0x2281_2281_2281_2281;
+    let mut next = move || {
+        s ^= s << 13;
+        s ^= s >> 7;
+        s ^= s << 17;
+        (s % 5) as i64 - 2
+    };
+    for copy in 0..100 {
+        let (mut built, add, c, picks) = census_case(2281, Similarity::IDENTITY);
+        if copy > 0 {
+            for p in built.points.clone() {
+                let q = built.ed.doc.point(p).unwrap();
+                let (kx, ky) = (next(), next());
+                built
+                    .ed
+                    .doc
+                    .set_point(p, DVec2::new(ulp(q.x, kx), ulp(q.y, ky)))
+                    .unwrap();
+            }
+        }
+        let (lines0, _) = shapes(&built.ed);
+        if apply(&mut built.ed, add, c, &picks).is_err() {
+            fails.push(format!("copy {copy}: refused"));
+            continue;
+        }
+        let (lines1, _) = shapes(&built.ed);
+        for ((id, a0, b0), (_, a1, b1)) in lines0.iter().zip(&lines1) {
+            if a1.distance(*b1) < 1e-3 * a0.distance(*b0) {
+                fails.push(format!("copy {copy}: line {id:?} left a sliver"));
+            }
+        }
+        let line = built.curves[2];
+        let (_, a0, b0) = lines0.iter().find(|(id, ..)| *id == line).unwrap();
+        let (_, a1, b1) = lines1.iter().find(|(id, ..)| *id == line).unwrap();
+        let turn = (*b0 - *a0).angle_to(*b1 - *a1).to_degrees().abs();
+        if turn < 10.0 {
+            fails.push(format!("copy {copy}: the 45° line turned {turn}°"));
+        }
+        let end = built.positions();
+        match &reference {
+            None => reference = Some(end),
+            Some(first) => {
+                let off = first
+                    .iter()
+                    .zip(&end)
+                    .map(|(a, b)| a.distance(*b))
+                    .fold(0.0, f64::max);
+                if off > 1e-6 * 43.133 {
+                    fails.push(format!("copy {copy}: {off:.3e} from the first"));
+                }
+            }
+        }
+    }
+    assert!(fails.is_empty(), "{}", fails.join("\n"));
 }
 
 /// The same edit with that line made Horizontal by the user first (the sketch turned 45° so

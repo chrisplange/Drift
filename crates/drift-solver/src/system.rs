@@ -174,9 +174,23 @@ impl Shape {
                 } else {
                     // Facing the other way: 2 − |sin|, which meets sin where the line stands
                     // square to the kept direction and grows to twice its length turned end
-                    // for end, so the shape always leads back the way it was kept.
+                    // for end, so the shape always leads back the way it was kept. That is
+                    // sin and an excess, 2 − 2|sin| signed as sin; the excess fades out as the
+                    // line shrinks to nothing (`turned_fades`), so a line shrinking along its
+                    // kept direction passes through itself at no cost on either side. Not
+                    // faded, it jumped there from nothing to twice its kept length: a relation
+                    // that pushes a line back along itself drove it onto that cliff, where
+                    // every step past was refused and the solve stalled wherever round-off
+                    // had it (census case 2281: 13 ends for nudges of 2 ulps a point), and
+                    // whether it was left a sliver to give way (see the editor's
+                    // `check_new_constraints`) was round-off's call too.
                     let sign = if sine < 0.0 { -1.0 } else { 1.0 };
-                    (sign * (2.0 - sine.abs()), -g)
+                    let excess = sign * (2.0 - 2.0 * sine.abs());
+                    let (fade, fades) = turned_fades(length, l0);
+                    (
+                        sine + excess * fade,
+                        g * (1.0 - 2.0 * fade) + along * (excess * fades),
+                    )
                 };
                 // Read at the length it is kept at (and that length's gradient, along the
                 // line).
@@ -188,6 +202,17 @@ impl Shape {
             Shape::Radius(r, r0) => Some(([1.0, 0.0, 0.0, 0.0], value(r) - r0)),
         }
     }
+}
+
+/// How much of a turned-round line's excess cost counts at `length`, for a line kept at `l0`,
+/// and its derivative (see [`Shape::offset`]): all of it from a quarter of `l0` up, fading to
+/// none at no length by a smoothstep, `3t² − 2t³` of `t = 4·length/l0`, level at both ends.
+fn turned_fades(length: f64, l0: f64) -> (f64, f64) {
+    let t = 4.0 * length / l0;
+    if t >= 1.0 {
+        return (1.0, 0.0);
+    }
+    (t * t * (3.0 - 2.0 * t), 6.0 * t * (1.0 - t) * 4.0 / l0)
 }
 
 /// The length a kept direction's turn is read at, for a line `length` long kept at `l0`, and

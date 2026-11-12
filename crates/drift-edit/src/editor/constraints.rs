@@ -289,8 +289,12 @@ impl Editor {
         Ok(())
     }
 
-    /// The lines the edit's solve shrank to slivers ([`left_a_sliver`](Self::left_a_sliver))
-    /// that it kept to their directions: those `named` by the new relations keep none.
+    /// The lines kept to their directions (not `named` by the new relations, which keep none)
+    /// that the edit's solve shrank to slivers ([`left_a_sliver`](Self::left_a_sliver)), or
+    /// pushed back through themselves: turned end for end and under a quarter of what they
+    /// were. (A line that swings round keeps its length; one a relation pushes back along
+    /// itself shrinks through nothing and comes out the other way short, where the direction
+    /// measure's cost for turning round fades out: see `drift_solver`'s `Shape::offset`.)
     fn slivers(&self, start: &Geometry, named: &HashSet<EntityId>) -> HashSet<EntityId> {
         let was: HashMap<EntityId, DVec2> = start.points.iter().copied().collect();
         self.doc
@@ -300,8 +304,11 @@ impl Editor {
                 EntityKind::Line { a, b } => {
                     let (a0, b0) = (was.get(&a)?, was.get(&b)?);
                     let (a1, b1) = (self.doc.point(a).ok()?, self.doc.point(b).ok()?);
-                    let before = a0.distance(*b0);
-                    (before > 0.0 && a1.distance(b1) < SLIVER * before).then_some(id)
+                    let (was, now) = (*b0 - *a0, b1 - a1);
+                    let (before, after) = (was.length(), now.length());
+                    let sliver = after < SLIVER * before;
+                    let through = was.dot(now) < 0.0 && after < 0.25 * before;
+                    (before > 0.0 && (sliver || through)).then_some(id)
                 }
                 _ => None,
             })

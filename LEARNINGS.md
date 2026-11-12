@@ -12,3 +12,4 @@ What went wrong and the rule that came out of it. Add one when a review, revert 
 | 2026-10-30 | Tests asserting wall-clock budgets fail on a busy machine (#368) | No hard wall-clock asserts in normal tests; perf budgets live in ignored baselines |
 | 2026-11-10 | A dependency bump (#381) failed the Third-party notices job | After any Cargo.lock change, run `python scripts/notices.py` and commit THIRD-PARTY-NOTICES.txt in the same PR |
 | 2026-10-27 | Vague tasks caused rework | Every task has a checkable Done when before it runs |
+| 2026-11-12 | The PR 6 worker started its own session for the stage-2 stall (#400), outside the hub queue | Workers never start sessions; they report the need to the coordinator, who decides |

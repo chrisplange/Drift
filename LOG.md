@@ -24,3 +24,9 @@ One line per decision, approval or merge, newest last. Format: `YYYY-MM-DD | wha
 2026-11-10 | Solver PR 2 (#391): user accepted the remaining failures: heavy similarity seeds 14 and 17 (PR 3), seed 6 on Linux (PR 4, parked), the e13 arc drag stopping at 29 instead of 32 frames (ignored pin, PR 5, parked) | user in chat
 2026-11-11 | Solver PR 2 (#391) merged; tangent_and_parallel stays ignored, owned by PR 3 | user
 2026-11-11 | Solver PR 3 (#394) sent back before review: fix the arc growing in f3's drag (binding rule), free-move refusals (seeds 6, 17) and the arc-ends slide. Accepted as is: cap at 0.63 % (fix in parked PR 5), #351 left open (measured ~0.3 s on main and PR 3), active element held while a chain bends (#333) | user in chat
+2026-11-11 | Solver PR 3 (#394) merged by the user without the separate Opus/Fable reviews; held arcs never grow in a drag; tangent_and_parallel un-ignored; #349 and #280 closed (all seven #280 pins pass) | user
+2026-11-11 | "Stop the drag" reaffirmed: PR 3 (#394) brought back a whole-part rigid slide when a drag frame fails (rejected 2026-11-03); it is being removed (main-fix) | user
+2026-11-11 | Circles are held like arcs: "radii are never grown" covers circle radii too (main-fix) | user
+2026-11-11 | Dragging a point held on a fixed-centre circle outward past its radius stops the drag, the same as arcs; no circle exemption (confirms gated PR #398) | user
+2026-11-12 | A round set Equal to a fixed-centre round stops when dragged off its tangent line, for arcs and circles alike (merged #398 knowing it) | user
+2026-11-12 | The stage-2 stall fix (draft #400) continues as its own gated PR after PR 6 (#399) merges; it is not part of PR 6 | user

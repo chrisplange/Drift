@@ -522,7 +522,7 @@ fn relation_census() {
         }
         println!(
             "R {case} {kind} {act} ok size {size:.3} mv {mv:.6} pts {pts} nl {nl} ndl {ndl:.6} \
-             rl {rl} rdl {rdl:.6} na {na} nda {nda:.6} ra {ra} rda {rda:.6} rturn {rturn:.4}              col {col}"
+             rl {rl} rdl {rdl:.6} na {na} nda {nda:.6} ra {ra} rda {rda:.6} rturn {rturn:.4} col {col}"
         );
     }
     println!(

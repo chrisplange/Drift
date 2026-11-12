@@ -521,6 +521,8 @@ fn moving_hatches_over_each_other_moves_only_their_own_curves() {
 /// not found by going through every area, or every curve of the drawing (#84: a big PDF
 /// took minutes).
 #[test]
+// Flaky: a wall-clock budget; fails when the machine is busy (quarantine.yml runs it).
+#[ignore = "flaky: #368"]
 fn large_import_commits_quickly() {
     let import = crate::perf_tests::sheet_import(900, 2);
     let mut ed = Editor::new(Document::new());
@@ -2250,6 +2252,8 @@ fn restyling_an_old_area_fill_leaves_it_an_area_fill() {
 /// makes them all shapes), commits in moments, and so do later edits: shapes the edit didn't
 /// touch aren't found again, and nothing is found over the whole drawing per shape.
 #[test]
+// Flaky: a wall-clock budget; fails when the machine is busy (quarantine.yml runs it).
+#[ignore = "flaky: #368"]
 fn many_filled_rectangles_made_shapes_commit_quickly() {
     let mut doc = Document::new();
     for k in 0..1000 {

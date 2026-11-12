@@ -848,6 +848,8 @@ proptest! {
     }
 
     #[test]
+    // Flaky: nested blocks can pass the 20 s time box on a slow runner (quarantine.yml runs it).
+    #[ignore = "flaky: #409"]
     fn mutated_dxf_never_panics(which in 0usize..64, edits in edits()) {
         let corpus = dxf_corpus();
         let (name, text) = &corpus[which % corpus.len()];

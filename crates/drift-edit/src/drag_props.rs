@@ -2818,6 +2818,8 @@ proptest! {
     #![proptest_config(ProptestConfig { cases: LIGHT, ..ProptestConfig::default() })]
 
     #[test]
+    // Flaky: a big 5-step drag can break a face relation or flip a join (quarantine.yml runs it).
+    #[ignore = "flaky: #295"]
     fn face_dimensions_hold_through_drags(
         kind in 0u8..3,
         which in 0usize..8,

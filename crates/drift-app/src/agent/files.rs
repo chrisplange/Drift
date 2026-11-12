@@ -337,7 +337,7 @@ fn placement(a: &Value) -> Result<crate::output::PdfPlacement, String> {
     use crate::output::PdfPlacement;
     match args::opt_str(a, "placement")? {
         None | Some("fit") => Ok(PdfPlacement::Fit),
-        Some("true-scale" | "1:1") => Ok(PdfPlacement::TrueScale),
+        Some("true-scale") => Ok(PdfPlacement::TrueScale),
         Some(other) => Err(format!("placement is fit or true-scale, not \"{other}\"")),
     }
 }
@@ -348,6 +348,11 @@ pub(super) fn export(s: &mut Session, a: &Value) -> Res {
         Some(f) => f.to_ascii_lowercase(),
         None => extension(&path),
     };
+    if format != "pdf" && a.get("placement").is_some_and(|v| !v.is_null()) {
+        return Err(format!(
+            "placement is for a PDF with no sheets, not .{format}"
+        ));
+    }
     let title = s.title();
     let painter = s.painter();
     let bytes = match format.as_str() {

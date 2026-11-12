@@ -602,11 +602,9 @@ pub struct DriftApp {
     #[cfg(not(feature = "demo"))]
     cad_format: output::CadFormat,
     /// Export PDF and Print with no sheets ask how to place the drawing (#245): the prompt,
-    /// while open (for which of the two), and the choice it has (for this session).
+    /// while open.
     #[cfg(not(feature = "demo"))]
-    pdf_place_dialog: Option<app::sheets_ui::Output>,
-    #[cfg(not(feature = "demo"))]
-    pdf_placement: output::PdfPlacement,
+    pdf_place_dialog: Option<app::sheets_ui::PlacePrompt>,
     /// Show views' crops and names on the canvas (View → View crops).
     show_view_crops: bool,
     /// Dimensions and annotations hidden on the canvas are drawn (faded) and can be picked.
@@ -804,8 +802,6 @@ impl DriftApp {
             cad_format: Default::default(),
             #[cfg(not(feature = "demo"))]
             pdf_place_dialog: None,
-            #[cfg(not(feature = "demo"))]
-            pdf_placement: output::PdfPlacement::TrueScale,
             show_view_crops: true,
             show_hidden_annotations: false,
             show_temp_dims: true,

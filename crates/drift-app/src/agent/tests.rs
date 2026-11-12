@@ -478,33 +478,59 @@ fn a_pdf_with_no_sheets_is_placed_as_asked() {
     );
     let bytes = |f: &str| std::fs::read(dir.join(f)).unwrap();
     assert_eq!(bytes("default.pdf"), bytes("fit.pdf"));
-    // A drawing set to 1:50: at 1:1 its dimension text is paper size, not 50 times that.
-    ok(&mut s, "new_drawing", json!({ "scale": 50 }));
-    let made = ok(
-        &mut s,
-        "add_geometry",
-        json!({ "items": [{ "type": "rectangle", "corner": [0, 0], "width": 120, "height": 80 }] }),
+    // A drawing set to 1:50: at 1:1 its dimension text is paper size, as a drawing set to 1:1
+    // prints it, not 50 times that.
+    let mut text_at = |n: u32| {
+        ok(&mut s, "new_drawing", json!({ "scale": n }));
+        let made = ok(
+            &mut s,
+            "add_geometry",
+            json!({ "items": [{ "type": "rectangle", "corner": [0, 0], "width": 120, "height": 80 }] }),
+        );
+        let bottom = str_at(&made["created"][0], &["sides", "bottom"]).to_owned();
+        ok(
+            &mut s,
+            "add_dimensions",
+            json!({ "dimensions": [{ "type": "length", "line": bottom, "value": 120 }] }),
+        );
+        let file = format!("plate{n}.pdf");
+        ok(
+            &mut s,
+            "export",
+            json!({ "path": file, "placement": "true-scale" }),
+        );
+        let pdf = std::fs::read(dir.join(&file)).unwrap();
+        let (_, longest) = crate::output::pdf_page_and_longest_line(&pdf);
+        assert!((longest - 120.0).abs() < 0.01, "1:{n}: {longest}");
+        let art = drift_io::pdf_import::read_artwork(&pdf, 1, "page").unwrap();
+        let sizes: Vec<f64> = art.texts.iter().map(|t| t.size).collect();
+        assert_eq!(sizes.len(), 1, "the dimension's text: {sizes:?}");
+        (sizes[0], s.editor.doc.draft_style().text_height)
+    };
+    let (at_1, paper) = text_at(1);
+    let (at_50, _) = text_at(50);
+    assert!(
+        (at_50 - at_1).abs() < 0.01,
+        "1:50 prints its text as 1:1 does ({at_1} mm), not at {at_50} mm"
     );
-    let bottom = str_at(&made["created"][0], &["sides", "bottom"]).to_owned();
-    ok(
-        &mut s,
-        "add_dimensions",
-        json!({ "dimensions": [{ "type": "length", "line": bottom, "value": 120 }] }),
+    // (The reader gives the font's em, a little more than the style's cap height.)
+    assert!(
+        at_1 > paper && at_1 < 2.0 * paper,
+        "{at_1} mm for {paper} mm text"
     );
-    ok(
+    // Only a PDF takes it.
+    let e = err(
         &mut s,
         "export",
-        json!({ "path": "plate50.pdf", "placement": "true-scale" }),
+        json!({ "path": "plate.svg", "placement": "true-scale" }),
     );
-    let pdf = std::fs::read(dir.join("plate50.pdf")).unwrap();
-    let art = drift_io::pdf_import::read_artwork(&pdf, 1, "page").unwrap();
-    let biggest = art.texts.iter().map(|t| t.size).fold(0.0, f64::max);
-    assert!(
-        biggest > 1.0 && biggest < 10.0,
-        "the dimension's text at paper size: {biggest} mm"
+    assert!(e.contains("placement is for a PDF"), "{e}");
+    let e = err(
+        &mut s,
+        "export",
+        json!({ "path": "x.pdf", "placement": "1:1" }),
     );
-    let (_, longest) = crate::output::pdf_page_and_longest_line(&pdf);
-    assert!((longest - 120.0).abs() < 0.01, "{longest}");
+    assert!(e.contains("fit or true-scale"), "{e}");
     let e = err(
         &mut s,
         "export",

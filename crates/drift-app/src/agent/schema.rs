@@ -440,7 +440,7 @@ Two filled shapes trimmed into one outline keep one fill, the top one's.",
                     "path": { "type": "string" },
                     "format": { "type": "string", "enum": ["pdf", "svg", "dwg", "dxf", "dxf-r12", "png"], "description": "Default: from the file's extension" },
                     "sheet": { "type": "integer" },
-                    "placement": { "type": "string", "enum": ["fit", "true-scale"], "description": "PDF with no sheets only: fit (default) puts the drawing on one A3 sheet at the scale that fits; true-scale prints it at 1:1 on a page sized to it" },
+                    "placement": { "type": "string", "enum": ["fit", "true-scale"], "description": "PDF only (refused for other formats), and only used when the drawing has no sheets: fit (default) puts the drawing on one A3 sheet at the scale that fits; true-scale prints it at 1:1 on a page sized to it plus a 5 mm margin, with dimensions and notes at paper size" },
                     "region": region, "width": { "type": "integer" }
                 }),
                 &["path"],

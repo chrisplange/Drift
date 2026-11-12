@@ -1285,26 +1285,33 @@ pub fn sheet_pages(
         .collect()
 }
 
-/// A PDF's first page as read back: its size (mm) and its longest straight stroke (mm), to
-/// check a print's scale (#245).
+/// A PDF's first page as read back: its size (mm) and the lengths of its straight strokes
+/// (mm), to check a print's scale (#245).
 #[cfg(test)]
-pub(crate) fn pdf_page_and_longest_line(pdf: &[u8]) -> (DVec2, f64) {
+pub(crate) fn pdf_page_and_lines(pdf: &[u8]) -> (DVec2, Vec<f64>) {
     use drift_io::vector::Seg;
     let art = drift_io::pdf_import::read_artwork(pdf, 1, "page").expect("a PDF page");
-    let mut longest = 0.0_f64;
+    let mut lines = Vec::new();
     for sub in art.paths.iter().flat_map(|p| &p.subpaths) {
         let mut from = sub.start;
         for seg in &sub.segs {
             if let Seg::Line(to) = *seg {
-                longest = longest.max(from.distance(to));
+                lines.push(from.distance(to));
             }
             from = seg.end();
         }
         if sub.closed {
-            longest = longest.max(from.distance(sub.start));
+            lines.push(from.distance(sub.start));
         }
     }
-    (art.size, longest)
+    (art.size, lines)
+}
+
+/// [`pdf_page_and_lines`] with only the longest line.
+#[cfg(test)]
+pub(crate) fn pdf_page_and_longest_line(pdf: &[u8]) -> (DVec2, f64) {
+    let (size, lines) = pdf_page_and_lines(pdf);
+    (size, lines.into_iter().fold(0.0, f64::max))
 }
 
 /// Centre a view on `b` (the sketch with its dimension labels, in world mm) at the largest

@@ -79,10 +79,20 @@ pub use self::{
     tangent_arc::TangentArcTool, three_point_arc::ThreePointArcTool,
 };
 
-/// How many things a plain Select click could pick under the pointer, one per click there
-/// (see [`crate::pick_cycle`]).
-pub fn select_pick_count(ed: &mut Editor, p: &Pointer) -> usize {
-    picking::candidates_at(ed, p).len()
+pub(crate) use self::picking::Pick;
+
+/// A plain Select click at `p` on an annotation (a dimension, relation or note): whether it
+/// goes on to the next of what is under the pointer there, which the select tool then picks
+/// with the click, rather than picking the annotation (click again to pick the next; see
+/// [`crate::pick_cycle`]).
+pub fn click_past_annotation(ed: &mut Editor, p: &Pointer) -> bool {
+    match picking::cycle_step(ed, p, 1) {
+        picking::Step::Lead => false,
+        picking::Step::Tool(pick) => {
+            ed.pick_cycle.hand(pick);
+            true
+        }
+    }
 }
 
 /// The geometry under the pointer that a temporary dimension's far end can measure to: a

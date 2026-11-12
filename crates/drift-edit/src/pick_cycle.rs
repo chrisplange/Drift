@@ -1,41 +1,43 @@
 //! Click again to pick the next: a plain Select click on the spot of the last one picks the
 //! next of what lies under the pointer there, round and round (PAPERCUTS 2026-11-11). The
 //! candidates are the app's annotation under the pointer, if any, then the Select tool's
-//! (see `tools::picking::candidates_at`), the first of them what a single click picks.
-//! Moving the pointer away, a click anywhere else (Shift and Ctrl clicks too), a drag, Esc
-//! or another tool start again from the first.
+//! (see `tools::picking::candidates_at`), the first of them what a single click picks. A
+//! first click picks as it always has: the candidates are only gathered when a click lands
+//! on the spot of the last one. Moving the pointer away, a click anywhere else (Shift and
+//! Ctrl clicks too), a drag, a double-click, Esc or another tool start again from the first.
 
 use drift_core::DVec2;
 
-use crate::editor::Editor;
+use crate::tools::Pick;
 
 /// How near a click must land to the last one to count as the same spot, as a share of the
 /// pick radius (8 px on screen, so a few pixels).
 pub const SAME_SPOT: f64 = 0.5;
 
 /// Where the last plain Select click was and which of the candidates there it picked.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct PickCycle {
     last: Option<Spot>,
     /// A click stepped the cycle this frame (see [`PickCycle::end_frame`]).
     fresh: bool,
-    /// The step the app worked out this frame, past its annotation, for the Select tool to
-    /// pick (see [`Editor::hand_pick_to_tool`]).
-    handed: Option<usize>,
+    /// What the app's click on an annotation went on to, for the Select tool to pick this
+    /// frame (see `tools::click_past_annotation`).
+    handed: Option<Option<Pick>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct Spot {
-    at: DVec2,
+pub(crate) struct Spot {
+    pub(crate) at: DVec2,
     /// The pick radius then, in world units.
-    reach: f64,
-    /// Which candidate this click picked, and how many there were.
-    step: usize,
-    len: usize,
+    pub(crate) reach: f64,
+    /// Which candidate this click picked, and how many there were (not counted on a first
+    /// click, which picks the first).
+    pub(crate) step: usize,
+    pub(crate) len: Option<usize>,
     /// How many of them were the app's annotations, ahead of the tool's.
-    lead: usize,
+    pub(crate) lead: usize,
     /// The click went on from the one before (it didn't start the cycle).
-    advanced: bool,
+    pub(crate) advanced: bool,
 }
 
 impl PickCycle {
@@ -45,12 +47,10 @@ impl PickCycle {
         self.handed = None;
     }
 
-    /// The pointer is at `at`: away from the last click's spot, the cycle starts again.
+    /// The pointer is at `at`: away from the last click's spot (out of the pick radius, so
+    /// not on the way to a drag from it), the cycle starts again.
     pub fn pointer_at(&mut self, at: DVec2) {
-        if self
-            .last
-            .is_some_and(|s| at.distance(s.at) > SAME_SPOT * s.reach)
-        {
+        if self.last.is_some_and(|s| at.distance(s.at) > s.reach) {
             self.reset();
         }
     }
@@ -65,68 +65,53 @@ impl PickCycle {
         self.handed = None;
     }
 
-    /// Which candidate the last click picked, of how many: for the status bar and the tests.
-    pub fn position(&self) -> Option<(usize, usize)> {
+    /// Which candidate the last click picked, and of how many once counted: for the tests.
+    pub fn position(&self) -> Option<(usize, Option<usize>)> {
         self.last.map(|s| (s.step, s.len))
     }
 
-    /// The step the app handed to the Select tool this frame, past its annotations.
-    pub(crate) fn take_handed(&mut self) -> Option<usize> {
+    /// The last click, if `at` is on its spot and it had `lead` annotations ahead.
+    pub(crate) fn same_spot(&self, at: DVec2, lead: usize) -> Option<Spot> {
+        self.last
+            .filter(|s| at.distance(s.at) <= SAME_SPOT * s.reach && s.lead == lead)
+    }
+
+    pub(crate) fn record(&mut self, spot: Spot) {
+        self.last = Some(spot);
+        self.fresh = true;
+    }
+
+    pub(crate) fn hand(&mut self, pick: Option<Pick>) {
+        self.handed = Some(pick);
+    }
+
+    /// What the app's click on an annotation went on to this frame.
+    pub(crate) fn take_handed(&mut self) -> Option<Option<Pick>> {
         self.handed.take()
+    }
+
+    /// Which of the tool's candidates a click that went on picked, if `at` is on its spot:
+    /// a drag from there takes that one.
+    pub(crate) fn cycled_at(&self, at: DVec2) -> Option<usize> {
+        let s = self
+            .last
+            .filter(|s| s.advanced && at.distance(s.at) <= SAME_SPOT * s.reach)?;
+        s.step.checked_sub(s.lead)
     }
 
     /// The candidate a double-click's first click picked, of the tool's, when the second
     /// click (this frame) went on to the next: the double-click acts on that one, as before.
     pub(crate) fn step_back(&mut self) -> Option<usize> {
         let s = self.last.as_mut().filter(|_| self.fresh)?;
-        if !s.advanced {
-            return None;
-        }
-        let prev = (s.step + s.len - 1) % s.len;
+        let len = s.len.filter(|_| s.advanced)?;
+        let prev = (s.step + len - 1) % len;
         let k = prev.checked_sub(s.lead)?;
         s.step = prev;
         Some(k)
     }
 }
 
-impl Editor {
-    /// A plain Select click at `at` (pick radius `reach`) with `len` candidates under it, the
-    /// first `lead` of them the app's annotations: which one it picks. The first, unless the
-    /// last click was on the same spot with the same candidates: then the one after the last
-    /// picked, round to the first again. With more than one, the status bar says which.
-    pub fn cycle_pick(&mut self, at: DVec2, reach: f64, lead: usize, len: usize) -> usize {
-        let same = self
-            .pick_cycle
-            .last
-            .filter(|s| at.distance(s.at) <= SAME_SPOT * s.reach && s.len == len && s.lead == lead);
-        let step = match same {
-            Some(s) if len > 0 => (s.step + 1) % len,
-            _ => 0,
-        };
-        self.pick_cycle.last = Some(Spot {
-            // (The spot stays where the cycle began, so it can't creep away.)
-            at: same.map_or(at, |s| s.at),
-            reach,
-            step,
-            len,
-            lead,
-            advanced: same.is_some(),
-        });
-        self.pick_cycle.fresh = true;
-        if len > 1 {
-            self.out.inform(cycle_status(step, len));
-        }
-        step
-    }
-
-    /// The app's annotation under the pointer was passed over: the Select tool picks its
-    /// candidate `k` this frame.
-    pub fn hand_pick_to_tool(&mut self, k: usize) {
-        self.pick_cycle.handed = Some(k);
-    }
-}
-
-/// What the status bar says of a click with several things under it.
+/// What the status bar says of a click again with several things under it.
 pub fn cycle_status(step: usize, len: usize) -> String {
     format!(
         "Picked {} of {len} here (click again for the next)",
@@ -140,49 +125,50 @@ mod tests {
 
     const AT: DVec2 = DVec2::new(1.0, 2.0);
 
+    fn spot(at: DVec2, step: usize, lead: usize) -> Spot {
+        Spot {
+            at,
+            reach: 1.0,
+            step,
+            len: Some(3),
+            lead,
+            advanced: step > 0,
+        }
+    }
+
     #[test]
     fn a_click_that_did_not_step_the_cycle_starts_it_again() {
-        let mut ed = Editor::default();
-        assert_eq!(ed.cycle_pick(AT, 1.0, 0, 3), 0);
-        ed.pick_cycle.end_frame(true);
-        assert_eq!(ed.cycle_pick(AT, 1.0, 0, 3), 1);
-        ed.pick_cycle.end_frame(true);
-        // A frame with no click keeps it; a click that went elsewhere (a grip, a panel's
-        // button on the canvas, a drag) doesn't.
-        ed.pick_cycle.end_frame(false);
-        assert_eq!(ed.cycle_pick(AT, 1.0, 0, 3), 2);
-        ed.pick_cycle.end_frame(true);
-        ed.pick_cycle.end_frame(true);
-        assert_eq!(ed.cycle_pick(AT, 1.0, 0, 3), 0);
+        let mut c = PickCycle::default();
+        c.record(spot(AT, 1, 0));
+        c.end_frame(true);
+        // A frame with no click keeps it.
+        c.end_frame(false);
+        assert!(c.same_spot(AT, 0).is_some());
+        // A click that went elsewhere (a grip, a drag) doesn't.
+        c.end_frame(true);
+        assert_eq!(c.position(), None);
     }
 
     #[test]
-    fn an_annotation_leads_and_the_tool_takes_the_steps_after_it() {
-        let mut ed = Editor::default();
-        // The dimension under the pointer, then two of the tool's.
-        assert_eq!(ed.cycle_pick(AT, 1.0, 1, 3), 0);
-        ed.pick_cycle.end_frame(true);
-        let step = ed.cycle_pick(AT, 1.0, 1, 3);
-        assert_eq!(step, 1);
-        ed.hand_pick_to_tool(step - 1);
-        assert_eq!(ed.pick_cycle.take_handed(), Some(0));
-        assert_eq!(ed.pick_cycle.take_handed(), None);
-        ed.pick_cycle.end_frame(true);
-        // Handed but not taken (another handler had the click): gone with the frame.
-        ed.hand_pick_to_tool(5);
-        ed.pick_cycle.end_frame(false);
-        assert_eq!(ed.pick_cycle.take_handed(), None);
-        assert_eq!(ed.pick_cycle.position(), Some((1, 3)));
+    fn what_was_handed_goes_with_the_frame() {
+        let mut c = PickCycle::default();
+        c.hand(None);
+        c.end_frame(false);
+        assert_eq!(c.take_handed(), None);
     }
 
     #[test]
-    fn a_different_count_or_spot_starts_again() {
-        let mut ed = Editor::default();
-        ed.cycle_pick(AT, 1.0, 0, 3);
-        assert_eq!(ed.cycle_pick(AT, 1.0, 0, 2), 0);
-        assert_eq!(ed.cycle_pick(AT + DVec2::new(0.4, 0.0), 1.0, 0, 2), 1);
-        assert_eq!(ed.cycle_pick(AT + DVec2::new(0.6, 0.0), 1.0, 0, 2), 0);
-        ed.pick_cycle.pointer_at(AT + DVec2::new(3.0, 0.0));
-        assert_eq!(ed.pick_cycle.position(), None);
+    fn the_spot_is_a_few_pixels_and_the_same_annotations() {
+        let mut c = PickCycle::default();
+        c.record(spot(AT, 1, 1));
+        assert!(c.same_spot(AT + DVec2::new(0.4, 0.0), 1).is_some());
+        assert!(c.same_spot(AT + DVec2::new(0.6, 0.0), 1).is_none());
+        assert!(c.same_spot(AT, 0).is_none());
+        assert_eq!(c.cycled_at(AT), Some(0));
+        // Still on the way to a drag from it; then away.
+        c.pointer_at(AT + DVec2::new(0.9, 0.0));
+        assert!(c.position().is_some());
+        c.pointer_at(AT + DVec2::new(1.1, 0.0));
+        assert_eq!(c.position(), None);
     }
 }

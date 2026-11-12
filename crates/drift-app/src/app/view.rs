@@ -15,13 +15,9 @@ impl DriftApp {
             map.to_world(at),
             PICK_RADIUS / self.drawing.view.camera.scale,
         );
-        let ed = &mut self.drawing.editor;
-        let under = drift_edit::tools::select_pick_count(ed, &p);
-        let step = ed.cycle_pick(p.raw, p.tolerance, 1, 1 + under);
-        if step == 0 {
+        if !drift_edit::tools::click_past_annotation(&mut self.drawing.editor, &p) {
             return false;
         }
-        ed.hand_pick_to_tool(step - 1);
         self.drawing.selected_constraint = None;
         true
     }
@@ -895,7 +891,10 @@ impl DriftApp {
             || self.annotation_input(ui, &response, &map, &pick_dims, &pick_glyphs, pos)
             || self.view_crop_input(ui, &response, &map, pos, snap);
         // Away from the last click's spot, click again picks afresh.
-        if let Some(pos) = pos {
+        // (Not with the button down: a drag from the spot takes what it picked.)
+        if let Some(pos) = pos
+            && !ui.input(|i| i.pointer.primary_down())
+        {
             self.drawing.editor.pick_cycle.pointer_at(map.to_world(pos));
         }
         if consumed {

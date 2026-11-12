@@ -8,11 +8,12 @@ use drift_core::{FillId, InstanceId, TextId, WallId};
 
 use super::*;
 use crate::editor::PickFilter;
+use crate::pick_cycle::{Spot, cycle_status};
 
 /// The geometry the select tool would pick under the pointer: points first, then line
 /// midpoints, then curves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Target {
+pub(crate) enum Target {
     Entity(EntityId),
     Midpoint(EntityId),
 }
@@ -139,7 +140,7 @@ pub(super) enum Purpose {
 
 /// What the select tool takes under the pointer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Pick {
+pub(crate) enum Pick {
     Geometry(Target),
     Text(TextId),
     Copy(InstanceId),
@@ -238,8 +239,8 @@ pub(super) fn target_at(ed: &mut Editor, p: &Pointer, purpose: Purpose) -> Optio
 /// spot (see [`crate::pick_cycle`]): first what a single click picks ([`target_at`]), then the
 /// rest of the geometry (points, then curves, nearest first), sketch texts (smallest first),
 /// the copy of a block, and the fills (topmost first; a wall by its poché), as the filter and
-/// the open group let pick. Two pieces of geometry that would pick the same (members of one
-/// closed group, say) count once.
+/// the open group let pick. Two that would pick the same count once: a line and its
+/// midpoint, members of one closed group, a wall's face and its poché.
 pub(super) fn candidates_at(ed: &mut Editor, p: &Pointer) -> Vec<Pick> {
     let filter = ed.prefs.pick_filter;
     let scoped = ed.edit_scope().is_some();
@@ -247,12 +248,18 @@ pub(super) fn candidates_at(ed: &mut Editor, p: &Pointer) -> Vec<Pick> {
     {
         let hidden = ed.hidden_handles();
         let rule = Rule::select(filter, &hidden, true);
-        let mut seen: BTreeSet<EntityId> = BTreeSet::new();
-        // (Nearest first: each pick passes over the ones before.)
-        while let Some(id) = entity_at(ed, p.raw, p.tolerance, rule, |id| !seen.contains(&id)) {
-            seen.insert(id);
-            picks.push(Pick::Geometry(Target::Entity(id)));
-        }
+        // In the order [`entity_at`] picks: points before curves, nearest first, then older.
+        let mut near: Vec<(EntityId, bool, f64)> = ed
+            .index
+            .near(p.raw, p.tolerance)
+            .filter(|(id, ..)| rule.allows(ed, *id))
+            .map(|(id, shape, d)| (id, !matches!(shape, drift_core::Shape::Point(_)), d))
+            .collect();
+        near.sort_by(|a, b| a.1.cmp(&b.1).then(a.2.total_cmp(&b.2)).then(a.0.cmp(&b.0)));
+        picks.extend(
+            near.into_iter()
+                .map(|(id, ..)| Pick::Geometry(Target::Entity(id))),
+        );
     }
     if !scoped && filter.texts() {
         picks.extend(ed.texts_at(p.raw, p.tolerance).into_iter().map(Pick::Text));
@@ -271,21 +278,103 @@ pub(super) fn candidates_at(ed: &mut Editor, p: &Pointer) -> Vec<Pick> {
             });
         }
     }
-    // Once each, and geometry once for what it picks.
-    let mut out: Vec<Pick> = Vec::new();
-    let mut sets: Vec<BTreeSet<EntityId>> = Vec::new();
-    for pick in picks {
-        if out.contains(&pick) {
-            continue;
+    let mut seen: Vec<Picks> = Vec::new();
+    picks.retain(|pick| {
+        let key = picks_of(ed, *pick);
+        let new = !seen.contains(&key);
+        if new {
+            seen.push(key);
         }
-        if let Some(id) = pick.entity() {
-            let set = ed.pick_set(id);
-            if sets.contains(&set) {
-                continue;
-            }
-            sets.push(set);
-        }
-        out.push(pick);
+        new
+    });
+    picks
+}
+
+/// What a candidate picks, to count each once (as [`Editor::pick_set`] decides, without
+/// gathering a big group's members for each).
+#[derive(PartialEq)]
+enum Picks {
+    Opening(drift_core::OpeningId),
+    Wall(WallId),
+    Offset(drift_core::OffsetId),
+    Group(drift_core::GroupId),
+    One(EntityId),
+    Other(Pick),
+}
+
+fn picks_of(ed: &Editor, pick: Pick) -> Picks {
+    // (A line's midpoint stands for the line: picked alone near its middle, as before.)
+    let id = match pick {
+        Pick::Geometry(Target::Entity(id) | Target::Midpoint(id)) => id,
+        Pick::Wall(w, _) => return Picks::Wall(w),
+        other => return Picks::Other(other),
+    };
+    if let Some(o) = ed.opening_of(id) {
+        return Picks::Opening(o);
     }
-    out
+    if ed.doc.has_walls()
+        && ed.wall_owners().by_wall(id)
+        && let Some(w) = ed.wall_of(id)
+    {
+        return Picks::Wall(w);
+    }
+    if let Some(x) = ed.offset_of(id) {
+        return Picks::Offset(x);
+    }
+    match ed.doc.group_of(id) {
+        Some(g) if ed.open_group != Some(g) => Picks::Group(g),
+        _ => Picks::One(id),
+    }
+}
+
+/// What a plain Select click goes to, with `lead` of the app's annotations under the pointer
+/// ahead of the tool's candidates.
+pub(super) enum Step {
+    /// The annotation: the app's to pick.
+    Lead,
+    /// The tool's pick (or empty canvas).
+    Tool(Option<Pick>),
+}
+
+/// A plain Select click at `p` (see [`crate::pick_cycle`]): a first click there picks what a
+/// single click always has, without gathering the rest; a click on the spot of the last one
+/// picks the next, round to the first, and the status bar says which.
+pub(super) fn cycle_step(ed: &mut Editor, p: &Pointer, lead: usize) -> Step {
+    let Some(last) = ed.pick_cycle.same_spot(p.raw, lead) else {
+        ed.pick_cycle.record(Spot {
+            at: p.raw,
+            reach: p.tolerance,
+            step: 0,
+            len: None,
+            lead,
+            advanced: false,
+        });
+        return match lead {
+            0 => Step::Tool(target_at(ed, p, Purpose::Click)),
+            _ => Step::Lead,
+        };
+    };
+    let picks = candidates_at(ed, p);
+    let len = lead + picks.len();
+    // (Not the same things under it any more: from the first.)
+    let step = match last.len {
+        Some(l) if l != len => 0,
+        _ => (last.step + 1) % len.max(1),
+    };
+    ed.pick_cycle.record(Spot {
+        // (The spot stays where the cycle began, so it can't creep away.)
+        at: last.at,
+        reach: p.tolerance,
+        step,
+        len: Some(len),
+        lead,
+        advanced: true,
+    });
+    if len > 1 {
+        ed.out.inform(cycle_status(step, len));
+    }
+    match step.checked_sub(lead) {
+        Some(k) => Step::Tool(picks.get(k).copied()),
+        None => Step::Lead,
+    }
 }

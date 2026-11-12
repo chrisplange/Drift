@@ -63,10 +63,8 @@ fn clicking_again_picks_the_next_of_three_stacked_and_wraps_round() {
     // The first click picks what a single click always has: the nearest.
     click(&mut ed, &mut sel, SPOT);
     assert_eq!(picked(&ed), [c]);
-    assert_eq!(
-        ed.out.info.take().as_deref(),
-        Some("Picked 1 of 3 here (click again for the next)")
-    );
+    // (Quiet: a first click says nothing, as before.)
+    assert_eq!(ed.out.info.take(), None);
     // Again, a pixel or so off: the next nearest, then the last.
     click(&mut ed, &mut sel, SPOT + v(0.2, 0.1));
     assert_eq!(picked(&ed), [a]);
@@ -84,6 +82,10 @@ fn clicking_again_picks_the_next_of_three_stacked_and_wraps_round() {
     click(&mut ed, &mut sel, SPOT);
     assert_eq!(picked(&ed), [c]);
     assert_eq!(ed.active(), Some(c));
+    assert_eq!(
+        ed.out.info.take().as_deref(),
+        Some("Picked 1 of 3 here (click again for the next)")
+    );
 }
 
 #[test]
@@ -131,12 +133,68 @@ fn shift_and_ctrl_clicks_add_and_toggle_without_cycling() {
 
 #[test]
 fn one_thing_under_the_pointer_picks_as_before() {
-    let (mut ed, [_, _, c]) = three_stacked();
+    let (mut ed, [a, _, c]) = three_stacked();
     let mut sel = SelectTool::default();
     for _ in 0..3 {
         click(&mut ed, &mut sel, v(20.0, 20.0));
         assert_eq!(picked(&ed), [c]);
         // (Nothing to say with one.)
+        assert_eq!(ed.out.info.take(), None);
+    }
+    // Near a lone line's middle: its midpoint every time, not the midpoint then the line.
+    for _ in 0..3 {
+        click(&mut ed, &mut sel, v(10.1, 0.1));
+        assert!(ed.selection.is_empty());
+        assert_eq!(ed.selected_midpoints, [a].into());
+        assert_eq!(ed.out.info.take(), None);
+    }
+}
+
+#[test]
+fn a_drag_from_the_spot_moves_what_the_click_again_picked() {
+    let (mut ed, [a, _, c]) = three_stacked();
+    let mut sel = SelectTool::default();
+    click(&mut ed, &mut sel, SPOT);
+    click(&mut ed, &mut sel, SPOT);
+    assert_eq!(picked(&ed), [a]);
+    let y = |ed: &Editor, id: EntityId| match ed.doc.get(id).unwrap().kind {
+        EntityKind::Line { a, .. } => ed.doc.point(a).unwrap().y,
+        _ => unreachable!(),
+    };
+    let (ya, yc) = (y(&ed, a), y(&ed, c));
+    let down = Modifiers::default();
+    sel.handle(Input::DragStart(Pointer::new(SPOT, TOL), down), &mut ed);
+    sel.handle(Input::Drag(Pointer::new(SPOT + v(0.0, 5.0), TOL)), &mut ed);
+    sel.handle(
+        Input::DragEnd(Pointer::new(SPOT + v(0.0, 5.0), TOL), down),
+        &mut ed,
+    );
+    // The line across moved up; the diagonal (what a single click takes there) didn't.
+    assert_eq!(picked(&ed), [a]);
+    assert!((y(&ed, a) - ya - 5.0).abs() < 1e-6);
+    assert_eq!(y(&ed, c), yc);
+}
+
+#[test]
+fn locked_and_hidden_layers_are_passed_over() {
+    let (mut ed, [a, b, c]) = three_stacked();
+    let locked = ed.add_layer("Locked");
+    let hidden = ed.add_layer("Hidden");
+    ed.doc.begin();
+    ed.doc.set_entity_layer(b, locked).unwrap();
+    ed.doc.set_entity_layer(c, hidden).unwrap();
+    ed.commit("Layers");
+    let mut l = ed.doc.layer(locked).cloned().unwrap();
+    l.locked = true;
+    ed.update_layer(locked, l);
+    let mut h = ed.doc.layer(hidden).cloned().unwrap();
+    h.visible = false;
+    ed.update_layer(hidden, h);
+    let mut sel = SelectTool::default();
+    // Only the line across is left to pick: every click picks it, and says nothing.
+    for _ in 0..3 {
+        click(&mut ed, &mut sel, SPOT);
+        assert_eq!(picked(&ed), [a]);
         assert_eq!(ed.out.info.take(), None);
     }
 }

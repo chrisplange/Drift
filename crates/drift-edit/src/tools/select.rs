@@ -1,6 +1,6 @@
 //! Select: pick, box-select, drag, and the Blender-style modal move (G).
 
-use super::picking::{Pick, Purpose, Target, candidates_at, target_at};
+use super::picking::{Pick, Purpose, Step, Target, candidates_at, cycle_step, target_at};
 use super::*;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -863,18 +863,27 @@ impl Tool for SelectTool {
                     let target = candidates_at(ed, &p).get(k).copied();
                     ed.set_active(None);
                     click_pick(ed, &p, Modifiers::default(), target);
-                    if let Some((step, len)) = ed.pick_cycle.position() {
+                    if let Some((step, Some(len))) = ed.pick_cycle.position() {
                         ed.out.inform(crate::pick_cycle::cycle_status(step, len));
                     }
                 }
                 double_click(ed, &p);
+                // (A group or block may have opened: what's under the pointer changes.)
+                ed.pick_cycle.reset();
             }
             Input::Finish => {}
             Input::DragStart(p, mods) => {
                 if self.start_handle_drag(&p, ed) {
                     return;
                 }
-                let target = target_at(ed, &p, Purpose::DragStart);
+                // From the spot of a click again: what that click picked (the drag moves it,
+                // not what a single click would take there).
+                let cycled = ed
+                    .pick_cycle
+                    .cycled_at(p.raw)
+                    .and_then(|k| candidates_at(ed, &p).get(k).copied())
+                    .filter(|t| t.midpoint().is_none());
+                let target = cycled.or_else(|| target_at(ed, &p, Purpose::DragStart));
                 match target {
                     // A piece of an offset, with nothing else picked: change the offset's
                     // distance (with more picked, a drag moves the lot, the offset following
@@ -1410,12 +1419,14 @@ fn click_target(ed: &mut Editor, p: &Pointer, mods: Modifiers) -> Option<Pick> {
         ed.pick_cycle.reset();
         return target_at(ed, p, Purpose::Click);
     }
-    let picks = candidates_at(ed, p);
-    let k = match ed.pick_cycle.take_handed() {
-        Some(k) => k,
-        None => ed.cycle_pick(p.raw, p.tolerance, 0, picks.len()),
-    };
-    picks.get(k).or(picks.first()).copied()
+    if let Some(handed) = ed.pick_cycle.take_handed() {
+        return handed;
+    }
+    match cycle_step(ed, p, 0) {
+        Step::Tool(pick) => pick,
+        // (No annotations ahead of the tool's.)
+        Step::Lead => None,
+    }
 }
 
 /// Pick `target` (or what's there for an empty area at `p`), as a click with `mods` does.

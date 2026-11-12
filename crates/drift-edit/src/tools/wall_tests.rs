@@ -235,6 +235,14 @@ fn picking_a_face_or_the_poche_picks_the_wall() {
     // Inside the poché.
     click(&mut ed, &mut select, v(50.0, 1.0));
     assert_eq!(ed.selection, curves);
+    // On a face, just inside the poché: the face and the poché pick the same wall, so a
+    // click again there picks it again, and says nothing (PAPERCUTS 2026-11-11).
+    ed.out.info = None;
+    for _ in 0..2 {
+        click(&mut ed, &mut select, v(50.0, -4.8));
+        assert_eq!(ed.selection, curves);
+        assert_eq!(ed.out.info.take(), None);
+    }
     // Trim on a face is refused.
     let face = ed
         .doc

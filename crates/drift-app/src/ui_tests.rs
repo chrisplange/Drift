@@ -782,12 +782,13 @@ fn smart_dimension_place_type_drag_and_delete_relation() {
 
     // A double click just outside the corner of the text still edits it, with the select
     // tool and with the dimension tool. (The harness's frames are a quarter of a second
-    // apart: allow two of them between clicks.)
-    h.ctx
-        .options_mut(|o| o.input_options.max_double_click_delay = 0.6);
+    // apart: allow two of them between clicks, set after each change of tool, which sets its
+    // own.)
     for tool in [Key::S, Key::D] {
         h.key_press(tool);
         h.run();
+        h.ctx
+            .options_mut(|o| o.input_options.max_double_click_delay = 0.6);
         let rect = first_dimension(&h).text_rect;
         let near = rect.right_top() + egui::vec2(4.0, -4.0);
         h.hover_at(near);

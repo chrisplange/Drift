@@ -74,8 +74,33 @@ const SCROLL_ZOOM_SPEED: f64 = 0.0015;
 const FIT_MARGIN: f64 = 40.0;
 /// Pick and snap radius, in logical points.
 const PICK_RADIUS: f64 = 8.0;
-/// Seconds within which a second click makes a double-click.
-const DOUBLE_CLICK_DELAY: f64 = 0.5;
+/// Seconds within which a second click makes a double-click with the select tool: half a
+/// second (egui's own 0.3 s is quicker than most people double-click; Windows uses 0.5 s).
+/// Slower clicks on one spot pick the next thing under the pointer (user, 2026-11-12).
+const SELECT_DOUBLE_CLICK: f64 = 0.5;
+/// The same with the drawing tools (Line, Wall, Tangent arc and the rest): egui's 0.3 s, so
+/// two quick clicks on one spot don't finish or reset them.
+const DRAW_DOUBLE_CLICK: f64 = 0.3;
+
+/// Seconds within which a second click makes a double-click with `tool`.
+fn double_click_delay(tool: ToolKind) -> f64 {
+    if tool == ToolKind::Select {
+        SELECT_DOUBLE_CLICK
+    } else {
+        DRAW_DOUBLE_CLICK
+    }
+}
+
+/// Give egui the double-click time of `tool` when the tool has changed since the last call
+/// (only then, so a time set otherwise in between, as the UI tests do, holds meanwhile).
+fn sync_double_click(ctx: &egui::Context, tool: ToolKind) {
+    let id = egui::Id::new("drift-double-click-tool");
+    if ctx.data(|d| d.get_temp::<ToolKind>(id)) == Some(tool) {
+        return;
+    }
+    ctx.data_mut(|d| d.insert_temp(id, tool));
+    ctx.options_mut(|o| o.input_options.max_double_click_delay = double_click_delay(tool));
+}
 /// A picked shape's status line says how to edit its fill on its own until its fill has
 /// been picked alone this many times.
 const FILL_ALONE_HINTS: u32 = 3;
@@ -861,11 +886,8 @@ impl DriftApp {
             theme::set_dark_look(look);
         }
         theme::apply(&cc.egui_ctx);
-        // Two clicks within half a second are a double-click (egui's own is 0.3 s, quicker than
-        // most people double-click; Windows uses 0.5 s). Slower clicks on one spot pick the
-        // next thing under the pointer.
-        cc.egui_ctx
-            .options_mut(|o| o.input_options.max_double_click_delay = DOUBLE_CLICK_DELAY);
+        // The double-click time of the tool it starts with (see `sync_double_click`).
+        sync_double_click(&cc.egui_ctx, app.tool.kind());
         // Each window autosaves to a session file of its own.
         #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo"), not(test)))]
         {
@@ -1087,6 +1109,7 @@ impl eframe::App for DriftApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        sync_double_click(&ctx, self.tool.kind());
         if std::mem::take(&mut self.maximize) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
         }
@@ -1294,6 +1317,25 @@ fn format_length(value: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::format_length;
+
+    #[test]
+    fn select_double_clicks_within_half_a_second_and_drawing_tools_within_0_3() {
+        use super::{ToolKind, egui, sync_double_click};
+        let ctx = egui::Context::default();
+        let delay = |ctx: &egui::Context| ctx.options(|o| o.input_options.max_double_click_delay);
+        sync_double_click(&ctx, ToolKind::Select);
+        assert_eq!(delay(&ctx), 0.5);
+        for tool in [ToolKind::Line, ToolKind::Wall, ToolKind::TangentArc] {
+            sync_double_click(&ctx, tool);
+            assert_eq!(delay(&ctx), 0.3, "{tool:?}");
+        }
+        sync_double_click(&ctx, ToolKind::Select);
+        assert_eq!(delay(&ctx), 0.5);
+        // Set otherwise (as the UI tests do), it holds while the tool stays the same.
+        ctx.options_mut(|o| o.input_options.max_double_click_delay = 0.6);
+        sync_double_click(&ctx, ToolKind::Select);
+        assert_eq!(delay(&ctx), 0.6);
+    }
 
     #[test]
     fn benchmark_sketches_solve() {

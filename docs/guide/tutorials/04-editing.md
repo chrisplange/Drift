@@ -289,7 +289,9 @@ sharp corner back, right-click it and choose **Remove fillet** or **Remove chamf
   two points instead. A click anywhere on a line uses the line, so start the axis off any
   line (a loose point, a centre, empty space); the second point may snap anywhere:
   the mirror previews while you pick the second point, Esc cancels, and no axis is drawn.
-  Copies made about two points are plain copies, with no line to be symmetric about.
+  With no line to be symmetric about, copies made about two points take the originals'
+  relations and dimensions among themselves (a fixed point stays fixed, at its image; level
+  and plumb ones only about a level or plumb axis), so a fully defined shape stays so.
 
 A group copied whole, by Mirror, Copy and Paste, Shift+D or a pattern, gives a new group of
 the copies, named after it ("Panel" → "Panel 2"). Part of a group copies as loose objects.

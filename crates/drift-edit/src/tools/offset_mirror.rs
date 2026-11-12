@@ -149,15 +149,16 @@ impl Tool for OffsetTool {
 }
 
 /// Mirror the selection: click a line to mirror about it (the copies stay symmetric to the
-/// originals), or click two points anywhere else for a temporary axis, drawn nowhere and
+/// originals), or click two points off any line for a temporary axis, drawn nowhere and
 /// previewed while the second point is picked.
 #[derive(Default)]
 pub struct MirrorTool {
     /// The temporary axis's first point, once clicked.
     first: Option<DVec2>,
-    /// The mirrored selection about the axis to the pointer, and that axis.
-    shapes: Vec<Shape>,
+    /// The temporary axis, from the first point to the pointer.
     axis: Option<(DVec2, DVec2)>,
+    /// Nothing was picked to mirror, at the last input (the hint says to pick first).
+    nothing_picked: bool,
 }
 
 /// The line under the pointer that a click mirrors about. A click on a line (anywhere on it,
@@ -170,6 +171,14 @@ fn axis_line_under(ed: &Editor, p: &Pointer) -> Option<EntityId> {
             Some(EntityKind::Line { .. })
         )
     })
+}
+
+/// Whether anything is picked that a mirror would copy.
+fn has_picks(ed: &Editor) -> bool {
+    !ed.selection.is_empty()
+        || !ed.selected_instances.is_empty()
+        || !ed.selected_texts.is_empty()
+        || !ed.annotation_picks.is_empty()
 }
 
 impl MirrorTool {
@@ -190,7 +199,7 @@ impl MirrorTool {
         if ids.iter().all(|id| Some(*id) == axis) && instances.is_empty() && riders.is_empty() {
             ed.out.notice = Some(
                 "Mirror: select the geometry to mirror first (Select tool), then pick Mirror \
-                 and click a line or two points"
+                 and click a line, or two points off any line"
                     .into(),
             );
             return None;
@@ -221,29 +230,16 @@ impl MirrorTool {
         }
     }
 
-    /// Preview the selection mirrored about the axis from the first point to `to`.
-    fn update(&mut self, ed: &Editor, to: DVec2) {
-        let Some(from) = self.first else {
-            return;
-        };
-        self.shapes.clear();
-        self.axis = None;
-        if (to - from).length() < 1e-9 {
-            return;
-        }
-        self.axis = Some((from, to));
-        self.shapes = ed
-            .selection
-            .iter()
-            .filter(|id| ed.doc.get(**id).is_some_and(|e| !e.kind.is_point()))
-            .filter_map(|id| ed.doc.shape(*id))
-            .map(|s| crate::modify::reflect_shape(from, to, s))
-            .collect();
+    /// Follow the pointer: the axis from the first point to `to`.
+    fn update(&mut self, to: DVec2) {
+        self.axis = self
+            .first
+            .filter(|from| (to - *from).length() >= 1e-9)
+            .map(|from| (from, to));
     }
 
     fn reset(&mut self) {
         self.first = None;
-        self.shapes.clear();
         self.axis = None;
     }
 }
@@ -254,20 +250,27 @@ impl Tool for MirrorTool {
     }
 
     fn hint(&self) -> String {
-        match self.first {
-            None => "Click a line to mirror about it, or click off any line to start a \
-                     two-point axis · select the geometry first with Select"
+        match (self.first, self.nothing_picked) {
+            (Some(_), _) => {
+                "Click the axis's second point (a line's end or midpoint is fine) · Esc cancels"
+                    .into()
+            }
+            (None, false) => {
+                "Mirror: click a line, or two points off any line, to mirror about".into()
+            }
+            (None, true) => "Mirror: select the geometry first (Select tool), then click a line, \
+                              or two points off any line, to mirror about"
                 .into(),
-            Some(_) => "Click the axis's second point · Esc cancels".into(),
         }
     }
 
     fn handle(&mut self, input: Input, ed: &mut Editor) {
+        self.nothing_picked = !has_picks(ed);
         match input {
             Input::Hover(p) => {
                 if self.first.is_some() {
                     ed.hovered = None;
-                    self.update(ed, p.pos());
+                    self.update(p.pos());
                 } else {
                     ed.hovered = axis_line_under(ed, &p);
                 }
@@ -275,8 +278,12 @@ impl Tool for MirrorTool {
             Input::Click(p, _) => match self.first {
                 Some(from) => {
                     let to = p.pos();
-                    if (to - from).length() <= p.tolerance * 1e-3 {
-                        return; // the same point again: keep picking
+                    if (to - from).length() <= p.tolerance {
+                        // Too close to the first point to make an axis: keep picking.
+                        ed.out.notice = Some(
+                            "Mirror: click the axis's second point away from the first".into(),
+                        );
+                        return;
                     }
                     self.reset();
                     Self::mirror(ed, crate::modify::MirrorAxis::Points(from, to));
@@ -287,7 +294,7 @@ impl Tool for MirrorTool {
                     } else if Self::picks(ed, None).is_some() {
                         self.first = Some(p.pos());
                         ed.hovered = None;
-                        self.update(ed, p.pos());
+                        self.update(p.pos());
                     }
                 }
             },
@@ -310,7 +317,7 @@ impl Tool for MirrorTool {
     }
 
     fn preview(&self, _pointer: Option<&Pointer>) -> Vec<SketchItem> {
-        let mut items: Vec<SketchItem> = self.shapes.iter().map(|s| preview(*s)).collect();
+        let mut items = Vec::new();
         if let Some((a, b)) = self.axis {
             items.push(preview(Shape::Line { a, b }).with_kind(drift_core::LineKind::Center));
         }
@@ -318,5 +325,19 @@ impl Tool for MirrorTool {
             items.push(preview_vertex(a));
         }
         items
+    }
+
+    /// The picked curves mirrored about the axis, read from the document as it is now (so an
+    /// undo between the two clicks shows at once).
+    fn editor_preview(&self, ed: &Editor) -> Vec<SketchItem> {
+        let Some((from, to)) = self.axis else {
+            return Vec::new();
+        };
+        ed.selection
+            .iter()
+            .filter(|id| ed.doc.get(**id).is_some_and(|e| !e.kind.is_point()))
+            .filter_map(|id| ed.doc.shape(*id))
+            .map(|s| preview(crate::modify::reflect_shape(from, to, s)))
+            .collect()
     }
 }

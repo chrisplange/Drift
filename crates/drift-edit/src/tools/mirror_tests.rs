@@ -48,6 +48,15 @@ fn lines(doc: &Document) -> usize {
     count(doc, |k| matches!(k, EntityKind::Line { .. }))
 }
 
+/// What the tool draws: the mirrored curves and the axis.
+fn shown(tool: &MirrorTool, ed: &Editor) -> Vec<Shape> {
+    tool.editor_preview(ed)
+        .into_iter()
+        .chain(tool.preview(None))
+        .map(|i| i.shape)
+        .collect()
+}
+
 fn has_point(ed: &Editor, at: DVec2) -> bool {
     ed.doc.iter().any(|(_, e)| match e.kind {
         EntityKind::Point(p) => (p - at).length() < 1e-9,
@@ -118,7 +127,7 @@ fn the_mirror_previews_live_while_the_second_point_is_picked() {
     click(&mut ed, &mut tool, v(0.0, -3.0));
     // Pointing straight up from the first point: the axis is x = 0.
     hover(&mut ed, &mut tool, v(0.0, 20.0));
-    let previewed: Vec<Shape> = tool.preview(None).into_iter().map(|i| i.shape).collect();
+    let previewed: Vec<Shape> = shown(&tool, &ed);
     assert!(
         previewed.iter().any(|s| match *s {
             Shape::Line { a, b } =>
@@ -129,7 +138,7 @@ fn the_mirror_previews_live_while_the_second_point_is_picked() {
     );
     // Pointing along y = −3 instead: the preview follows.
     hover(&mut ed, &mut tool, v(20.0, -3.0));
-    let previewed: Vec<Shape> = tool.preview(None).into_iter().map(|i| i.shape).collect();
+    let previewed: Vec<Shape> = shown(&tool, &ed);
     assert!(
         previewed.iter().any(|s| match *s {
             Shape::Line { a, b } =>
@@ -150,7 +159,7 @@ fn esc_during_the_second_point_cancels_cleanly() {
     hover(&mut ed, &mut tool, v(0.0, 7.0));
     assert!(tool.cancel(&mut ed));
     assert!(!tool.is_busy());
-    assert!(tool.preview(None).is_empty());
+    assert!(shown(&tool, &ed).is_empty());
     assert_eq!(ed.doc.iter().count(), entities);
     assert_eq!(ed.history.undo_label(), Some("Setup"), "no undo step");
     assert!(!tool.cancel(&mut ed), "nothing left to cancel");
@@ -255,10 +264,9 @@ fn the_preview_of_an_arc_matches_the_mirrored_arc() {
     // A slanted axis through (0, 0) and (1, 3).
     click(&mut ed, &mut tool, v(0.0, 0.0));
     hover(&mut ed, &mut tool, v(1.0, 3.0));
-    let previewed = tool
-        .preview(None)
+    let previewed = shown(&tool, &ed)
         .into_iter()
-        .find_map(|i| match i.shape {
+        .find_map(|s| match s {
             s @ Shape::Arc { .. } => Some(s),
             _ => None,
         })
@@ -298,4 +306,205 @@ fn the_preview_of_an_arc_matches_the_mirrored_arc() {
     assert!((w0 - w1).abs() < 1e-9, "{w0} vs {w1}");
     let at = |s: f64| DVec2::from_angle(s);
     assert!((at(s0) - at(s1)).length() < 1e-9, "{s0} vs {s1}");
+}
+
+#[test]
+fn a_second_click_on_the_first_point_keeps_picking_with_a_notice() {
+    let (mut ed, _) = fixture();
+    let entities = ed.doc.iter().count();
+    let mut tool = MirrorTool::default();
+    click(&mut ed, &mut tool, v(10.0, 10.0));
+    // Within the pick distance of the first point: no axis yet.
+    click(&mut ed, &mut tool, v(10.3, 10.0));
+    assert!(tool.is_busy(), "still picking the second point");
+    assert!(ed.out.notice.take().is_some());
+    assert_eq!(ed.doc.iter().count(), entities);
+    click(&mut ed, &mut tool, v(10.0, 20.0));
+    assert!(!tool.is_busy());
+    assert!(has_point(&ed, v(18.0, 1.0)), "mirrored about x = 10");
+}
+
+#[test]
+fn an_undo_between_the_clicks_shows_in_the_preview_at_once() {
+    let (mut ed, line) = fixture();
+    ed.doc.begin();
+    let a = ed.doc.add_point(v(2.0, -5.0));
+    let b = ed.doc.add_point(v(5.0, -5.0));
+    let other = ed.doc.add_line(a, b).unwrap();
+    ed.commit("Another");
+    ed.selection = [line, other].into();
+    let mut tool = MirrorTool::default();
+    click(&mut ed, &mut tool, v(0.0, -3.0));
+    hover(&mut ed, &mut tool, v(0.0, 7.0));
+    let lines_shown = |tool: &MirrorTool, ed: &Editor| {
+        shown(tool, ed)
+            .iter()
+            .filter(|s| matches!(s, Shape::Line { .. }))
+            .count()
+    };
+    assert_eq!(lines_shown(&tool, &ed), 3, "two images and the axis");
+    // Undo takes the second line away; with no new pointer move the preview follows.
+    ed.undo();
+    assert_eq!(lines_shown(&tool, &ed), 2, "one image and the axis");
+}
+
+#[test]
+fn the_prompt_says_to_pick_first_only_when_nothing_is_picked() {
+    let (mut ed, _) = fixture();
+    let mut tool = MirrorTool::default();
+    hover(&mut ed, &mut tool, v(10.0, 10.0));
+    assert_eq!(
+        tool.hint(),
+        "Mirror: click a line, or two points off any line, to mirror about"
+    );
+    click(&mut ed, &mut tool, v(10.0, 10.0));
+    assert!(tool.hint().contains("a line's end or midpoint is fine"));
+    tool.cancel(&mut ed);
+    ed.selection.clear();
+    hover(&mut ed, &mut tool, v(10.0, 10.0));
+    assert!(tool.hint().contains("select the geometry first"));
+}
+
+/// A 30 × 20 rectangle at (2, 1), fully defined: level and plumb sides, its width and height,
+/// and its first corner fixed. Its sides.
+fn dimensioned_rectangle(ed: &mut Editor) -> Vec<EntityId> {
+    ed.doc.begin();
+    let p = [v(2.0, 1.0), v(32.0, 1.0), v(32.0, 21.0), v(2.0, 21.0)].map(|at| ed.doc.add_point(at));
+    let l: Vec<EntityId> = (0..4)
+        .map(|i| ed.doc.add_line(p[i], p[(i + 1) % 4]).unwrap())
+        .collect();
+    for c in [
+        Constraint::Horizontal { line: l[0] },
+        Constraint::Horizontal { line: l[2] },
+        Constraint::Vertical { line: l[1] },
+        Constraint::Vertical { line: l[3] },
+        Constraint::Distance {
+            a: p[0],
+            b: p[1],
+            value: 30.0,
+        },
+        Constraint::Distance {
+            a: p[1],
+            b: p[2],
+            value: 20.0,
+        },
+        Constraint::Fix {
+            point: p[0],
+            at: v(2.0, 1.0),
+        },
+    ] {
+        ed.doc.add_constraint(c).unwrap();
+    }
+    ed.commit("Rectangle");
+    l
+}
+
+fn length(ed: &Editor, line: EntityId) -> f64 {
+    let Some(EntityKind::Line { a, b }) = ed.doc.get(line).map(|e| e.kind) else {
+        panic!("a line");
+    };
+    (ed.doc.point(b).unwrap() - ed.doc.point(a).unwrap()).length()
+}
+
+fn copied_lines(ed: &Editor) -> Vec<EntityId> {
+    ed.selection
+        .iter()
+        .copied()
+        .filter(|id| {
+            matches!(
+                ed.doc.get(*id).map(|e| e.kind),
+                Some(EntityKind::Line { .. })
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_dimensioned_rectangle_mirrored_about_two_points_stays_fully_defined() {
+    let mut ed = Editor::default();
+    let sides = dimensioned_rectangle(&mut ed);
+    ed.selection = sides.iter().copied().collect();
+    ed.sync();
+    assert_eq!(ed.analysis().dof, Some(0));
+    let mut tool = MirrorTool::default();
+    // A plumb axis at x = -5: the copy keeps its level and plumb sides and its dimensions,
+    // and its first corner is fixed at its image.
+    click(&mut ed, &mut tool, v(-5.0, -10.0));
+    click(&mut ed, &mut tool, v(-5.0, 40.0));
+    assert_eq!(ed.out.notice, None);
+    let copy = copied_lines(&ed);
+    assert_eq!(copy.len(), 4);
+    ed.sync();
+    assert_eq!(ed.analysis().dof, Some(0), "still fully defined");
+    let mut lengths: Vec<f64> = copy.iter().map(|l| length(&ed, *l)).collect();
+    lengths.sort_by(f64::total_cmp);
+    for (got, want) in lengths.iter().zip([20.0, 20.0, 30.0, 30.0]) {
+        assert!((got - want).abs() < 1e-9, "{lengths:?}");
+    }
+    for at in [v(-12.0, 1.0), v(-42.0, 1.0), v(-42.0, 21.0), v(-12.0, 21.0)] {
+        assert!(has_point(&ed, at), "{at:?}");
+    }
+    assert_eq!(ed.history.undo_label(), Some("Mirror"));
+    ed.undo();
+    assert_eq!(ed.history.undo_label(), Some("Rectangle"));
+}
+
+#[test]
+fn a_slanted_two_point_axis_keeps_lengths_and_angles_but_not_level_or_plumb() {
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let o = ed.doc.add_point(v(0.0, 0.0));
+    let a = ed.doc.add_point(v(10.0, 0.0));
+    let b = ed.doc.add_point(v(5.0, 5.0 * 3f64.sqrt()));
+    let la = ed.doc.add_line(o, a).unwrap();
+    let lb = ed.doc.add_line(o, b).unwrap();
+    for c in [
+        Constraint::Distance {
+            a: o,
+            b: a,
+            value: 10.0,
+        },
+        Constraint::Distance {
+            a: o,
+            b,
+            value: 10.0,
+        },
+        Constraint::Angle {
+            a: la,
+            b: lb,
+            degrees: 60.0,
+        },
+        Constraint::Horizontal { line: la },
+    ] {
+        ed.doc.add_constraint(c).unwrap();
+    }
+    ed.commit("Vee");
+    ed.selection = [la, lb].into();
+    let mut tool = MirrorTool::default();
+    // An axis through (20, 0) and (21, 2).
+    let reflect = |p: DVec2| crate::modify::reflect_about(v(20.0, 0.0), v(21.0, 2.0), p);
+    click(&mut ed, &mut tool, v(20.0, 0.0));
+    click(&mut ed, &mut tool, v(21.0, 2.0));
+    assert_eq!(ed.out.notice, None);
+    // The solve left the copy where the reflection put it: the angle ran the right way
+    // round, and the lengths held.
+    for p in [v(0.0, 0.0), v(10.0, 0.0), v(5.0, 5.0 * 3f64.sqrt())] {
+        let at = reflect(p);
+        assert!(
+            ed.doc.iter().any(|(_, e)| match e.kind {
+                EntityKind::Point(q) => (q - at).length() < 1e-6,
+                _ => false,
+            }),
+            "{at:?}"
+        );
+    }
+    let count =
+        |pred: fn(&Constraint) -> bool| ed.doc.constraints().filter(|(_, c)| pred(c)).count();
+    assert_eq!(count(|c| matches!(c, Constraint::Distance { .. })), 4);
+    assert_eq!(count(|c| matches!(c, Constraint::Angle { .. })), 2);
+    assert_eq!(
+        count(|c| matches!(c, Constraint::Horizontal { .. })),
+        1,
+        "a slanted reflection isn't level"
+    );
 }

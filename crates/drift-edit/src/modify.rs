@@ -84,6 +84,62 @@ pub fn reflect_shape(a: DVec2, b: DVec2, shape: Shape) -> Shape {
     }
 }
 
+/// The image of relation `c` reflected about the line through `pa` along unit `u`, on the
+/// images of its entities (`image`), or `None` where a reflection doesn't keep it. Lengths,
+/// radii and distances keep (a horizontal or vertical distance and a distance from a line
+/// take their side from where the copy is). Level and plumb relations and dimensions, and a
+/// point's x or y lock, keep only about a level or plumb axis. An angle, measured
+/// counter-clockwise from its first line, runs the other way: its lines swap. A fixed point
+/// stays fixed, at its image.
+fn reflected_relation(
+    c: Constraint,
+    image: &impl Fn(EntityId) -> Option<EntityId>,
+    pa: DVec2,
+    u: DVec2,
+    reflect: &impl Fn(DVec2) -> DVec2,
+) -> Option<Constraint> {
+    const LEVEL: f64 = 1e-9;
+    let (level, plumb) = (u.y.abs() <= LEVEL, u.x.abs() <= LEVEL);
+    if c.entities().any(|e| image(e).is_none()) {
+        return None;
+    }
+    let copy = c.map_entities(|e| image(e).unwrap_or(e));
+    Some(match copy {
+        Constraint::Horizontal { .. }
+        | Constraint::Vertical { .. }
+        | Constraint::HorizontalPoints { .. }
+        | Constraint::VerticalPoints { .. }
+        | Constraint::HorizontalDistance { .. }
+        | Constraint::VerticalDistance { .. } => {
+            if !(level || plumb) {
+                return None;
+            }
+            copy
+        }
+        Constraint::Angle { a, b, degrees } => Constraint::Angle {
+            a: b,
+            b: a,
+            degrees,
+        },
+        Constraint::Fix { point, at } => Constraint::Fix {
+            point,
+            at: reflect(at),
+        },
+        Constraint::FixX { point, x } if plumb => Constraint::FixX {
+            point,
+            x: 2.0 * pa.x - x,
+        },
+        Constraint::FixX { .. } if level => copy,
+        Constraint::FixY { point, y } if level => Constraint::FixY {
+            point,
+            y: 2.0 * pa.y - y,
+        },
+        Constraint::FixY { .. } if plumb => copy,
+        Constraint::FixX { .. } | Constraint::FixY { .. } => return None,
+        _ => copy,
+    })
+}
+
 fn invalid(msg: impl Into<String>) -> EditError {
     EditError::Invalid(msg.into())
 }
@@ -2568,6 +2624,12 @@ impl Editor {
         if ids.is_empty() && instances.is_empty() && riders.is_empty() {
             return Err(invalid("select geometry to mirror, then the line"));
         }
+        // About a temporary axis nothing holds the copies to the originals: they take the
+        // relations and dimensions among the originals that a reflection keeps instead.
+        let internal = match axis {
+            Some(_) => Vec::new(),
+            None => self.mirror_relations(&ids),
+        };
         let doc_err = |e: drift_core::DocumentError| invalid(e.to_string());
         self.doc.begin();
         let mut created = Vec::new();
@@ -2609,7 +2671,10 @@ impl Editor {
                     }
                     EntityKind::Circle { center, radius } => {
                         let c = self.doc.add_circle(m(center), radius).map_err(doc_err)?;
-                        self.relate(Constraint::Equal { a: id, b: c });
+                        // (About a temporary axis its own radius dimension, if any, holds it.)
+                        if axis.is_some() {
+                            self.relate(Constraint::Equal { a: id, b: c });
+                        }
                         c
                     }
                     // A reflection reverses direction: swap the ends to stay counter-clockwise.
@@ -2644,6 +2709,24 @@ impl Editor {
                 images.insert(id, new);
                 created.push(new);
             }
+            let image = |e: EntityId| images.get(&e).or_else(|| map.get(&e)).copied();
+            for (cid, c) in &internal {
+                let Some(copy) = reflected_relation(*c, &image, pa, u, &reflect) else {
+                    continue;
+                };
+                // (One wholly on the axis is its own image.)
+                if copy == *c {
+                    continue;
+                }
+                if let Ok(new) = self.doc.add_constraint(copy) {
+                    if let Some(e) = self.doc.expression(*cid) {
+                        self.doc.set_expression(new, Some(e.to_owned()));
+                    }
+                    if self.doc.is_driven(*cid) {
+                        let _ = self.doc.set_driven(new, true);
+                    }
+                }
+            }
             self.copy_fills_onto(|e| images.get(&e).copied(), reflect);
             self.copy_walls_onto(&|e| images.get(&e).copied(), &reflect, true);
             self.copy_offsets_onto(&|e| images.get(&e).copied(), true);
@@ -2676,6 +2759,18 @@ impl Editor {
         })();
         self.finish(result, "Mirror")?;
         Ok((created, copies, copied))
+    }
+
+    /// The relations and dimensions wholly among `ids` and their defining points, for a mirror
+    /// about a temporary axis to copy (see [`reflected_relation`]).
+    fn mirror_relations(&self, ids: &[EntityId]) -> Vec<(ConstraintId, Constraint)> {
+        let mut members: BTreeSet<EntityId> = self.doc.defining_points(ids.iter().copied());
+        members.extend(ids.iter().copied());
+        self.doc
+            .constraints()
+            .filter(|(_, c)| c.entities().all(|e| members.contains(&e)))
+            .map(|(id, c)| (id, *c))
+            .collect()
     }
 
     /// New groups of copies made inside the open transaction, for groups copied whole (`copy`

@@ -145,3 +145,41 @@ fn smoke_shift_d_then_esc_leaves_entity_count_unchanged() {
     assert_eq!(h.state().drawing.editor.selection, picked);
     assert!(status(&h).contains("Copy removed"), "{}", status(&h));
 }
+
+/// #264 follow-up: Shift+D with the pointer off the canvas (on a panel, or gone from the
+/// window) still leaves no copy stacked on the originals. The move starts from where the
+/// pointer last was on the canvas, so Esc removes the copy; with no pointer ever on the
+/// canvas, nothing is copied and the status says why.
+#[test]
+fn smoke_shift_d_with_the_pointer_off_the_canvas_leaves_no_stacked_copy() {
+    let Some(mut h) = harness() else { return };
+    view(&mut h, DVec2::new(-10.0, -10.0), DVec2::new(50.0, 40.0));
+    let (sides, _) = rectangle(&mut h, DVec2::ZERO, DVec2::new(40.0, 30.0), Fill::No);
+    let picked: std::collections::BTreeSet<_> = sides.iter().copied().collect();
+    h.state_mut().drawing.editor.selection = picked.clone();
+    h.run();
+    let count = |h: &Harness<'_, DriftApp>| h.state().drawing.editor.doc.iter().count();
+    let before = count(&h);
+    h.hover_at(screen(&h, DVec2::new(20.0, 0.0)));
+    h.run();
+    h.event(egui::Event::PointerGone);
+    h.run();
+    assert!(
+        h.state().drawing.view.pointer.is_none(),
+        "pointer off the canvas"
+    );
+    h.key_press_modifiers(EguiModifiers::SHIFT, Key::D);
+    h.run();
+    h.key_press(Key::Escape);
+    h.run();
+    assert_eq!(count(&h), before, "no copy left stacked on the originals");
+    assert!(!h.state().tool.is_busy());
+    assert_eq!(h.state().drawing.editor.selection, picked);
+    // No pointer on the canvas at all yet: nothing is copied, and it says why.
+    h.state_mut().drawing.view.last_pointer = None;
+    h.key_press_modifiers(EguiModifiers::SHIFT, Key::D);
+    h.run();
+    assert_eq!(count(&h), before, "nothing copied without a pointer");
+    assert!(!h.state().tool.is_busy());
+    assert!(status(&h).contains("canvas"), "{}", status(&h));
+}

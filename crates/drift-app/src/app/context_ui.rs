@@ -939,18 +939,37 @@ impl DriftApp {
 
     /// Duplicate the selection in place and grab the copy (Shift+D). Esc then removes the
     /// copy again and picks the originals, rather than leave it stacked on them (#264).
+    ///
+    /// Nothing is copied where the copy couldn't then be moved: with something picked on a
+    /// locked layer, or with no pointer on the canvas yet (off the canvas, the move starts
+    /// from where the pointer last was there). If the move still doesn't start, the copy is
+    /// taken back.
     pub(crate) fn duplicate_and_grab(&mut self) {
+        if self.drawing.editor.picked_on_locked_layer() {
+            self.drawing.editor.out.notice =
+                Some("Part of the selection is on a locked layer: unlock it to duplicate".into());
+            return;
+        }
+        let Some(pointer) = self.drawing.view.pointer.or(self.drawing.view.last_pointer) else {
+            self.drawing.editor.out.notice =
+                Some("Point at the canvas, then duplicate: the copy follows the pointer".into());
+            return;
+        };
         if self.tool.kind() != ToolKind::Select {
             self.set_tool(ToolKind::Select);
         }
         let originals = self.drawing.editor.picked();
-        if self.drawing.editor.duplicate_selection() > 0 {
-            self.tool.key(
-                ToolKey::G,
-                self.drawing.view.pointer.as_ref(),
-                &mut self.drawing.editor,
-            );
+        if self.drawing.editor.duplicate_selection() == 0 {
+            return;
+        }
+        self.tool
+            .key(ToolKey::G, Some(&pointer), &mut self.drawing.editor);
+        if self.tool.is_busy() {
             self.tool.grab_from_copy(originals);
+        } else if self.drawing.editor.history.undo_label() == Some("Duplicate")
+            && self.drawing.editor.undo()
+        {
+            self.drawing.editor.pick(&originals);
         }
     }
 

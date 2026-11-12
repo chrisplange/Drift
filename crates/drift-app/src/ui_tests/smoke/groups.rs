@@ -761,3 +761,31 @@ fn smoke_groups_block_name_fields_take_spaces() {
     keyboard_type(&mut h, " 600");
     assert_eq!(focused_field(&h), "Block 2 600", "the block's Name field");
 }
+
+/// #264 follow-up: Shift+D on a block copy whose layer was locked after it was picked makes
+/// no copy (it would be stacked on a layer where it can't be picked or moved), and says why.
+#[test]
+fn smoke_groups_shift_d_on_a_locked_layer_makes_no_copy_and_says_why() {
+    let Some(mut h) = harness() else { return };
+    let copy = flag_block(&mut h);
+    click_world(&mut h, DVec2::new(110.0, 10.0));
+    assert_eq!(h.state().drawing.editor.selected_instances, [copy].into());
+    {
+        let ed = &mut h.state_mut().drawing.editor;
+        let id = ed.doc.instance(copy).unwrap().layer;
+        let mut layer = ed.doc.layer(id).unwrap().clone();
+        layer.locked = true;
+        ed.update_layer(id, layer);
+    }
+    h.run();
+    h.state_mut().status = None;
+    h.hover_at(screen(&h, DVec2::new(110.0, 10.0)));
+    h.run();
+    let entities = h.state().drawing.editor.doc.iter().count();
+    h.key_press_modifiers(EguiModifiers::SHIFT, Key::D);
+    h.run();
+    assert_eq!(copies(&h).len(), 1, "no copy made");
+    assert_eq!(h.state().drawing.editor.doc.iter().count(), entities);
+    assert!(!h.state().tool.is_busy());
+    assert!(status(&h).contains("locked layer"), "{}", status(&h));
+}

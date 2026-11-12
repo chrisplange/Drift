@@ -14,7 +14,7 @@ Areas: canvas, panel, tool, menu, file, other. Status: `open`, `batched #NNN`, `
 | 2026-11-11 | other | A sheet view can't be duplicated together with its drawing entities and annotations in one operation | open |
 | 2026-11-11 | panel | Layer 0 is a DWG/DXF requirement that shows in every drawing. New files must never show a layer 0, and a file without one must still open; layer 0 appears only on an imported document or a drawing that already has one. Every DWG/DXF export writes an empty layer 0 | open |
 | 2026-11-11 | menu | Hatches are slow to reach and change; a right-click or fly-out menu to switch a fill's hatch quickly would help | fixed #416 |
-| 2026-11-11 | tool | There's no way to pick one entity out of several overlapping ones (e.g. click again to cycle, or a pick list) | open |
+| 2026-11-11 | tool | There's no way to pick one entity out of several overlapping ones (e.g. click again to cycle, or a pick list) | fixed #419 |
 | 2026-11-11 | panel | The right-side panels need a whole UX/UI review | open |
 | 2026-11-11 | canvas | How annotations work with the canvas and drawing scale is unintuitive (details to collect when batched; see #369) | open |
 | 2026-11-11 | canvas | An SVG logo shows broken strokes because of how antialiasing is done | open |

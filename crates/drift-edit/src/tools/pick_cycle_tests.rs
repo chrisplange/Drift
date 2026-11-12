@@ -297,18 +297,48 @@ fn a_drag_pressed_a_little_off_the_spot_moves_what_was_picked() {
 }
 
 #[test]
-fn a_drag_off_the_spot_takes_a_picked_line_under_the_pointer_first() {
+fn a_drag_on_a_line_inside_a_picked_filled_shape_moves_the_line() {
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let p = [v(0.0, 0.0), v(20.0, 0.0), v(20.0, 10.0), v(0.0, 10.0)].map(|q| ed.doc.add_point(q));
+    for i in 0..4 {
+        ed.doc.add_line(p[i], p[(i + 1) % 4]).unwrap();
+    }
+    let (q, r) = (
+        ed.doc.add_point(v(4.0, 3.0)),
+        ed.doc.add_point(v(16.0, 3.0)),
+    );
+    let inner = ed.doc.add_line(q, r).unwrap();
+    ed.commit("Shape");
+    let fill = ed.add_fill_at(v(10.0, 7.0)).unwrap();
+    let mut sel = SelectTool::default();
+    // The shape picked by its fill.
+    click(&mut ed, &mut sel, v(10.0, 7.0));
+    assert_eq!(ed.selected_fills, [fill].into());
+    let y = ed.doc.point(q).unwrap().y;
+    let corner = ed.doc.point(p[0]).unwrap();
+    // A drag on the inner line picks it and moves it alone, as before.
+    drag(&mut ed, &mut sel, v(8.0, 3.0), v(0.0, 2.0));
+    assert_eq!(picked(&ed), [inner]);
+    assert!((ed.doc.point(q).unwrap().y - y - 2.0).abs() < 1e-6);
+    assert_eq!(ed.doc.point(p[0]).unwrap(), corner);
+}
+
+#[test]
+fn a_delete_or_undo_starts_the_cycle_again() {
     let (mut ed, [a, _, c]) = three_stacked();
     let mut sel = SelectTool::default();
     click(&mut ed, &mut sel, SPOT);
     click(&mut ed, &mut sel, SPOT);
     assert_eq!(picked(&ed), [a]);
-    let (ya, yc) = (y_of(&ed, a), y_of(&ed, c));
-    // Off the spot, the diagonal is nearest, but the line across is picked and in reach.
-    drag(&mut ed, &mut sel, v(0.6, 0.3), v(0.0, 5.0));
-    assert_eq!(picked(&ed), [a]);
-    assert!((y_of(&ed, a) - ya - 5.0).abs() < 1e-6);
-    assert_eq!(y_of(&ed, c), yc);
+    // The line across deleted: the hover there shows the first again, and so does a click.
+    ed.delete_selection();
+    assert!(ed.doc.get(a).is_none());
+    sel.handle(Input::Hover(Pointer::new(SPOT, TOL)), &mut ed);
+    assert_eq!(ed.hovered, Some(c));
+    assert_eq!(ed.pick_cycle.position(), None);
+    click(&mut ed, &mut sel, SPOT);
+    assert_eq!(picked(&ed), [c]);
 }
 
 #[test]

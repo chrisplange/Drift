@@ -1,7 +1,7 @@
 //! Select: pick, box-select, drag, and the Blender-style modal move (G).
 
 use super::picking::{
-    Pick, Purpose, Step, Target, candidates_at, cycle_step, hover_next, is_picked, target_at,
+    Pick, Purpose, Step, Target, candidates_at, cycle_step, hover_next, target_at,
 };
 use super::*;
 
@@ -870,6 +870,7 @@ impl Tool for SelectTool {
             Input::DoubleClick(p) => {
                 // The double-click's second click went on to the next thing under the
                 // pointer: back to what the first picked, which the double-click acts on.
+                ed.pick_cycle.forget_if_changed(ed.doc.revision());
                 if let Some((k, spot)) = ed.pick_cycle.step_back() {
                     let target = candidates_at(ed, &p.at(spot)).get(k).copied();
                     ed.set_active(None);
@@ -888,27 +889,14 @@ impl Tool for SelectTool {
                     return;
                 }
                 // From the spot of a click again: what that click picked (the drag moves it,
-                // not what a single click would take there). Elsewhere, something under the
-                // pointer that's picked already before what a single click would take.
+                // not what a single click would take there).
+                ed.pick_cycle.forget_if_changed(ed.doc.revision());
                 let cycled = ed
                     .pick_cycle
                     .cycled_at(p.raw)
                     .and_then(|(k, spot)| candidates_at(ed, &p.at(spot)).get(k).copied())
                     .filter(|t| t.midpoint().is_none());
-                let target = cycled.or_else(|| {
-                    let first = target_at(ed, &p, Purpose::DragStart);
-                    let nothing_picked = ed.selection.is_empty()
-                        && ed.selected_fills.is_empty()
-                        && ed.selected_texts.is_empty()
-                        && ed.selected_instances.is_empty();
-                    if nothing_picked || first.is_none_or(|t| is_picked(ed, t)) {
-                        return first;
-                    }
-                    candidates_at(ed, &p)
-                        .into_iter()
-                        .find(|t| t.midpoint().is_none() && is_picked(ed, *t))
-                        .or(first)
-                });
+                let target = cycled.or_else(|| target_at(ed, &p, Purpose::DragStart));
                 match target {
                     // A piece of an offset, with nothing else picked: change the offset's
                     // distance (with more picked, a drag moves the lot, the offset following

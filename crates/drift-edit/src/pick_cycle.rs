@@ -44,6 +44,8 @@ pub(crate) struct Spot {
     pub(crate) lead: usize,
     /// The click went on from the one before (it didn't start the cycle).
     pub(crate) advanced: bool,
+    /// The drawing's revision then: any edit since (a delete, an undo) starts again.
+    pub(crate) rev: u64,
 }
 
 impl PickCycle {
@@ -53,6 +55,14 @@ impl PickCycle {
         self.handed = None;
         self.cached = None;
         self.hover_past = false;
+    }
+
+    /// Start again if the drawing changed since the last click (`rev` is its revision now):
+    /// what was under the pointer may be gone.
+    pub(crate) fn forget_if_changed(&mut self, rev: u64) {
+        if self.last.is_some_and(|s| s.rev != rev) {
+            self.reset();
+        }
     }
 
     /// Whether the next click on the annotation under the pointer goes past it, to the
@@ -167,6 +177,7 @@ mod tests {
             len: Some(3),
             lead,
             advanced: step > 0,
+            rev: 0,
         }
     }
 
@@ -180,6 +191,16 @@ mod tests {
         assert!(c.same_spot(AT, 0).is_some());
         // A click that went elsewhere (a grip, a drag) doesn't.
         c.end_frame(true);
+        assert_eq!(c.position(), None);
+    }
+
+    #[test]
+    fn an_edit_since_starts_again() {
+        let mut c = PickCycle::default();
+        c.record(spot(AT, 1, 0));
+        c.forget_if_changed(0);
+        assert!(c.position().is_some());
+        c.forget_if_changed(1);
         assert_eq!(c.position(), None);
     }
 

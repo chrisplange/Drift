@@ -347,6 +347,7 @@ pub(super) enum Step {
 /// single click always has, without gathering the rest; a click on the spot of the last one
 /// picks the next, round to the first, and the status bar says which.
 pub(super) fn cycle_step(ed: &mut Editor, p: &Pointer, lead: usize) -> Step {
+    ed.pick_cycle.forget_if_changed(ed.doc.revision());
     let Some(last) = ed.pick_cycle.same_spot(p.raw, lead) else {
         ed.pick_cycle.record(Spot {
             at: p.raw,
@@ -355,6 +356,7 @@ pub(super) fn cycle_step(ed: &mut Editor, p: &Pointer, lead: usize) -> Step {
             len: None,
             lead,
             advanced: false,
+            rev: ed.doc.revision(),
         });
         return match lead {
             0 => Step::Tool(target_at(ed, p, Purpose::Click)),
@@ -378,6 +380,7 @@ pub(super) fn cycle_step(ed: &mut Editor, p: &Pointer, lead: usize) -> Step {
         len: Some(len),
         lead,
         advanced: true,
+        rev: ed.doc.revision(),
     });
     if len > 1 {
         ed.out.inform(cycle_status(step, len));
@@ -394,6 +397,7 @@ pub(super) fn cycle_step(ed: &mut Editor, p: &Pointer, lead: usize) -> Step {
 /// hover shows what a single click picks, as ever.
 pub(super) fn hover_next(ed: &mut Editor, p: &Pointer) -> Option<Option<Pick>> {
     ed.pick_cycle.set_hover_past(false);
+    ed.pick_cycle.forget_if_changed(ed.doc.revision());
     let last = ed.pick_cycle.on_spot(p.raw)?;
     let picks = match ed.pick_cycle.cached() {
         Some(picks) => picks.clone(),
@@ -411,17 +415,6 @@ pub(super) fn hover_next(ed: &mut Editor, p: &Pointer) -> Option<Option<Pick>> {
     let k = next.checked_sub(last.lead);
     ed.pick_cycle.set_hover_past(last.lead > 0 && k.is_some());
     Some(k.and_then(|k| picks.get(k).copied()))
-}
-
-/// Whether `pick` is picked already.
-pub(super) fn is_picked(ed: &Editor, pick: Pick) -> bool {
-    match pick {
-        Pick::Geometry(Target::Entity(id)) => ed.selection.contains(&id),
-        Pick::Geometry(Target::Midpoint(line)) => ed.selected_midpoints.contains(&line),
-        Pick::Text(t) => ed.selected_texts.contains(&t),
-        Pick::Copy(c) => ed.selected_instances.contains(&c),
-        Pick::Wall(_, f) | Pick::Fill(f) => ed.selected_fills.contains(&f),
-    }
 }
 
 impl Pointer {

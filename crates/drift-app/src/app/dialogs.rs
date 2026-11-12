@@ -137,7 +137,7 @@ impl DriftApp {
             #[cfg(not(feature = "demo"))]
             "cad_export" => self.cad_dialog,
             #[cfg(not(feature = "demo"))]
-            "pdf_placement" => self.pdf_place_dialog,
+            "pdf_placement" => self.pdf_place_dialog.is_some(),
             "import_report" => self.drawing.import_report.is_some(),
             "sketch_check" => self.drawing.sketch_check.is_some(),
             "Drawing settings" => self.show_drawing_settings,
@@ -158,7 +158,7 @@ impl DriftApp {
             #[cfg(not(feature = "demo"))]
             "cad_export" => self.cad_dialog = false,
             #[cfg(not(feature = "demo"))]
-            "pdf_placement" => self.pdf_place_dialog = false,
+            "pdf_placement" => self.pdf_place_dialog = None,
             "import_report" => self.drawing.import_report = None,
             "sketch_check" => self.drawing.sketch_check = None,
             "Drawing settings" => self.show_drawing_settings = false,

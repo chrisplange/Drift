@@ -33,9 +33,10 @@ fn drawn(h: &mut Harness<'_, DriftApp>, page: usize) -> usize {
 /// #245: Export PDF with no sheets asks how to place the drawing: 1:1, or fitted to A3 and
 /// labelled with the scale that gives. At 1:1 a 120 x 80 mm plate's 120 mm side measures
 /// 120 mm, on a page of the plate plus a 5 mm margin; fitted, it is today's A3 sheet. Cancel
-/// closes the prompt, exporting nothing.
+/// closes the prompt, exporting nothing. Print with no sheets asks the same.
 #[test]
 fn smoke_pdf_with_no_sheets_asks_and_prints_at_true_scale() {
+    use crate::app::sheets_ui::Output;
     use crate::output::{PdfPlacement, pdf_page_and_longest_line};
     let Some(mut h) = harness() else { return };
     view(&mut h, DVec2::new(-10.0, -10.0), DVec2::new(130.0, 90.0));
@@ -48,10 +49,12 @@ fn smoke_pdf_with_no_sheets_asks_and_prints_at_true_scale() {
     h.get_by_label("PDF…").click();
     h.run();
     h.run();
-    assert!(
+    assert_eq!(
         h.state().pdf_place_dialog,
+        Some(Output::Pdf),
         "PDF with no sheets asks how to place it"
     );
+    assert!(h.query_by_label("Export…").is_some());
     let fit = h.state().fit_label();
     assert!(fit.starts_with("Fit to A3 (1:"), "{fit}");
     assert!(h.query_by_label("1:1 (true scale)").is_some());
@@ -66,7 +69,17 @@ fn smoke_pdf_with_no_sheets_asks_and_prints_at_true_scale() {
     save_png("drift_smoke_pdf_placement.png", &mut h);
     h.get_by_label("Cancel").click();
     h.run();
-    assert!(!h.state().pdf_place_dialog, "Cancel closes it");
+    assert_eq!(h.state().pdf_place_dialog, None, "Cancel closes it");
+    // Print (Ctrl+P) asks the same; Cancel prints nothing.
+    h.key_press_modifiers(EguiModifiers::COMMAND, Key::P);
+    h.run();
+    h.run();
+    assert_eq!(h.state().pdf_place_dialog, Some(Output::Print));
+    assert!(h.query_by_label("Print…").is_some());
+    assert!(h.query_by_label("1:1 (true scale)").is_some());
+    h.get_by_label("Cancel").click();
+    h.run();
+    assert_eq!(h.state().pdf_place_dialog, None);
     // What each choice writes.
     let painter = painter(&h);
     let pdf = h

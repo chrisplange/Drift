@@ -1147,6 +1147,18 @@ pub fn model_page(
     annotate: bool,
 ) -> Drawing {
     let n = ed.doc.draft_style().scale;
+    model_page_for(ed, patterns, painter, only, annotate, n)
+}
+
+/// [`model_page`] with annotations and line types sized for 1 : `n`.
+fn model_page_for(
+    ed: &mut Editor,
+    patterns: &PatternLibrary,
+    painter: &egui::Painter,
+    only: Option<&Scope>,
+    annotate: bool,
+    n: f64,
+) -> Drawing {
     let mut d = Drawing::new(DVec2::ZERO);
     d.font = ed.drawing_font();
     drift_draft::font::set_drawing_font(d.font.clone());
@@ -1214,7 +1226,8 @@ pub enum PdfPlacement {
     #[default]
     Fit,
     /// The drawing at true size (1 : 1) on a page fitted to it with a small margin
-    /// ([`MODEL_MARGIN`]), as [`model_page`] with its dimensions and notes.
+    /// ([`MODEL_MARGIN`]), as [`model_page`] with its dimensions and notes, but those sized
+    /// for the paper (a drawing set to 1 : 50 doesn't print its text 50 times too big).
     TrueScale,
 }
 
@@ -1230,7 +1243,7 @@ impl PdfPlacement {
         if self != PdfPlacement::TrueScale || ed.doc.sheets().next().is_some() {
             return None;
         }
-        let d = model_page(ed, patterns, painter, None, true);
+        let d = model_page_for(ed, patterns, painter, None, true, 1.0);
         (!d.items.is_empty()).then_some(d)
     }
 }

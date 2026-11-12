@@ -2,6 +2,16 @@
 
 use super::*;
 
+/// Which shapes a relation's solve keeps (see [`Editor::check_new_constraints`]).
+#[derive(Clone, Copy)]
+enum Shapes {
+    /// Every line's length and direction and every arc's radius ([`Editor::kept_shapes`]).
+    Kept,
+    /// As before: the rest's directions and radii only, nothing of what the relations name
+    /// ([`Editor::kept_shapes_as_before`]).
+    AsBefore,
+}
+
 impl Editor {
     /// Add constraints as one undoable step. Refused if they conflict with the existing ones
     /// or add nothing new.
@@ -207,9 +217,95 @@ impl Editor {
             .flat_map(|c| c.entities())
             .collect();
         let keep = self.kept_entity(keep, ids, &named, before);
+        let start = self.points_and_circles();
+        let mut error = self.solve_new_relations(
+            ids,
+            &named,
+            keep,
+            before,
+            degenerate_before,
+            &start,
+            Shapes::Kept,
+        );
+        // A curve shrunk to a sliver counts as collapsed here: a line's direction is kept at
+        // any length, so a solve that must turn lines can meet the relations by shrinking one
+        // to nearly nothing, short of the zero the analysis reads as collapsed, and too small
+        // to see or pick. (Solved as before then, a sliver is only ever left where that
+        // solve leaves one, so the bar can be generous: a thousandth of the curve.)
+        if error.is_none() && self.left_a_sliver(&start) {
+            error = Some(EditError::Degenerate);
+        }
+        // The shapes are preferences: where keeping them leaves the relations refused (they
+        // can lead the solve to a configuration the analysis reads as collapsed, or as one
+        // where the relation adds nothing: a line kept at its length landing on another's
+        // line) or a sliver, the relations are solved as before, from the geometry as it was,
+        // and added if that adds them. So keeping shapes never refuses a relation, nor adds
+        // one by leaving a sliver where it was solved as before.
+        if error.is_some() {
+            self.restore_geometry(&start);
+            error = self.solve_new_relations(
+                ids,
+                &named,
+                keep,
+                before,
+                degenerate_before,
+                &start,
+                Shapes::AsBefore,
+            );
+        }
+        if let Some(error) = error {
+            self.doc.rollback();
+            self.sync();
+            return Err(error);
+        }
+        self.commit(label);
+        Ok(())
+    }
+
+    /// Whether a line or an arc's or circle's radius is now under a thousandth of what it was
+    /// in `start` (and not already nothing there): left a sliver.
+    fn left_a_sliver(&self, start: &Geometry) -> bool {
+        let was: HashMap<EntityId, DVec2> = start.points.iter().copied().collect();
+        let radius_was: HashMap<EntityId, f64> = start.circles.iter().copied().collect();
+        let shrunk = |before: f64, now: f64| before > 0.0 && now < 1e-3 * before;
+        let between = |a: EntityId, b: EntityId| {
+            let (Some(a0), Some(b0)) = (was.get(&a), was.get(&b)) else {
+                return false;
+            };
+            let (Ok(a1), Ok(b1)) = (self.doc.point(a), self.doc.point(b)) else {
+                return false;
+            };
+            shrunk(a0.distance(*b0), a1.distance(b1))
+        };
+        self.doc.iter().any(|(id, e)| match e.kind {
+            EntityKind::Line { a, b } => between(a, b),
+            EntityKind::Arc { center, start, .. } => between(center, start),
+            EntityKind::Circle { radius, .. } => {
+                radius_was.get(&id).is_some_and(|&r0| shrunk(r0, radius))
+            }
+            _ => false,
+        })
+    }
+
+    /// Solve new constraints `ids` (naming `named`) keeping `shapes`, and the active element
+    /// `keep` where it can stay, and say why they are refused, if they are (see
+    /// [`check_new_constraints`](Self::check_new_constraints)). `start`: the document as the
+    /// edit found it.
+    #[allow(clippy::too_many_arguments)]
+    fn solve_new_relations(
+        &mut self,
+        ids: &[ConstraintId],
+        named: &HashSet<EntityId>,
+        keep: Option<EntityId>,
+        before: &SolveReport,
+        degenerate_before: &[EntityId],
+        start: &Geometry,
+        shapes: Shapes,
+    ) -> Option<EditError> {
         // The active element stays exactly where it is when the relations can be met that
         // way; otherwise they are solved exactly as without it, from the geometry as it was.
-        let kept = keep.is_some_and(|k| self.keep_in_place(ids, &named, k, degenerate_before));
+        let kept = keep
+            .is_some_and(|k| self.keep_in_place(ids, named, k, degenerate_before, start, shapes));
         // Where it was kept, this is the same solve again from where that one landed, and
         // expected to take no step at all: the relations are met, and every preference is
         // measured from where the geometry already is. Its analysis is what the checks below
@@ -219,9 +315,9 @@ impl Editor {
         // Coincident or level or plumb points, can end one unit of rounding off: this solve
         // and the commit's rebuild it from the mean of its members, as every commit does
         // today.)
-        let report = self.solve_new_constraints(ids, named, None);
+        let report = self.solve_new_constraints(ids, named.clone(), None, shapes);
         self.relation_kept = Some((kept, report.iterations));
-        let error = if self.new_conflicts(&report) {
+        if self.new_conflicts(&report) {
             Some(EditError::Conflict)
         } else if self.new_degeneracy(degenerate_before) {
             Some(EditError::Degenerate)
@@ -233,34 +329,28 @@ impl Editor {
             Some(EditError::Redundant)
         } else {
             None
-        };
-        if let Some(error) = error {
-            self.doc.rollback();
-            self.sync();
-            return Err(error);
         }
-        self.commit(label);
-        Ok(())
     }
 
     /// Solve constraints `ids` (active in the open transaction, naming `named`) with `keep`
-    /// carried: true if it stayed exactly where it is; else the geometry is put back as it
-    /// was before this solve, and false (see
-    /// [`check_new_constraints`](Self::check_new_constraints)).
+    /// carried, keeping `shapes`: true if it stayed exactly where it is; else the geometry is
+    /// put back as it is in `saved` (a copy taken earlier in the open transaction), and false
+    /// (see [`check_new_constraints`](Self::check_new_constraints)).
     fn keep_in_place(
         &mut self,
         ids: &[ConstraintId],
         named: &HashSet<EntityId>,
         keep: EntityId,
         degenerate_before: &[EntityId],
+        saved: &Geometry,
+        shapes: Shapes,
     ) -> bool {
-        let saved = self.doc.clone();
         let held = self.doc.defining_points([keep]);
         let at = |doc: &Document| -> Vec<Option<DVec2>> {
             held.iter().map(|p| doc.point(*p).ok()).collect()
         };
         let start = at(&self.doc);
-        let report = self.solve_new_constraints(ids, named.clone(), Some(keep));
+        let report = self.solve_new_constraints(ids, named.clone(), Some(keep), shapes);
         // Kept only where it landed exactly (`==`, no tolerance): the solver's landing goes
         // on only from groups already exactly on their targets, solves again with them
         // pinned (written back as they were), and puts the weighted values back where that
@@ -273,7 +363,7 @@ impl Editor {
             && !self.new_degeneracy(degenerate_before)
             && at(&self.doc) == start;
         if !landed {
-            self.put_geometry_back(&saved);
+            self.restore_geometry(saved);
         }
         landed
     }
@@ -304,31 +394,6 @@ impl Editor {
         self.kept_entity(self.typed_keep(c), &ids, &named, self.analysis())
     }
 
-    /// Put every point and circle radius back where it is in `saved` (a copy of this document
-    /// taken earlier in the open transaction), as edits in the transaction: what a solve
-    /// writes (the document stays this one, so the caches that follow its changes go on
-    /// following them).
-    fn put_geometry_back(&mut self, saved: &Document) {
-        for (id, e) in saved.iter() {
-            match e.kind {
-                EntityKind::Point(at) => {
-                    if self.doc.point(id).is_ok_and(|p| p != at) {
-                        let _ = self.doc.set_point(id, at);
-                    }
-                }
-                EntityKind::Circle { radius, .. } => {
-                    if let Some(EntityKind::Circle { radius: now, .. }) =
-                        self.doc.get(id).map(|e| e.kind)
-                        && now != radius
-                    {
-                        let _ = self.doc.set_radius(id, radius);
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
     /// The solve after new constraints `ids`, naming `named`, were added (see
     /// [`check_new_constraints`](Self::check_new_constraints)). `keep`: the active element
     /// they keep, if any: it is carried (the rank a drag carries geometry at), so the solve
@@ -342,36 +407,23 @@ impl Editor {
         ids: &[ConstraintId],
         named: HashSet<EntityId>,
         keep: Option<EntityId>,
+        shapes: Shapes,
     ) -> SolveReport {
-        // The geometry the new constraints name takes up the change. The rest of the sketch
-        // moves only where it has to, and its lines keep their directions and its arcs their
-        // sizes where they can: a relation reshapes what it relates instead of spreading the
-        // change thinly over everything. (The active element is one of the rest here, and
-        // carried: the solve lands it again where it was if it can, and the others named take
-        // up the change.)
+        // The geometry the new constraints name takes up the change, by moving and turning:
+        // it keeps its size where it can (#350). The rest of the sketch moves only where it
+        // has to, and keeps its lines' lengths and directions and its arcs' radii where it
+        // can: a relation reshapes what it relates instead of spreading the change thinly
+        // over everything (see `kept_shapes`). (The active element is one of the rest here,
+        // and carried: the solve lands it again where it was if it can, and the others named
+        // take up the change.)
         let mut named = named;
         if let Some(k) = keep {
             named.remove(&k);
         }
-        let mut directions = HashMap::new();
-        let mut radii = HashMap::new();
-        for (id, e) in self.doc.iter().filter(|(id, _)| !named.contains(id)) {
-            match e.kind {
-                EntityKind::Line { a, b } => {
-                    if let (Ok(pa), Ok(pb)) = (self.doc.point(a), self.doc.point(b))
-                        && let Some(u) = (pb - pa).try_normalize()
-                    {
-                        directions.insert(id, u);
-                    }
-                }
-                EntityKind::Arc { .. } => {
-                    if let Some(r) = drift_solver::radius_of(&self.doc, id) {
-                        radii.insert(id, r);
-                    }
-                }
-                _ => {}
-            }
-        }
+        let kept = match shapes {
+            Shapes::Kept => self.kept_shapes(&named),
+            Shapes::AsBefore => self.kept_shapes_as_before(&named),
+        };
         // (Relations on walls' faces take up the change on the centrelines they lower to.)
         let lowering = self.lowering();
         if let Some(l) = &lowering {
@@ -394,8 +446,11 @@ impl Editor {
                 analyze: keep.is_none(),
                 focus,
                 carried,
-                directions,
-                radii,
+                lengths: kept.lengths,
+                length_ranks: kept.length_ranks,
+                shapes_as_before: kept.as_before,
+                directions: kept.directions,
+                radii: kept.radii,
                 lowering,
                 ..Default::default()
             },
@@ -797,14 +852,8 @@ impl Editor {
             return Err(EditError::Invalid(e.to_string()));
         }
         self.settle_fillet(&current.with_value(value));
-        // One end stays where it is if it can (#348); else, or then, as before: a solve
-        // that moves everything as little as it can (from where the kept one landed, it
-        // takes no step).
-        if let Some(k) = keep {
-            let named: HashSet<EntityId> = current.entities().collect();
-            self.keep_in_place(&[id], &named, k, &degenerate_before);
-        }
-        let report = self.solve(&[]);
+        let named: HashSet<EntityId> = current.entities().collect();
+        let report = self.solve_typed_size(id, &named, keep, &degenerate_before);
         let error = if self.new_conflicts(&report) {
             Some(EditError::Conflict)
         } else if self.new_degeneracy(&degenerate_before) {
@@ -819,6 +868,48 @@ impl Editor {
         }
         self.commit("Change dimension");
         Ok(())
+    }
+
+    /// The solve after a typed size `id` (naming `named`) was set in the open transaction:
+    /// one end, `keep`, stays where it is if it can (#348); else, or then, a solve that
+    /// keeps shapes (from where the kept one landed, it takes no step). Where keeping
+    /// shapes leaves a sliver, solved as before from the geometry as it was (see
+    /// [`check_new_constraints`](Self::check_new_constraints)).
+    fn solve_typed_size(
+        &mut self,
+        id: ConstraintId,
+        named: &HashSet<EntityId>,
+        keep: Option<EntityId>,
+        degenerate_before: &[EntityId],
+    ) -> SolveReport {
+        let start = self.points_and_circles();
+        let report =
+            self.solve_typed_size_keeping(id, named, keep, degenerate_before, &start, Shapes::Kept);
+        if !self.left_a_sliver(&start) {
+            return report;
+        }
+        self.restore_geometry(&start);
+        self.solve_typed_size_keeping(id, named, keep, degenerate_before, &start, Shapes::AsBefore)
+    }
+
+    /// [`solve_typed_size`](Self::solve_typed_size) keeping `shapes`. `start`: the geometry
+    /// as the edit found it.
+    fn solve_typed_size_keeping(
+        &mut self,
+        id: ConstraintId,
+        named: &HashSet<EntityId>,
+        keep: Option<EntityId>,
+        degenerate_before: &[EntityId],
+        start: &Geometry,
+        shapes: Shapes,
+    ) -> SolveReport {
+        if let Some(k) = keep {
+            self.keep_in_place(&[id], named, k, degenerate_before, start, shapes);
+        }
+        match shapes {
+            Shapes::Kept => self.solve_commit(),
+            Shapes::AsBefore => self.solve(&[]),
+        }
     }
 
     pub fn remove_constraint(&mut self, id: ConstraintId) {
@@ -1072,12 +1163,8 @@ impl Editor {
             }
         };
         self.settle_fillet(&c);
-        // One end stays where it is if it can, as with a dimension (#348).
-        if let Some(k) = keep {
-            let named: HashSet<EntityId> = c.entities().collect();
-            self.keep_in_place(&[id], &named, k, &degenerate_before);
-        }
-        let report = self.solve(&[]);
+        let named: HashSet<EntityId> = c.entities().collect();
+        let report = self.solve_typed_size(id, &named, keep, &degenerate_before);
         let error = if self.new_conflicts(&report) {
             Some(EditError::Conflict)
         } else if self.new_degeneracy(&degenerate_before) {

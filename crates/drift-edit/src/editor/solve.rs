@@ -3,6 +3,29 @@
 
 use super::*;
 
+/// What a line's length weighs in an edit's solve against its direction and the arcs' radii,
+/// where they can't all be met (see [`Editor::kept_shapes`]): a line keeps its direction
+/// first. (Weights, not a strict order: where a length must change, its direction and the
+/// radii beside it give way by about this share of the change, micrometres in a change of
+/// millimetres.)
+const LENGTH_YIELD: f64 = 1e-3;
+
+/// What the lengths of the lines a new relation names weigh against
+/// the rest's lengths (see [`Editor::kept_shapes`]): the named take up the change.
+const NAMED_YIELD: f64 = 1e-3;
+
+/// The shapes an edit's solve keeps where the relations leave room (see
+/// [`Editor::kept_shapes`]), as the solver takes them.
+#[derive(Default)]
+pub(crate) struct KeptShapes {
+    pub lengths: HashMap<EntityId, f64>,
+    pub length_ranks: HashMap<EntityId, f64>,
+    /// As before the audit's PR 6 (see [`drift_solver::SolveOptions::shapes_as_before`]).
+    pub as_before: bool,
+    pub directions: HashMap<EntityId, DVec2>,
+    pub radii: HashMap<EntityId, f64>,
+}
+
 impl Editor {
     /// The entities a drag of `ids` can move (cached while the make-up is unchanged: see
     /// [`drag_scope_and_parts`](Self::drag_scope_and_parts)).
@@ -67,6 +90,10 @@ impl Editor {
         drift_solver::solve(&mut self.doc, &options)
     }
 
+    /// Solve with `dragged` held where they are, and no shape kept: what a drag of a circle's
+    /// radius or of an offset's side solves each step ([`drag_radius`](Self::drag_radius),
+    /// [`drag_offset`](Self::drag_offset)). An edit's solve is
+    /// [`solve_commit`](Self::solve_commit).
     pub(crate) fn solve(&mut self, dragged: &[Param]) -> SolveReport {
         let options = SolveOptions {
             dragged: dragged.to_vec(),
@@ -74,6 +101,192 @@ impl Editor {
             ..Default::default()
         };
         drift_solver::solve(&mut self.doc, &options)
+    }
+
+    /// An edit's solve: the relations met, and every shape kept where they leave room (see
+    /// [`kept_shapes`](Self::kept_shapes)). From geometry where the relations already hold
+    /// (the commit after a drag, or after a relation's own solve) it takes no step.
+    pub(crate) fn solve_commit(&mut self) -> SolveReport {
+        let kept = self.kept_shapes(&HashSet::new());
+        let options = SolveOptions {
+            lowering: self.lowering(),
+            lengths: kept.lengths,
+            length_ranks: kept.length_ranks,
+            shapes_as_before: kept.as_before,
+            directions: kept.directions,
+            radii: kept.radii,
+            ..Default::default()
+        };
+        drift_solver::solve(&mut self.doc, &options)
+    }
+
+    /// The shapes an edit's solve keeps where the relations leave room, as the geometry
+    /// stands (the audit's PR 6, #350). The solver meets the relations first and only then,
+    /// among their solutions, comes as near these as it can, so a relation that sets a size
+    /// or turns a line changes it, and nothing changes that it leaves free:
+    /// - every arc and circle keeps its radius, and every line its direction (the sketch
+    ///   stays square);
+    /// - a line keeps its length where keeping it moves nothing else: where it hangs from the
+    ///   rest (an end no other curve and no relation uses, as in a drag). A line between two
+    ///   ends the rest of the sketch holds keeps its direction and stretches along itself where
+    ///   they part (a dimension typed on an outline's side moves the side across and stretches
+    ///   the two beside it), rather than carry the rest of the sketch along to keep its length:
+    ///   a relation moves what it relates, not the whole sketch;
+    /// - geometry a new relation names (`turning`) takes up its change by moving and turning:
+    ///   its lines keep their lengths but not their directions (a line made parallel to another
+    ///   turns, and neither stretches), and its arcs take up the change in their radii (a
+    ///   fillet made concentric with a round grows inside lines that stay square, #75);
+    /// - a size a dimension sets is the dimension's, not a preference.
+    ///
+    /// Where they can't all be met, a length ranks below a direction or a radius
+    /// ([`LENGTH_YIELD`]), and a length of what the relation names lower still
+    /// ([`NAMED_YIELD`]). What a solve holds where it is (the active element, carried) ranks
+    /// above all of these.
+    pub(crate) fn kept_shapes(&self, turning: &HashSet<EntityId>) -> KeptShapes {
+        let mut kept = KeptShapes::default();
+        // Only what the relations reach (through shared points and relations) can move in an
+        // edit's solve: the rest of a big drawing (imported linework, say) is left out, which
+        // changes nothing but what the solve has to look through.
+        let reached = self.related_reach();
+        let curves: Vec<(EntityId, EntityKind)> = reached
+            .iter()
+            .filter_map(|id| self.doc.get(*id).map(|e| (*id, e.kind)))
+            .filter(|(_, kind)| !kind.is_point())
+            .collect();
+        // How many curves use each point, and which points relations name: a line with an
+        // end used by it alone, and by no relation, hangs.
+        let mut uses: HashMap<EntityId, usize> = HashMap::new();
+        for (_, kind) in &curves {
+            for p in kind.points() {
+                *uses.entry(p).or_default() += 1;
+            }
+        }
+        let related: HashSet<EntityId> = self
+            .doc
+            .constraints()
+            .flat_map(|(_, c)| c.entities().collect::<Vec<_>>())
+            .collect();
+        let hangs = |p: EntityId| uses.get(&p) == Some(&1) && !related.contains(&p);
+        // Sizes a dimension sets are the dimension's, not preferences: the lines whose ends a
+        // distance holds apart, and the arcs a radius or diameter sizes.
+        let mut sized: HashSet<(EntityId, EntityId)> = HashSet::new();
+        let mut sized_arcs: HashSet<EntityId> = HashSet::new();
+        for (_, c) in self
+            .doc
+            .constraints()
+            .filter(|(id, _)| !self.doc.is_driven(*id))
+        {
+            match *c {
+                Constraint::Distance { a, b, .. } => {
+                    sized.insert((a.min(b), a.max(b)));
+                }
+                Constraint::Radius { curve, .. }
+                | Constraint::Diameter { curve, .. }
+                | Constraint::FixRadius { curve, .. } => {
+                    sized_arcs.insert(curve);
+                }
+                _ => {}
+            }
+        }
+        for &(id, kind) in &curves {
+            match kind {
+                EntityKind::Line { a, b } => {
+                    let (Ok(pa), Ok(pb)) = (self.doc.point(a), self.doc.point(b)) else {
+                        continue;
+                    };
+                    let turns = turning.contains(&id);
+                    if (turns || hangs(a) || hangs(b)) && !sized.contains(&(a.min(b), a.max(b))) {
+                        kept.lengths.insert(id, pa.distance(pb));
+                        let rank = if turns {
+                            LENGTH_YIELD * NAMED_YIELD
+                        } else {
+                            LENGTH_YIELD
+                        };
+                        kept.length_ranks.insert(id, rank);
+                    }
+                    if !turns && let Some(u) = (pb - pa).try_normalize() {
+                        kept.directions.insert(id, u);
+                    }
+                }
+                // (Circles too, as the main-fix PR after PR 3 keeps them in drags.)
+                EntityKind::Arc { .. } | EntityKind::Circle { .. }
+                    if !turning.contains(&id) && !sized_arcs.contains(&id) =>
+                {
+                    if let Some(r) = drift_solver::radius_of(&self.doc, id) {
+                        kept.radii.insert(id, r);
+                    }
+                }
+                _ => {}
+            }
+        }
+        kept
+    }
+
+    /// What the driving relations reach through shared points and relations: all an edit's
+    /// solve can move. Kept while the sketch's make-up is the same (moves don't change it).
+    fn related_reach(&self) -> std::rc::Rc<HashSet<EntityId>> {
+        let make_up = self.doc.make_up();
+        if let Some((key, reach)) = &*self.related_reach.borrow()
+            && *key == make_up
+        {
+            return reach.clone();
+        }
+        let seeds: Vec<EntityId> = self
+            .doc
+            .constraints()
+            .filter(|(id, _)| !self.doc.is_driven(*id))
+            .flat_map(|(_, c)| c.entities().collect::<Vec<_>>())
+            .collect();
+        let reach = std::rc::Rc::new(if seeds.is_empty() {
+            HashSet::new()
+        } else {
+            drift_solver::connected_with(&self.doc, seeds, self.lowering().as_deref())
+        });
+        *self.related_reach.borrow_mut() = Some((make_up, reach.clone()));
+        reach
+    }
+
+    /// Where every point is and every circle's radius, to put back
+    /// ([`restore_geometry`](Self::restore_geometry)).
+    pub(super) fn points_and_circles(&self) -> Geometry {
+        let mut out = Geometry::default();
+        for (id, e) in self.doc.iter() {
+            match e.kind {
+                EntityKind::Point(p) => out.points.push((id, p)),
+                EntityKind::Circle { radius, .. } => out.circles.push((id, radius)),
+                _ => {}
+            }
+        }
+        out
+    }
+
+    /// The shapes a relation's solve kept before the audit's PR 6: the directions of the
+    /// lines and the radii of the arcs the relation doesn't name (`named`), no lengths. What
+    /// a relation is solved with where keeping every shape ([`kept_shapes`](Self::kept_shapes))
+    /// would leave it refused (see `Editor::check_new_constraints`).
+    pub(crate) fn kept_shapes_as_before(&self, named: &HashSet<EntityId>) -> KeptShapes {
+        let mut kept = KeptShapes {
+            as_before: true,
+            ..Default::default()
+        };
+        for (id, e) in self.doc.iter().filter(|(id, _)| !named.contains(id)) {
+            match e.kind {
+                EntityKind::Line { a, b } => {
+                    if let (Ok(pa), Ok(pb)) = (self.doc.point(a), self.doc.point(b))
+                        && let Some(u) = (pb - pa).try_normalize()
+                    {
+                        kept.directions.insert(id, u);
+                    }
+                }
+                EntityKind::Arc { .. } => {
+                    if let Some(r) = drift_solver::radius_of(&self.doc, id) {
+                        kept.radii.insert(id, r);
+                    }
+                }
+                _ => {}
+            }
+        }
+        kept
     }
 
     /// Relations on walls' faces lowered onto their centrelines, for the solver (None when
@@ -171,7 +384,7 @@ impl Editor {
         }
         // (Free lines alone have nothing to solve: no relations, nothing pinned or round.)
         let report = if drift_solver::anything_to_solve(&self.doc) {
-            self.solve(&[])
+            self.solve_commit()
         } else {
             SolveReport {
                 converged: true,

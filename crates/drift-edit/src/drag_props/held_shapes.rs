@@ -943,12 +943,14 @@ fn a_drag_refused_whole_leaves_the_history_as_any_refused_drag() {
     assert_eq!(theirs, (true, 0));
 }
 
-/// An unsettled start (a line drawn 9.51 where its dimension says 9, as an import or an old
+/// An unsettled start (a line drawn 10 where its dimension says 9, as an import or an old
 /// unsolved edit can leave it), beside a lever drag that can't land: every frame's solve settles
 /// it, and the rule reads the settling as the drag shortening a held line. A drag of nothing
 /// settles at once, as before; a real drag holds until the pointer has moved a hundredth of the
-/// unsettled amount for a line (about 0.005 here; a tenth for a radius, see the next test),
-/// then settles with the drag, at the origin and a kilometre out alike.
+/// unsettled amount for a line (0.01 here, to the next frame; a tenth for a radius, see the
+/// next test), then settles with the drag, at the origin and a kilometre out alike. (Opening
+/// the drawing settles it once, keeping the lever where it is and moving the hanging line's
+/// end; the line is then unsettled again by hand.)
 #[test]
 fn an_unsettled_start_holds_for_its_first_hundredth_then_goes() {
     for at in [DVec2::ZERO, DVec2::new(1e6, 0.0)] {
@@ -1000,7 +1002,8 @@ fn an_unsettled_start_holds_for_its_first_hundredth_then_goes() {
                     .unwrap()
                     .distance(ed.doc.point(h).unwrap())
             };
-            assert!(length(&ed) > 9.5);
+            let unsettled = length(&ed) - 9.0;
+            assert!(unsettled > 0.5);
             ed.doc.begin();
             let mut applied = DVec2::ZERO;
             let mut first = None;
@@ -1012,8 +1015,10 @@ fn an_unsettled_start_holds_for_its_first_hundredth_then_goes() {
                 }
             }
             let first = first.expect("goes in the end");
+            // (A hundredth of the unsettled amount, to the frame that first reaches it.)
+            let step = DVec2::splat(off).length() / f64::from(frames);
             assert!(
-                first < 0.01,
+                first <= unsettled / 100.0 + step,
                 "at {at}, {off} in {frames}: first went at {first}"
             );
             assert!((length(&ed) - 9.0).abs() < 1e-6, "at {at}: settled");

@@ -292,8 +292,11 @@ mod editing {
         };
         let (pp, qq) = (ed.doc.point(p).unwrap(), ed.doc.point(q).unwrap());
         let u = (b - a).normalize();
-        assert!((pp - qq).dot(u).abs() < 1e-9);
-        assert!(((pp + qq) * 0.5 - a).perp_dot(u).abs() < 1e-9);
+        // To the solver's bar (a billionth of a quarter of the sketch, about 30 mm across):
+        // the circle p is on keeps its radius, so the solve ends at the bar, not exactly.
+        let bar = 1e-9 * 30.0 / 4.0;
+        assert!((pp - qq).dot(u).abs() < bar);
+        assert!(((pp + qq) * 0.5 - a).perp_dot(u).abs() < bar);
     }
 
     #[test]
@@ -1687,15 +1690,16 @@ mod broken_geometry {
                 ed.set_dimension(height, 8.0 * scale).is_ok(),
                 "B {scale}× {at}"
             );
+            // To the solver's bar (a billionth of a quarter of the sketch, about 45 across):
+            // the circle's radius is kept where it can be, so the solve ends at the bar, not
+            // exactly. The radius is the height's error and the tangency's together: two bars.
+            let bar = 1e-9 * 45.0 * scale.max(1.0) / 4.0;
             let y = ed.doc.point(a).unwrap().y - at.y;
+            assert!((y + 2.0 * scale).abs() <= bar, "B {scale}× {at}: {y}");
+            let r = drift_solver::radius_of(&ed.doc, circle).unwrap();
             assert!(
-                (y + 2.0 * scale).abs() <= 1e-9 * scale.max(1.0),
-                "B {scale}× {at}: {y}"
-            );
-            assert!(
-                (drift_solver::radius_of(&ed.doc, circle).unwrap() - 2.0 * scale).abs()
-                    <= 1e-9 * scale,
-                "B {scale}× {at}"
+                (r - 2.0 * scale).abs() <= 2.0 * bar,
+                "B {scale}× {at}: r {r}"
             );
             assert!(ed.analysis().conflicts.is_empty(), "B {scale}× {at}");
         }

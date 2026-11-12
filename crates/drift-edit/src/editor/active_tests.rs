@@ -363,10 +363,12 @@ fn where_the_active_line_must_turn_its_neighbours_move_as_before() {
 
 #[test]
 fn a_relation_the_even_split_cannot_finish_may_be_added_keeping_the_active_one() {
-    // An L whose second line is held level: Collinear shared between the two collapses
-    // geometry, and is refused; with the level line active it stays, and the other turns
-    // onto its line, which meets the relation. (The one way the rule changes what is added:
-    // a relation keeping the active element can finish where the even split can't.)
+    // An L whose second line is held level: Collinear shared between the two collapsed
+    // geometry and was refused before the audit's PR 6; since then the lines keep their
+    // lengths, so the shared solve turns the free line onto the level one's line and adds it
+    // too. With the level line active it stays, and the other turns onto its line, which
+    // meets the relation. (The one way the rule changes what is added: a relation keeping the
+    // active element can finish where the even split can't.)
     let build = || {
         let mut ed = Editor::default();
         ed.doc.begin();
@@ -383,8 +385,8 @@ fn a_relation_the_even_split_cannot_finish_may_be_added_keeping_the_active_one()
     let (mut today, a, b, _) = build();
     let start = points(&today);
     let r = relate(&mut today, &[a, b], false, "Collinear");
-    assert!(matches!(r, Err(EditError::Degenerate)), "{r:?}");
-    assert_eq!(points(&today), start);
+    assert!(r.is_ok(), "{r:?}");
+    assert!(drift_solver::degenerate_entities(&today.doc).is_empty());
     let (mut ed, a, b, [far, corner, end]) = build();
     relate(&mut ed, &[a, b], true, "Collinear").unwrap();
     assert!(kept(&ed));
@@ -444,9 +446,21 @@ fn the_free_end_of_a_chain_turns_to_the_active_bar() {
         .iter()
         .map(|(p, s)| at(&today, *p).distance(*s))
         .collect();
-    // (Points 0 to 27; 28 and 29 are the active bar's, and don't move at all.)
+    // (Points 0 to 27; 28 and 29 are the active bar's, and don't move at all. To the solver's
+    // bar, 1e-9 of a quarter of the chain's size: where the solve keeps the bars' shapes, the
+    // rest of the chain can move by that much.)
+    let size = {
+        let (lo, hi) = start.iter().fold(
+            (DVec2::splat(f64::INFINITY), DVec2::splat(f64::NEG_INFINITY)),
+            |(lo, hi), (_, p)| (lo.min(*p), hi.max(*p)),
+        );
+        (hi - lo).length()
+    };
     for (k, (kept, today)) in kept_moves.iter().zip(&today_moves).enumerate().take(28) {
-        assert!(*kept <= *today + 1e-9, "point {k}: {kept} against {today}");
+        assert!(
+            *kept <= *today + 1e-9 * size / 4.0,
+            "point {k}: {kept} against {today}"
+        );
     }
     assert_eq!(kept_moves[28..30], [0.0, 0.0]);
 }

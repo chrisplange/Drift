@@ -24,6 +24,8 @@ mod filter;
 #[cfg(test)]
 mod hidden_points_tests;
 mod items;
+#[cfg(test)]
+mod kept_shapes_tests;
 mod layers;
 mod options;
 mod outbox;
@@ -347,6 +349,10 @@ pub struct Editor {
     /// while the sketch's make-up apart from fills stays the same: (dragged ids, the
     /// make-up, the connected set and its parts).
     drag_scope: std::cell::RefCell<Option<DragScope>>,
+    /// What the relations reach through shared points and relations (see
+    /// `Editor::kept_shapes`), while the sketch's make-up stays the same: (the make-up, the
+    /// set).
+    related_reach: std::cell::RefCell<Option<(u64, std::rc::Rc<HashSet<EntityId>>)>>,
     /// What tools see while a group or block is open for editing (see
     /// [`edit_scope`](Editor::edit_scope)), by group and document structure.
     edit_scope_cache: std::cell::RefCell<Option<(drift_core::GroupId, u64, EditScope)>>,
@@ -411,7 +417,7 @@ impl Editor {
         // older build edited it.
         editor.doc.begin();
         if editor.apply_parameters().is_ok() {
-            editor.solve(&[]);
+            editor.solve_commit();
         }
         let repaired = editor.repair_walls();
         let offsets_repaired = editor.repair_offsets();

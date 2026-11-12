@@ -2003,7 +2003,13 @@ mod pick_memo_tests {
                     ed.commit("Move");
                 }
                 "a relation added" => {
-                    let (a, b) = (lines[rnd(lines.len())], lines[rnd(lines.len())]);
+                    // Not on the hatched rectangle (lines 0..4): a relation that reshapes it
+                    // decides whether later moves carry the hatch, and where a 300-step walk
+                    // of solves ends that up is round-off, not the memo (Windows and macOS
+                    // parted by 0.46 mm by step 171 on main), so the count of hatched moves
+                    // below would hang on the platform.
+                    let rest = &lines[4..];
+                    let (a, b) = (rest[rnd(rest.len())], rest[rnd(rest.len())]);
                     if a != b {
                         let _ = ed.add_constraints("Parallel", &[Constraint::Parallel { a, b }]);
                     }

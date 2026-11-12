@@ -71,6 +71,15 @@ pub struct System {
     /// lengths and directions): a drag's kept radii are held, not only preferred (see
     /// `newton`'s stop).
     pub radii_kept: usize,
+    /// What each of [`keep`](Self::keep) weighs against the others in the second stage where
+    /// they can't all be met (none past the end: 1; see
+    /// [`crate::SolveOptions::length_ranks`]).
+    pub keep_rank: Vec<f64>,
+    /// Keep shapes as before the audit's PR 6 ([`crate::SolveOptions::shapes_as_before`]).
+    pub shapes_as_before: bool,
+    /// Per group, the indices of the [`keep`](Self::keep) shapes over it, in order (empty
+    /// where `solve` hasn't indexed them: `reach` then looks through every shape).
+    pub keep_of_group: Vec<Vec<usize>>,
     /// Per group, the length bar the last solve measured its component against (`run`; zero
     /// for a group no component solved): what a kept shape over it is met to.
     pub bars: Vec<f64>,
@@ -89,8 +98,10 @@ pub enum Shape {
     /// The distance between two points (an arc's centre and start, a line's ends): x and y
     /// of each, and the distance.
     Distance([usize; 4], f64),
-    /// A line's direction: its ends' x and y, and the unit direction.
-    Direction([usize; 4], DVec2),
+    /// A line's direction: its ends' x and y, the unit direction, and the length it is
+    /// measured at (the line's as the solve began; `None`: as before the audit's PR 6, see
+    /// [`crate::SolveOptions::shapes_as_before`]).
+    Direction([usize; 4], DVec2, Option<f64>),
     /// A circle's radius: its radius parameter, and the radius.
     Radius(usize, f64),
 }
@@ -99,7 +110,7 @@ impl Shape {
     /// The parameters it is over.
     pub fn params(&self) -> &[usize] {
         match self {
-            Shape::Distance(k, _) | Shape::Direction(k, _) => k,
+            Shape::Distance(k, _) | Shape::Direction(k, ..) => k,
             Shape::Radius(r, _) => std::slice::from_ref(r),
         }
     }
@@ -115,14 +126,18 @@ impl Shape {
     /// How long the shape is at `value` ([`length`](Self::length); a circle's radius).
     pub fn size(&self, value: impl Fn(usize) -> f64) -> f64 {
         match self {
-            Shape::Distance(k, _) | Shape::Direction(k, _) => Self::length(k, value),
+            Shape::Distance(k, _) | Shape::Direction(k, ..) => Self::length(k, value),
             Shape::Radius(r, _) => value(*r).abs(),
         }
     }
 
-    /// How far off the shape is at `value`, as a distance (a direction's: how far one end is
-    /// off the line through the other), and its gradient over [`params`](Self::params), a
-    /// unit vector per end. `None` where the shape has collapsed (no distance to keep).
+    /// How far off the shape is at `value`, as a distance, and its gradient over
+    /// [`params`](Self::params) (a unit vector per end for a distance). `None` where the shape
+    /// has collapsed (no distance to keep). A direction's offset is the sine of the line's turn
+    /// at the length it was kept at, `l₀·sin θ`, while it faces the kept way, rising to `2·l₀`
+    /// turned end for end: the same at any length, so no line is kept square by shrinking it
+    /// (before, `l·sin θ` was: a line a relation must turn was shrunk to nothing to meet its
+    /// direction), and never met reversed.
     pub fn offset(&self, value: impl Fn(usize) -> f64) -> Option<([f64; 4], f64)> {
         match *self {
             Shape::Distance(k, d0) => {
@@ -133,9 +148,32 @@ impl Shape {
                     ([-ux, -uy, ux, uy], d - d0)
                 })
             }
-            Shape::Direction(k, u) => {
+            Shape::Direction(k, u, l0) => {
                 let [ax, ay, bx, by] = k.map(value);
-                Some(([-u.y, u.x, u.y, -u.x], (bx - ax) * u.y - (by - ay) * u.x))
+                let Some(l0) = l0 else {
+                    return Some(([-u.y, u.x, u.y, -u.x], (bx - ax) * u.y - (by - ay) * u.x));
+                };
+                let d = DVec2::new(bx - ax, by - ay);
+                let length = d.length();
+                // (Collapsed, or not a number: no direction to keep.)
+                if length.is_nan() || length <= 0.0 {
+                    return None;
+                }
+                let along = d / length;
+                // The sine of the turn, and its gradient over the line's far end.
+                let n = DVec2::new(u.y, -u.x);
+                let sine = along.dot(n);
+                let g = (n - along * sine) / length;
+                let (off, g) = if along.dot(u) >= 0.0 {
+                    (l0 * sine, g * l0)
+                } else {
+                    // Facing the other way: l₀·(2 − |sin|), which meets l₀·sin where the line
+                    // stands square to the kept direction and grows to twice its length turned
+                    // end for end, so the shape always leads back the way it was kept.
+                    let sign = if sine < 0.0 { -1.0 } else { 1.0 };
+                    (sign * l0 * (2.0 - sine.abs()), -g * l0)
+                };
+                Some(([-g.x, -g.y, g.x, g.y], off))
             }
             // (The gradient's first entry is the radius's; its parameters are that one.)
             Shape::Radius(r, r0) => Some(([1.0, 0.0, 0.0, 0.0], value(r) - r0)),
@@ -1298,6 +1336,9 @@ impl System {
             redundant,
             entities,
             radii_kept: keep_shape.len(),
+            keep_rank: Vec::new(),
+            shapes_as_before: false,
+            keep_of_group: Vec::new(),
             keep: keep_shape,
             bars: Vec::new(),
             arcs,

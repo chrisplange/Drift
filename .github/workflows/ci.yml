@@ -5,10 +5,17 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # Merges made by the auto-merge job's token don't fire `push`; it dispatches this workflow
+  # on main instead, and the nightly run catches anything a dispatch missed.
+  schedule:
+    - cron: "41 5 * * *"
 
+# A pull request's newer push cancels its older run. On main every commit gets its own
+# group, so no run there is cancelled or dropped while queued, and a red main names the
+# merge that broke it.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -84,6 +91,18 @@ jobs:
         run: python -m unittest discover -s integrations/blender/tests -p "test_*.py" -v
       - name: The manifest's version is Drift's
         run: python scripts/package-blender-addon.py --check
+
+  # The merge-gate scripts: tiers, the Solver review status and the auto-merge rules.
+  gates:
+    name: Merge-gate scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Unit tests
+        run: python -m unittest discover -s scripts/tests -v
 
   # The add-on in a real Blender (the oldest it supports), headless. It downloads Blender, so
   # it is optional: a failure to fetch it doesn't fail the build.

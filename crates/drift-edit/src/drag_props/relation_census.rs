@@ -371,6 +371,55 @@ fn nudged_edits_agree(cases_wanted: &[usize]) {
     );
 }
 
+/// Edits the census found adding a relation or a typed size by shrinking a curve nearly to
+/// nothing (a 30 mm line, arcs of radius 8 and 20, a line beside a typed size, a corner
+/// made square), each refused or solved as before on main: no line or radius ends under a
+/// thousandth of what it was, short of the zero read as collapsed.
+#[test]
+fn no_edit_leaves_a_sliver() {
+    const CASES: [usize; 5] = [206, 389, 911, 18319, 19049];
+    let mut next = cases();
+    let mut fails = Vec::new();
+    for case in 0..=CASES.iter().copied().max().unwrap() {
+        let (plan, add, seed, active) = next();
+        if !CASES.contains(&case) {
+            continue;
+        }
+        let sketch = plan.sketch().expect("the case builds");
+        let mut built = Built::new(&sketch, Similarity::IDENTITY).expect("the case builds");
+        let (c, picks) = constraint(&built, add, seed).expect("the case picks");
+        let (lines0, arcs0) = shapes(&built.ed);
+        let ed = &mut built.ed;
+        ed.selection = picks.iter().copied().collect();
+        ed.set_active(if active { picks.last().copied() } else { None });
+        let added = apply(ed, add, c, &picks).is_ok();
+        let (lines1, arcs1) = shapes(&built.ed);
+        for ((id, a0, b0), (_, a1, b1)) in lines0.iter().zip(&lines1) {
+            let (l0, l1) = (a0.distance(*b0), a1.distance(*b1));
+            if l1 < 1e-3 * l0 {
+                fails.push(format!(
+                    "case {case} (added {added}): line {id:?} {l0} -> {l1:e}"
+                ));
+            }
+        }
+        for ((id, r0), (_, r1)) in arcs0.iter().zip(&arcs1) {
+            if *r1 < 1e-3 * r0 {
+                fails.push(format!(
+                    "case {case} (added {added}): arc {id:?} {r0} -> {r1:e}"
+                ));
+            }
+        }
+    }
+    assert!(
+        fails.is_empty(),
+        "{}",
+        fails.join(
+            "
+"
+        )
+    );
+}
+
 #[test]
 #[ignore = "census: run in release with --ignored --exact --nocapture"]
 fn relation_census() {

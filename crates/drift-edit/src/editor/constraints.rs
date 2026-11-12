@@ -227,11 +227,20 @@ impl Editor {
             &start,
             Shapes::Kept,
         );
+        // A curve shrunk to a sliver counts as collapsed here: a line's direction is kept at
+        // any length, so a solve that must turn lines can meet the relations by shrinking one
+        // to nearly nothing, short of the zero the analysis reads as collapsed, and too small
+        // to see or pick. (Solved as before then, a sliver is only ever left where that
+        // solve leaves one, so the bar can be generous: a thousandth of the curve.)
+        if error.is_none() && self.left_a_sliver(&start) {
+            error = Some(EditError::Degenerate);
+        }
         // The shapes are preferences: where keeping them leaves the relations refused (they
         // can lead the solve to a configuration the analysis reads as collapsed, or as one
         // where the relation adds nothing: a line kept at its length landing on another's
-        // line), the relations are solved as before, from the geometry as it was, and added
-        // if that adds them. So keeping shapes never refuses a relation.
+        // line) or a sliver, the relations are solved as before, from the geometry as it was,
+        // and added if that adds them. So keeping shapes never refuses a relation, nor adds
+        // one by leaving a sliver where it was solved as before.
         if error.is_some() {
             self.restore_geometry(&start);
             error = self.solve_new_relations(
@@ -251,6 +260,31 @@ impl Editor {
         }
         self.commit(label);
         Ok(())
+    }
+
+    /// Whether a line or an arc's or circle's radius is now under a thousandth of what it was
+    /// in `start` (and not already nothing there): left a sliver.
+    fn left_a_sliver(&self, start: &Geometry) -> bool {
+        let was: HashMap<EntityId, DVec2> = start.points.iter().copied().collect();
+        let radius_was: HashMap<EntityId, f64> = start.circles.iter().copied().collect();
+        let shrunk = |before: f64, now: f64| before > 0.0 && now < 1e-3 * before;
+        let between = |a: EntityId, b: EntityId| {
+            let (Some(a0), Some(b0)) = (was.get(&a), was.get(&b)) else {
+                return false;
+            };
+            let (Ok(a1), Ok(b1)) = (self.doc.point(a), self.doc.point(b)) else {
+                return false;
+            };
+            shrunk(a0.distance(*b0), a1.distance(b1))
+        };
+        self.doc.iter().any(|(id, e)| match e.kind {
+            EntityKind::Line { a, b } => between(a, b),
+            EntityKind::Arc { center, start, .. } => between(center, start),
+            EntityKind::Circle { radius, .. } => {
+                radius_was.get(&id).is_some_and(|&r0| shrunk(r0, radius))
+            }
+            _ => false,
+        })
     }
 
     /// Solve new constraints `ids` (naming `named`) keeping `shapes`, and the active element
@@ -818,15 +852,8 @@ impl Editor {
             return Err(EditError::Invalid(e.to_string()));
         }
         self.settle_fillet(&current.with_value(value));
-        // One end stays where it is if it can (#348); else, or then, as before: a solve
-        // that moves everything as little as it can (from where the kept one landed, it
-        // takes no step).
-        if let Some(k) = keep {
-            let named: HashSet<EntityId> = current.entities().collect();
-            let saved = self.points_and_circles();
-            self.keep_in_place(&[id], &named, k, &degenerate_before, &saved, Shapes::Kept);
-        }
-        let report = self.solve_commit();
+        let named: HashSet<EntityId> = current.entities().collect();
+        let report = self.solve_typed_size(id, &named, keep, &degenerate_before);
         let error = if self.new_conflicts(&report) {
             Some(EditError::Conflict)
         } else if self.new_degeneracy(&degenerate_before) {
@@ -841,6 +868,48 @@ impl Editor {
         }
         self.commit("Change dimension");
         Ok(())
+    }
+
+    /// The solve after a typed size `id` (naming `named`) was set in the open transaction:
+    /// one end, `keep`, stays where it is if it can (#348); else, or then, a solve that
+    /// keeps shapes (from where the kept one landed, it takes no step). Where keeping
+    /// shapes leaves a sliver, solved as before from the geometry as it was (see
+    /// [`check_new_constraints`](Self::check_new_constraints)).
+    fn solve_typed_size(
+        &mut self,
+        id: ConstraintId,
+        named: &HashSet<EntityId>,
+        keep: Option<EntityId>,
+        degenerate_before: &[EntityId],
+    ) -> SolveReport {
+        let start = self.points_and_circles();
+        let report =
+            self.solve_typed_size_keeping(id, named, keep, degenerate_before, &start, Shapes::Kept);
+        if !self.left_a_sliver(&start) {
+            return report;
+        }
+        self.restore_geometry(&start);
+        self.solve_typed_size_keeping(id, named, keep, degenerate_before, &start, Shapes::AsBefore)
+    }
+
+    /// [`solve_typed_size`](Self::solve_typed_size) keeping `shapes`. `start`: the geometry
+    /// as the edit found it.
+    fn solve_typed_size_keeping(
+        &mut self,
+        id: ConstraintId,
+        named: &HashSet<EntityId>,
+        keep: Option<EntityId>,
+        degenerate_before: &[EntityId],
+        start: &Geometry,
+        shapes: Shapes,
+    ) -> SolveReport {
+        if let Some(k) = keep {
+            self.keep_in_place(&[id], named, k, degenerate_before, start, shapes);
+        }
+        match shapes {
+            Shapes::Kept => self.solve_commit(),
+            Shapes::AsBefore => self.solve(&[]),
+        }
     }
 
     pub fn remove_constraint(&mut self, id: ConstraintId) {
@@ -1094,13 +1163,8 @@ impl Editor {
             }
         };
         self.settle_fillet(&c);
-        // One end stays where it is if it can, as with a dimension (#348).
-        if let Some(k) = keep {
-            let named: HashSet<EntityId> = c.entities().collect();
-            let saved = self.points_and_circles();
-            self.keep_in_place(&[id], &named, k, &degenerate_before, &saved, Shapes::Kept);
-        }
-        let report = self.solve_commit();
+        let named: HashSet<EntityId> = c.entities().collect();
+        let report = self.solve_typed_size(id, &named, keep, &degenerate_before);
         let error = if self.new_conflicts(&report) {
             Some(EditError::Conflict)
         } else if self.new_degeneracy(&degenerate_before) {

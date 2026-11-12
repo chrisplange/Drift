@@ -173,7 +173,7 @@ impl DriftApp {
                                 ed.doc.begin();
                                 ed.doc
                                     .set_draft_style(drift_core::DraftStyle { scale: n, ..style });
-                                ed.commit("Drawing scale");
+                                ed.commit("Drafting style");
                                 self.drawing.scale_hint_closed = true;
                             }
                         }

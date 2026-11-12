@@ -637,7 +637,7 @@ impl DriftApp {
             };
             ed.doc.set_fill(id, f);
         }
-        ed.commit("Hatch");
+        ed.commit("Edit fill");
         ui.close();
     }
 }

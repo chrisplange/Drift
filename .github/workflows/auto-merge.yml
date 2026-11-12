@@ -1,0 +1,48 @@
+name: Auto-merge
+
+# Merges auto-tier pull requests once every required check is green (scripts/auto_merge.py
+# says exactly when). Agent sessions never merge; gated and solver PRs wait for the owner.
+#
+# Runs whenever a workflow that reports a required check finishes on a pull request. It
+# checks out the default branch only, never the PR's code. `workflow_run` fires only for
+# workflows on the default branch, so this does nothing until it is merged.
+
+on:
+  workflow_run:
+    workflows: [CI, Solver bar, Tier]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number to try
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+  checks: read
+  statuses: read
+
+concurrency:
+  group: auto-merge
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    name: Merge if auto-tier and green
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.event == 'pull_request' &&
+       github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - name: Merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ inputs.pr || github.event.workflow_run.pull_requests[0].number }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: python3 scripts/auto_merge.py

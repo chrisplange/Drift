@@ -2547,18 +2547,36 @@ impl Editor {
     /// The topmost visible fill under `p` (of the group or block open for editing, if one
     /// is).
     pub fn fill_at(&mut self, p: DVec2) -> Option<FillId> {
+        self.fills_under(p, true).first().copied()
+    }
+
+    /// Every visible fill under `p`, topmost first (of the group or block open for editing,
+    /// if one is).
+    pub fn fills_at(&mut self, p: DVec2) -> Vec<FillId> {
+        self.fills_under(p, false)
+    }
+
+    /// The visible fills under `p`, topmost first: only the first with `first`.
+    fn fills_under(&mut self, p: DVec2, first: bool) -> Vec<FillId> {
         let shapes = self.fill_shapes();
-        self.fills_in_order().into_iter().rev().find(|id| {
-            if !self.fill_in_scope(*id) {
-                return false;
+        let mut found = Vec::new();
+        for id in self.fills_in_order().into_iter().rev() {
+            if !self.fill_in_scope(id) {
+                continue;
             }
             let visible = self
                 .doc
-                .fill(*id)
+                .fill(id)
                 .and_then(|f| self.doc.layer(f.layer))
                 .is_none_or(|l| l.visible);
-            visible && shapes.get(id).is_some_and(|s| s.region.contains(p))
-        })
+            if visible && shapes.get(&id).is_some_and(|s| s.region.contains(p)) {
+                found.push(id);
+                if first {
+                    break;
+                }
+            }
+        }
+        found
     }
 
     /// The eyedropper: make the style of the fill under `p` the Fill tool's style.

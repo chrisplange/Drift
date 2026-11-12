@@ -78,7 +78,13 @@ impl Editor {
 
     /// The text under `p` (inside its bounds, with `tol` to spare), smallest first.
     pub fn text_at(&self, p: DVec2, tol: f64) -> Option<TextId> {
-        self.doc
+        self.texts_at(p, tol).first().copied()
+    }
+
+    /// Every text under `p` (inside its bounds, with `tol` to spare), smallest first.
+    pub fn texts_at(&self, p: DVec2, tol: f64) -> Vec<TextId> {
+        let mut found: Vec<(TextId, f64)> = self
+            .doc
             .texts()
             .filter(|(_, t)| {
                 self.doc
@@ -93,8 +99,10 @@ impl Editor {
                     && p.y <= b.max.y + tol;
                 inside.then(|| (id, (b.max - b.min).length()))
             })
-            .min_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|(id, _)| id)
+            .collect();
+        // (Stable: equal sizes keep the drawing's order, as `min_by` kept the first.)
+        found.sort_by(|a, b| a.1.total_cmp(&b.1));
+        found.into_iter().map(|(id, _)| id).collect()
     }
 
     /// Outlines of the visible texts, coloured by their own or their layer's colour.

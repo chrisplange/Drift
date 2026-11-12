@@ -1,0 +1,67 @@
+# Merge tiers by changed path. Read by scripts/tier.py; every workflow that needs a PR's
+# tier asks that script, and nothing trusts a label.
+#
+# A PR's tier is the strictest one any of its files falls in:
+#   solver - gated, and the "Solver review" status needs the owner's review marker
+#   gated  - waits for the owner to merge
+#   auto   - everything else; merged by .github/workflows/auto-merge.yml once every
+#            required check is green
+# [heavy] is not a tier: a PR touching any of its paths (or any solver path) runs the heavy
+# drag matrix in solver-bar.yml. It is broader than [solver] on purpose: the document model
+# and the editor feed every drag, so they are tested by the matrix without each needing a
+# separate review.
+#
+# Patterns are matched against repo-relative paths with forward slashes. `**` matches any
+# number of directories (including none), `*` anything within one path segment.
+# This file is itself gated (.github/**), so a PR can't loosen its own tier.
+
+[solver]
+# The solver, its tolerance and relation definitions, and the editor's drag and solve paths.
+crates/drift-solver/**
+crates/drift-core/src/constraint.rs
+crates/drift-core/src/tolerance.rs
+crates/drift-edit/src/drag_props.rs
+crates/drift-edit/src/drag_props/**
+crates/drift-edit/src/editor/drag.rs
+crates/drift-edit/src/editor/drag_speed_tests.rs
+crates/drift-edit/src/editor/solve.rs
+crates/drift-edit/src/editor/kept_shapes_tests.rs
+crates/drift-edit/src/editor/active_tests.rs
+scripts/solver-bar/**
+
+[gated]
+# File format, save/load, recovery, import and export.
+crates/drift-io/**
+docs/file-format.md
+crates/drift-app/src/output.rs
+crates/drift-app/src/app/import_ui.rs
+crates/drift-app/src/app/recovery.rs
+crates/drift-app/src/app/document.rs
+# The AI link (reads and writes files, serves a local connection) and the updater.
+apps/mcp/**
+crates/drift-app/src/agent/**
+crates/drift-app/src/update/**
+# Dependencies, versions and releases.
+Cargo.toml
+Cargo.lock
+**/Cargo.toml
+scripts/package-*
+LICENSE.md
+THIRD-PARTY-NOTICES.txt
+# CI and the process itself.
+.github/**
+.claude/**
+CLAUDE.md
+WORKFLOW.md
+scripts/tier.py
+scripts/review_gate.py
+scripts/auto_merge.py
+scripts/protect-main.ps1
+scripts/tests/**
+
+[heavy]
+# What the heavy drag matrix watched before tiers existed.
+crates/drift-core/**
+crates/drift-edit/src/editor/**
+Cargo.lock
+.github/workflows/solver-bar.yml

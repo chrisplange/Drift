@@ -1051,6 +1051,7 @@ impl DriftApp {
             self.drawing.inference_points.clear();
             self.drawing.editor.highlight.clear();
             self.tool = kind.create();
+            self.drawing.editor.pick_cycle.reset();
             self.drawing.editor.hovered = None;
             self.drawing.editor.reach = None;
             self.drawing.editor.hovered_fill = None;

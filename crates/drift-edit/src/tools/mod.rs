@@ -35,6 +35,8 @@ mod opening;
 #[cfg(test)]
 mod opening_tests;
 mod pen;
+#[cfg(test)]
+mod pick_cycle_tests;
 mod picking;
 mod place_block;
 mod point;
@@ -78,6 +80,22 @@ pub use self::{
     line::LineTool, point::PointTool, rectangle::RectangleTool, select::SelectTool,
     tangent_arc::TangentArcTool, three_point_arc::ThreePointArcTool,
 };
+
+pub(crate) use self::picking::Pick;
+
+/// A plain Select click at `p` on an annotation (a dimension, relation or note): whether it
+/// goes on to the next of what is under the pointer there, which the select tool then picks
+/// with the click, rather than picking the annotation (click again to pick the next; see
+/// [`crate::pick_cycle`]).
+pub fn click_past_annotation(ed: &mut Editor, p: &Pointer) -> bool {
+    match picking::cycle_step(ed, p, 1) {
+        picking::Step::Lead => false,
+        picking::Step::Tool(pick) => {
+            ed.pick_cycle.hand(pick);
+            true
+        }
+    }
+}
 
 /// The geometry under the pointer that a temporary dimension's far end can measure to: a
 /// point, or a line (picked at its middle, the line).

@@ -30,6 +30,7 @@ mod openings_props;
 mod perf_big;
 #[cfg(test)]
 mod perf_tests;
+pub mod pick_cycle;
 pub mod picks;
 pub mod prefs;
 pub mod stack;

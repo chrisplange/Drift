@@ -1,0 +1,57 @@
+name: Quarantine
+
+# The flaky tests taken out of the normal run with `#[ignore = "flaky: #NNN"]`, each run by
+# name on the OS where it has flaked, so they still get exercised and the failures still show.
+# Not a required check: a red run here blocks nothing. When an issue is fixed, drop its
+# `#[ignore]` and its line below.
+#
+#   #409  mutated_dxf_never_panics                                  Windows
+#   #368  large_import_commits_quickly,
+#         many_filled_rectangles_made_shapes_commit_quickly         Windows (busy machine)
+#   #295  face_dimensions_hold_through_drags                        all three
+#   #296  faces_move_with_the_drawing                               Windows, macOS
+#   #297  openings_props_follow_edits_and_match_a_full_rebuild      macOS
+
+on:
+  schedule:
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  quarantine:
+    name: Quarantined tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: "#409 mutated_dxf_never_panics"
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        run: cargo test -p drift-io --test import_robustness -- --ignored --exact mutated_dxf_never_panics
+
+      - name: "#368 drift-edit commit-time budgets"
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        run: >
+          cargo test -p drift-edit --lib -- --ignored --exact
+          fill_tests::large_import_commits_quickly
+          fill_tests::many_filled_rectangles_made_shapes_commit_quickly
+
+      - name: "#295 face_dimensions_hold_through_drags"
+        if: ${{ !cancelled() }}
+        run: cargo test -p drift-edit --lib -- --ignored --exact drag_props::face_dimensions_hold_through_drags
+
+      - name: "#296 faces_move_with_the_drawing"
+        if: ${{ !cancelled() && runner.os != 'Linux' }}
+        run: cargo test -p drift-geom --test regions_props -- --ignored --exact faces_move_with_the_drawing
+
+      - name: "#297 openings_props_follow_edits_and_match_a_full_rebuild"
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        run: cargo test -p drift-edit --lib -- --ignored --exact openings_props::openings_props_follow_edits_and_match_a_full_rebuild

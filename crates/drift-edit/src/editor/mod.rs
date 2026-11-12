@@ -269,6 +269,9 @@ pub struct Editor {
     /// dimension and `selected_annotation`): added with Shift, or by a box.
     pub annotation_picks: Vec<drift_core::AnnotationRef>,
     pub hovered_annotation: Option<drift_core::AnnotationId>,
+    /// Where the last plain Select click was, to pick the next under it on a click there
+    /// again.
+    pub pick_cycle: crate::pick_cycle::PickCycle,
     /// The group being edited (its members pick one by one).
     pub open_group: Option<drift_core::GroupId>,
     /// Picked and hovered copies of blocks.

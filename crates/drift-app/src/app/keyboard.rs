@@ -186,6 +186,8 @@ impl DriftApp {
         }
 
         if pressed(Key::Escape) {
+            // Esc starts click again to pick the next afresh.
+            self.drawing.editor.pick_cycle.reset();
             if self.drawing.adding_leader.take().is_some()
                 || self.drawing.align_edge.take().is_some()
                 || self.drawing.selected_leader.take().is_some()

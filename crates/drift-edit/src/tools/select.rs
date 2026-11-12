@@ -1,6 +1,8 @@
 //! Select: pick, box-select, drag, and the Blender-style modal move (G).
 
-use super::picking::{Pick, Purpose, Target, target_at};
+use super::picking::{
+    Pick, Purpose, Step, Target, candidates_at, cycle_step, hover_next, target_at,
+};
 use super::*;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -791,9 +793,19 @@ impl Tool for SelectTool {
         }
         match input {
             Input::Hover(p) => {
-                let target = match self.drag {
-                    None => target_at(ed, &p, Purpose::Hover),
+                ed.pick_cycle.pointer_at(p.raw);
+                // On the spot of the last click: what the next click there picks.
+                let next = match self.drag {
+                    None => hover_next(ed, &p),
                     Some(_) => None,
+                };
+                if ed.pick_cycle.hover_passes_annotation() {
+                    ed.hovered_annotation = None;
+                }
+                let target = match (self.drag.is_some(), next) {
+                    (true, _) => None,
+                    (false, Some(next)) => next,
+                    (false, None) => target_at(ed, &p, Purpose::Hover),
                 };
                 ed.hovered = match &self.drag {
                     Some(SelectDrag::Radius { circle, .. }) => Some(*circle),
@@ -851,244 +863,40 @@ impl Tool for SelectTool {
                     ed.flip_openings(&[o], flip);
                     return;
                 }
-                let target = target_at(ed, &p, Purpose::Click);
-                if let Some(line) = target.and_then(Pick::midpoint) {
-                    if mods.command {
-                        if !ed.selected_midpoints.remove(&line) {
-                            ed.selected_midpoints.insert(line);
-                        }
-                    } else {
-                        if !mods.shift {
-                            ed.selection.clear();
-                            ed.selected_midpoints.clear();
-                        }
-                        ed.selected_midpoints.insert(line);
-                    }
-                    return;
-                }
-                if !mods.shift && !mods.command {
-                    ed.selected_midpoints.clear();
-                    // (A click on a dimension or annotation is the app's: this one is off
-                    // them.)
-                    ed.selected_annotation = None;
-                    ed.annotation_picks.clear();
-                }
-                let hit = target.and_then(Pick::entity);
-                let filter = ed.prefs.pick_filter;
-                // Sketch text (anywhere in its box): Shift adds it, Ctrl adds or takes it away.
-                if let Some(t) = target.and_then(Pick::text) {
-                    if mods.command {
-                        if !ed.selected_texts.remove(&t) {
-                            ed.selected_texts.insert(t);
-                        }
-                    } else if mods.shift {
-                        ed.selected_texts.insert(t);
-                    } else {
-                        ed.selected_texts = [t].into();
-                        ed.selection.clear();
-                        ed.selected_instances.clear();
-                        ed.selected_fills.clear();
-                        ed.selected_region = None;
-                    }
-                    return;
-                }
-                if !mods.shift && !mods.command {
-                    ed.selected_texts.clear();
-                }
-                // A copy of a block (on its curves, or inside it).
-                // (Only outside a group or block open for editing: inside one, nothing
-                // outside it is hit, and only Esc or Finish editing leaves it.)
-                if let Some(c) = target.and_then(Pick::copy) {
-                    if mods.command {
-                        if !ed.selected_instances.remove(&c) {
-                            ed.selected_instances.insert(c);
-                        }
-                    } else if mods.shift {
-                        ed.selected_instances.insert(c);
-                    } else {
-                        ed.selected_instances = [c].into();
-                        ed.selection.clear();
-                        ed.selected_fills.clear();
-                        ed.selected_region = None;
-                    }
-                    return;
-                }
-                if !mods.shift && !mods.command {
-                    ed.selected_instances.clear();
-                }
-                // Clicking inside a fill (not on a curve) picks the fill: a shape's fill picks
-                // the shape, its outline with it (so Duplicate, Copy, Move and Delete act on
-                // all of it). Inside another closed area, the region.
-                let fill = target.and_then(Pick::fill);
-                // Inside a wall's poché: the wall (the nearest, where walls merge).
-                if let Some(Pick::Wall(w, _)) = target
-                    && let Some(&first) = ed.wall_curves(w).first()
-                {
-                    let set = ed.wall_pick_set(w);
-                    if mods.command && ed.selection.contains(&first) {
-                        ed.selection.retain(|e| !set.contains(e));
-                    } else if mods.shift || mods.command {
-                        ed.selection.extend(set);
-                    } else {
-                        ed.selection = set;
-                        ed.selected_fills.clear();
-                        ed.selected_region = None;
-                    }
-                    ed.sync_group_fills();
-                    return;
-                }
-                // Alt-click inside a shape (not in a closed group): its fill alone, to align
-                // its pattern without the transform handles.
-                if mods.alt
-                    && !mods.shift
-                    && !mods.command
-                    && let Some(f) = fill
-                    && ed.fill_group(f).is_none()
-                    && ed.shape_outline(f).is_some()
-                {
-                    ed.pick_fill_alone(f);
-                    return;
-                }
-                // A shape in a group (not the open one) picks the whole group, as a click on
-                // its outline does.
-                if let Some(f) = fill
-                    && ed.fill_group(f).is_some()
-                    && let Some(&first) = ed.shape_outline(f).as_ref().and_then(|o| o.first())
-                {
-                    let set = ed.pick_set(first);
-                    if mods.command && ed.selection.contains(&first) {
-                        ed.selection.retain(|e| !set.contains(e));
-                    } else if mods.shift || mods.command {
-                        ed.selection.extend(set);
-                    } else {
-                        ed.selection = set;
-                        ed.selected_fills.clear();
-                        ed.selected_region = None;
-                    }
-                    ed.sync_group_fills();
-                    return;
-                }
-                // (With edges filtered out, the fill alone.)
-                let outline = fill
-                    .filter(|_| filter.has(crate::editor::PickKind::Edges))
-                    .and_then(|f| ed.shape_outline(f))
-                    .unwrap_or_default();
-                match fill {
-                    Some(f) if mods.command => {
-                        if ed.selected_fills.remove(&f) {
-                            for c in &outline {
-                                ed.selection.remove(c);
-                            }
-                        } else {
-                            ed.selected_fills.insert(f);
-                            ed.selection.extend(outline);
-                        }
-                    }
-                    Some(f) if mods.shift => {
-                        ed.selected_fills.insert(f);
-                        ed.selection.extend(outline);
-                    }
-                    Some(f) => {
-                        ed.selected_fills = [f].into();
-                        ed.selection = outline.into_iter().collect();
-                        ed.selected_region = None;
-                        return;
-                    }
-                    None if !mods.shift && !mods.command => ed.selected_fills.clear(),
-                    None => {}
-                }
-                if fill.is_some() {
-                    return;
-                }
-                ed.selected_region = match hit {
-                    // (A filled area was picked as its fill above: with areas picked only
-                    // where filled, an empty outline's inside picks nothing.)
-                    // (Not one outlined by hidden curves.)
-                    None if filter.areas() && !ed.regions_need_fill() => {
-                        ed.visible_region_at(p.raw).map(|_| p.raw)
-                    }
-                    _ => None,
-                };
-                match hit {
-                    Some(id) if mods.command => {
-                        let set = ed.pick_set(id);
-                        if ed.selection.contains(&id) {
-                            ed.selection.retain(|e| !set.contains(e));
-                        } else {
-                            ed.selection.extend(set);
-                            ed.set_active(active_pick(ed, id));
-                        }
-                    }
-                    // (Shift-click of an element already picked makes it the active one.)
-                    Some(id) if mods.shift => {
-                        let set = ed.pick_set(id);
-                        ed.selection.extend(set);
-                        ed.set_active(active_pick(ed, id));
-                    }
-                    Some(id) => {
-                        ed.selection = ed.pick_set(id);
-                        ed.set_active(active_pick(ed, id));
-                    }
-                    // Inside a closed area (with no fill): its outline curves.
-                    None => {
-                        let curves: Vec<EntityId> = match ed.region() {
-                            Some(r) => ed
-                                .region_curves(&r)
-                                .into_iter()
-                                .filter(|id| !ed.is_locked(*id))
-                                .collect(),
-                            None => Vec::new(),
-                        };
-                        if !mods.shift && !mods.command {
-                            ed.selection.clear();
-                        }
-                        ed.selection.extend(curves);
-                        ed.expand_groups();
-                    }
-                }
-                ed.sync_group_fills();
+                let target = click_target(ed, &p, mods);
+                click_pick(ed, &p, mods, target);
             }
             // Double-click a group's member to edit inside the group.
-            Input::DoubleClick(p) => match target_at(ed, &p, Purpose::DoubleClick) {
-                // Sketch text: type into it where it stands.
-                Some(Pick::Text(t)) => {
-                    ed.selected_texts = [t].into();
-                    ed.editing_text = Some(t);
-                    ed.text_caret_at = Some(p.raw);
-                }
-                Some(Pick::Copy(c)) => ed.edit_block(c),
-                Some(Pick::Geometry(Target::Entity(id))) => {
-                    if let Some(g) = ed.doc.group_of(id)
-                        && ed.open_group != Some(g)
-                    {
-                        ed.open_group = Some(g);
-                        ed.selection = [id].into();
+            Input::DoubleClick(p) => {
+                // The double-click's second click went on to the next thing under the
+                // pointer: back to what the first picked, which the double-click acts on.
+                ed.pick_cycle.forget_if_changed(ed.doc.revision());
+                if let Some((k, spot)) = ed.pick_cycle.step_back() {
+                    let target = candidates_at(ed, &p.at(spot)).get(k).copied();
+                    ed.set_active(None);
+                    click_pick(ed, &p, Modifiers::default(), target);
+                    if let Some((step, Some(len))) = ed.pick_cycle.position() {
+                        ed.out.inform(crate::pick_cycle::cycle_status(step, len));
                     }
                 }
-                // Inside a grouped shape's fill: into the group, with that shape picked. Inside
-                // a shape of its own (or of the open group): its fill alone.
-                Some(Pick::Wall(_, f) | Pick::Fill(f)) => {
-                    if let Some(outline) = ed.shape_outline(f) {
-                        match ed.fill_group(f) {
-                            Some(g) => {
-                                ed.open_group = Some(g);
-                                ed.selected_fills = [f].into();
-                                ed.selection = outline.into_iter().collect();
-                                ed.selected_region = None;
-                            }
-                            None => ed.pick_fill_alone(f),
-                        }
-                    }
-                }
-                // (No midpoints for a double-click.)
-                Some(Pick::Geometry(Target::Midpoint(_))) | None => {}
-            },
+                double_click(ed, &p);
+                // (A group or block may have opened: what's under the pointer changes.)
+                ed.pick_cycle.reset();
+            }
             Input::Finish => {}
             Input::DragStart(p, mods) => {
                 if self.start_handle_drag(&p, ed) {
                     return;
                 }
-                let target = target_at(ed, &p, Purpose::DragStart);
+                // From the spot of a click again: what that click picked (the drag moves it,
+                // not what a single click would take there).
+                ed.pick_cycle.forget_if_changed(ed.doc.revision());
+                let cycled = ed
+                    .pick_cycle
+                    .cycled_at(p.raw)
+                    .and_then(|(k, spot)| candidates_at(ed, &p.at(spot)).get(k).copied())
+                    .filter(|t| t.midpoint().is_none());
+                let target = cycled.or_else(|| target_at(ed, &p, Purpose::DragStart));
                 match target {
                     // A piece of an offset, with nothing else picked: change the offset's
                     // distance (with more picked, a drag moves the lot, the offset following
@@ -1509,6 +1317,7 @@ impl Tool for SelectTool {
     }
 
     fn cancel(&mut self, ed: &mut Editor) -> bool {
+        ed.pick_cycle.reset();
         if self.cancel_grab(ed) || self.cancel_spin(ed) {
             return true;
         }
@@ -1613,4 +1422,259 @@ impl Tool for SelectTool {
 fn active_pick(ed: &Editor, id: EntityId) -> Option<EntityId> {
     let set = ed.pick_set(id);
     (set.len() == 1 && set.contains(&id)).then_some(id)
+}
+
+/// What a click takes: with Shift or Ctrl what a single click picks; a plain click on the
+/// spot of the last one, the next of what is under the pointer there (see
+/// [`crate::pick_cycle`]).
+fn click_target(ed: &mut Editor, p: &Pointer, mods: Modifiers) -> Option<Pick> {
+    if mods.shift || mods.command {
+        ed.pick_cycle.reset();
+        return target_at(ed, p, Purpose::Click);
+    }
+    if let Some(handed) = ed.pick_cycle.take_handed() {
+        return handed;
+    }
+    match cycle_step(ed, p, 0) {
+        Step::Tool(pick) => pick,
+        // (No annotations ahead of the tool's.)
+        Step::Lead => None,
+    }
+}
+
+/// Pick `target` (or what's there for an empty area at `p`), as a click with `mods` does.
+fn click_pick(ed: &mut Editor, p: &Pointer, mods: Modifiers, target: Option<Pick>) {
+    if let Some(line) = target.and_then(Pick::midpoint) {
+        if mods.command {
+            if !ed.selected_midpoints.remove(&line) {
+                ed.selected_midpoints.insert(line);
+            }
+        } else {
+            if !mods.shift {
+                ed.selection.clear();
+                ed.selected_midpoints.clear();
+            }
+            ed.selected_midpoints.insert(line);
+        }
+        return;
+    }
+    if !mods.shift && !mods.command {
+        ed.selected_midpoints.clear();
+        // (A click on a dimension or annotation is the app's: this one is off
+        // them.)
+        ed.selected_annotation = None;
+        ed.annotation_picks.clear();
+    }
+    let hit = target.and_then(Pick::entity);
+    let filter = ed.prefs.pick_filter;
+    // Sketch text (anywhere in its box): Shift adds it, Ctrl adds or takes it away.
+    if let Some(t) = target.and_then(Pick::text) {
+        if mods.command {
+            if !ed.selected_texts.remove(&t) {
+                ed.selected_texts.insert(t);
+            }
+        } else if mods.shift {
+            ed.selected_texts.insert(t);
+        } else {
+            ed.selected_texts = [t].into();
+            ed.selection.clear();
+            ed.selected_instances.clear();
+            ed.selected_fills.clear();
+            ed.selected_region = None;
+        }
+        return;
+    }
+    if !mods.shift && !mods.command {
+        ed.selected_texts.clear();
+    }
+    // A copy of a block (on its curves, or inside it).
+    // (Only outside a group or block open for editing: inside one, nothing
+    // outside it is hit, and only Esc or Finish editing leaves it.)
+    if let Some(c) = target.and_then(Pick::copy) {
+        if mods.command {
+            if !ed.selected_instances.remove(&c) {
+                ed.selected_instances.insert(c);
+            }
+        } else if mods.shift {
+            ed.selected_instances.insert(c);
+        } else {
+            ed.selected_instances = [c].into();
+            ed.selection.clear();
+            ed.selected_fills.clear();
+            ed.selected_region = None;
+        }
+        return;
+    }
+    if !mods.shift && !mods.command {
+        ed.selected_instances.clear();
+    }
+    // Clicking inside a fill (not on a curve) picks the fill: a shape's fill picks
+    // the shape, its outline with it (so Duplicate, Copy, Move and Delete act on
+    // all of it). Inside another closed area, the region.
+    let fill = target.and_then(Pick::fill);
+    // Inside a wall's poché: the wall (the nearest, where walls merge).
+    if let Some(Pick::Wall(w, _)) = target
+        && let Some(&first) = ed.wall_curves(w).first()
+    {
+        let set = ed.wall_pick_set(w);
+        if mods.command && ed.selection.contains(&first) {
+            ed.selection.retain(|e| !set.contains(e));
+        } else if mods.shift || mods.command {
+            ed.selection.extend(set);
+        } else {
+            ed.selection = set;
+            ed.selected_fills.clear();
+            ed.selected_region = None;
+        }
+        ed.sync_group_fills();
+        return;
+    }
+    // Alt-click inside a shape (not in a closed group): its fill alone, to align
+    // its pattern without the transform handles.
+    if mods.alt
+        && !mods.shift
+        && !mods.command
+        && let Some(f) = fill
+        && ed.fill_group(f).is_none()
+        && ed.shape_outline(f).is_some()
+    {
+        ed.pick_fill_alone(f);
+        return;
+    }
+    // A shape in a group (not the open one) picks the whole group, as a click on
+    // its outline does.
+    if let Some(f) = fill
+        && ed.fill_group(f).is_some()
+        && let Some(&first) = ed.shape_outline(f).as_ref().and_then(|o| o.first())
+    {
+        let set = ed.pick_set(first);
+        if mods.command && ed.selection.contains(&first) {
+            ed.selection.retain(|e| !set.contains(e));
+        } else if mods.shift || mods.command {
+            ed.selection.extend(set);
+        } else {
+            ed.selection = set;
+            ed.selected_fills.clear();
+            ed.selected_region = None;
+        }
+        ed.sync_group_fills();
+        return;
+    }
+    // (With edges filtered out, the fill alone.)
+    let outline = fill
+        .filter(|_| filter.has(crate::editor::PickKind::Edges))
+        .and_then(|f| ed.shape_outline(f))
+        .unwrap_or_default();
+    match fill {
+        Some(f) if mods.command => {
+            if ed.selected_fills.remove(&f) {
+                for c in &outline {
+                    ed.selection.remove(c);
+                }
+            } else {
+                ed.selected_fills.insert(f);
+                ed.selection.extend(outline);
+            }
+        }
+        Some(f) if mods.shift => {
+            ed.selected_fills.insert(f);
+            ed.selection.extend(outline);
+        }
+        Some(f) => {
+            ed.selected_fills = [f].into();
+            ed.selection = outline.into_iter().collect();
+            ed.selected_region = None;
+            return;
+        }
+        None if !mods.shift && !mods.command => ed.selected_fills.clear(),
+        None => {}
+    }
+    if fill.is_some() {
+        return;
+    }
+    ed.selected_region = match hit {
+        // (A filled area was picked as its fill above: with areas picked only
+        // where filled, an empty outline's inside picks nothing.)
+        // (Not one outlined by hidden curves.)
+        None if filter.areas() && !ed.regions_need_fill() => {
+            ed.visible_region_at(p.raw).map(|_| p.raw)
+        }
+        _ => None,
+    };
+    match hit {
+        Some(id) if mods.command => {
+            let set = ed.pick_set(id);
+            if ed.selection.contains(&id) {
+                ed.selection.retain(|e| !set.contains(e));
+            } else {
+                ed.selection.extend(set);
+                ed.set_active(active_pick(ed, id));
+            }
+        }
+        // (Shift-click of an element already picked makes it the active one.)
+        Some(id) if mods.shift => {
+            let set = ed.pick_set(id);
+            ed.selection.extend(set);
+            ed.set_active(active_pick(ed, id));
+        }
+        Some(id) => {
+            ed.selection = ed.pick_set(id);
+            ed.set_active(active_pick(ed, id));
+        }
+        // Inside a closed area (with no fill): its outline curves.
+        None => {
+            let curves: Vec<EntityId> = match ed.region() {
+                Some(r) => ed
+                    .region_curves(&r)
+                    .into_iter()
+                    .filter(|id| !ed.is_locked(*id))
+                    .collect(),
+                None => Vec::new(),
+            };
+            if !mods.shift && !mods.command {
+                ed.selection.clear();
+            }
+            ed.selection.extend(curves);
+            ed.expand_groups();
+        }
+    }
+    ed.sync_group_fills();
+}
+
+/// A double-click: into a group or block, or typing into text.
+fn double_click(ed: &mut Editor, p: &Pointer) {
+    match target_at(ed, p, Purpose::DoubleClick) {
+        // Sketch text: type into it where it stands.
+        Some(Pick::Text(t)) => {
+            ed.selected_texts = [t].into();
+            ed.editing_text = Some(t);
+            ed.text_caret_at = Some(p.raw);
+        }
+        Some(Pick::Copy(c)) => ed.edit_block(c),
+        Some(Pick::Geometry(Target::Entity(id))) => {
+            if let Some(g) = ed.doc.group_of(id)
+                && ed.open_group != Some(g)
+            {
+                ed.open_group = Some(g);
+                ed.selection = [id].into();
+            }
+        }
+        // Inside a grouped shape's fill: into the group, with that shape picked. Inside
+        // a shape of its own (or of the open group): its fill alone.
+        Some(Pick::Wall(_, f) | Pick::Fill(f)) => {
+            if let Some(outline) = ed.shape_outline(f) {
+                match ed.fill_group(f) {
+                    Some(g) => {
+                        ed.open_group = Some(g);
+                        ed.selected_fills = [f].into();
+                        ed.selection = outline.into_iter().collect();
+                        ed.selected_region = None;
+                    }
+                    None => ed.pick_fill_alone(f),
+                }
+            }
+        }
+        // (No midpoints for a double-click.)
+        Some(Pick::Geometry(Target::Midpoint(_))) | None => {}
+    }
 }

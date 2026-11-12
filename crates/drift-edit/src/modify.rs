@@ -140,6 +140,64 @@ fn reflected_relation(
     })
 }
 
+/// About a slanted axis (`u`, a unit vector neither level nor plumb), what a reflection keeps
+/// of the level and plumb lines among `internal`, on their images: the level ones parallel to
+/// each other, the plumb ones too, and the first of each perpendicular. A rectangle's copy
+/// stays square, though free to turn. Pairs the originals already relate are left alone.
+fn squared_relations(
+    internal: &[(ConstraintId, Constraint)],
+    image: &impl Fn(EntityId) -> Option<EntityId>,
+    u: DVec2,
+) -> Vec<Constraint> {
+    const LEVEL: f64 = 1e-9;
+    if u.y.abs() <= LEVEL || u.x.abs() <= LEVEL {
+        return Vec::new();
+    }
+    let lines = |pick: fn(&Constraint) -> Option<EntityId>| -> Vec<EntityId> {
+        let mut out: Vec<EntityId> = internal.iter().filter_map(|(_, c)| pick(c)).collect();
+        out.dedup();
+        out
+    };
+    let level = lines(|c| match *c {
+        Constraint::Horizontal { line } => Some(line),
+        _ => None,
+    });
+    let plumb = lines(|c| match *c {
+        Constraint::Vertical { line } => Some(line),
+        _ => None,
+    });
+    let related = |a: EntityId, b: EntityId| {
+        internal.iter().any(|(_, c)| {
+            matches!(c,
+                Constraint::Parallel { a: x, b: y }
+                | Constraint::Perpendicular { a: x, b: y }
+                | Constraint::Collinear { a: x, b: y }
+                    if (*x == a && *y == b) || (*x == b && *y == a))
+        })
+    };
+    let mut pairs: Vec<(EntityId, EntityId, bool)> = Vec::new();
+    for group in [&level, &plumb] {
+        if let Some((&first, rest)) = group.split_first() {
+            pairs.extend(rest.iter().map(|&other| (first, other, true)));
+        }
+    }
+    if let (Some(&a), Some(&b)) = (level.first(), plumb.first()) {
+        pairs.push((a, b, false));
+    }
+    pairs
+        .into_iter()
+        .filter(|&(a, b, _)| !related(a, b))
+        .filter_map(|(a, b, parallel)| {
+            let (a, b) = (image(a)?, image(b)?);
+            Some(if parallel {
+                Constraint::Parallel { a, b }
+            } else {
+                Constraint::Perpendicular { a, b }
+            })
+        })
+        .collect()
+}
+
 fn invalid(msg: impl Into<String>) -> EditError {
     EditError::Invalid(msg.into())
 }
@@ -2726,6 +2784,9 @@ impl Editor {
                         let _ = self.doc.set_driven(new, true);
                     }
                 }
+            }
+            for c in squared_relations(&internal, &image, u) {
+                let _ = self.doc.add_constraint(c);
             }
             self.copy_fills_onto(|e| images.get(&e).copied(), reflect);
             self.copy_walls_onto(&|e| images.get(&e).copied(), &reflect, true);

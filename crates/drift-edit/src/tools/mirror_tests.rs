@@ -507,4 +507,114 @@ fn a_slanted_two_point_axis_keeps_lengths_and_angles_but_not_level_or_plumb() {
         1,
         "a slanted reflection isn't level"
     );
+    // No conflicts. The original can still slide (2); the copy can slide and turn (3).
+    ed.sync();
+    let report = ed.analysis();
+    assert!(report.conflicts.is_empty() && report.redundant.is_empty());
+    assert_eq!(report.dof, Some(5));
+}
+
+#[test]
+fn a_rectangle_mirrored_about_a_slanted_axis_stays_square_and_may_turn() {
+    let mut ed = Editor::default();
+    let sides = dimensioned_rectangle(&mut ed);
+    ed.selection = sides.iter().copied().collect();
+    let mut tool = MirrorTool::default();
+    // A 45° axis through (-5, -5) and (-15, 5).
+    let reflect = |p: DVec2| crate::modify::reflect_about(v(-5.0, -5.0), v(-15.0, 5.0), p);
+    click(&mut ed, &mut tool, v(-5.0, -5.0));
+    click(&mut ed, &mut tool, v(-15.0, 5.0));
+    assert_eq!(ed.out.notice, None);
+    for p in [v(2.0, 1.0), v(32.0, 1.0), v(32.0, 21.0), v(2.0, 21.0)] {
+        let at = reflect(p);
+        assert!(
+            ed.doc.iter().any(|(_, e)| match e.kind {
+                EntityKind::Point(q) => (q - at).length() < 1e-6,
+                _ => false,
+            }),
+            "{at:?}"
+        );
+    }
+    let count =
+        |pred: fn(&Constraint) -> bool| ed.doc.constraints().filter(|(_, c)| pred(c)).count();
+    // Level and plumb don't survive a slanted reflection: the copy's sides are parallel in
+    // pairs and square at a corner instead.
+    assert_eq!(count(|c| matches!(c, Constraint::Horizontal { .. })), 2);
+    assert_eq!(count(|c| matches!(c, Constraint::Vertical { .. })), 2);
+    assert_eq!(count(|c| matches!(c, Constraint::Parallel { .. })), 2);
+    assert_eq!(count(|c| matches!(c, Constraint::Perpendicular { .. })), 1);
+    ed.sync();
+    let report = ed.analysis();
+    assert!(report.conflicts.is_empty() && report.redundant.is_empty());
+    // The original is fully defined; the copy keeps its shape and can only turn about its
+    // fixed corner.
+    assert_eq!(report.dof, Some(1));
+    let mut lengths: Vec<f64> = copied_lines(&ed).iter().map(|l| length(&ed, *l)).collect();
+    lengths.sort_by(f64::total_cmp);
+    for (got, want) in lengths.iter().zip([20.0, 20.0, 30.0, 30.0]) {
+        assert!((got - want).abs() < 1e-9, "{lengths:?}");
+    }
+}
+
+#[test]
+fn a_rectangle_held_by_x_and_y_locks_mirrors_about_a_level_axis_fully_defined() {
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let p = [v(2.0, 1.0), v(32.0, 1.0), v(32.0, 21.0), v(2.0, 21.0)].map(|at| ed.doc.add_point(at));
+    let l: Vec<EntityId> = (0..4)
+        .map(|i| ed.doc.add_line(p[i], p[(i + 1) % 4]).unwrap())
+        .collect();
+    for c in [
+        Constraint::Horizontal { line: l[0] },
+        Constraint::Horizontal { line: l[2] },
+        Constraint::Vertical { line: l[1] },
+        Constraint::Vertical { line: l[3] },
+        Constraint::HorizontalDistance {
+            a: p[0],
+            b: p[1],
+            value: 30.0,
+        },
+        Constraint::VerticalDistance {
+            a: p[1],
+            b: p[2],
+            value: 20.0,
+        },
+        Constraint::FixX {
+            point: p[0],
+            x: 2.0,
+        },
+        Constraint::FixY {
+            point: p[0],
+            y: 1.0,
+        },
+    ] {
+        ed.doc.add_constraint(c).unwrap();
+    }
+    ed.commit("Rectangle");
+    ed.sync();
+    assert_eq!(ed.analysis().dof, Some(0));
+    ed.selection = l.iter().copied().collect();
+    let mut tool = MirrorTool::default();
+    // A level axis at y = -5: y = 1 goes to -11, y = 21 to -31.
+    click(&mut ed, &mut tool, v(-10.0, -5.0));
+    click(&mut ed, &mut tool, v(40.0, -5.0));
+    assert_eq!(ed.out.notice, None);
+    for at in [v(2.0, -11.0), v(32.0, -11.0), v(32.0, -31.0), v(2.0, -31.0)] {
+        assert!(has_point(&ed, at), "{at:?}");
+    }
+    ed.sync();
+    let report = ed.analysis();
+    assert!(report.conflicts.is_empty() && report.redundant.is_empty());
+    assert_eq!(report.dof, Some(0), "still fully defined");
+    // The copy's corner keeps its x and has its y at the image.
+    assert!(ed.doc.constraints().any(|(_, c)| matches!(c,
+        Constraint::FixY { y, .. } if (*y + 11.0).abs() < 1e-9)));
+    assert!(
+        ed.doc
+            .constraints()
+            .filter(|(_, c)| matches!(c,
+        Constraint::FixX { x, .. } if (*x - 2.0).abs() < 1e-9))
+            .count()
+            == 2
+    );
 }

@@ -30,3 +30,4 @@ One line per decision, approval or merge, newest last. Format: `YYYY-MM-DD | wha
 2026-11-11 | Dragging a point held on a fixed-centre circle outward past its radius stops the drag, the same as arcs; no circle exemption (confirms gated PR #398) | user
 2026-11-12 | A round set Equal to a fixed-centre round stops when dragged off its tangent line, for arcs and circles alike (merged #398 knowing it) | user
 2026-11-12 | The stage-2 stall fix (draft #400) continues as its own gated PR after PR 6 (#399) merges; it is not part of PR 6 | user
+2026-11-12 | Solver PR 6 (#399, edits keep shapes) merged before the separate Opus and Fable reviews ran; closes #350 | user

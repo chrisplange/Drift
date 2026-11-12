@@ -143,10 +143,13 @@ impl DriftApp {
         if !too_small {
             return;
         }
-        let scale = drift_core::sheets::scale_label(
-            self.drawing.editor.doc.draft_style().scale,
-            self.imperial(),
-        );
+        let doc = &self.drawing.editor.doc;
+        let now = doc.draft_style().scale;
+        let scale = drift_core::sheets::scale_label(now, self.imperial());
+        // The scale the sheets' views all share, offered in one click (#367).
+        let shared = doc
+            .sheets_shared_scale()
+            .filter(|n| !crate::app::scale_menu::same_scale(*n, now));
         egui::Area::new(egui::Id::new("scale_hint"))
             .fixed_pos(rect.left_bottom() + egui::vec2(12.0, -48.0))
             .order(egui::Order::Foreground)
@@ -156,6 +159,24 @@ impl DriftApp {
                         ui.label(format!(
                             "Annotations are at print size for {scale}: too small to read here."
                         ));
+                        if let Some(n) = shared {
+                            let label = drift_core::sheets::scale_label(n, self.imperial());
+                            if ui
+                                .button(format!("Set to {label} (the scale its sheets use)"))
+                                .on_hover_text(
+                                    "Every view on the drawing's sheets is at this scale",
+                                )
+                                .clicked()
+                            {
+                                let ed = &mut self.drawing.editor;
+                                let style = ed.doc.draft_style();
+                                ed.doc.begin();
+                                ed.doc
+                                    .set_draft_style(drift_core::DraftStyle { scale: n, ..style });
+                                ed.commit("Drawing scale");
+                                self.drawing.scale_hint_closed = true;
+                            }
+                        }
                         if ui
                             .button("Set drawing scale…")
                             .on_hover_text("Drawing settings → Drafting → Scale")

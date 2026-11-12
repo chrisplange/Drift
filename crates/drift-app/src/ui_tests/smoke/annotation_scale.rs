@@ -325,3 +325,81 @@ fn smoke_annotation_scale_custom_scale_field_keeps_the_menu_open_to_type() {
         "Enter applies the scale and closes the menu"
     );
 }
+
+/// A 20 m dimensioned plan at 1:1 in view, its sheets showing views at `scales` (one sheet
+/// per scale; none for an empty list).
+fn plan_with_sheet_views(h: &mut Harness<'_, DriftApp>, scales: &[f64]) {
+    {
+        let ed = &mut h.state_mut().drawing.editor;
+        ed.doc.begin();
+        let a = ed.doc.add_point(DVec2::new(0.0, 0.0));
+        let b = ed.doc.add_point(DVec2::new(20_000.0, 0.0));
+        ed.doc.add_line(a, b).unwrap();
+        ed.doc
+            .add_constraint(Constraint::Distance {
+                a,
+                b,
+                value: 20_000.0,
+            })
+            .unwrap();
+        for (k, n) in scales.iter().enumerate() {
+            let crop = drift_core::Bounds {
+                min: DVec2::new(0.0, -1000.0),
+                max: DVec2::new(20_000.0, 1000.0),
+            };
+            let view = ed
+                .doc
+                .add_view(drift_core::View::new(format!("V{k}"), crop, *n));
+            let mut sheet = drift_core::Sheet::new(format!("S{k}"));
+            sheet
+                .viewports
+                .push(drift_core::Viewport::new(view, DVec2::new(200.0, 150.0)));
+            ed.doc.add_sheet(sheet);
+        }
+        ed.commit("Plan");
+    }
+    view(
+        h,
+        DVec2::new(-1000.0, -5000.0),
+        DVec2::new(21_000.0, 5000.0),
+    );
+    h.run();
+    h.run();
+    assert!(h.query_by_label("Set drawing scale…").is_some(), "the hint");
+}
+
+#[test]
+fn smoke_annotation_scale_hint_offers_the_scale_the_sheets_share() {
+    const OFFER: &str = "Set to 1:50 (the scale its sheets use)";
+    // Every sheet view at 1:50: one click sets it, as one undo step, and the hint goes.
+    {
+        let Some(mut h) = harness() else { return };
+        plan_with_sheet_views(&mut h, &[50.0, 50.0]);
+        h.get_by_label(OFFER).click();
+        h.run();
+        h.run();
+        assert_eq!(h.state().drawing.editor.doc.draft_style().scale, 50.0);
+        assert!(h.query_by_label(OFFER).is_none());
+        assert!(h.query_by_label("Set drawing scale…").is_none());
+        undo(&mut h);
+        assert_eq!(h.state().drawing.editor.doc.draft_style().scale, 1.0);
+    }
+    // Views that disagree: the hint as before.
+    {
+        let Some(mut h) = harness() else { return };
+        plan_with_sheet_views(&mut h, &[50.0, 100.0]);
+        assert!(
+            h.query_by_label_contains("the scale its sheets use")
+                .is_none()
+        );
+    }
+    // No views: the hint as before.
+    {
+        let Some(mut h) = harness() else { return };
+        plan_with_sheet_views(&mut h, &[]);
+        assert!(
+            h.query_by_label_contains("the scale its sheets use")
+                .is_none()
+        );
+    }
+}

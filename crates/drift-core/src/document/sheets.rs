@@ -228,6 +228,19 @@ impl Document {
         )
     }
 
+    /// The scale (1 : n) every view placed on the drawing's sheets shares, if there is at
+    /// least one and they all agree; `None` when there are none or they differ.
+    pub fn sheets_shared_scale(&self) -> Option<f64> {
+        let mut scales = self
+            .sheets
+            .values()
+            .flat_map(|s| s.viewports.iter())
+            .filter_map(|p| self.views.get(&p.view).map(|v| v.scale));
+        let first = scales.next()?;
+        let same = |n: f64| (n - first).abs() <= 1e-6 * n.abs().max(first.abs());
+        scales.all(same).then_some(first)
+    }
+
     /// Write back viewport `index` of sheet `id` (and its view, which every sheet showing
     /// it follows).
     pub fn set_placed_view(&mut self, id: SheetId, index: usize, placed: &PlacedView) {

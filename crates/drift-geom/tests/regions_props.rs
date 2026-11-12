@@ -128,6 +128,8 @@ proptest! {
 
     /// Translating, rotating and scaling the drawing gives the same faces, moved.
     #[test]
+    // Flaky: a far move scaled to a tenth can change the faces (quarantine.yml runs it).
+    #[ignore = "flaky: #296"]
     fn faces_move_with_the_drawing(
         shapes in drawing(),
         dx in -1e4f64..1e4,

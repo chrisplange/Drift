@@ -66,7 +66,20 @@ jobs:
       - name: Install software Vulkan (lavapipe) for GPU render tests
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers
-      - run: cargo test --workspace
+      - name: cargo test --workspace
+        if: runner.os != 'Windows'
+        run: cargo test --workspace
+      # Windows: the same tests, with one retry for drift-app's alone. Its test binary sometimes
+      # dies mid UI tests under the WARP software renderer, at a different test each time
+      # (#353), so no single test can be quarantined. Every other crate gets no retry.
+      - name: cargo test --workspace (Windows, drift-app retried once for #353)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cargo test --workspace --exclude drift-app
+          cargo test -p drift-app && exit 0
+          echo "::warning::drift-app tests failed on Windows; retrying once (#353)"
+          cargo test -p drift-app
       # The editor, edits and tools without a window (no GPU; also part of the line above).
       - run: cargo test -p drift-edit
       # The browser demo: saving, exporting and printing show a note, and copies stay inside.

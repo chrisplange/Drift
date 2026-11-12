@@ -6,4 +6,5 @@ Things only the user can do. The hub adds to this list instead of pinging; the u
 - [ ] Closed-source move: move issues to the private tracker, then make the repo private
 - [ ] Next release: approve the version bump PR and push the gated tag (see docs/releasing.md)
 - [ ] Website: deploy What's new after each release
+- [ ] When PR 5 is picked up: answer the four questions in `docs/solver-audit-references.md` section 3.1
 - [ ] Upstream report to acadrust about the clockwise hatch-arc fix (#289), if wanted

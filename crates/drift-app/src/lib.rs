@@ -74,6 +74,8 @@ const SCROLL_ZOOM_SPEED: f64 = 0.0015;
 const FIT_MARGIN: f64 = 40.0;
 /// Pick and snap radius, in logical points.
 const PICK_RADIUS: f64 = 8.0;
+/// Seconds within which a second click makes a double-click.
+const DOUBLE_CLICK_DELAY: f64 = 0.5;
 /// A picked shape's status line says how to edit its fill on its own until its fill has
 /// been picked alone this many times.
 const FILL_ALONE_HINTS: u32 = 3;
@@ -859,6 +861,11 @@ impl DriftApp {
             theme::set_dark_look(look);
         }
         theme::apply(&cc.egui_ctx);
+        // Two clicks within half a second are a double-click (egui's own is 0.3 s, quicker than
+        // most people double-click; Windows uses 0.5 s). Slower clicks on one spot pick the
+        // next thing under the pointer.
+        cc.egui_ctx
+            .options_mut(|o| o.input_options.max_double_click_delay = DOUBLE_CLICK_DELAY);
         // Each window autosaves to a session file of its own.
         #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo"), not(test)))]
         {

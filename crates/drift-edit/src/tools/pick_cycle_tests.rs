@@ -241,3 +241,24 @@ fn a_double_click_on_a_grouped_line_with_another_over_it_still_opens_the_group()
     assert_eq!(ed.open_group, Some(g));
     assert_eq!(picked(&ed), [c]);
 }
+
+#[test]
+fn the_hover_shows_what_the_next_click_picks() {
+    let (mut ed, [a, b, c]) = three_stacked();
+    let mut sel = SelectTool::default();
+    let hover = |ed: &mut Editor, sel: &mut SelectTool, at: DVec2| {
+        sel.handle(Input::Hover(Pointer::new(at, TOL)), ed);
+        ed.hovered
+    };
+    // Before any click: what a single click picks.
+    assert_eq!(hover(&mut ed, &mut sel, SPOT), Some(c));
+    click(&mut ed, &mut sel, SPOT);
+    assert_eq!(hover(&mut ed, &mut sel, SPOT), Some(a));
+    click(&mut ed, &mut sel, SPOT);
+    assert_eq!(picked(&ed), [a]);
+    assert_eq!(hover(&mut ed, &mut sel, SPOT), Some(b));
+    click(&mut ed, &mut sel, SPOT);
+    assert_eq!(hover(&mut ed, &mut sel, SPOT), Some(c));
+    // Off the spot (but still over the lines): what a click there would pick, the first.
+    assert_eq!(hover(&mut ed, &mut sel, v(0.5, 0.4)), Some(c));
+}

@@ -919,6 +919,10 @@ impl DriftApp {
                 self.tool.handle(Input::Drag(p), &mut self.drawing.editor);
             } else {
                 self.tool.handle(Input::Hover(p), &mut self.drawing.editor);
+                // The next click goes past the annotation to what the hover shows.
+                if self.drawing.editor.pick_cycle.hover_passes_annotation() {
+                    self.drawing.hovered_constraint = None;
+                }
             }
             // Use the exact release position: if a slow frame batched the release with later
             // pointer motion, the current position is no longer where the user clicked.

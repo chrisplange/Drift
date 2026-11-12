@@ -1,6 +1,8 @@
 //! Select: pick, box-select, drag, and the Blender-style modal move (G).
 
-use super::picking::{Pick, Purpose, Step, Target, candidates_at, cycle_step, target_at};
+use super::picking::{
+    Pick, Purpose, Step, Target, candidates_at, cycle_step, hover_next, target_at,
+};
 use super::*;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -792,9 +794,18 @@ impl Tool for SelectTool {
         match input {
             Input::Hover(p) => {
                 ed.pick_cycle.pointer_at(p.raw);
-                let target = match self.drag {
-                    None => target_at(ed, &p, Purpose::Hover),
+                // On the spot of the last click: what the next click there picks.
+                let next = match self.drag {
+                    None => hover_next(ed, &p),
                     Some(_) => None,
+                };
+                if ed.pick_cycle.hover_passes_annotation() {
+                    ed.hovered_annotation = None;
+                }
+                let target = match (self.drag.is_some(), next) {
+                    (true, _) => None,
+                    (false, Some(next)) => next,
+                    (false, None) => target_at(ed, &p, Purpose::Hover),
                 };
                 ed.hovered = match &self.drag {
                     Some(SelectDrag::Radius { circle, .. }) => Some(*circle),

@@ -23,6 +23,12 @@ pub struct PickCycle {
     /// What the app's click on an annotation went on to, for the Select tool to pick this
     /// frame (see `tools::click_past_annotation`).
     handed: Option<Option<Pick>>,
+    /// The tool's candidates at the spot, gathered for the hover after a click (each click
+    /// gathers its own afresh).
+    cached: Option<Vec<Pick>>,
+    /// The hover shows one of the tool's candidates where the app's annotation is under the
+    /// pointer: the next click goes past the annotation.
+    hover_past: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -45,6 +51,14 @@ impl PickCycle {
     pub fn reset(&mut self) {
         self.last = None;
         self.handed = None;
+        self.cached = None;
+        self.hover_past = false;
+    }
+
+    /// Whether the next click on the annotation under the pointer goes past it, to the
+    /// geometry the hover shows: the app doesn't highlight the annotation then.
+    pub fn hover_passes_annotation(&self) -> bool {
+        self.hover_past
     }
 
     /// The pointer is at `at`: away from the last click's spot (out of the pick radius, so
@@ -79,6 +93,25 @@ impl PickCycle {
     pub(crate) fn record(&mut self, spot: Spot) {
         self.last = Some(spot);
         self.fresh = true;
+        self.cached = None;
+    }
+
+    /// The last click, if `at` is on its spot (whatever was ahead of the tool's).
+    pub(crate) fn on_spot(&self, at: DVec2) -> Option<Spot> {
+        self.last
+            .filter(|s| at.distance(s.at) <= SAME_SPOT * s.reach)
+    }
+
+    pub(crate) fn cached(&self) -> Option<&Vec<Pick>> {
+        self.cached.as_ref()
+    }
+
+    pub(crate) fn cache(&mut self, picks: Vec<Pick>) {
+        self.cached = Some(picks);
+    }
+
+    pub(crate) fn set_hover_past(&mut self, past: bool) {
+        self.hover_past = past;
     }
 
     pub(crate) fn hand(&mut self, pick: Option<Pick>) {

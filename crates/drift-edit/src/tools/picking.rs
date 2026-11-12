@@ -378,3 +378,28 @@ pub(super) fn cycle_step(ed: &mut Editor, p: &Pointer, lead: usize) -> Step {
         None => Step::Lead,
     }
 }
+
+/// What the next plain click at `p` would pick, for the hover to show, when `p` is on the
+/// spot of the last click and there are several things there (see [`crate::pick_cycle`]):
+/// `Some(None)` when it's the app's annotation, none of the tool's. None elsewhere: the
+/// hover shows what a single click picks, as ever.
+pub(super) fn hover_next(ed: &mut Editor, p: &Pointer) -> Option<Option<Pick>> {
+    ed.pick_cycle.set_hover_past(false);
+    let last = ed.pick_cycle.on_spot(p.raw)?;
+    let picks = match ed.pick_cycle.cached() {
+        Some(picks) => picks.clone(),
+        None => {
+            let picks = candidates_at(ed, p);
+            ed.pick_cycle.cache(picks.clone());
+            picks
+        }
+    };
+    let len = last.lead + picks.len();
+    if len <= 1 || last.len.is_some_and(|l| l != len) {
+        return None;
+    }
+    let next = (last.step + 1) % len;
+    let k = next.checked_sub(last.lead);
+    ed.pick_cycle.set_hover_past(last.lead > 0 && k.is_some());
+    Some(k.and_then(|k| picks.get(k).copied()))
+}

@@ -285,7 +285,10 @@ sharp corner back, right-click it and choose **Remove fillet** or **Remove chamf
 
 - **Mirror** (M): pick the geometry first with **Select**, press M, and click the line to
   mirror about. The copies are held symmetric to the originals. Picked block copies get a
-  mirrored copy on the far side, in the same undo step.
+  mirrored copy on the far side, in the same undo step. With no line to mirror about, click
+  two points instead (anywhere but on a line; snaps to ends, midpoints and centres apply):
+  the mirror previews while you pick the second point, Esc cancels, and no axis is drawn.
+  Copies made about two points are plain copies, with no line to be symmetric about.
 
 A group copied whole, by Mirror, Copy and Paste, Shift+D or a pattern, gives a new group of
 the copies, named after it ("Panel" → "Panel 2"). Part of a group copies as loose objects.

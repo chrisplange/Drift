@@ -22,6 +22,68 @@ pub type Patterned = (
     (Vec<drift_core::TextId>, Vec<drift_core::AnnotationId>),
 );
 
+/// What a mirror made: the copies of the curves, of the block copies, and of the picked
+/// texts and notes.
+pub type Mirrored = Patterned;
+
+/// The line a mirror reflects about.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MirrorAxis {
+    /// An existing line: the copies are kept symmetric about it.
+    Line(EntityId),
+    /// A temporary axis through two points, drawn nowhere.
+    Points(DVec2, DVec2),
+}
+
+/// `p` reflected about the line through `a` and `b` (which differ).
+pub fn reflect_about(a: DVec2, b: DVec2, p: DVec2) -> DVec2 {
+    let u = (b - a).normalize();
+    let foot = a + u * (p - a).dot(u);
+    foot * 2.0 - p
+}
+
+/// `shape` reflected about the line through `a` and `b` (which differ), for previews. A
+/// reflection reverses turning, so arcs keep counter-clockwise by running the other way.
+pub fn reflect_shape(a: DVec2, b: DVec2, shape: Shape) -> Shape {
+    let r = |p: DVec2| reflect_about(a, b, p);
+    let theta = (b - a).to_angle();
+    match shape {
+        Shape::Point(p) => Shape::Point(r(p)),
+        Shape::Line { a: p, b: q } => Shape::Line { a: r(p), b: r(q) },
+        Shape::Circle { center, radius } => Shape::Circle {
+            center: r(center),
+            radius,
+        },
+        // Angle φ goes to 2θ − φ: the arc from s over w runs from 2θ − s − w over w.
+        Shape::Arc {
+            center,
+            radius,
+            start,
+            sweep,
+        } => Shape::Arc {
+            center: r(center),
+            radius,
+            start: (2.0 * theta - start - sweep).rem_euclid(TAU),
+            sweep,
+        },
+        // The major axis reflects as a vector and the minor side swaps, so t goes to −t.
+        Shape::Ellipse {
+            center,
+            major,
+            minor,
+            start,
+            sweep,
+        } => Shape::Ellipse {
+            center: r(center),
+            major: r(center + major) - r(center),
+            minor,
+            start: (-start - sweep).rem_euclid(TAU),
+            sweep,
+        },
+        Shape::Bezier { p } => Shape::Bezier { p: p.map(r) },
+    }
+}
+
 fn invalid(msg: impl Into<String>) -> EditError {
     EditError::Invalid(msg.into())
 }
@@ -2450,28 +2512,43 @@ impl Editor {
     /// Mirror entities, block copies, and the text and annotations picked with them, about a
     /// line: the copies of the entities, of the block copies, and of the text and annotations.
     /// A block copy's image is a new copy on the far side, mirrored (#260).
-    #[allow(clippy::type_complexity)]
     pub fn mirror_with(
         &mut self,
         ids: &[EntityId],
         instances: &[drift_core::InstanceId],
         axis: EntityId,
         riders: &crate::picks::Riders,
-    ) -> Result<
-        (
-            Vec<EntityId>,
-            Vec<drift_core::InstanceId>,
-            (Vec<drift_core::TextId>, Vec<drift_core::AnnotationId>),
-        ),
-        EditError,
-    > {
-        let Some(EntityKind::Line { a: ax, b: bx }) = self.doc.get(axis).map(|e| e.kind) else {
-            return Err(invalid("mirror about a line"));
+    ) -> Result<Mirrored, EditError> {
+        self.mirror_about(ids, instances, MirrorAxis::Line(axis), riders)
+    }
+
+    /// Mirror as [`Self::mirror_with`] does, about a line or about a temporary axis through
+    /// two points. A temporary axis leaves nothing behind: the copies are plain reflections
+    /// (with no line to be symmetric about), joined to the originals where they touch it.
+    pub fn mirror_about(
+        &mut self,
+        ids: &[EntityId],
+        instances: &[drift_core::InstanceId],
+        axis: MirrorAxis,
+        riders: &crate::picks::Riders,
+    ) -> Result<Mirrored, EditError> {
+        let (pa, pb, axis) = match axis {
+            MirrorAxis::Line(line) => {
+                let Some(EntityKind::Line { a: ax, b: bx }) = self.doc.get(line).map(|e| e.kind)
+                else {
+                    return Err(invalid("mirror about a line"));
+                };
+                (
+                    self.doc.point(ax).unwrap_or_default(),
+                    self.doc.point(bx).unwrap_or_default(),
+                    Some(line),
+                )
+            }
+            MirrorAxis::Points(a, b) => (a, b, None),
         };
-        let (pa, pb) = (
-            self.doc.point(ax).unwrap_or_default(),
-            self.doc.point(bx).unwrap_or_default(),
-        );
+        if (pb - pa).length() <= intersect::tolerance(pa.abs().max_element()) {
+            return Err(invalid("the mirror axis needs two different points"));
+        }
         let u = (pb - pa).normalize();
         let reflect = |p: DVec2| {
             let foot = pa + u * (p - pa).dot(u);
@@ -2486,7 +2563,7 @@ impl Editor {
         let ids: Vec<EntityId> = ids
             .iter()
             .copied()
-            .filter(|id| *id != axis && !generated.contains(id))
+            .filter(|id| Some(*id) != axis && !generated.contains(id))
             .collect();
         if ids.is_empty() && instances.is_empty() && riders.is_empty() {
             return Err(invalid("select geometry to mirror, then the line"));
@@ -2505,7 +2582,9 @@ impl Editor {
                 } else {
                     let q = self.doc.add_point(reflect(at));
                     map.insert(p, q);
-                    self.relate(Constraint::Symmetric { a: p, b: q, axis });
+                    if let Some(axis) = axis {
+                        self.relate(Constraint::Symmetric { a: p, b: q, axis });
+                    }
                     if self.doc.users_of(p).next().is_none() {
                         created.push(q);
                     }
@@ -2513,7 +2592,8 @@ impl Editor {
             }
             let m = |p: EntityId| map[&p];
             // Each curve's mirror image (a line on the axis is its own).
-            let mut images: HashMap<EntityId, EntityId> = HashMap::from([(axis, axis)]);
+            let mut images: HashMap<EntityId, EntityId> =
+                axis.map(|a| (a, a)).into_iter().collect();
             for &id in &ids {
                 let Some(entity) = self.doc.get(id).copied() else {
                     continue;

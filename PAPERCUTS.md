@@ -21,7 +21,7 @@ Areas: canvas, panel, tool, menu, file, other. Status: `open`, `batched #NNN`, `
 | 2026-11-11 | canvas | Geometry on one layer still attaches to geometry on other layers, so vertices and edges merge across layers when you don't expect it (#267 fixed this for Tab chain selection only) | open |
 | 2026-11-11 | menu | The custom scale input box closes when you click in its field to type | fixed #416 |
 | 2026-11-11 | file | An uploaded company logo doesn't stay in Drift; it should persist so it doesn't have to be loaded again | open |
-| 2026-11-11 | tool | Mirror needs a temporary axis (two picked points, no line drawn first); the user has asked for this before and needs it badly | open |
+| 2026-11-11 | tool | Mirror needs a temporary axis (two picked points, no line drawn first); the user has asked for this before and needs it badly | fixed #PR |
 | 2026-11-11 | canvas | Text notes are edited in a separate text box, which makes multi-line formatting a nightmare; editing should happen live on the canvas | open |
 | 2026-11-11 | canvas | In the sheet view you can't add or edit annotations in sheet space; the user needs this badly (see #369 for note positions) | open |
 | 2026-11-10 | tool | Shift+D with no pointer on the canvas, or on a locked layer, isn't handled well (follow-up to #264) | open |

@@ -28,6 +28,8 @@ mod fill;
 #[cfg(test)]
 mod fillet_drag_tests;
 mod line;
+#[cfg(test)]
+mod mirror_tests;
 mod offset_mirror;
 mod opening;
 #[cfg(test)]
@@ -383,7 +385,9 @@ impl ToolKind {
             ToolKind::Fillet => "Round the corner where two lines meet",
             ToolKind::Chamfer => "Cut the corner where two lines meet",
             ToolKind::Offset => "A parallel copy of a curve and the curves connected to it",
-            ToolKind::Mirror => "Mirror the selection about a line, kept symmetric",
+            ToolKind::Mirror => {
+                "Mirror the selection about a line (kept symmetric) or two clicked points"
+            }
             ToolKind::Calibrate => {
                 "Two points on the underlay, then the real distance between them"
             }

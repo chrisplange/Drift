@@ -404,9 +404,15 @@ fn smoke_walls_mirror_copies_the_floor_and_the_faces() {
         assert_eq!(h.state().drawing.editor.selected_walls().len(), 1);
         palette(&mut h, "Mirror");
         assert_eq!(h.state().tool.kind(), ToolKind::Mirror);
-        let on_axis = h.state().drawing.editor.doc.shape(axis).unwrap().bounds();
-        // On the line's body: its midpoint (a point snap) would start a two-point axis.
-        let on_axis = on_axis.min.lerp(on_axis.max, 0.3);
+        let on_axis = h
+            .state()
+            .drawing
+            .editor
+            .doc
+            .shape(axis)
+            .unwrap()
+            .bounds()
+            .center();
         click_world(&mut h, on_axis);
         h.key_press(Key::Escape);
         h.run_steps(2);

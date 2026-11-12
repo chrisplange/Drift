@@ -160,24 +160,16 @@ pub struct MirrorTool {
     axis: Option<(DVec2, DVec2)>,
 }
 
-/// The line under the pointer that a click mirrors about: a line's body, not a point snapped
-/// to on it (an end, a midpoint, a crossing), which starts a temporary axis instead.
+/// The line under the pointer that a click mirrors about. A click on a line (anywhere on it,
+/// its ends and midpoint too) always uses the line, as before; a two-point axis starts from a
+/// click anywhere off a line, and its second point may snap anywhere.
 fn axis_line_under(ed: &Editor, p: &Pointer) -> Option<EntityId> {
-    if point_snap(p).is_some() {
-        return None;
-    }
     curve_under(ed, p).filter(|id| {
         matches!(
             ed.doc.get(*id).map(|e| e.kind),
             Some(EntityKind::Line { .. })
         )
     })
-}
-
-/// A snap to a spot (not anywhere along a curve, and not the grid).
-fn point_snap(p: &Pointer) -> Option<drift_geom::Snap> {
-    p.exact_snap()
-        .filter(|s| s.kind != drift_geom::SnapKind::OnCurve)
 }
 
 impl MirrorTool {
@@ -263,8 +255,8 @@ impl Tool for MirrorTool {
 
     fn hint(&self) -> String {
         match self.first {
-            None => "Click a line to mirror about it, or a point (or empty space) to start an \
-                     axis · select the geometry first with Select"
+            None => "Click a line to mirror about it, or click off any line to start a \
+                     two-point axis · select the geometry first with Select"
                 .into(),
             Some(_) => "Click the axis's second point · Esc cancels".into(),
         }

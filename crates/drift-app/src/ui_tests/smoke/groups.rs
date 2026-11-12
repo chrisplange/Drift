@@ -264,9 +264,15 @@ fn smoke_groups_mirroring_a_group_makes_a_group() {
     click_world(&mut h, DVec2::new(15.0, 15.0));
     palette(&mut h, "Mirror");
     assert_eq!(h.state().tool.kind(), ToolKind::Mirror);
-    let on_axis = h.state().drawing.editor.doc.shape(axis).unwrap().bounds();
-    // On the line's body: its midpoint (a point snap) would start a two-point axis.
-    let on_axis = on_axis.min.lerp(on_axis.max, 0.3);
+    let on_axis = h
+        .state()
+        .drawing
+        .editor
+        .doc
+        .shape(axis)
+        .unwrap()
+        .bounds()
+        .center();
     click_world(&mut h, on_axis);
     copied_as_a_group(&mut h, &before, entities, 1);
 }
@@ -325,8 +331,7 @@ fn smoke_groups_mirroring_a_block_copy_makes_a_mirrored_copy() {
     let original = *h.state().drawing.editor.doc.instance(copy).unwrap();
     palette(&mut h, "Mirror");
     assert_eq!(h.state().tool.kind(), ToolKind::Mirror);
-    // On the line's body: its midpoint (160, 15) would start a two-point axis.
-    click_world(&mut h, DVec2::new(160.0, 25.0));
+    click_world(&mut h, DVec2::new(160.0, 15.0));
     let _ = axis;
     let now = copies(&h);
     assert_eq!(now.len(), 2, "a mirrored copy was placed: {now:?}");

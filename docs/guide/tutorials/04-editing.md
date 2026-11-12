@@ -286,8 +286,8 @@ sharp corner back, right-click it and choose **Remove fillet** or **Remove chamf
 - **Mirror** (M): pick the geometry first with **Select**, press M, and click the line to
   mirror about. The copies are held symmetric to the originals. Picked block copies get a
   mirrored copy on the far side, in the same undo step. With no line to mirror about, click
-  two points instead. A click on a line's body uses the line; a point snap (an end,
-  midpoint, centre, crossing or the origin) or empty space starts the axis, and snaps apply:
+  two points instead. A click anywhere on a line uses the line, so start the axis off any
+  line (a loose point, a centre, empty space); the second point may snap anywhere:
   the mirror previews while you pick the second point, Esc cancels, and no axis is drawn.
   Copies made about two points are plain copies, with no line to be symmetric about.
 

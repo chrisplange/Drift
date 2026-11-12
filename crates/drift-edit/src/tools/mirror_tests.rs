@@ -188,20 +188,26 @@ fn clicking_a_line_still_mirrors_about_it_kept_symmetric() {
 }
 
 #[test]
-fn a_snap_to_a_point_on_a_line_starts_a_temporary_axis() {
-    let (mut ed, _) = fixture();
+fn a_click_on_a_line_s_end_or_midpoint_still_uses_the_line() {
+    let (mut ed, picked) = fixture();
+    ed.prefs.auto_relations = true;
     ed.doc.begin();
     let a = ed.doc.add_point(v(-1.0, -10.0));
     let b = ed.doc.add_point(v(-1.0, 10.0));
     ed.doc.add_line(a, b).unwrap();
     ed.commit("Axis");
     let mut tool = MirrorTool::default();
-    // The line's midpoint, then its end: a temporary axis along the line, not the line.
+    // Its midpoint: mirrored about the line at once, kept symmetric.
     click(&mut ed, &mut tool, v(-0.9, 0.1));
-    assert!(tool.is_busy());
-    click(&mut ed, &mut tool, v(-1.1, 9.9));
+    assert!(!tool.is_busy());
     assert!(has_point(&ed, v(-4.0, 1.0)));
-    assert_eq!(symmetric(&ed), 0);
+    assert_eq!(symmetric(&ed), 2);
+    // Its end, after undoing: the line again.
+    ed.undo();
+    ed.selection = [picked].into();
+    click(&mut ed, &mut tool, v(-1.1, 9.9));
+    assert!(!tool.is_busy());
+    assert_eq!(symmetric(&ed), 2);
 }
 
 #[test]
@@ -215,7 +221,7 @@ fn a_two_point_axis_snaps_to_a_circle_centre_and_ends_on_a_line() {
     ed.doc.add_line(a, b).unwrap();
     ed.commit("Targets");
     let mut tool = MirrorTool::default();
-    // Near the circle's centre: the axis starts there, snapped.
+    // Near the circle's centre (off any line): the axis starts there, snapped.
     click(&mut ed, &mut tool, v(0.2, -19.8));
     assert!(tool.is_busy());
     // The second point may land on a line: its midpoint snap ends the axis on x = 0.

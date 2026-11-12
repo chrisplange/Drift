@@ -2071,7 +2071,7 @@ fn offset_tool_picks_a_chain_then_the_side() {
 fn mirror_tool_mirrors_the_selection() {
     let (mut ed, ids) =
         modify_fixture(&[(v(2.0, 1.0), v(5.0, 4.0)), (v(0.0, -10.0), v(0.0, 10.0))]);
-    let mut tool = MirrorTool;
+    let mut tool = MirrorTool::default();
     // Nothing selected: explained.
     click(&mut ed, &mut tool, v(0.0, 5.0));
     assert!(ed.out.notice.take().is_some());

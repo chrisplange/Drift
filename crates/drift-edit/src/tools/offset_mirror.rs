@@ -1,4 +1,5 @@
-//! Offset (click a curve, then the side and distance) and Mirror (the selection about a line).
+//! Offset (click a curve, then the side and distance) and Mirror (the selection about a line, or
+//! about a temporary axis through two clicked points).
 
 use super::curve_ops::curve_under;
 use super::*;
@@ -147,9 +148,101 @@ impl Tool for OffsetTool {
     }
 }
 
-/// Mirror the selection about a line: click the line.
+/// Mirror the selection: click a line to mirror about it (the copies stay symmetric to the
+/// originals), or click two points off any line for a temporary axis, drawn nowhere and
+/// previewed while the second point is picked.
 #[derive(Default)]
-pub struct MirrorTool;
+pub struct MirrorTool {
+    /// The temporary axis's first point, once clicked.
+    first: Option<DVec2>,
+    /// The temporary axis, from the first point to the pointer.
+    axis: Option<(DVec2, DVec2)>,
+    /// Nothing was picked to mirror, at the last input (the hint says to pick first).
+    nothing_picked: bool,
+}
+
+/// The line under the pointer that a click mirrors about. A click on a line (anywhere on it,
+/// its ends and midpoint too) always uses the line, as before; a two-point axis starts from a
+/// click anywhere off a line, and its second point may snap anywhere.
+fn axis_line_under(ed: &Editor, p: &Pointer) -> Option<EntityId> {
+    curve_under(ed, p).filter(|id| {
+        matches!(
+            ed.doc.get(*id).map(|e| e.kind),
+            Some(EntityKind::Line { .. })
+        )
+    })
+}
+
+/// Whether anything is picked that a mirror would copy.
+fn has_picks(ed: &Editor) -> bool {
+    !ed.selection.is_empty()
+        || !ed.selected_instances.is_empty()
+        || !ed.selected_texts.is_empty()
+        || !ed.annotation_picks.is_empty()
+}
+
+impl MirrorTool {
+    /// What is mirrored: the selection, its block copies and the text and notes picked with
+    /// it; or, with nothing to mirror, an explanation.
+    fn picks(
+        ed: &mut Editor,
+        axis: Option<EntityId>,
+    ) -> Option<(
+        Vec<EntityId>,
+        Vec<drift_core::InstanceId>,
+        crate::picks::Riders,
+    )> {
+        let ids: Vec<EntityId> = ed.selection.iter().copied().collect();
+        let instances: Vec<drift_core::InstanceId> =
+            ed.selected_instances.iter().copied().collect();
+        let riders = ed.riders();
+        if ids.iter().all(|id| Some(*id) == axis) && instances.is_empty() && riders.is_empty() {
+            ed.out.notice = Some(
+                "Mirror: select the geometry to mirror first (Select tool), then pick Mirror \
+                 and click a line, or two points off any line"
+                    .into(),
+            );
+            return None;
+        }
+        Some((ids, instances, riders))
+    }
+
+    fn mirror(ed: &mut Editor, axis: crate::modify::MirrorAxis) {
+        let line = match axis {
+            crate::modify::MirrorAxis::Line(id) => Some(id),
+            crate::modify::MirrorAxis::Points(..) => None,
+        };
+        let Some((ids, instances, riders)) = Self::picks(ed, line) else {
+            return;
+        };
+        match ed.mirror_about(&ids, &instances, axis, &riders) {
+            Ok((copies, instances, (texts, notes))) => {
+                ed.selection = copies.into_iter().collect();
+                ed.pick_made_copies(instances);
+                ed.selected_texts = texts.into_iter().collect();
+                ed.selected_annotation = None;
+                ed.annotation_picks = notes
+                    .into_iter()
+                    .map(drift_core::AnnotationRef::Annotation)
+                    .collect();
+            }
+            Err(e) => ed.out.notice = Some(format!("Mirror: {e}")),
+        }
+    }
+
+    /// Follow the pointer: the axis from the first point to `to`.
+    fn update(&mut self, to: DVec2) {
+        self.axis = self
+            .first
+            .filter(|from| (to - *from).length() >= 1e-9)
+            .map(|from| (from, to));
+    }
+
+    fn reset(&mut self) {
+        self.first = None;
+        self.axis = None;
+    }
+}
 
 impl Tool for MirrorTool {
     fn kind(&self) -> ToolKind {
@@ -157,62 +250,94 @@ impl Tool for MirrorTool {
     }
 
     fn hint(&self) -> String {
-        "Click the line to mirror the selection about (select geometry first with Select)".into()
+        match (self.first, self.nothing_picked) {
+            (Some(_), _) => {
+                "Click the axis's second point (a line's end or midpoint is fine) · Esc cancels"
+                    .into()
+            }
+            (None, false) => {
+                "Mirror: click a line, or two points off any line, to mirror about".into()
+            }
+            (None, true) => "Mirror: select the geometry first (Select tool), then click a line, \
+                              or two points off any line, to mirror about"
+                .into(),
+        }
     }
 
     fn handle(&mut self, input: Input, ed: &mut Editor) {
+        self.nothing_picked = !has_picks(ed);
         match input {
             Input::Hover(p) => {
-                ed.hovered = curve_under(ed, &p).filter(|id| {
-                    matches!(
-                        ed.doc.get(*id).map(|e| e.kind),
-                        Some(EntityKind::Line { .. })
-                    )
-                });
-            }
-            Input::Click(p, _) => {
-                let Some(axis) = curve_under(ed, &p) else {
-                    return;
-                };
-                let ids: Vec<EntityId> = ed.selection.iter().copied().collect();
-                let instances: Vec<drift_core::InstanceId> =
-                    ed.selected_instances.iter().copied().collect();
-                let riders = ed.riders();
-                if ids.iter().all(|id| *id == axis) && instances.is_empty() && riders.is_empty() {
-                    ed.out.notice = Some(
-                        "Mirror: select the geometry to mirror first (Select tool), then pick \
-                         Mirror and click the line"
-                            .into(),
-                    );
-                    return;
+                if self.first.is_some() {
+                    ed.hovered = None;
+                    self.update(p.pos());
+                } else {
+                    ed.hovered = axis_line_under(ed, &p);
                 }
-                match ed.mirror_with(&ids, &instances, axis, &riders) {
-                    Ok((copies, instances, (texts, notes))) => {
-                        ed.selection = copies.into_iter().collect();
-                        ed.pick_made_copies(instances);
-                        ed.selected_texts = texts.into_iter().collect();
-                        ed.selected_annotation = None;
-                        ed.annotation_picks = notes
-                            .into_iter()
-                            .map(drift_core::AnnotationRef::Annotation)
-                            .collect();
+            }
+            Input::Click(p, _) => match self.first {
+                Some(from) => {
+                    let to = p.pos();
+                    if (to - from).length() <= p.tolerance {
+                        // Too close to the first point to make an axis: keep picking.
+                        ed.out.notice = Some(
+                            "Mirror: click the axis's second point away from the first".into(),
+                        );
+                        return;
                     }
-                    Err(e) => ed.out.notice = Some(format!("Mirror: {e}")),
+                    self.reset();
+                    Self::mirror(ed, crate::modify::MirrorAxis::Points(from, to));
                 }
-            }
+                None => {
+                    if let Some(line) = axis_line_under(ed, &p) {
+                        Self::mirror(ed, crate::modify::MirrorAxis::Line(line));
+                    } else if Self::picks(ed, None).is_some() {
+                        self.first = Some(p.pos());
+                        ed.hovered = None;
+                        self.update(p.pos());
+                    }
+                }
+            },
             _ => {}
         }
     }
 
     fn cancel(&mut self, _ed: &mut Editor) -> bool {
-        false
+        let had = self.first.is_some();
+        self.reset();
+        had
     }
 
     fn is_busy(&self) -> bool {
-        false
+        self.first.is_some()
     }
 
-    fn wants_snap(&self) -> bool {
-        false
+    fn snap_from(&self) -> Option<DVec2> {
+        self.first
+    }
+
+    fn preview(&self, _pointer: Option<&Pointer>) -> Vec<SketchItem> {
+        let mut items = Vec::new();
+        if let Some((a, b)) = self.axis {
+            items.push(preview(Shape::Line { a, b }).with_kind(drift_core::LineKind::Center));
+        }
+        if let Some(a) = self.first {
+            items.push(preview_vertex(a));
+        }
+        items
+    }
+
+    /// The picked curves mirrored about the axis, read from the document as it is now (so an
+    /// undo between the two clicks shows at once).
+    fn editor_preview(&self, ed: &Editor) -> Vec<SketchItem> {
+        let Some((from, to)) = self.axis else {
+            return Vec::new();
+        };
+        ed.selection
+            .iter()
+            .filter(|id| ed.doc.get(**id).is_some_and(|e| !e.kind.is_point()))
+            .filter_map(|id| ed.doc.shape(*id))
+            .map(|s| preview(crate::modify::reflect_shape(from, to, s)))
+            .collect()
     }
 }

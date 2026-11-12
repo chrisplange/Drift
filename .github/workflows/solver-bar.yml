@@ -4,22 +4,17 @@ name: Solver bar
 # 9): the heavy drag matrix and the ignored pins on ubuntu, where libm's sin, cos and atan2
 # differ from Windows' and macOS' by the ulps that decide a drag at a fold. Nightly, by hand,
 # and on any pull request that touches the solver, what it is built on, the editor that calls
-# it, or this bar.
+# it, or this bar: the [heavy] and [solver] paths in .github/tiers.txt.
+#
+# It starts on every pull request so that its heavy job can be a required check: a PR that
+# touches none of those paths skips the job, and a skipped job counts as passing. If the path
+# check itself fails, the matrix runs anyway.
 
 on:
   schedule:
     - cron: "17 6 * * *"
   workflow_dispatch:
   pull_request:
-    paths:
-      - "crates/drift-solver/**"
-      - "crates/drift-core/**"
-      - "crates/drift-edit/src/editor/**"
-      - "crates/drift-edit/src/drag_props.rs"
-      - "crates/drift-edit/src/drag_props/**"
-      - "Cargo.lock"
-      - "scripts/solver-bar/**"
-      - ".github/workflows/solver-bar.yml"
 
 permissions:
   contents: read
@@ -33,8 +28,37 @@ env:
   RUSTFLAGS: -D warnings
 
 jobs:
+  changes:
+    name: Does this need the heavy matrix
+    runs-on: ubuntu-latest
+    outputs:
+      heavy: ${{ steps.paths.outputs.heavy }}
+    steps:
+      # The default branch's rules and script judge the PR, not the PR's own.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - name: Bootstrap (only until the gate scripts are on main)
+        run: |
+          if [ ! -f scripts/tier.py ]; then
+            git fetch -q --depth=1 origin "$GITHUB_SHA"
+            git checkout FETCH_HEAD -- scripts .github/tiers.txt
+          fi
+      - id: paths
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
+            echo "heavy=true" >> "$GITHUB_OUTPUT"
+          else
+            python3 scripts/tier.py --pr "$PR" --explain --github-output
+          fi
+
   heavy:
     name: Heavy drag matrix and pins (ubuntu)
+    needs: changes
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.heavy == 'true')
     # (Pinned, so a nightly that turns red names a change in the code, not in the runner's
     # libm; the summary prints glibc's and rustc's versions.)
     runs-on: ubuntu-24.04

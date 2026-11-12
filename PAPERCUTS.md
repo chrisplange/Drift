@@ -8,6 +8,7 @@ Areas: canvas, panel, tool, menu, file, other. Status: `open`, `batched #NNN`, `
 
 | Date | Area | Papercut | Status |
 |---|---|---|---|
+| 2026-11-12 | menu | After Esc or a click outside, the custom scale box keeps the typed text and error and shows them again next time | open |
 | 2026-11-12 | tool | Door openings don't include a jamb | open |
 | 2026-11-12 | tool | Pressing Space to change a wall's orientation while drawing skips the "center" option | fixed #416 |
 | 2026-11-11 | other | A sheet view can't be duplicated together with its drawing entities and annotations in one operation | open |
@@ -24,7 +25,7 @@ Areas: canvas, panel, tool, menu, file, other. Status: `open`, `batched #NNN`, `
 | 2026-11-11 | canvas | Text notes are edited in a separate text box, which makes multi-line formatting a nightmare; editing should happen live on the canvas | open |
 | 2026-11-11 | canvas | In the sheet view you can't add or edit annotations in sheet space; the user needs this badly (see #369 for note positions) | open |
 | 2026-11-10 | tool | Shift+D with no pointer on the canvas, or on a locked layer, isn't handled well (follow-up to #264) | open |
-| 2026-11-06 | panel | The print-size hint doesn't offer the scale the drawing's sheet views share | fixed #416 (#367) |
+| 2026-11-06 | panel | The print-size hint doesn't offer the scale the drawing's sheet views share | fixed #416 |
 | 2026-11-03 | canvas | Fill edges look jagged when the fill has no outline | batched #326 |
 | 2026-10-31 | tool | Automatic relations keep redundant ones for snaps other than onto-point | batched #306 |
 | 2026-10-28 | file | PDF export defaults to fit-to-A3 instead of true scale | batched #245 |

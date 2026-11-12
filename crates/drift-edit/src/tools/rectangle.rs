@@ -51,7 +51,7 @@ impl RectangleTool {
             } else {
                 GuideKind::Vertical
             };
-            auto_relation(ed, Some(relation), *line);
+            auto_relation(ed, Some(relation), *line, false);
         }
         if let Some(w) = dims[0] {
             ed.add_typed_dimension(

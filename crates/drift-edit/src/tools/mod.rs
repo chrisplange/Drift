@@ -612,45 +612,24 @@ fn exact(p: &Pointer, at: DVec2) -> Pointer {
     Pointer::new(at, p.tolerance)
 }
 
-/// Add a relation if automatic relations are on; failures (e.g. redundancy) are ignored and
-/// the commit's solve decides whether the whole step is acceptable.
-fn auto_relation(
-    ed: &mut Editor,
-    relation: Option<GuideKind>,
-    line: EntityId,
-) -> Option<ConstraintId> {
-    if !ed.prefs.auto_relations {
-        return None;
-    }
-    let constraint = match relation {
-        Some(GuideKind::Horizontal) => Constraint::Horizontal { line },
-        Some(GuideKind::Vertical) => Constraint::Vertical { line },
-        Some(GuideKind::Perpendicular(curve)) => match ed.doc.get(curve).map(|e| e.kind) {
-            Some(EntityKind::Line { .. }) => Constraint::Perpendicular { a: line, b: curve },
-            // Square to a circle or arc: along its radius, so the line runs through the centre.
-            Some(EntityKind::Circle { center, .. } | EntityKind::Arc { center, .. }) => {
-                Constraint::PointOnCurve {
-                    point: center,
-                    curve: line,
-                }
-            }
-            _ => return None,
-        },
-        Some(GuideKind::Tangent(curve)) => Constraint::Tangent { a: line, b: curve },
-        _ => return None,
-    };
-    ed.doc.add_constraint(constraint).ok()
-}
-
-/// [`auto_relation`] for a segment that ends on an existing point (closing a loop, say): its
-/// two ends may already be held, so the relation is checked first. Left out, with a notice
-/// saying so, if the relations already there imply it or it would conflict with them; the
-/// segment is drawn either way (#204). Call inside the segment's transaction.
-fn auto_relation_onto_point(ed: &mut Editor, relation: Option<GuideKind>, line: EntityId) {
-    let Some(id) = auto_relation(ed, relation, line) else {
+/// Add the automatic relation `relation` (from a snap or guide) to `line`, a segment a tool
+/// has just drawn, if automatic relations are on. Left out, with a notice saying so, if the
+/// relations already there imply it or it would conflict with them; the segment is drawn
+/// either way (#204, #306). `onto_point`: the segment ends on an existing point (closing a
+/// loop, say). Call inside the segment's transaction.
+fn auto_relation(ed: &mut Editor, relation: Option<GuideKind>, line: EntityId, onto_point: bool) {
+    let Some(id) = add_auto_relation(ed, relation, line) else {
         return;
     };
-    // Solved on a copy: a side drawn a hair off level only meets its relation once solved.
+    // Ending on a point, a side drawn a hair off level only meets its relation once solved,
+    // so it is always checked. Elsewhere the relations already there are met as drawn, so
+    // one the new geometry doesn't meet isn't implied by them (the commit's solve decides
+    // it), and one it does meet can't conflict: it is checked unless a free end shows it
+    // isn't implied either. Most segments drawn on from a chain end in a new point.
+    if !onto_point && (!holds_as_drawn(ed, id) || has_free_end(ed, line, id)) {
+        return;
+    }
+    // Solved on a copy.
     let mut solved = ed.doc.clone();
     let report = drift_solver::solve(
         &mut solved,
@@ -681,6 +660,82 @@ fn auto_relation_onto_point(ed: &mut Editor, relation: Option<GuideKind>, line: 
     } else {
         ed.out.notice = Some(text);
     }
+}
+
+/// The relation [`auto_relation`] adds, added.
+fn add_auto_relation(
+    ed: &mut Editor,
+    relation: Option<GuideKind>,
+    line: EntityId,
+) -> Option<ConstraintId> {
+    if !ed.prefs.auto_relations {
+        return None;
+    }
+    let constraint = match relation {
+        Some(GuideKind::Horizontal) => Constraint::Horizontal { line },
+        Some(GuideKind::Vertical) => Constraint::Vertical { line },
+        Some(GuideKind::Perpendicular(curve)) => match ed.doc.get(curve).map(|e| e.kind) {
+            Some(EntityKind::Line { .. }) => Constraint::Perpendicular { a: line, b: curve },
+            // Square to a circle or arc: along its radius, so the line runs through the centre.
+            Some(EntityKind::Circle { center, .. } | EntityKind::Arc { center, .. }) => {
+                Constraint::PointOnCurve {
+                    point: center,
+                    curve: line,
+                }
+            }
+            _ => return None,
+        },
+        Some(GuideKind::Tangent(curve)) => Constraint::Tangent { a: line, b: curve },
+        _ => return None,
+    };
+    ed.doc.add_constraint(constraint).ok()
+}
+
+/// Whether an end of `line` is free but for `relation`: a point no other curve uses and no
+/// other relation (stored, or of the geometry) holds, directly or through `line`. Every
+/// automatic relation moves both of a segment's ends across it, so its equation is then the
+/// only one on that end's coordinates, and the others can't imply it.
+fn has_free_end(ed: &Editor, line: EntityId, relation: ConstraintId) -> bool {
+    let Some(EntityKind::Line { a, b }) = ed.doc.get(line).map(|e| e.kind) else {
+        return false;
+    };
+    let lowering = ed.lowering();
+    let held = |id: EntityId| {
+        ed.doc.constraints_on(id).any(|c| c != relation)
+            || lowering
+                .as_ref()
+                .is_some_and(|l| l.extra.iter().any(|x| x.entities().contains(&id)))
+    };
+    if held(line) {
+        return false;
+    }
+    [a, b]
+        .into_iter()
+        .any(|end| !held(end) && ed.doc.users_of(end).all(|user| user == line))
+}
+
+/// Whether the geometry as drawn already meets `relation`, as a solve judges it (only it and
+/// what it relates are read).
+fn holds_as_drawn(ed: &Editor, relation: ConstraintId) -> bool {
+    let Some(c) = ed.doc.constraint(relation).copied() else {
+        return false;
+    };
+    let lowering = ed.lowering();
+    let lowered: Vec<drift_solver::Lowered> =
+        match lowering.as_ref().and_then(|l| l.of.get(&relation)) {
+            Some(list) => list.clone(),
+            None => vec![drift_solver::Lowered::Relation(c)],
+        };
+    let mut scope = std::collections::HashSet::new();
+    for entity in lowered.iter().flat_map(drift_solver::Lowered::entities) {
+        scope.insert(entity);
+        if let Some(e) = ed.doc.get(entity) {
+            scope.extend(e.kind.points());
+        }
+    }
+    let relations: drift_solver::Relations =
+        lowered.into_iter().map(|l| (Some(relation), l)).collect();
+    drift_solver::meets_within(&ed.doc, &scope, &relations, lowering.as_deref(), None)
 }
 
 /// Unit vector at `degrees`, exact for multiples of 90° (where `cos`/`sin` would leave ~1e-16

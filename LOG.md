@@ -42,3 +42,5 @@ One line per decision, approval or merge, newest last. Format: `YYYY-MM-DD | wha
 2026-11-12 | #338: a Trim drag across a wall trims the wall properly: the centreline is cut, and the faces, fill and outline follow; it does not skip the wall | user
 2026-11-12 | #245: PDF export with no sheets asks how to place the drawing (1:1, or fit to page labelled with its scale) instead of defaulting to fit-to-A3 | user
 2026-11-12 | #326 (jagged fill edges) skipped for now: out of batch-1, to `later`; batch-1 is now the #264 follow-up, #338, #306, #367 and #245 | user
+2026-11-12 | Two layers: one lead session (plans with the user against the live repo, reviews by subagent, merges auto PRs, keeps records) plus at most 2 workers; no notes session; the planning chat no longer writes tasks. HUB-QUEUE.md, USER-ACTIONS.md and LEARNINGS.md folded into STATUS.md; the /hub skill removed | user
+2026-11-12 | batch-1 started: #264 follow-up (#412), #338 (#413); papercut sweep started (wall Space center, scale box, #367, hatch menu, door jamb), taking #367 out of batch-1 | user

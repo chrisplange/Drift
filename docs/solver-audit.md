@@ -325,7 +325,7 @@ not time.
 3. **#377's census** (random 20,000 at 0, 1, 3, 10, 30 m, 100 m, 1 km; seeded 2,000 at those and
    100 km): every new stop and every went → stop traced; "stop, as now" holds.
 4. **Pins:** each PR names the pins it un-ignores; none it doesn't name changes.
-5. **Perf baselines** (`cargo test -- --ignored` perf, per the rules in STATUS.md): `perf_big_drag`,
+5. **Perf baselines** (`cargo test -- --ignored` perf, per the rules learned in WORKFLOW.md): `perf_big_drag`,
    `perf_big`, the tiled sketch at 200 and 1,000 copies, the refused 2,000 mm part.
 6. **Linux:** the heavy matrix and the pins also run on ubuntu, since that is where libm differs.
 7. **The binding drag rule:** a drag that kept radii can't follow stops at the last valid shape;

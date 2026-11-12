@@ -15,13 +15,12 @@ How Drift work gets done. Short on purpose. If this and another note disagree, t
 - A planning chat outside the repo can be used for open-ended thinking. Nothing from it becomes work until the lead has checked it against the repo and the user has confirmed the Done when.
 
 ## Where things live
-- **GitHub issues and labels** are the backlog. Open PRs show what is in flight.
-- **`STATUS.md`** lists what is running and next, what waits on the user, and the rules learned.
-- **`LOG.md`** has one line per decision, approval or merge.
-- **`PAPERCUTS.md`** is the inbox for small usability annoyances, one line each. The user reports one to the lead in a few words. Small ones are cleared in a sweep PR. Bigger ones become issues.
+- **GitHub issues and labels** are the backlog and the status. Open PRs show what is in flight.
+- **Decisions** are a comment on the issue they're about, posted by the lead when the user makes them. `LOG.md` is frozen at 2026-11-12, as history.
+- **`PAPERCUTS.md`** is the inbox for small usability annoyances, one line each. The user reports one to the lead in a few words. Small ones are cleared in a sweep PR, which marks its rows fixed. Bigger ones become issues.
 - **`FEATURES.md`** lists what Drift does, each line pointing to code.
 
-The lead updates the records in one docs commit per batch, not once per event.
+There are no records-only PRs. Records change only inside the PR that does the work, such as a sweep marking its papercuts fixed, or a PR that changes this file.
 
 ## Rules
 1. **No "Done when", no work.** An issue gets a checkable Done when (a named test, a measured number, or a behaviour you can see) before anyone starts it. The lead confirms it with the user in one message.
@@ -33,7 +32,19 @@ The lead updates the records in one docs commit per batch, not once per event.
 5. **Red main stops everything.** Fix main first. Never merge on "red only for known reasons".
 6. **No band-aids on the solver.** A solver issue is closed by a fix for its cause, or left open with what was learned. A test is only ignored for proven flakiness, with a note pointing to the issue.
 7. **Clean up as you go.** When a PR merges, archive its sessions and delete its worktree and target.
-8. **Batch the user.** Don't ping for each thing. Put it in `STATUS.md` under "Waiting on the user", or in the lead's turn report.
+8. **Batch the user.** Don't ping for each thing. Put it in the lead's turn report.
+
+## Rules learned
+Each rule came from something that went wrong.
+- Nothing becomes work until the lead has checked it against the live repo and confirmed its Done when with the user. A plan written from a stale view cost two workers on 2026-11-12.
+- Workers never start sessions. They report the need to the lead.
+- After any Cargo.lock change, run `python scripts/notices.py` and commit THIRD-PARTY-NOTICES.txt in the same PR.
+- After starting a reviewer with a model, check that it is really running that model.
+- Use one fresh reviewer per PR, and delete its target after the merge.
+- Before claiming Drift lacks a feature, check FEATURES.md and grep the code.
+- No hard wall-clock asserts in normal tests. Perf budgets live in the ignored baselines.
+- Any PR touching drag, solver, index or fills runs the ignored perf baselines (`cargo test -- --ignored`) and puts the numbers in the PR.
+- Before merging, check that the PR's base is `main`.
 
 ## Clearing the issues log
 Work in batches of up to 5. The order is papercuts, then flaky tests, then perf, then solver, which follows the audit's PR sequence (`docs/solver-audit.md`).

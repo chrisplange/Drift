@@ -928,24 +928,30 @@ impl Editor {
         self.doc.layer_of(id).locked
     }
 
-    /// Whether anything picked is on a locked layer: curves, block copies, text or fills
+    /// The locked layer of something picked, if any: curves, block copies, text or fills
     /// picked before their layer was locked (curves drop out of the selection then, the
     /// rest stays picked).
-    pub fn picked_on_locked_layer(&self) -> bool {
-        let locked = |layer| self.doc.layer(layer).is_some_and(|l| l.locked);
-        self.selection.iter().any(|id| self.is_locked(*id))
-            || self
-                .selected_instances
-                .iter()
-                .any(|id| self.doc.instance(*id).is_some_and(|i| locked(i.layer)))
-            || self
-                .selected_texts
-                .iter()
-                .any(|id| self.doc.text(*id).is_some_and(|t| locked(t.layer)))
-            || self
-                .selected_fills
-                .iter()
-                .any(|id| self.doc.fill(*id).is_some_and(|f| locked(f.layer)))
+    pub fn picked_locked_layer(&self) -> Option<&drift_core::Layer> {
+        let locked = |layer| self.doc.layer(layer).filter(|l| l.locked);
+        self.selection
+            .iter()
+            .map(|id| self.doc.layer_of(*id))
+            .find(|l| l.locked)
+            .or_else(|| {
+                self.selected_instances
+                    .iter()
+                    .find_map(|id| locked(self.doc.instance(*id)?.layer))
+            })
+            .or_else(|| {
+                self.selected_texts
+                    .iter()
+                    .find_map(|id| locked(self.doc.text(*id)?.layer))
+            })
+            .or_else(|| {
+                self.selected_fills
+                    .iter()
+                    .find_map(|id| locked(self.doc.fill(*id)?.layer))
+            })
     }
 
     /// Refuse to move curves of which some are on a locked layer (a picked area or hatch

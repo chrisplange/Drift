@@ -787,5 +787,9 @@ fn smoke_groups_shift_d_on_a_locked_layer_makes_no_copy_and_says_why() {
     assert_eq!(copies(&h).len(), 1, "no copy made");
     assert_eq!(h.state().drawing.editor.doc.iter().count(), entities);
     assert!(!h.state().tool.is_busy());
-    assert!(status(&h).contains("locked layer"), "{}", status(&h));
+    assert!(
+        status(&h).contains("On locked layer") && status(&h).contains("unlock the layer"),
+        "{}",
+        status(&h)
+    );
 }

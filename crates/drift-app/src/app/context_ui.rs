@@ -943,16 +943,21 @@ impl DriftApp {
     /// Nothing is copied where the copy couldn't then be moved: with something picked on a
     /// locked layer, or with no pointer on the canvas yet (off the canvas, the move starts
     /// from where the pointer last was there). If the move still doesn't start, the copy is
-    /// taken back.
+    /// taken back, and not kept on Redo either: Redo would bring back a stacked copy the
+    /// user never saw.
     pub(crate) fn duplicate_and_grab(&mut self) {
-        if self.drawing.editor.picked_on_locked_layer() {
-            self.drawing.editor.out.notice =
-                Some("Part of the selection is on a locked layer: unlock it to duplicate".into());
+        if let Some(layer) = self.drawing.editor.picked_locked_layer() {
+            self.drawing.editor.out.notice = Some(format!(
+                "On locked layer {}: unlock the layer to duplicate",
+                layer.name
+            ));
             return;
         }
         let Some(pointer) = self.drawing.view.pointer.or(self.drawing.view.last_pointer) else {
-            self.drawing.editor.out.notice =
-                Some("Point at the canvas, then duplicate: the copy follows the pointer".into());
+            self.drawing
+                .editor
+                .out
+                .inform("Duplicate: point at the canvas and press Shift+D");
             return;
         };
         if self.tool.kind() != ToolKind::Select {
@@ -966,10 +971,13 @@ impl DriftApp {
             .key(ToolKey::G, Some(&pointer), &mut self.drawing.editor);
         if self.tool.is_busy() {
             self.tool.grab_from_copy(originals);
-        } else if self.drawing.editor.history.undo_label() == Some("Duplicate")
-            && self.drawing.editor.undo()
-        {
-            self.drawing.editor.pick(&originals);
+            return;
+        }
+        let ed = &mut self.drawing.editor;
+        if ed.history.undo_label() == Some("Duplicate") && ed.undo() {
+            ed.history.forget_redo();
+            ed.pick(&originals);
+            ed.out.notice = Some("Can't duplicate this: the copy couldn't be moved".into());
         }
     }
 

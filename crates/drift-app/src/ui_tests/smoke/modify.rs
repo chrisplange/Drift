@@ -170,6 +170,12 @@ fn smoke_shift_d_with_the_pointer_off_the_canvas_leaves_no_stacked_copy() {
     );
     h.key_press_modifiers(EguiModifiers::SHIFT, Key::D);
     h.run();
+    // (The rectangle is the whole drawing, so the copy doubles the count.)
+    assert_eq!(count(&h), 2 * before, "duplicated");
+    assert!(
+        h.state().tool.is_busy(),
+        "the copy is being moved, from the last pointer"
+    );
     h.key_press(Key::Escape);
     h.run();
     assert_eq!(count(&h), before, "no copy left stacked on the originals");
@@ -181,5 +187,6 @@ fn smoke_shift_d_with_the_pointer_off_the_canvas_leaves_no_stacked_copy() {
     h.run();
     assert_eq!(count(&h), before, "nothing copied without a pointer");
     assert!(!h.state().tool.is_busy());
-    assert!(status(&h).contains("canvas"), "{}", status(&h));
+    assert!(status(&h).contains("point at the canvas"), "{}", status(&h));
+    assert!(!status_is_error(&h), "a plain hint, as for Move");
 }

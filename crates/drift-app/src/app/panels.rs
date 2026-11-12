@@ -1928,6 +1928,29 @@ mod pick_memo_tests {
         let mut kept_through_hatched_moves = 0;
         let mut memo = PickMemo::default();
         check(&mut memo, &ed, 0, "at the start");
+        // Platform check (scratch): every point after every step, against Windows' record.
+        let coords = |ed: &Editor| -> Vec<f64> {
+            ed.doc
+                .iter()
+                .filter_map(|(_, e)| match e.kind {
+                    drift_core::EntityKind::Point(p) => Some([p.x, p.y]),
+                    _ => None,
+                })
+                .flatten()
+                .collect()
+        };
+        let reference: Vec<Vec<f64>> = include_str!("pick_trace_windows.txt")
+            .lines()
+            .map(|l| {
+                l.split(' ')
+                    .filter(|t| !t.is_empty())
+                    .map(|t| t.parse().unwrap())
+                    .collect()
+            })
+            .collect();
+        let mut trace = String::new();
+        let mut worst = (0.0f64, 0usize);
+        let mut first_off = None;
         for step in 1..300 {
             let what = match rnd(12) {
                 0..=2 => "picks",
@@ -2008,8 +2031,7 @@ mod pick_memo_tests {
                     // of solves ends that up is round-off, not the memo (Windows and macOS
                     // parted by 0.46 mm by step 171 on main), so the count of hatched moves
                     // below would hang on the platform.
-                    let rest = &lines[4..];
-                    let (a, b) = (rest[rnd(rest.len())], rest[rnd(rest.len())]);
+                    let (a, b) = (lines[rnd(lines.len())], lines[rnd(lines.len())]);
                     if a != b {
                         let _ = ed.add_constraints("Parallel", &[Constraint::Parallel { a, b }]);
                     }
@@ -2048,7 +2070,45 @@ mod pick_memo_tests {
             }
             ed.settle_areas();
             check(&mut memo, &ed, step, what);
+            let now = coords(&ed);
+            trace.push_str(
+                &now.iter()
+                    .map(|v| format!("{v:e}"))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            );
+            trace.push(char::from(10));
+            if let Some(r) = reference.get(step - 1) {
+                let extent = now.iter().fold(0.0f64, |m, v| m.max(v.abs()));
+                let off = if r.len() == now.len() {
+                    r.iter()
+                        .zip(&now)
+                        .fold(0.0f64, |m, (a, b)| m.max((a - b).abs()))
+                } else {
+                    f64::INFINITY
+                };
+                println!("PLATFORM step {step} {what}: off {off:e} mm (sketch {extent:.1} mm)");
+                if off > worst.0 {
+                    worst = (off, step);
+                }
+                if off > 1e-9 * extent && first_off.is_none() {
+                    first_off = Some((step, off));
+                }
+            }
         }
+        if let Ok(out) = std::env::var("PICK_TRACE_OUT") {
+            std::fs::write(out, &trace).unwrap();
+        }
+        println!(
+            "PLATFORM worst {:e} mm at step {}; first past 1e-9 of the sketch: {:?}",
+            worst.0, worst.1, first_off
+        );
+        assert!(
+            reference.is_empty() || first_off.is_none(),
+            "PLATFORM: parts from Windows' record past 1e-9 of the sketch at {first_off:?}; worst {:e} at step {}",
+            worst.0,
+            worst.1
+        );
         assert!(kept_through_moves > 5);
         assert!(
             kept_through_hatched_moves > 5,

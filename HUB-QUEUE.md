@@ -16,8 +16,8 @@ Last updated 2026-11-12.
 
 | ID | Issue | Task | Done when | Files | Tier | Status | PR | Session |
 |---|---|---|---|---|---|---|---|---|
-| H-9 | #349 (PR 3 review items 1 and 2) | Solver stage-2 stall: steps keep to the rows' solutions and stop on the step | Heavy drag matrix matches `expected.txt`; free-move seeds 3, 6, 17, 18, 19 pass again; no perf line slower than main; Linux matches Windows | `crates/drift-solver/` `newton` second stage, `Shape::Direction` | gated | running (draft) | #400 | solver-fix-the-stage-2-s |
-| H-7 | #350, #284 (commit side) | Solver redesign PR 6: commits keep shapes | Commits keep line lengths and directions and arc radii where the relations leave room, ranked below relations and named geometry; before/after on the relation-adding census (#333's corpus) in the PR | `crates/drift-solver/`, `crates/drift-edit/` editor `solve.rs` and its tests | gated | in-review | #399 | solver-pr6 |
+| H-9 | #349 (PR 3 review items 1 and 2) | Solver stage-2 stall: steps keep to the rows' solutions and stop on the step | Heavy drag matrix matches `expected.txt`; free-move seeds 3, 6, 17, 18, 19 pass again; no perf line slower than main; Linux matches Windows | `crates/drift-solver/` `newton` second stage, `Shape::Direction` | gated | parked (draft; scope waits on the user) | #400 | solver-fix-the-stage-2-s |
+| H-7 | #350, #284 (commit side) | Solver redesign PR 6: commits keep shapes | Commits keep line lengths and directions and arc radii where the relations leave room, ranked below relations and named geometry; before/after on the relation-adding census (#333's corpus) in the PR | `crates/drift-solver/`, `crates/drift-edit/` editor `solve.rs` and its tests | gated | in-review (rebasing onto main) | #399 | solver-pr6 |
 
 Solver scope is PRs 2, 3 and 6 only; 2 and 3 are merged. PR 1 (#352), PR 4 (#344) and PR 5 (#362) are parked as `later`. After PR 6, work returns to the usability and bug batches; batch-1 waits on its Done when lines from the planning chat.
 

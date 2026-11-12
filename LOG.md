@@ -28,3 +28,4 @@ One line per decision, approval or merge, newest last. Format: `YYYY-MM-DD | wha
 2026-11-11 | "Stop the drag" reaffirmed: PR 3 (#394) brought back a whole-part rigid slide when a drag frame fails (rejected 2026-11-03); it is being removed (main-fix) | user
 2026-11-11 | Circles are held like arcs: "radii are never grown" covers circle radii too (main-fix) | user
 2026-11-11 | Dragging a point held on a fixed-centre circle outward past its radius stops the drag, the same as arcs; no circle exemption (confirms gated PR #398) | user
+2026-11-12 | A round set Equal to a fixed-centre round stops when dragged off its tangent line, for arcs and circles alike (merged #398 knowing it) | user

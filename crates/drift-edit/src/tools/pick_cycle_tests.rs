@@ -157,22 +157,12 @@ fn a_drag_from_the_spot_moves_what_the_click_again_picked() {
     click(&mut ed, &mut sel, SPOT);
     click(&mut ed, &mut sel, SPOT);
     assert_eq!(picked(&ed), [a]);
-    let y = |ed: &Editor, id: EntityId| match ed.doc.get(id).unwrap().kind {
-        EntityKind::Line { a, .. } => ed.doc.point(a).unwrap().y,
-        _ => unreachable!(),
-    };
-    let (ya, yc) = (y(&ed, a), y(&ed, c));
-    let down = Modifiers::default();
-    sel.handle(Input::DragStart(Pointer::new(SPOT, TOL), down), &mut ed);
-    sel.handle(Input::Drag(Pointer::new(SPOT + v(0.0, 5.0), TOL)), &mut ed);
-    sel.handle(
-        Input::DragEnd(Pointer::new(SPOT + v(0.0, 5.0), TOL), down),
-        &mut ed,
-    );
+    let (ya, yc) = (y_of(&ed, a), y_of(&ed, c));
+    drag(&mut ed, &mut sel, SPOT, v(0.0, 5.0));
     // The line across moved up; the diagonal (what a single click takes there) didn't.
     assert_eq!(picked(&ed), [a]);
-    assert!((y(&ed, a) - ya - 5.0).abs() < 1e-6);
-    assert_eq!(y(&ed, c), yc);
+    assert!((y_of(&ed, a) - ya - 5.0).abs() < 1e-6);
+    assert_eq!(y_of(&ed, c), yc);
 }
 
 #[test]
@@ -261,4 +251,86 @@ fn the_hover_shows_what_the_next_click_picks() {
     assert_eq!(hover(&mut ed, &mut sel, SPOT), Some(c));
     // Off the spot (but still over the lines): what a click there would pick, the first.
     assert_eq!(hover(&mut ed, &mut sel, v(0.5, 0.4)), Some(c));
+}
+
+#[test]
+fn clicks_a_pixel_apart_on_the_spot_keep_the_order() {
+    let (mut ed, [a, b, c]) = three_stacked();
+    let mut sel = SelectTool::default();
+    // At (0.05, 0.1) alone the upright is nearer than the line across: the order stays the
+    // one gathered where the cycle began.
+    let mut got = Vec::new();
+    for at in [SPOT, v(0.05, 0.1)].into_iter().cycle().take(6) {
+        click(&mut ed, &mut sel, at);
+        got.extend(picked(&ed));
+    }
+    assert_eq!(got, [c, a, b, c, a, b]);
+}
+
+fn y_of(ed: &Editor, id: EntityId) -> f64 {
+    match ed.doc.get(id).unwrap().kind {
+        EntityKind::Line { a, .. } => ed.doc.point(a).unwrap().y,
+        _ => unreachable!(),
+    }
+}
+
+fn drag(ed: &mut Editor, sel: &mut SelectTool, from: DVec2, by: DVec2) {
+    let down = Modifiers::default();
+    sel.handle(Input::DragStart(Pointer::new(from, TOL), down), ed);
+    sel.handle(Input::Drag(Pointer::new(from + by, TOL)), ed);
+    sel.handle(Input::DragEnd(Pointer::new(from + by, TOL), down), ed);
+}
+
+#[test]
+fn a_drag_pressed_a_little_off_the_spot_moves_what_was_picked() {
+    let (mut ed, [a, _, c]) = three_stacked();
+    let mut sel = SelectTool::default();
+    click(&mut ed, &mut sel, SPOT);
+    click(&mut ed, &mut sel, SPOT);
+    assert_eq!(picked(&ed), [a]);
+    let (ya, yc) = (y_of(&ed, a), y_of(&ed, c));
+    // Pressed where the upright would come before the line across.
+    drag(&mut ed, &mut sel, v(0.05, 0.1), v(0.0, 5.0));
+    assert_eq!(picked(&ed), [a]);
+    assert!((y_of(&ed, a) - ya - 5.0).abs() < 1e-6);
+    assert_eq!(y_of(&ed, c), yc);
+}
+
+#[test]
+fn a_drag_off_the_spot_takes_a_picked_line_under_the_pointer_first() {
+    let (mut ed, [a, _, c]) = three_stacked();
+    let mut sel = SelectTool::default();
+    click(&mut ed, &mut sel, SPOT);
+    click(&mut ed, &mut sel, SPOT);
+    assert_eq!(picked(&ed), [a]);
+    let (ya, yc) = (y_of(&ed, a), y_of(&ed, c));
+    // Off the spot, the diagonal is nearest, but the line across is picked and in reach.
+    drag(&mut ed, &mut sel, v(0.6, 0.3), v(0.0, 5.0));
+    assert_eq!(picked(&ed), [a]);
+    assert!((y_of(&ed, a) - ya - 5.0).abs() < 1e-6);
+    assert_eq!(y_of(&ed, c), yc);
+}
+
+#[test]
+fn a_grouped_shapes_edge_and_fill_count_once() {
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let p = [v(0.0, 0.0), v(20.0, 0.0), v(20.0, 10.0), v(0.0, 10.0)].map(|q| ed.doc.add_point(q));
+    let lines: BTreeSet<EntityId> = (0..4)
+        .map(|i| ed.doc.add_line(p[i], p[(i + 1) % 4]).unwrap())
+        .collect();
+    ed.commit("Rectangle");
+    let fill = ed.add_fill_at(v(10.0, 5.0)).unwrap();
+    ed.selection = lines.clone();
+    let g = ed.make_group().expect("grouped");
+    assert_eq!(ed.fill_group(fill), Some(g));
+    ed.selection.clear();
+    ed.selected_fills.clear();
+    let mut sel = SelectTool::default();
+    // Just inside the bottom edge: the edge and the fill both pick the group.
+    for _ in 0..3 {
+        click(&mut ed, &mut sel, v(5.0, 0.3));
+        assert!(lines.iter().all(|l| ed.selection.contains(l)));
+        assert_eq!(ed.out.info.take(), None);
+    }
 }

@@ -307,6 +307,13 @@ fn picks_of(ed: &Editor, pick: Pick) -> Picks {
     let id = match pick {
         Pick::Geometry(Target::Entity(id) | Target::Midpoint(id)) => id,
         Pick::Wall(w, _) => return Picks::Wall(w),
+        // (A grouped shape's fill picks the group, as its edges do.)
+        Pick::Fill(f) => {
+            return match ed.fill_group(f) {
+                Some(g) if ed.open_group != Some(g) => Picks::Group(g),
+                _ => Picks::Other(pick),
+            };
+        }
         other => return Picks::Other(other),
     };
     if let Some(o) = ed.opening_of(id) {
@@ -354,7 +361,9 @@ pub(super) fn cycle_step(ed: &mut Editor, p: &Pointer, lead: usize) -> Step {
             _ => Step::Lead,
         };
     };
-    let picks = candidates_at(ed, p);
+    // Gathered at the spot, not wherever this click landed in it: a pixel's jitter near a
+    // crossing would reorder them.
+    let picks = candidates_at(ed, &p.at(last.at));
     let len = lead + picks.len();
     // (Not the same things under it any more: from the first.)
     let step = match last.len {
@@ -389,7 +398,7 @@ pub(super) fn hover_next(ed: &mut Editor, p: &Pointer) -> Option<Option<Pick>> {
     let picks = match ed.pick_cycle.cached() {
         Some(picks) => picks.clone(),
         None => {
-            let picks = candidates_at(ed, p);
+            let picks = candidates_at(ed, &p.at(last.at));
             ed.pick_cycle.cache(picks.clone());
             picks
         }
@@ -402,4 +411,22 @@ pub(super) fn hover_next(ed: &mut Editor, p: &Pointer) -> Option<Option<Pick>> {
     let k = next.checked_sub(last.lead);
     ed.pick_cycle.set_hover_past(last.lead > 0 && k.is_some());
     Some(k.and_then(|k| picks.get(k).copied()))
+}
+
+/// Whether `pick` is picked already.
+pub(super) fn is_picked(ed: &Editor, pick: Pick) -> bool {
+    match pick {
+        Pick::Geometry(Target::Entity(id)) => ed.selection.contains(&id),
+        Pick::Geometry(Target::Midpoint(line)) => ed.selected_midpoints.contains(&line),
+        Pick::Text(t) => ed.selected_texts.contains(&t),
+        Pick::Copy(c) => ed.selected_instances.contains(&c),
+        Pick::Wall(_, f) | Pick::Fill(f) => ed.selected_fills.contains(&f),
+    }
+}
+
+impl Pointer {
+    /// The same pointer at `raw`.
+    pub(super) fn at(&self, raw: DVec2) -> Pointer {
+        Pointer { raw, ..*self }
+    }
 }

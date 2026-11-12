@@ -123,24 +123,25 @@ impl PickCycle {
         self.handed.take()
     }
 
-    /// Which of the tool's candidates a click that went on picked, if `at` is on its spot:
-    /// a drag from there takes that one.
-    pub(crate) fn cycled_at(&self, at: DVec2) -> Option<usize> {
+    /// Which of the tool's candidates a click that went on picked, and where they were
+    /// gathered (the spot), if `at` is on it: a drag from there takes that one.
+    pub(crate) fn cycled_at(&self, at: DVec2) -> Option<(usize, DVec2)> {
         let s = self
             .last
             .filter(|s| s.advanced && at.distance(s.at) <= SAME_SPOT * s.reach)?;
-        s.step.checked_sub(s.lead)
+        Some((s.step.checked_sub(s.lead)?, s.at))
     }
 
     /// The candidate a double-click's first click picked, of the tool's, when the second
     /// click (this frame) went on to the next: the double-click acts on that one, as before.
-    pub(crate) fn step_back(&mut self) -> Option<usize> {
+    /// (With the spot, where the candidates were gathered.)
+    pub(crate) fn step_back(&mut self) -> Option<(usize, DVec2)> {
         let s = self.last.as_mut().filter(|_| self.fresh)?;
         let len = s.len.filter(|_| s.advanced)?;
         let prev = (s.step + len - 1) % len;
         let k = prev.checked_sub(s.lead)?;
         s.step = prev;
-        Some(k)
+        Some((k, s.at))
     }
 }
 
@@ -197,7 +198,7 @@ mod tests {
         assert!(c.same_spot(AT + DVec2::new(0.4, 0.0), 1).is_some());
         assert!(c.same_spot(AT + DVec2::new(0.6, 0.0), 1).is_none());
         assert!(c.same_spot(AT, 0).is_none());
-        assert_eq!(c.cycled_at(AT), Some(0));
+        assert_eq!(c.cycled_at(AT + DVec2::new(0.3, 0.0)), Some((0, AT)));
         // Still on the way to a drag from it; then away.
         c.pointer_at(AT + DVec2::new(0.9, 0.0));
         assert!(c.position().is_some());

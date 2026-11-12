@@ -2372,7 +2372,7 @@ fn newton(
             let Some(factor) = normal.factor(&shift) else {
                 // (Positive definite by construction; a factor that fails is round-off
                 // swamping the rows, with nothing a preference's step could rely on.)
-                stage2(6);
+                stage2(5);
                 return finish(
                     Stop::Settled,
                     iteration,
@@ -2688,7 +2688,7 @@ fn newton(
                 None => radius = stepped / 4.0,
             }
             if radius <= bar.get().length {
-                stage2(5);
+                stage2(4);
                 return finish(
                     Stop::Settled,
                     iteration + 1,
@@ -2915,7 +2915,7 @@ fn newton(
         }
     }
     if in_stage2 && converged(&res, values) {
-        stage2(7);
+        stage2(6);
     }
     finish(
         Stop::Cap,

@@ -11,8 +11,8 @@
 //! numbers stay as they are. `CENSUS_CASE` runs that case alone and prints the drawing before
 //! and after; `CENSUS_POS` adds a `P <case>` line of every point's position, to compare two
 //! builds point by point. An `S <case>` line lists the edit's second-stage endings where one
-//! stalled (stopped by the bound on the preferences' steps, the region or the cap, not by a
-//! test that the shapes are as near as the rows let them be), and `S2 TOTAL` sums them (`drift_solver::exits::STAGE2`: the PR 3
+//! stalled (stopped by the region or the cap, not by a test that the shapes are as near as the
+//! rows let them be), and `S2 TOTAL` sums them (`drift_solver::exits::STAGE2`: the PR 3
 //! review's items 1 and 2). Each line: `R <case> <kind> <active> <result>`, then (where the
 //! relation was added) `mv` how far the farthest point moved, `pts` how many points moved, and
 //! for the lines and the arcs, apart for the geometry the relation names (`n…`: a line counts
@@ -487,8 +487,8 @@ fn relation_census() {
         let _ = drift_solver::exits::take_stage2();
         let result = apply(ed, add, c, &picks);
         show(ed, "after");
-        // How the edit's solves' second stages ended: a stall (the bound, the region or the
-        // cap) is printed, case by case.
+        // How the edit's solves' second stages ended: a stall (the region or the cap) is
+        // printed, case by case.
         let s2 = drift_solver::exits::take_stage2();
         for k in 0..drift_solver::exits::STAGE2.len() {
             total.other[k] += s2.other[k];
@@ -498,7 +498,7 @@ fn relation_census() {
         if stalled > 0 {
             println!(
                 "S {case} {kind} {act} stalled {stalled} cap {} ends {:?} stalls {:?}",
-                s2.other[7], s2.other, s2.other_stalled
+                s2.other[6], s2.other, s2.other_stalled
             );
         }
         let result = match result {

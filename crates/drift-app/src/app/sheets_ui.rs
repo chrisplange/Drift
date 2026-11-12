@@ -10,6 +10,8 @@ use drift_core::{
 use drift_draft::page::Drawing;
 use drift_platform::FileType;
 
+#[cfg(not(feature = "demo"))]
+use crate::output::PdfPlacement;
 use crate::*;
 
 #[cfg(not(feature = "demo"))]
@@ -389,8 +391,28 @@ impl DriftApp {
 
     #[cfg(not(feature = "demo"))]
     /// The sheets chosen for the PDF and print, as a PDF. Each keeps its number in the whole
-    /// set ("2 / 5"), so a reissued sheet matches the set it belongs to.
+    /// set ("2 / 5"), so a reissued sheet matches the set it belongs to. With no sheets, a
+    /// fitted A3 sheet (as print makes it).
     pub(crate) fn pdf_bytes(&mut self, painter: &egui::Painter) -> Vec<u8> {
+        self.placed_pdf_bytes(painter, PdfPlacement::Fit)
+    }
+
+    #[cfg(not(feature = "demo"))]
+    /// [`Self::pdf_bytes`], with a drawing that has no sheets placed as `placement` says.
+    pub(crate) fn placed_pdf_bytes(
+        &mut self,
+        painter: &egui::Painter,
+        placement: PdfPlacement,
+    ) -> Vec<u8> {
+        self.hatch_patterns
+            .update(self.drawing.editor.doc.custom_patterns());
+        let patterns = &self.hatch_patterns;
+        let true_scale = crate::output::as_finished(&mut self.drawing.editor, |ed| {
+            placement.true_scale_page(ed, patterns, painter)
+        });
+        if let Some(d) = true_scale {
+            return drift_io::pdf::write(&[d], &self.file_stem());
+        }
         let chosen: Vec<bool> = self
             .drawing
             .editor
@@ -407,18 +429,19 @@ impl DriftApp {
     }
 
     #[cfg(not(feature = "demo"))]
-    /// Export a PDF: with several sheets, first a dialog to choose which.
+    /// Export a PDF: with several sheets, first a dialog to choose which; with none, first a
+    /// prompt for how to place the drawing (#245).
     pub(crate) fn export_pdf(&mut self, painter: &egui::Painter) {
-        if self.drawing.editor.doc.sheets().nth(1).is_some() {
-            self.drawing.output_dialog = Some(Output::Pdf);
-        } else {
-            self.write_pdf(painter);
+        match self.drawing.editor.doc.sheets().take(2).count() {
+            2 => self.drawing.output_dialog = Some(Output::Pdf),
+            0 => self.pdf_place_dialog = true,
+            _ => self.write_pdf(painter, PdfPlacement::Fit),
         }
     }
 
     #[cfg(not(feature = "demo"))]
-    fn write_pdf(&mut self, painter: &egui::Painter) {
-        let bytes = self.pdf_bytes(painter);
+    fn write_pdf(&mut self, painter: &egui::Painter, placement: PdfPlacement) {
+        let bytes = self.placed_pdf_bytes(painter, placement);
         let name = format!("{}.pdf", self.file_stem());
         self.files.export(&name, PDF_FILE, bytes);
     }
@@ -577,6 +600,84 @@ impl DriftApp {
         }
     }
 
+    /// With no sheets, the scale the fitted A3 sheet of a PDF or print has, as the prompt
+    /// labels it: `Fit to A3 (1:5)`.
+    #[cfg(not(feature = "demo"))]
+    pub(crate) fn fit_label(&self) -> String {
+        let sheet = self.fresh_sheet("Sheet 1");
+        let imperial = self.imperial();
+        let (view, _) = crate::output::sheet_view(
+            self.fit_bounds(),
+            &sheet,
+            imperial,
+            self.drawing.editor.doc.draft_style().scale,
+        );
+        format!(
+            "Fit to {} ({})",
+            sheet.paper.label(),
+            scale_label(view.scale, imperial)
+        )
+    }
+
+    /// Export PDF with no sheets: how to place the drawing, at 1 : 1 or fitted to a sheet
+    /// (#245). Cancel exports nothing.
+    #[cfg(not(feature = "demo"))]
+    pub(crate) fn pdf_place_window(&mut self, ctx: &egui::Context) {
+        if !self.pdf_place_dialog {
+            return;
+        }
+        let title = "Export PDF";
+        let dark = ctx.global_style().visuals.dark_mode;
+        let fit = self.fit_label();
+        let (mut close, mut go) = (false, false);
+        theme::dialog(ctx, title)
+            .id(egui::Id::new("pdf_placement"))
+            .show(ctx, |ui| {
+                ui.set_width(380.0);
+                if theme::dialog_title(ui, title, true) {
+                    close = true;
+                }
+                ui.label(
+                    egui::RichText::new("This drawing has no sheets. How should it be placed?")
+                        .weak(),
+                );
+                ui.add_space(6.0);
+                let choices = [
+                    (
+                        PdfPlacement::TrueScale,
+                        "1:1 (true scale)".to_owned(),
+                        "At full size, on a page sized to the drawing with a 5 mm margin",
+                    ),
+                    (
+                        PdfPlacement::Fit,
+                        fit,
+                        "On one sheet with a title block, at the scale that fits",
+                    ),
+                ];
+                for (placement, label, hint) in choices {
+                    ui.radio_value(&mut self.pdf_placement, placement, label);
+                    ui.indent(hint, |ui| {
+                        ui.label(egui::RichText::new(hint).small().weak());
+                    });
+                }
+                theme::dialog_buttons(ui, |ui| {
+                    if ui.add(theme::primary_button("Export…", dark)).clicked() {
+                        go = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        close = true;
+                    }
+                });
+            });
+        if go {
+            self.pdf_place_dialog = false;
+            let painter = ctx.layer_painter(egui::LayerId::background());
+            self.write_pdf(&painter, self.pdf_placement);
+        } else if close {
+            self.pdf_place_dialog = false;
+        }
+    }
+
     #[cfg(not(feature = "demo"))]
     /// Print: with several sheets, first a dialog to choose which.
     pub(crate) fn print(&mut self, painter: &egui::Painter) {
@@ -678,7 +779,7 @@ impl DriftApp {
             self.drawing.output_dialog = None;
             let painter = ctx.layer_painter(egui::LayerId::background());
             match kind {
-                Output::Pdf => self.write_pdf(&painter),
+                Output::Pdf => self.write_pdf(&painter, PdfPlacement::Fit),
                 Output::Print => self.open_to_print(&painter),
             }
         } else if close {

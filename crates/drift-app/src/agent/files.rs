@@ -332,6 +332,16 @@ pub(super) fn import(s: &mut Session, a: &Value) -> Res {
     }))
 }
 
+/// A PDF's `placement` with no sheets (#245): `fit` (the default) or `true-scale`.
+fn placement(a: &Value) -> Result<crate::output::PdfPlacement, String> {
+    use crate::output::PdfPlacement;
+    match args::opt_str(a, "placement")? {
+        None | Some("fit") => Ok(PdfPlacement::Fit),
+        Some("true-scale" | "1:1") => Ok(PdfPlacement::TrueScale),
+        Some(other) => Err(format!("placement is fit or true-scale, not \"{other}\"")),
+    }
+}
+
 pub(super) fn export(s: &mut Session, a: &Value) -> Res {
     let path = resolve(s, args::str_(a, "path")?, false)?;
     let format = match args::opt_str(a, "format")? {
@@ -342,14 +352,16 @@ pub(super) fn export(s: &mut Session, a: &Value) -> Res {
     let painter = s.painter();
     let bytes = match format.as_str() {
         "pdf" => {
+            let placement = placement(a)?;
             let pages = crate::output::as_finished(&mut s.editor, |ed| {
-                crate::output::sheet_pages(ed, &mut s.patterns, &painter, &title)
+                crate::output::sheet_pages(ed, &mut s.patterns, &painter, &title, placement)
             });
             drift_io::pdf::write(&pages, &title)
         }
         "svg" => {
             let pages = crate::output::as_finished(&mut s.editor, |ed| {
-                crate::output::sheet_pages(ed, &mut s.patterns, &painter, &title)
+                let fit = crate::output::PdfPlacement::Fit;
+                crate::output::sheet_pages(ed, &mut s.patterns, &painter, &title, fit)
             });
             let index = args::opt_f64(a, "sheet")?.unwrap_or(1.0).max(1.0) as usize - 1;
             let page = pages

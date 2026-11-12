@@ -1207,14 +1207,48 @@ pub fn view_drawing(
     d
 }
 
-/// Every sheet of the document as a page; with no sheets, one A3 sheet titled `title` with
-/// the drawing fitted on it (as the app prints).
+/// How a PDF of a drawing with no sheets places it (#245).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PdfPlacement {
+    /// One A3 sheet with the drawing fitted on it, at the scale that takes.
+    #[default]
+    Fit,
+    /// The drawing at true size (1 : 1) on a page fitted to it with a small margin
+    /// ([`MODEL_MARGIN`]), as [`model_page`] with its dimensions and notes.
+    TrueScale,
+}
+
+impl PdfPlacement {
+    /// The page at 1 : 1 when that is the choice, there are no sheets and there is something
+    /// to draw on it.
+    pub(crate) fn true_scale_page(
+        self,
+        ed: &mut Editor,
+        patterns: &PatternLibrary,
+        painter: &egui::Painter,
+    ) -> Option<Drawing> {
+        if self != PdfPlacement::TrueScale || ed.doc.sheets().next().is_some() {
+            return None;
+        }
+        let d = model_page(ed, patterns, painter, None, true);
+        (!d.items.is_empty()).then_some(d)
+    }
+}
+
+/// Every sheet of the document as a page; with no sheets, as `placement` says: one A3 sheet
+/// titled `title` with the drawing fitted on it (as the app prints), or the drawing at 1 : 1
+/// on a page of its own size (an empty drawing gets the A3 sheet either way).
 pub fn sheet_pages(
     ed: &mut Editor,
     patterns: &mut PatternLibrary,
     painter: &egui::Painter,
     title: &str,
+    placement: PdfPlacement,
 ) -> Vec<Drawing> {
+    patterns.update(ed.doc.custom_patterns());
+    if let Some(d) = placement.true_scale_page(ed, patterns, painter) {
+        return vec![d];
+    }
     let doc = &ed.doc;
     let mut sheets: Vec<(Sheet, Vec<PlacedView>)> = doc
         .sheets()
@@ -1230,13 +1264,34 @@ pub fn sheet_pages(
         let placed = PlacedView::new(port.view, &view, &port);
         sheets.push((sheet, vec![placed]));
     }
-    patterns.update(ed.doc.custom_patterns());
     let count = sheets.len();
     sheets
         .iter()
         .enumerate()
         .map(|(i, (s, views))| sheet_drawing(ed, patterns, painter, s, views, (i + 1, count)))
         .collect()
+}
+
+/// A PDF's first page as read back: its size (mm) and its longest straight stroke (mm), to
+/// check a print's scale (#245).
+#[cfg(test)]
+pub(crate) fn pdf_page_and_longest_line(pdf: &[u8]) -> (DVec2, f64) {
+    use drift_io::vector::Seg;
+    let art = drift_io::pdf_import::read_artwork(pdf, 1, "page").expect("a PDF page");
+    let mut longest = 0.0_f64;
+    for sub in art.paths.iter().flat_map(|p| &p.subpaths) {
+        let mut from = sub.start;
+        for seg in &sub.segs {
+            if let Seg::Line(to) = *seg {
+                longest = longest.max(from.distance(to));
+            }
+            from = seg.end();
+        }
+        if sub.closed {
+            longest = longest.max(from.distance(sub.start));
+        }
+    }
+    (art.size, longest)
 }
 
 /// Centre a view on `b` (the sketch with its dimension labels, in world mm) at the largest

@@ -361,7 +361,9 @@ fn output_painter() -> eframe::egui::Painter {
 /// once, as it now stands, in every copy; and the edit goes on.
 #[test]
 fn output_during_a_block_edit_is_the_finished_drawing() {
-    use crate::output::{CadFormat, as_finished, cad_file, model_drawing, sheet_pages};
+    use crate::output::{
+        CadFormat, PdfPlacement, as_finished, cad_file, model_drawing, sheet_pages,
+    };
     let painter = output_painter();
     let mut patterns = drift_edit::fills::PatternLibrary::default();
     let mut editing = block_being_edited();
@@ -382,11 +384,17 @@ fn output_during_a_block_edit_is_the_finished_drawing() {
         cad_file(&mut finished, &patterns, &painter, CadFormat::DxfR12).unwrap()
     );
     let pages = as_finished(&mut editing, |ed| {
-        sheet_pages(ed, &mut patterns, &painter, "Box")
+        sheet_pages(ed, &mut patterns, &painter, "Box", PdfPlacement::Fit)
     });
     assert_eq!(
         pages,
-        sheet_pages(&mut finished, &mut patterns, &painter, "Box")
+        sheet_pages(
+            &mut finished,
+            &mut patterns,
+            &painter,
+            "Box",
+            PdfPlacement::Fit
+        )
     );
     // Still editing, nothing undone or added.
     assert!(editing.block_edit.is_some());

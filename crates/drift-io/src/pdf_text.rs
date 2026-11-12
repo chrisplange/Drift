@@ -210,10 +210,16 @@ fn parse_cmap(text: &str) -> HashMap<u32, String> {
             _ => {}
         }
     }
+    // Byte pairs, not string slices: a damaged CMap can put a character of several bytes in a
+    // hex string, and slicing it at a byte that isn't a character's boundary panics.
     let hex = |t: &str| -> Option<Vec<u8>> {
-        let h = t.strip_prefix('<')?;
-        (0..h.len() / 2)
-            .map(|i| u8::from_str_radix(&h[i * 2..i * 2 + 2], 16).ok())
+        let digit = |b: u8| char::from(b).to_digit(16);
+        t.strip_prefix('<')?
+            .as_bytes()
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&[a, b]| Some((digit(a)? * 16 + digit(b)?) as u8))
             .collect()
     };
     let code = |t: &str| -> Option<u32> {
@@ -475,6 +481,16 @@ mod tests {
         assert_eq!(map[&0x14], "0");
         assert_eq!(map[&0x1d], "9");
         assert_eq!(map[&0x25], "B");
+    }
+
+    #[test]
+    fn a_hex_string_with_a_wide_character_is_skipped_not_a_panic() {
+        // `mutated_pdf_content_never_panics` found this: a character of three bytes inside
+        // a hex code.
+        let cmap = "1 beginbfchar\n<00\u{2318}1> <0041>\n<0003> <0020>\nendbfchar";
+        let map = parse_cmap(cmap);
+        assert_eq!(map[&3], " ");
+        assert_eq!(map.len(), 1);
     }
 
     #[test]

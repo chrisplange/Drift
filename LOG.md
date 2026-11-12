@@ -32,3 +32,4 @@ One line per decision, approval or merge, newest last. Format: `YYYY-MM-DD | wha
 2026-11-12 | The stage-2 stall fix (draft #400) continues as its own gated PR after PR 6 (#399) merges; it is not part of PR 6 | user
 2026-11-12 | Solver PR 6 (#399, edits keep shapes) merged before the separate Opus and Fable reviews ran; closes #350 | user
 2026-11-12 | When a relation can only be met by changing a line kept square only by shape-keeping (a preference, not a relation), the line turns rather than shrinking to nothing (as Fusion, SolidWorks and Onshape do); explicit Horizontal, Vertical and Perpendicular stay hard and a conflict with one is refused; zero-length geometry is never a valid solve (being built in #400) | user
+2026-11-12 | #400 (stage-2 stall fix) parked by the user as a draft | user

@@ -16,9 +16,10 @@ Last updated 2026-11-12.
 
 | ID | Issue | Task | Done when | Files | Tier | Status | PR | Session |
 |---|---|---|---|---|---|---|---|---|
-| H-9 | #349 (PR 3 review items 1 and 2) | Solver stage-2 stall: steps keep to the rows' solutions and stop on the step | Heavy drag matrix matches `expected.txt`; free-move seeds 3, 6, 17, 18, 19 pass again; no perf line slower than main; Linux matches Windows | `crates/drift-solver/` `newton` second stage, `Shape::Direction` | gated | running | #400 | solver-fix-the-stage-2-s |
+| H-10 | — | PDF import: a wide character in a CMap hex code is skipped, not a panic (fuzz find) | The fuzz case imports without a panic; CI green | PDF import (`crates/` IO) | gated | in-review, waiting on the user | #402 | — |
+| H-9 | #349 (PR 3 review items 1 and 2) | Solver stage-2 stall: steps keep to the rows' solutions and stop on the step; carries the "let the line turn" decision (LOG 2026-11-12) and the `Shape::Direction` measure fix | Heavy drag matrix matches `expected.txt`; free-move seeds 3, 6, 17, 18, 19 pass again; no perf line slower than main; Linux matches Windows | `crates/drift-solver/` `newton` second stage, `Shape::Direction` | gated | parked (draft, by the user) | #400 | — |
 
-Solver scope is PRs 2, 3 and 6 only; all three are merged. The stage-2 stall fix (#400) is running as its own gated PR. PR 1 (#352), PR 4 (#344) and PR 5 (#362) are parked as `later`. After #400, work returns to the usability and bug batches; batch-1 waits on its Done when lines from the planning chat.
+Nothing is running. Solver scope (PRs 2, 3 and 6) is merged; the stage-2 stall fix (#400) is parked as a draft, its state in the coordinator notes folder as `pr400-parked.md`. PR 1 (#352), PR 4 (#344) and PR 5 (#362) are parked as `later`. Next: the usability and bug batches; batch-1 waits on its Done when lines from the planning chat. #297 has a new macOS clamp panic (see batch-2).
 
 ## Done
 

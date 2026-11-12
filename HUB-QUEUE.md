@@ -41,9 +41,9 @@ The trial is over: self-merge of `auto` tasks is on. #264 stays open for its fol
 
 Work a batch at a time, up to 5 issues, in this order: papercuts, flaky tests, perf, solver. Each issue gets its Done when in the planning chat before it starts.
 
-- **batch-1** (papercuts): #367, #338, #326, #306, #245
+- **batch-1** (papercuts): #264 follow-up (Shift+D with no pointer, or on a locked layer), #338 (decided 11-12: trim the wall properly), #306, #367, #245 (decided 11-12: ask how to place the drawing). Draft Done when lines are with the coordinator and still go through the planning chat. #326 skipped for now (11-12), moved to later
 - **batch-2** (flaky tests): #368, #353, #297 (2026-11-12, macOS: also a `f64::clamp` panic, `min = 1.0000000000000004, max = 1.0`, no seed), #296, #295 (walls join bug, not solver; its fix adds the four saved seeds), #409 (2026-11-12, Windows `mutated_dxf_never_panics` timed out at 20 s; makes six, so one waits for the next round)
 - **batch-3** (big-drawing perf): #373, #372, #371, #370, #285, #253
 - **solver-audit** (PR 6 closes #350): #350, #351 (left open by PR 3: ~0.3 s on main and PR 3), #347 (blocked by #313), #187
 - **solver, not in an audit PR**: #407 (some `newton()` exits say converged before re-reading the bar of the part as left; heavy seed 8; parked with #400 and decided with it, labelled `later`). #392 closed 2026-11-12, fixed by #394
-- **later**: #352, #344, #362 (parked solver PRs 1, 4 and 5; still labelled solver-audit), #407 (with #400), #369, #345, #314, #313, #307, #305, #291, #290, #289, #244, #243, #231, #183
+- **later**: #352, #344, #362 (parked solver PRs 1, 4 and 5; still labelled solver-audit), #407 (with #400), #326 (jagged fill edges, skipped 11-12), #369, #345, #314, #313, #307, #305, #291, #290, #289, #244, #243, #231, #183

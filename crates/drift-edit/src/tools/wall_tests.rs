@@ -490,3 +490,141 @@ fn the_preview_shows_the_join_before_the_click() {
         .fold(f64::INFINITY, f64::min);
     assert!((lowest - 5.0).abs() < 1e-9, "the faces end at y = {lowest}");
 }
+
+/// What the walls made, to compare two drawings: walls, face lines (curves the walls own),
+/// curves nobody owns, fills, and the poché's area.
+fn wall_summary(ed: &mut Editor) -> (usize, usize, usize, usize, i64) {
+    let owners = ed.wall_owners();
+    let curves: Vec<EntityId> = ed
+        .doc
+        .iter()
+        .filter(|(_, e)| !e.kind.is_point())
+        .map(|(id, _)| id)
+        .collect();
+    let faces = curves.iter().filter(|id| owners.by_wall(**id)).count();
+    let loose = curves
+        .iter()
+        .filter(|id| owners.get(**id).is_none())
+        .count();
+    let area = poche_area(ed);
+    (
+        ed.doc.walls().count(),
+        faces,
+        loose,
+        ed.doc.fills().count(),
+        area.round() as i64,
+    )
+}
+
+/// One Trim drag through `pts`.
+fn trim_drag(ed: &mut Editor, pts: &[DVec2]) {
+    let mut tool = ToolKind::Trim.create();
+    let m = Modifiers::default();
+    tool.handle(Input::DragStart(Pointer::new(pts[0], TOL), m), ed);
+    for at in &pts[1..] {
+        tool.handle(Input::Drag(Pointer::new(*at, TOL)), ed);
+    }
+    let end = Pointer::new(*pts.last().unwrap(), TOL);
+    tool.handle(Input::DragEnd(end, m), ed);
+}
+
+/// #338: a Trim drag across two opposite walls of a closed room trims the walls whole. Their
+/// centrelines are cut (nothing else crosses them, so each crossed segment goes, corner to
+/// corner) and the faces, poché and outline follow: what is left is what drawing the two
+/// remaining walls from scratch makes, with no fill-less wall and no face lines left behind.
+#[test]
+fn a_trim_drag_across_walls_trims_them_whole() {
+    let mut ed = editor();
+    ed.show_centrelines = false;
+    run(
+        &mut ed,
+        &[
+            v(0.0, 0.0),
+            v(100.0, 0.0),
+            v(100.0, 60.0),
+            v(0.0, 60.0),
+            v(0.0, 0.0),
+        ],
+    );
+    assert_eq!(ed.doc.walls().count(), 1);
+    // Across the left wall and the right wall, in a few moves.
+    trim_drag(
+        &mut ed,
+        &[
+            v(-30.0, 30.0),
+            v(-10.0, 31.0),
+            v(20.0, 30.0),
+            v(60.0, 30.0),
+            v(130.0, 29.0),
+        ],
+    );
+    let got = wall_summary(&mut ed);
+
+    // The same two walls, drawn from scratch.
+    let mut fresh = editor();
+    run(&mut fresh, &[v(0.0, 0.0), v(100.0, 0.0)]);
+    run(&mut fresh, &[v(100.0, 60.0), v(0.0, 60.0)]);
+    let want = wall_summary(&mut fresh);
+    assert_eq!(want, (2, 8, 0, 2, 2 * 100 * 10));
+    assert_eq!(
+        got, want,
+        "(walls, face lines, loose curves, fills, poché area)"
+    );
+    // And a full rebuild of what is left changes nothing.
+    let before = ed.doc.len();
+    drift_geom::walls::regenerate(&mut ed.doc);
+    assert_eq!(ed.doc.len(), before);
+    assert_eq!(wall_summary(&mut ed), want);
+    // One undo step puts the room back.
+    ed.undo();
+    assert_eq!(ed.doc.walls().count(), 1);
+    assert_eq!(faces(&ed), 8);
+}
+
+/// A click-trim on the centreline of a closed room's side (with centrelines shown) opens the
+/// room there: the wall is the U that is left, as drawn from scratch.
+#[test]
+fn a_trim_click_on_a_rooms_centreline_opens_the_room() {
+    let mut ed = editor();
+    run(
+        &mut ed,
+        &[
+            v(0.0, 0.0),
+            v(100.0, 0.0),
+            v(100.0, 60.0),
+            v(0.0, 60.0),
+            v(0.0, 0.0),
+        ],
+    );
+    let mut tool = ToolKind::Trim.create();
+    click(&mut ed, tool.as_mut(), v(100.0, 30.0));
+    let got = wall_summary(&mut ed);
+    // The U, drawn from scratch.
+    let mut u = editor();
+    run(
+        &mut u,
+        &[v(100.0, 60.0), v(0.0, 60.0), v(0.0, 0.0), v(100.0, 0.0)],
+    );
+    assert_eq!(
+        got,
+        wall_summary(&mut u),
+        "(walls, face lines, loose curves, fills, poché area)"
+    );
+    assert_eq!(got.0, 1);
+}
+
+/// A single click on a wall face with the Trim tool still says why it can't trim it.
+#[test]
+fn a_trim_click_on_a_wall_face_says_to_trim_the_centreline() {
+    let mut ed = editor();
+    ed.show_centrelines = false;
+    run(&mut ed, &[v(0.0, 0.0), v(100.0, 0.0)]);
+    let before = wall_summary(&mut ed);
+    let mut tool = ToolKind::Trim.create();
+    click(&mut ed, tool.as_mut(), v(50.0, -5.0));
+    assert_eq!(wall_summary(&mut ed), before);
+    assert_eq!(
+        ed.out.notice.as_deref(),
+        Some("Trim: Wall faces follow the wall: trim its centreline, or Explode it")
+    );
+}

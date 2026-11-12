@@ -579,6 +579,7 @@ impl Editor {
             })
             .collect();
         let walls: Vec<(WallId, Wall)> = self.doc.walls().map(|(id, w)| (id, w.clone())).collect();
+        let (_, paths) = self.doc.walls_and_paths_touched_in_transaction();
         for (id, wall) in walls {
             let Some(path) = self.doc.path(wall.centre).cloned() else {
                 continue;
@@ -610,7 +611,11 @@ impl Editor {
                     }
                 }
             }
-            if !reshaped && own.len() == path.curves.len() {
+            // A deleted centreline curve is already gone from its path (the document drops
+            // it, #338): what is left may no longer run end to end, in its order.
+            let broken = paths.contains(&wall.centre)
+                && chains(&self.doc, &own) != [(own.clone(), path.closed)];
+            if !reshaped && !broken && own.len() == path.curves.len() {
                 self.keep_construction(&own);
                 continue;
             }

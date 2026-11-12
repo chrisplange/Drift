@@ -107,7 +107,16 @@ impl Editor {
     /// [`kept_shapes`](Self::kept_shapes)). From geometry where the relations already hold
     /// (the commit after a drag, or after a relation's own solve) it takes no step.
     pub(crate) fn solve_commit(&mut self) -> SolveReport {
-        let kept = self.kept_shapes(&HashSet::new());
+        self.solve_commit_giving_way(&HashSet::new())
+    }
+
+    /// [`solve_commit`](Self::solve_commit), with the lines `giving_way` keeping their lengths
+    /// instead of their directions (see [`kept_shapes`](Self::kept_shapes)).
+    pub(crate) fn solve_commit_giving_way(
+        &mut self,
+        giving_way: &HashSet<EntityId>,
+    ) -> SolveReport {
+        let kept = self.kept_shapes(&HashSet::new(), giving_way);
         let options = SolveOptions {
             lowering: self.lowering(),
             lengths: kept.lengths,
@@ -136,13 +145,19 @@ impl Editor {
     ///   its lines keep their lengths but not their directions (a line made parallel to another
     ///   turns, and neither stretches), and its arcs take up the change in their radii (a
     ///   fillet made concentric with a round grows inside lines that stay square, #75);
-    /// - a size a dimension sets is the dimension's, not a preference.
+    /// - a size a dimension sets is the dimension's, not a preference;
+    /// - a line `giving_way` keeps its length instead of its direction, as firmly: keeping
+    ///   its direction shrank it to a sliver, and a preference gives way, so it turns.
     ///
     /// Where they can't all be met, a length ranks below a direction or a radius
     /// ([`LENGTH_YIELD`]), and a length of what the relation names lower still
     /// ([`NAMED_YIELD`]). What a solve holds where it is (the active element, carried) ranks
     /// above all of these.
-    pub(crate) fn kept_shapes(&self, turning: &HashSet<EntityId>) -> KeptShapes {
+    pub(crate) fn kept_shapes(
+        &self,
+        turning: &HashSet<EntityId>,
+        giving_way: &HashSet<EntityId>,
+    ) -> KeptShapes {
         let mut kept = KeptShapes::default();
         // Only what the relations reach (through shared points and relations) can move in an
         // edit's solve: the rest of a big drawing (imported linework, say) is left out, which
@@ -195,7 +210,15 @@ impl Editor {
                         continue;
                     };
                     let turns = turning.contains(&id);
-                    if (turns || hangs(a) || hangs(b)) && !sized.contains(&(a.min(b), a.max(b))) {
+                    let sized_line = sized.contains(&(a.min(b), a.max(b)));
+                    if !turns && giving_way.contains(&id) {
+                        if !sized_line {
+                            kept.lengths.insert(id, pa.distance(pb));
+                            kept.length_ranks.insert(id, 1.0);
+                        }
+                        continue;
+                    }
+                    if (turns || hangs(a) || hangs(b)) && !sized_line {
                         kept.lengths.insert(id, pa.distance(pb));
                         let rank = if turns {
                             LENGTH_YIELD * NAMED_YIELD

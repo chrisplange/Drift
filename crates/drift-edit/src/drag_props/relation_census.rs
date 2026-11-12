@@ -423,6 +423,101 @@ fn no_edit_leaves_a_sliver() {
     );
 }
 
+/// The census's case `wanted`, built at `t`: the editor with the case's picks made, the
+/// relation or size to add, and the picks.
+fn census_case(wanted: usize, t: Similarity) -> (Built, Add, Constraint, Vec<EntityId>) {
+    let mut next = cases();
+    for _ in 0..wanted {
+        next();
+    }
+    let (plan, add, seed, active) = next();
+    let sketch = plan.sketch().expect("the case builds");
+    let mut built = Built::new(&sketch, t).expect("the case builds");
+    let (c, picks) = constraint(&built, add, seed).expect("the case picks");
+    built.ed.selection = picks.iter().copied().collect();
+    built
+        .ed
+        .set_active(if active { picks.last().copied() } else { None });
+    (built, add, c, picks)
+}
+
+/// Case 2281 (a Collinear between two lines): a line the sketch kept at 45° could keep its
+/// direction only by shrinking to nothing, the relation pushing it back along itself (the
+/// collapse attractor). Kept shapes are preferences, so it turns instead, as Fusion's,
+/// SolidWorks' and Onshape's sketches do (the user's call, 11-12): the relation is added, no
+/// line changes length, and that line turns.
+#[test]
+fn a_line_kept_square_turns_rather_than_collapsing() {
+    let (mut built, add, c, picks) = census_case(2281, Similarity::IDENTITY);
+    let (lines0, _) = shapes(&built.ed);
+    apply(&mut built.ed, add, c, &picks).expect("the Collinear is added");
+    let (lines1, _) = shapes(&built.ed);
+    let size = 43.133;
+    for ((id, a0, b0), (_, a1, b1)) in lines0.iter().zip(&lines1) {
+        let (l0, l1) = (a0.distance(*b0), a1.distance(*b1));
+        assert!(
+            (l1 - l0).abs() <= 1e-9 * size,
+            "line {id:?} changed length: {l0} -> {l1}"
+        );
+    }
+    // The line from (−2.6, −9.7) at −45° (the sketch's third curve) turned.
+    let line = built.curves[2];
+    let (_, a0, b0) = lines0.iter().find(|(id, ..)| *id == line).unwrap();
+    let (_, a1, b1) = lines1.iter().find(|(id, ..)| *id == line).unwrap();
+    let turn = (*b0 - *a0).angle_to(*b1 - *a1).to_degrees().abs();
+    assert!(turn > 10.0, "the line turned {turn}°");
+}
+
+/// The same edit with that line made Horizontal by the user first (the sketch turned 45° so
+/// it lies level): an explicit Horizontal is a relation, not a preference, so it doesn't give
+/// way. The edit is added with the line still level (it slides along itself instead), and a
+/// relation that could only be met by turning it, a Vertical on it, is refused, moving
+/// nothing.
+#[test]
+fn an_explicit_horizontal_holds_where_a_kept_direction_turns() {
+    let turned = Similarity {
+        scale: 1.0,
+        turn: 45.0,
+        shift: DVec2::ZERO,
+    };
+    let (mut built, add, c, picks) = census_case(2281, turned);
+    let line = built.curves[2];
+    let level = |ed: &Editor| {
+        let EntityKind::Line { a, b } = ed.doc.get(line).unwrap().kind else {
+            unreachable!()
+        };
+        let (a, b) = (ed.doc.point(a).unwrap(), ed.doc.point(b).unwrap());
+        (b.y - a.y).abs() <= 1e-9 * a.distance(b).max(1.0)
+    };
+    assert!(level(&built.ed), "the line lies level as built");
+    let selection = built.ed.selection.clone();
+    built
+        .ed
+        .add_constraints("Horizontal", &[Constraint::Horizontal { line }])
+        .expect("the Horizontal is added, moving nothing");
+    built.ed.selection = selection;
+    let constraints = built.ed.doc.constraints().count();
+    let added = apply(&mut built.ed, add, c, &picks);
+    assert!(level(&built.ed), "the Horizontal held ({added:?})");
+    added.expect("the Collinear is added, the line sliding along itself");
+    assert_eq!(built.ed.doc.constraints().count(), constraints + 1);
+    let before = built.positions();
+    let refused = built
+        .ed
+        .add_constraints("Vertical", &[Constraint::Vertical { line }]);
+    // (Read as collapsing the line: Horizontal and Vertical both hold only at no length.)
+    assert!(
+        matches!(refused, Err(EditError::Conflict | EditError::Degenerate)),
+        "a Vertical on the Horizontal line: {refused:?}"
+    );
+    assert_eq!(
+        built.positions(),
+        before,
+        "the refused Vertical moved nothing"
+    );
+    assert_eq!(built.ed.doc.constraints().count(), constraints + 1);
+}
+
 #[test]
 #[ignore = "census: run in release with --ignored --exact --nocapture"]
 fn relation_census() {

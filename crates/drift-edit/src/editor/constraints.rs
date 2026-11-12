@@ -4,13 +4,21 @@ use super::*;
 
 /// Which shapes a relation's solve keeps (see [`Editor::check_new_constraints`]).
 #[derive(Clone, Copy)]
-enum Shapes {
+enum Shapes<'a> {
     /// Every line's length and direction and every arc's radius ([`Editor::kept_shapes`]).
     Kept,
+    /// As [`Kept`](Self::Kept), but the lines here, which keeping their directions shrank to
+    /// slivers, give their directions up and keep their lengths: they turn instead (see
+    /// [`Editor::check_new_constraints`]).
+    GivingWay(&'a HashSet<EntityId>),
     /// As before: the rest's directions and radii only, nothing of what the relations name
     /// ([`Editor::kept_shapes_as_before`]).
     AsBefore,
 }
+
+/// What's left of a curve a solve shrank to under this share of itself is a sliver, too small
+/// to see or pick (see [`Editor::check_new_constraints`]).
+const SLIVER: f64 = 1e-3;
 
 impl Editor {
     /// Add constraints as one undoable step. Refused if they conflict with the existing ones
@@ -227,11 +235,30 @@ impl Editor {
             &start,
             Shapes::Kept,
         );
-        // A curve shrunk to a sliver counts as collapsed here: a line's direction is kept at
-        // any length, so a solve that must turn lines can meet the relations by shrinking one
-        // to nearly nothing, short of the zero the analysis reads as collapsed, and too small
-        // to see or pick. (Solved as before then, a sliver is only ever left where that
-        // solve leaves one, so the bar can be generous: a thousandth of the curve.)
+        // A line kept to its direction that the solve shrank to a sliver (or to nothing) gives
+        // its direction way: a direction is kept at any length, so a relation that pushes a
+        // line back along itself met it by shrinking the line to nearly nothing, short of the
+        // zero the analysis reads as collapsed or at it (census case 2281). Kept shapes are
+        // preferences, so the line turns instead, keeping its length, as Fusion's,
+        // SolidWorks' and Onshape's sketches do. (An explicit Horizontal, Vertical or
+        // Perpendicular is a relation, not a preference: one a new relation conflicts with is
+        // refused.)
+        let giving_way = self.slivers(&start, &named);
+        if !giving_way.is_empty() {
+            self.restore_geometry(&start);
+            error = self.solve_new_relations(
+                ids,
+                &named,
+                keep,
+                before,
+                degenerate_before,
+                &start,
+                Shapes::GivingWay(&giving_way),
+            );
+        }
+        // A curve shrunk to a sliver counts as collapsed here, too small to see or pick.
+        // (Solved as before then, a sliver is only ever left where that solve leaves one, so
+        // the bar can be generous: a thousandth of the curve.)
         if error.is_none() && self.left_a_sliver(&start) {
             error = Some(EditError::Degenerate);
         }
@@ -262,12 +289,31 @@ impl Editor {
         Ok(())
     }
 
+    /// The lines the edit's solve shrank to slivers ([`left_a_sliver`](Self::left_a_sliver))
+    /// that it kept to their directions: those `named` by the new relations keep none.
+    fn slivers(&self, start: &Geometry, named: &HashSet<EntityId>) -> HashSet<EntityId> {
+        let was: HashMap<EntityId, DVec2> = start.points.iter().copied().collect();
+        self.doc
+            .iter()
+            .filter(|(id, _)| !named.contains(id))
+            .filter_map(|(id, e)| match e.kind {
+                EntityKind::Line { a, b } => {
+                    let (a0, b0) = (was.get(&a)?, was.get(&b)?);
+                    let (a1, b1) = (self.doc.point(a).ok()?, self.doc.point(b).ok()?);
+                    let before = a0.distance(*b0);
+                    (before > 0.0 && a1.distance(b1) < SLIVER * before).then_some(id)
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
     /// Whether a line or an arc's or circle's radius is now under a thousandth of what it was
     /// in `start` (and not already nothing there): left a sliver.
     fn left_a_sliver(&self, start: &Geometry) -> bool {
         let was: HashMap<EntityId, DVec2> = start.points.iter().copied().collect();
         let radius_was: HashMap<EntityId, f64> = start.circles.iter().copied().collect();
-        let shrunk = |before: f64, now: f64| before > 0.0 && now < 1e-3 * before;
+        let shrunk = |before: f64, now: f64| before > 0.0 && now < SLIVER * before;
         let between = |a: EntityId, b: EntityId| {
             let (Some(a0), Some(b0)) = (was.get(&a), was.get(&b)) else {
                 return false;
@@ -300,7 +346,7 @@ impl Editor {
         before: &SolveReport,
         degenerate_before: &[EntityId],
         start: &Geometry,
-        shapes: Shapes,
+        shapes: Shapes<'_>,
     ) -> Option<EditError> {
         // The active element stays exactly where it is when the relations can be met that
         // way; otherwise they are solved exactly as without it, from the geometry as it was.
@@ -343,7 +389,7 @@ impl Editor {
         keep: EntityId,
         degenerate_before: &[EntityId],
         saved: &Geometry,
-        shapes: Shapes,
+        shapes: Shapes<'_>,
     ) -> bool {
         let held = self.doc.defining_points([keep]);
         let at = |doc: &Document| -> Vec<Option<DVec2>> {
@@ -407,7 +453,7 @@ impl Editor {
         ids: &[ConstraintId],
         named: HashSet<EntityId>,
         keep: Option<EntityId>,
-        shapes: Shapes,
+        shapes: Shapes<'_>,
     ) -> SolveReport {
         // The geometry the new constraints name takes up the change, by moving and turning:
         // it keeps its size where it can (#350). The rest of the sketch moves only where it
@@ -421,7 +467,8 @@ impl Editor {
             named.remove(&k);
         }
         let kept = match shapes {
-            Shapes::Kept => self.kept_shapes(&named),
+            Shapes::Kept => self.kept_shapes(&named, &HashSet::new()),
+            Shapes::GivingWay(lines) => self.kept_shapes(&named, lines),
             Shapes::AsBefore => self.kept_shapes_as_before(&named),
         };
         // (Relations on walls' faces take up the change on the centrelines they lower to.)
@@ -885,6 +932,22 @@ impl Editor {
         let start = self.points_and_circles();
         let report =
             self.solve_typed_size_keeping(id, named, keep, degenerate_before, &start, Shapes::Kept);
+        // (Lines kept to their directions and shrunk to slivers turn instead: see
+        // `check_new_constraints`.)
+        let giving_way = self.slivers(&start, named);
+        let report = if giving_way.is_empty() {
+            report
+        } else {
+            self.restore_geometry(&start);
+            self.solve_typed_size_keeping(
+                id,
+                named,
+                keep,
+                degenerate_before,
+                &start,
+                Shapes::GivingWay(&giving_way),
+            )
+        };
         if !self.left_a_sliver(&start) {
             return report;
         }
@@ -901,13 +964,14 @@ impl Editor {
         keep: Option<EntityId>,
         degenerate_before: &[EntityId],
         start: &Geometry,
-        shapes: Shapes,
+        shapes: Shapes<'_>,
     ) -> SolveReport {
         if let Some(k) = keep {
             self.keep_in_place(&[id], named, k, degenerate_before, start, shapes);
         }
         match shapes {
             Shapes::Kept => self.solve_commit(),
+            Shapes::GivingWay(lines) => self.solve_commit_giving_way(lines),
             Shapes::AsBefore => self.solve(&[]),
         }
     }

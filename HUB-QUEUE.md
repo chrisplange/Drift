@@ -18,7 +18,7 @@ Last updated 2026-11-12.
 |---|---|---|---|---|---|---|---|---|
 | H-9 | #349 (PR 3 review items 1 and 2) | Solver stage-2 stall: steps keep to the rows' solutions and stop on the step | Heavy drag matrix matches `expected.txt`; free-move seeds 3, 6, 17, 18, 19 pass again; no perf line slower than main; Linux matches Windows | `crates/drift-solver/` `newton` second stage, `Shape::Direction` | gated | running | #400 | solver-fix-the-stage-2-s |
 
-Solver scope is PRs 2, 3 and 6 only; all three are merged. The stage-2 stall fix (#400) runs next as its own gated PR. PR 1 (#352), PR 4 (#344) and PR 5 (#362) are parked as `later`. After #400, work returns to the usability and bug batches; batch-1 waits on its Done when lines from the planning chat.
+Solver scope is PRs 2, 3 and 6 only; all three are merged. The stage-2 stall fix (#400) is running as its own gated PR. PR 1 (#352), PR 4 (#344) and PR 5 (#362) are parked as `later`. After #400, work returns to the usability and bug batches; batch-1 waits on its Done when lines from the planning chat.
 
 ## Done
 

@@ -18,16 +18,21 @@ cargo test --workspace
 Smoke suite alone: `cargo test -p drift-app smoke_`.
 
 ## Tiers
-A PR's tier comes from the paths it changes, listed in [.github/tiers.txt](.github/tiers.txt)
-(`scripts/tier.py` computes it). Highest tier touched wins.
+A PR's tier comes from the paths it changes. [.github/tiers.txt](.github/tiers.txt) is the
+source of truth (`scripts/tier.py` computes it); the summary below is a guide only. Highest
+tier touched wins.
 
-| Tier | Paths (summary) | Merged by |
+| Tier | Paths (rough summary; see tiers.txt) | Merged by |
 |---|---|---|
-| solver | drift-solver, drift-core, drift-edit editor + drag_props, scripts/solver-bar | owner, after `Solver review` is green |
-| gated | drift-io, file format, Cargo.toml/lock, .github, packaging, CLAUDE.md, WORKFLOW.md, .claude | owner |
+| solver | drift-solver, drift-core constraint/tolerance, drag_props, the editor's drag/solve files, scripts/solver-bar | owner, after `Solver review` is green |
+| gated | drift-io, file format, Cargo.toml/lock, .github, packaging, app save/export/recovery, AI link, updater, CLAUDE.md, WORKFLOW.md, .claude | owner |
 | auto | everything else | itself, on green CI |
 
+`[heavy]` in tiers.txt is not a tier: it marks the broader paths that also run the heavy drag matrix.
+
 - **Sessions never merge.** Auto PRs merge themselves on green; the owner merges the rest.
+- **A branch that falls behind main** is brought up to date by its own session with
+  `gh pr update-branch`. The auto-merge job can't do it: a push made with its token starts no CI.
 - **Solver-tier PRs** get a separate reviewer session (Opus; solver/drag also Fable). The
   reviewer posts findings on the PR. The owner's approval comment carries
   `<!-- drift-review: approve <head-sha> -->`, which turns `Solver review` green.

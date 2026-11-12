@@ -811,3 +811,71 @@ fn smoke_fills_hatch_quick_switch_from_the_canvas_menu() {
     };
     assert_eq!(hatch.pattern, "ANSI37", "one undo step");
 }
+
+/// The Hatch menu with several fills picked: one undo step for all, each keeping its own
+/// scale and angle; Solid turns them all solid.
+#[test]
+fn smoke_fills_hatch_menu_switches_several_fills_and_solid() {
+    let Some(mut h) = harness() else { return };
+    view(&mut h, DVec2::new(-10.0, -10.0), DVec2::new(110.0, 40.0));
+    let (_, a) = rectangle(&mut h, DVec2::ZERO, DVec2::new(40.0, 30.0), Fill::Hatch);
+    let (_, b) = rectangle(
+        &mut h,
+        DVec2::new(60.0, 0.0),
+        DVec2::new(100.0, 30.0),
+        Fill::Hatch,
+    );
+    let fills = [a.unwrap(), b.unwrap()];
+    // Each at its own scale and angle.
+    for (id, (scale, angle)) in fills.iter().zip([(2.0, 0.0), (5.0, 30.0)]) {
+        let ed = &mut h.state_mut().drawing.editor;
+        let mut f = ed.doc.fill(*id).unwrap().clone();
+        let drift_core::FillKind::Hatch(hatch) = &mut f.kind else {
+            panic!("a hatch")
+        };
+        hatch.scale = scale;
+        hatch.angle = angle;
+        ed.update_fill(*id, f);
+    }
+    {
+        let ed = &mut h.state_mut().drawing.editor;
+        ed.selection.clear();
+        ed.selected_fills = fills.into_iter().collect();
+    }
+    h.run();
+    let hatches = |h: &Harness<'_, DriftApp>| -> Vec<Option<(String, f64, f64)>> {
+        fills
+            .iter()
+            .map(
+                |id| match &h.state().drawing.editor.doc.fill(*id).unwrap().kind {
+                    drift_core::FillKind::Hatch(x) => Some((x.pattern.clone(), x.scale, x.angle)),
+                    drift_core::FillKind::Solid => None,
+                },
+            )
+            .collect()
+    };
+    let before = hatches(&h);
+    let menu = |h: &mut Harness<'_, DriftApp>, item: &str| {
+        let pos = screen(h, DVec2::new(20.0, 15.0));
+        right_click(h, pos);
+        h.get_by_label("Hatch ⏵").click();
+        h.run();
+        h.get_all_by_label(item).last().unwrap().click();
+        h.run();
+        h.run();
+    };
+    menu(&mut h, "ANSI37");
+    assert_eq!(
+        hatches(&h),
+        [
+            Some(("ANSI37".into(), 2.0, 0.0)),
+            Some(("ANSI37".into(), 5.0, 30.0))
+        ]
+    );
+    undo(&mut h);
+    assert_eq!(hatches(&h), before, "one undo step for both");
+    menu(&mut h, "Solid");
+    assert_eq!(hatches(&h), [None, None]);
+    undo(&mut h);
+    assert_eq!(hatches(&h), before);
+}

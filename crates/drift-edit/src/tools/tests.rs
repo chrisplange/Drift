@@ -7837,3 +7837,23 @@ fn space_cycles_a_wall_through_every_orientation_including_centre() {
     assert_eq!(seen, [Justify::Right, Justify::Centre, Justify::Left]);
     tool.handle(Input::Finish, &mut ed);
 }
+
+#[test]
+fn space_from_the_default_centre_steps_to_left_then_right_then_centre() {
+    use drift_core::Justify;
+    let mut ed = Editor::default();
+    ed.prefs.auto_relations = false;
+    ed.prefs.wall_thickness = 10.0;
+    assert_eq!(ed.prefs.wall_justify, Justify::Centre, "the default");
+    let mut tool = ToolKind::Wall.create();
+    click(&mut ed, tool.as_mut(), v(0.0, 0.0));
+    click(&mut ed, tool.as_mut(), v(100.0, 0.0));
+    let w = ed.doc.walls().next().unwrap().0;
+    let mut seen = vec![];
+    for _ in 0..3 {
+        tool.key(ToolKey::Space, None, &mut ed);
+        seen.push(ed.doc.wall(w).unwrap().justify);
+    }
+    assert_eq!(seen, [Justify::Left, Justify::Right, Justify::Centre]);
+    tool.handle(Input::Finish, &mut ed);
+}

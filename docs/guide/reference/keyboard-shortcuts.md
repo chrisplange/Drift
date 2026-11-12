@@ -97,7 +97,7 @@ With no key (use the Build menu or the command palette): **Walls from curves**, 
 |---|---|---|
 | G | **Move** | Move the selection: X / Y lock an axis, type dX Tab dY, B picks the base point |
 | R (with a selection) | **Rotate** | Turn the selection: type an angle, B picks the pivot, R again rotates by reference |
-| M | **Mirror** | Mirror the selection about a line, kept symmetric |
+| M | **Mirror** | Mirror the selection about a line (kept symmetric) or two clicked points |
 | O | **Offset** | A parallel copy of a curve and the curves connected to it |
 | T | **Trim** | Remove a piece up to the curves that cut it; drag to trim several |
 | E | **Extend** | Lengthen a line or arc to the next curve |

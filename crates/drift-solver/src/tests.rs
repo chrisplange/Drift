@@ -2503,3 +2503,68 @@ fn a_solve_meets_its_rows_to_the_bar_of_the_part_it_leaves() {
     assert!(solved(&mut doc).converged);
     assert!(analyze(&doc).converged);
 }
+
+/// #392, `perturbed_satisfiable_sketches_converge`'s case as it shrank (found on solver PR 2):
+/// five lines, two points held one above another twice, two lengths, perturbed. The solve
+/// moved the part smaller than it found it and met a length to the bar of the part as it
+/// began (2.82e-8) but not to the bar of the part it left (2.18e-8): it said converged, and an
+/// analysis of what it wrote didn't. Passes since PR 3 read the rows at the bar of the part as
+/// left (`newton`'s `rows_hold_as_left`).
+#[test]
+fn a_solve_that_shrinks_the_part_meets_its_lengths_to_the_bar_it_leaves() {
+    let lines = [
+        (v(-49.635660597190636, 0.0), v(0.0, 0.0)),
+        (v(0.0, 0.0), v(0.0, -12.273179275365864)),
+        (
+            v(-44.88011602722318, -45.83130028144076),
+            v(-45.834736959542795, 5.856163615879645),
+        ),
+        (v(0.0, -1.1910823713683494), v(0.0, 0.0)),
+        (v(21.623467549433887, 0.0), v(0.0, 0.0)),
+    ];
+    let noise = [
+        v(0.8497898719603848, 0.0),
+        v(0.0, 0.0),
+        v(0.0, 0.0),
+        v(0.0, 0.0),
+        v(0.0, 0.0),
+        v(0.0, 0.6486957436997688),
+        v(0.24388362212589543, 0.335386217162917),
+        v(0.0, 0.0),
+        v(0.0, 0.14038767793803156),
+        v(0.0, 0.0),
+    ];
+    let mut doc = Document::new();
+    let mut ends = Vec::new();
+    for (a, b) in lines {
+        let pa = doc.add_point(a);
+        let pb = doc.add_point(b);
+        doc.add_line(pa, pb).unwrap();
+        ends.push((pa, pb));
+    }
+    let point = |doc: &Document, p| doc.point(p).unwrap();
+    // Held one above the other: the second moved under the first, as the proptest does.
+    let hold_vertical = |doc: &mut Document, a, c| {
+        let (pa, pc) = (point(doc, a), point(doc, c));
+        doc.set_point(c, DVec2::new(pa.x, pc.y)).unwrap();
+        doc.add_constraint(Constraint::VerticalPoints { a, b: c })
+            .unwrap();
+    };
+    let dimension = |doc: &mut Document, a, b| {
+        let value = point(doc, a).distance(point(doc, b));
+        doc.add_constraint(Constraint::Distance { a, b, value })
+            .unwrap();
+    };
+    hold_vertical(&mut doc, ends[0].0, ends[3].0);
+    dimension(&mut doc, ends[3].0, ends[2].0);
+    hold_vertical(&mut doc, ends[4].0, ends[2].0);
+    dimension(&mut doc, ends[2].0, ends[2].1);
+    for (k, (a, b)) in ends.iter().enumerate() {
+        for (p, n) in [(*a, noise[2 * k]), (*b, noise[2 * k + 1])] {
+            let at = doc.point(p).unwrap() + n * 2.0;
+            doc.set_point(p, at).unwrap();
+        }
+    }
+    assert!(solved(&mut doc).converged);
+    assert!(analyze(&doc).converged);
+}

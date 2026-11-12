@@ -1947,6 +1947,26 @@ fn newton(
             .zip(&comp.rows)
             .all(|(f, r)| f.abs() <= row_tolerance(sys, *r, bar.get(), values))
     };
+    // Where the rows hold, they hold to the bar of the part as the solve leaves it too, as an
+    // analysis of what it writes reads it: a solve that moves the geometry can make the part
+    // smaller than the solve found it, and a row met to the bar it began with would then be
+    // off to the drawing's own (`perturbed_satisfiable_sketches_converge`, #392). Every verdict
+    // on the values a solve has moved is read this way, at the top of each step and at each
+    // stop after one (a drag that ran to the cap on a preference's step: #392).
+    let rows_hold_as_left = |res: &[f64], values: &[f64]| {
+        if !converged(res, values) {
+            return false;
+        }
+        let now = bar_now(values);
+        if now >= bar.get().length {
+            return true;
+        }
+        bar.set(Bar {
+            length: now,
+            ..bar.get()
+        });
+        converged(res, values)
+    };
 
     let ((mut res, mut jac), mut own) = evaluate_with_own(sys, &comp.rows, values, &col_of);
     // Nothing to do where the rows already hold and every kept shape is met (most of a big
@@ -2223,21 +2243,7 @@ fn newton(
         if !res.iter().all(|f| f.is_finite()) || !jac.iter().flatten().all(|(_, g)| g.is_finite()) {
             return finish(Stop::NoStep, iteration, false, wandered, false);
         }
-        let mut rows_hold = converged(&res, values);
-        // Where the rows hold, they hold to the bar of the part as the solve leaves it too, as
-        // an analysis of what it writes reads it: a solve that moves the geometry can make the
-        // part smaller than the solve found it, and a row met to the bar it began with would
-        // then be off to the drawing's own (`perturbed_satisfiable_sketches_converge`).
-        if rows_hold {
-            let now = bar_now(values);
-            if now < bar.get().length {
-                bar.set(Bar {
-                    length: now,
-                    ..bar.get()
-                });
-                rows_hold = converged(&res, values);
-            }
-        }
+        let rows_hold = rows_hold_as_left(&res, values);
         // The shapes kept: arcs' radii, lines' lengths and directions, each as how far off
         // it is and the gradient of that over its columns.
         let value = |p: usize| values[sys.group_of[p]];
@@ -2604,7 +2610,7 @@ fn newton(
                 return finish(
                     Stop::Settled,
                     iteration + 1,
-                    converged(&res, values),
+                    rows_hold_as_left(&res, values),
                     wandered,
                     unkept(&free_radius, values),
                 );
@@ -2806,7 +2812,7 @@ fn newton(
         // still wouldn't hold. Every further step is smaller still (λ only grows on a refused
         // step), so the rows are as near as they get: a conflict, or the round-off floor.
         if before.sqrt() - model.max(0.0).sqrt() <= finest && model.max(0.0).sqrt() > finest {
-            let rows_hold = converged(&res, values);
+            let rows_hold = rows_hold_as_left(&res, values);
             return finish(
                 if rows_hold {
                     Stop::Settled
@@ -2820,13 +2826,14 @@ fn newton(
             );
         }
     }
-    if in_stage2 && converged(&res, values) {
+    let rows_hold = rows_hold_as_left(&res, values);
+    if in_stage2 && rows_hold {
         stage2(6, last_stationary);
     }
     finish(
         Stop::Cap,
         MAX_ITERATIONS,
-        converged(&res, values),
+        rows_hold,
         wandered,
         unkept(&free_radius, values),
     )

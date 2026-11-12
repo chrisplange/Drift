@@ -1069,6 +1069,11 @@ impl DriftApp {
             }
             self.command_items(ui, &[Some(Command::Toggle(ViewFlag::Hidden)), None]);
         }
+        // A fill picked alone: its hatch in one step.
+        if n == 0 && !self.drawing.editor.selected_fills.is_empty() {
+            self.hatch_menu(ui);
+            ui.separator();
+        }
         if n == 0 {
             if self.clipboard.is_some() {
                 self.command_item(ui, Command::Paste);
@@ -1115,6 +1120,9 @@ impl DriftApp {
         // A filled shape: its fill on its own, as a double-click inside picks it (#223).
         if commands::When::FilledShape.holds(self) {
             self.command_item(ui, Command::EditFill);
+        }
+        if !self.drawing.editor.selected_fills.is_empty() {
+            self.hatch_menu(ui);
         }
         if self.drawing.editor.can_arrange() {
             self.arrange_menu(ui);

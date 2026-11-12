@@ -742,3 +742,72 @@ fn smoke_fills_move_to_layer_takes_the_shapes_fill() {
     h.run();
     assert!(on(&h, a), "one undo puts both back");
 }
+
+/// Right-click → Hatch → a pattern switches a fill's hatch in one undo step, picked with its
+/// shape or alone; a hatch keeps its scale.
+#[test]
+fn smoke_fills_hatch_quick_switch_from_the_canvas_menu() {
+    let Some(mut h) = harness() else { return };
+    view(&mut h, DVec2::new(-10.0, -10.0), DVec2::new(60.0, 40.0));
+    let (_, fill) = rectangle(&mut h, DVec2::ZERO, DVec2::new(40.0, 30.0), Fill::Solid);
+    let fill = fill.unwrap();
+    let kind = |h: &Harness<'_, DriftApp>| {
+        h.state()
+            .drawing
+            .editor
+            .doc
+            .fill(fill)
+            .unwrap()
+            .kind
+            .clone()
+    };
+    let inside = DVec2::new(20.0, 15.0);
+    let switch = |h: &mut Harness<'_, DriftApp>, pattern: &str| {
+        let pos = screen(h, inside);
+        right_click(h, pos);
+        h.get_by_label("Hatch ⏵").click();
+        h.run();
+        h.get_by_label(pattern).click();
+        h.run();
+        h.run();
+    };
+    // The filled shape picked whole: Solid to ANSI37, one undo step.
+    click_world(&mut h, inside);
+    switch(&mut h, "ANSI37");
+    let drift_core::FillKind::Hatch(hatch) = kind(&h) else {
+        panic!("a hatch: {:?}", kind(&h))
+    };
+    assert_eq!(hatch.pattern, "ANSI37");
+    undo(&mut h);
+    assert_eq!(
+        kind(&h),
+        drift_core::FillKind::Solid,
+        "one undo puts it back"
+    );
+    h.key_press_modifiers(EguiModifiers::COMMAND | EguiModifiers::SHIFT, Key::Z);
+    h.run();
+
+    // The fill alone, at its own scale: ANSI37 to ANSI31, keeping the scale.
+    {
+        let ed = &mut h.state_mut().drawing.editor;
+        let mut f = ed.doc.fill(fill).unwrap().clone();
+        let drift_core::FillKind::Hatch(hatch) = &mut f.kind else {
+            unreachable!()
+        };
+        hatch.scale = 3.0;
+        ed.update_fill(fill, f);
+        ed.selection.clear();
+        ed.selected_fills = [fill].into();
+    }
+    h.run();
+    switch(&mut h, "ANSI31");
+    let drift_core::FillKind::Hatch(hatch) = kind(&h) else {
+        panic!("a hatch")
+    };
+    assert_eq!((hatch.pattern.as_str(), hatch.scale), ("ANSI31", 3.0));
+    undo(&mut h);
+    let drift_core::FillKind::Hatch(hatch) = kind(&h) else {
+        panic!("a hatch")
+    };
+    assert_eq!(hatch.pattern, "ANSI37", "one undo step");
+}

@@ -8,7 +8,11 @@ use crate::*;
 use drift_edit::fills::{FillStyle, PatternLibrary};
 
 /// A small swatch of a hatch pattern, drawn with the painter.
-fn swatch(ui: &mut egui::Ui, pattern: Option<&Pattern>, size: egui::Vec2) -> egui::Response {
+pub(super) fn swatch(
+    ui: &mut egui::Ui,
+    pattern: Option<&Pattern>,
+    size: egui::Vec2,
+) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
     let painter = ui.painter_at(rect);
     let visuals = ui.visuals();
@@ -563,5 +567,77 @@ impl DriftApp {
                 self.set_status(e, true, now);
             }
         }
+    }
+}
+
+impl DriftApp {
+    /// The canvas menu's Hatch submenu for the picked fills: a pattern (or Solid) in one
+    /// click, every picked fill in one undo step. A hatch keeps its scale, angle and origin.
+    pub(crate) fn hatch_menu(&mut self, ui: &mut egui::Ui) {
+        let fills: Vec<FillId> = self
+            .drawing
+            .editor
+            .selected_fills
+            .iter()
+            .copied()
+            .filter(|id| self.drawing.editor.doc.fill(*id).is_some())
+            .collect();
+        if fills.is_empty() {
+            return;
+        }
+        let current = match self.drawing.editor.doc.fill(fills[0]).map(|f| &f.kind) {
+            Some(FillKind::Hatch(h)) if fills.len() == 1 => Some(h.pattern.clone()),
+            Some(FillKind::Solid) if fills.len() == 1 => Some(String::new()),
+            _ => None,
+        };
+        let mut picked: Option<Option<(String, bool)>> = None;
+        ui.menu_button("Hatch", |ui| {
+            ui.set_min_width(220.0);
+            egui::ScrollArea::vertical()
+                .max_height(360.0)
+                .show(ui, |ui| {
+                    if ui
+                        .selectable_label(current.as_deref() == Some(""), "Solid")
+                        .clicked()
+                    {
+                        picked = Some(None);
+                    }
+                    for p in self.hatch_patterns.all() {
+                        ui.horizontal(|ui| {
+                            swatch(ui, Some(p), egui::vec2(34.0, 18.0));
+                            let on = current
+                                .as_deref()
+                                .is_some_and(|c| c.eq_ignore_ascii_case(&p.name));
+                            if ui.selectable_label(on, &p.name).clicked() {
+                                picked = Some(Some((p.name.clone(), p.model)));
+                            }
+                        });
+                    }
+                });
+        });
+        let Some(choice) = picked else { return };
+        let ed = &mut self.drawing.editor;
+        ed.doc.begin();
+        for id in fills {
+            let Some(mut f) = ed.doc.fill(id).cloned() else {
+                continue;
+            };
+            f.kind = match (&choice, f.kind) {
+                (None, _) => FillKind::Solid,
+                (Some((name, model)), FillKind::Hatch(mut h)) => {
+                    h.pattern = name.clone();
+                    h.model = *model;
+                    FillKind::Hatch(h)
+                }
+                (Some((name, model)), FillKind::Solid) => {
+                    let mut h = Hatch::new(name.clone());
+                    h.model = *model;
+                    FillKind::Hatch(h)
+                }
+            };
+            ed.doc.set_fill(id, f);
+        }
+        ed.commit("Hatch");
+        ui.close();
     }
 }

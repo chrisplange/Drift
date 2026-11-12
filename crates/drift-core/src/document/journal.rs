@@ -950,6 +950,17 @@ impl History {
         self.redo.clear();
     }
 
+    /// Forget the most recent redo step: a step just undone that must not come back on
+    /// Redo (it was taken back because what it was for couldn't go ahead). It counts as
+    /// discarded, as with [`discard_last`](Self::discard_last).
+    pub fn forget_redo(&mut self) -> bool {
+        let forgot = self.redo.pop().is_some();
+        if forgot {
+            self.recorded = self.recorded.saturating_sub(1);
+        }
+        forgot
+    }
+
     /// How many steps have been recorded: the difference between two readings is how many
     /// steps were added between them (steps squashed into one count as one, so nested
     /// squashes count right).

@@ -1,5 +1,7 @@
 # Log
 
+**Frozen 2026-11-12.** From now on, a decision is recorded as a comment on the issue it's about. This file keeps the history up to then.
+
 One line per decision, approval or merge, newest last. Format: `YYYY-MM-DD | what | source`. Source is where it came from: "user in chat", "planning chat", "hub", a PR or an issue. Never edit old lines; correct with a new one.
 
 2026-11-04 | Fresh reviewer session per PR, tiered by risk (drag/solver Opus + Fable final; other code Opus 2 steps; papercuts step 2; UI fillers none) | user in chat
@@ -39,3 +41,6 @@ One line per decision, approval or merge, newest last. Format: `YYYY-MM-DD | wha
 2026-11-12 | #392 closed as fixed by #394 (solver PR 3): with its `cc` line added it passes on main at `b95a141` and fails at the PR 2 merge `7273bd0` | #392
 2026-11-12 | #407 filed: some `newton()` exits say converged before re-reading the bar of the part as left (heavy seed 8); one exit is the stage-2 stop #400 also changes, so #407 is parked with #400 (`later`) and decided together with it | #407
 2026-11-12 | #409 filed: CI flake, Windows `mutated_dxf_never_panics` timed out at 20 s on #404's run (macOS cancelled); batch-2 | #409
+2026-11-12 | #338: a Trim drag across a wall trims the wall properly: the centreline is cut, and the faces, fill and outline follow; it does not skip the wall | user
+2026-11-12 | #245: PDF export with no sheets asks how to place the drawing (1:1, or fit to page labelled with its scale) instead of defaulting to fit-to-A3 | user
+2026-11-12 | #326 (jagged fill edges) skipped for now: out of batch-1, to `later`; batch-1 is now the #264 follow-up, #338, #306, #367 and #245 | user

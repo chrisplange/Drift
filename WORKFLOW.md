@@ -1,32 +1,50 @@
 # Workflow
 
-How Drift work gets done. Short on purpose. If this and another note disagree, this wins.
+How Drift work gets done. Short on purpose. If this and another note disagree, this wins. Two layers since 2026-11-12.
 
 ## Who does what
-- **The user** plans in the Claude Project (no code there), approves `gated` PRs, and clears `USER-ACTIONS.md` when it suits them.
-- **The hub** (one Claude Code session, started by the user from the sidebar, running `/hub`) runs tasks, gates PRs and keeps the records.
-- **Workers**: at most 2 at a time, one per task, each in its own worktree on E:.
+- **The user** decides what matters, confirms each task's Done when, makes product calls, and merges `gated` PRs.
+- **The lead**: one Claude Code session, the Drift Coordinator.
+  - It plans with the user directly, against the live repo.
+  - It starts workers.
+  - It has a subagent review each PR and passes the findings to the worker.
+  - It merges `auto` PRs.
+  - It keeps the records.
+  - It writes no product code.
+- **Workers**: at most 2 at a time, one issue each, each in its own worktree on E:. A worker reports to the lead and never starts sessions.
+- A planning chat outside the repo can be used for open-ended thinking. Nothing from it becomes work until the lead has checked it against the repo and the user has confirmed the Done when.
 
 ## Where things live
-- **GitHub issues** are the only backlog.
-- **`HUB-QUEUE.md`** holds only what is running or next: 5 rows at most.
-- **`LOG.md`** has one line per decision, approval or merge.
-- **`LEARNINGS.md`** records what went wrong and the rule that came out of it.
+- **GitHub issues and labels** are the backlog and the status. Open PRs show what is in flight.
+- **Decisions** are a comment on the issue they're about, posted by the lead when the user makes them. `LOG.md` is frozen at 2026-11-12, as history.
+- **`PAPERCUTS.md`** is the inbox for small usability annoyances, one line each. The user reports one to the lead in a few words. Small ones are cleared in a sweep PR, which marks its rows fixed. Bigger ones become issues.
 - **`FEATURES.md`** lists what Drift does, each line pointing to code.
-- **`USER-ACTIONS.md`** lists things only the user can do.
-- **`PAPERCUTS.md`** is the inbox for small usability annoyances, one line each. The hub and workers log papercuts there instead of opening issues; the user can report one in a few words to the coordinator or the notes session. A planned batch groups open papercuts into one issue with a Done when.
+
+There are no records-only PRs. Records change only inside the PR that does the work, such as a sweep marking its papercuts fixed, or a PR that changes this file.
 
 ## Rules
-1. **No "Done when", no work.** An issue gets a checkable Done when (a named test, a measured number, or a behaviour you can see) before anyone starts it.
-2. **Files listed up front.** A task lists the files it touches, including the code that calls what it changes and those callers' tests. The hub never runs two tasks whose files overlap.
+1. **No "Done when", no work.** An issue gets a checkable Done when (a named test, a measured number, or a behaviour you can see) before anyone starts it. The lead confirms it with the user in one message.
+2. **No overlapping files.** Every task lists the files it touches. The lead never runs two tasks whose files overlap.
 3. **Two tiers:**
-   - `auto`: papercuts, UI, docs, tests, refactors. The hub merges once CI is green and a security note, a product check and a review are on the PR.
+   - `auto`: papercuts, UI, docs, tests, refactors. The lead merges once CI is green and the review, a security note and a product check are on the PR.
    - `gated`: solver/drag, file format, save/load, import/export, release, CI. These wait for the user.
-4. **Reviews:** `auto` PRs are reviewed by an agent inside the hub, posted on the PR. Solver and drag PRs get separate Opus and Fable reviewer sessions.
+4. **Reviews.** A review subagent from the lead reviews every PR. Solver and drag PRs also get separate Opus and Fable reviewer sessions.
 5. **Red main stops everything.** Fix main first. Never merge on "red only for known reasons".
-6. **No band-aids on the solver.** A solver issue is closed by a fix for its cause, or left open with what was learned. Ignoring a test is only for proven flakiness, with a note pointing to the issue.
+6. **No band-aids on the solver.** A solver issue is closed by a fix for its cause, or left open with what was learned. A test is only ignored for proven flakiness, with a note pointing to the issue.
 7. **Clean up as you go.** When a PR merges, archive its sessions and delete its worktree and target.
-8. **Batch the user.** Don't ping for each thing. Add it to `USER-ACTIONS.md` or the hub's turn report.
+8. **Batch the user.** Don't ping for each thing. Put it in the lead's turn report.
+
+## Rules learned
+Each rule came from something that went wrong.
+- Nothing becomes work until the lead has checked it against the live repo and confirmed its Done when with the user. A plan written from a stale view cost two workers on 2026-11-12.
+- Workers never start sessions. They report the need to the lead.
+- After any Cargo.lock change, run `python scripts/notices.py` and commit THIRD-PARTY-NOTICES.txt in the same PR.
+- After starting a reviewer with a model, check that it is really running that model.
+- Use one fresh reviewer per PR, and delete its target after the merge.
+- Before claiming Drift lacks a feature, check FEATURES.md and grep the code.
+- No hard wall-clock asserts in normal tests. Perf budgets live in the ignored baselines.
+- Any PR touching drag, solver, index or fills runs the ignored perf baselines (`cargo test -- --ignored`) and puts the numbers in the PR.
+- Before merging, check that the PR's base is `main`.
 
 ## Clearing the issues log
-Work in batches of up to 5, in this order: papercuts, then flaky tests, then perf, then solver. Each batch gets its Done when lines in the planning chat first.
+Work in batches of up to 5. The order is papercuts, then flaky tests, then perf, then solver, which follows the audit's PR sequence (`docs/solver-audit.md`).

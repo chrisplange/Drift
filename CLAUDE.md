@@ -36,6 +36,9 @@ tier touched wins.
 - **Solver-tier PRs** get a separate reviewer session (Opus; solver/drag also Fable). The
   reviewer posts findings on the PR. The owner's approval comment carries
   `<!-- drift-review: approve <head-sha> -->`, which turns `Solver review` green.
+  **Only the owner posts that marker, by hand, after reading the findings.** Sessions never
+  post it (`.claude/settings.json` denies any command containing it). The owner's one-liner:
+  `$sha = gh pr view <N> --json headRefOid -q .headRefOid; gh pr comment <N> --body "Reviewed. <!-- drift-review: approve $sha -->"`
 - **Decisions** go as a comment on the issue they're about. LOG.md is frozen history.
 - [docs/solver-audit.md](docs/solver-audit.md) and its decisions stand.
 

@@ -22,6 +22,7 @@
       "Bash(git push * -f *)",
       "Bash(git push --force*)",
       "Bash(git push * --force*)",
+      "Bash(*drift-review*)",
       "PowerShell(gh pr merge *)",
       "PowerShell(gh * pr merge*)",
       "PowerShell(gh api */merge*)",
@@ -42,7 +43,8 @@
       "PowerShell(git push * -f)",
       "PowerShell(git push * -f *)",
       "PowerShell(git push --force*)",
-      "PowerShell(git push * --force*)"
+      "PowerShell(git push * --force*)",
+      "PowerShell(*drift-review*)"
     ]
   }
 }

@@ -2,7 +2,7 @@
 
 What is running or next: 5 rows at most (see `WORKFLOW.md`). GitHub issues are the backlog; the batch labels below say what comes next. The coordinator changes **Status**, **PR** and **Session**; workers and reviewers check each PR against its **Done when**.
 
-Last updated 2026-11-12.
+Last updated 2026-11-12 (after #402 and #408).
 
 ## Rules for a task entry
 
@@ -16,15 +16,15 @@ Last updated 2026-11-12.
 
 | ID | Issue | Task | Done when | Files | Tier | Status | PR | Session |
 |---|---|---|---|---|---|---|---|---|
-| H-10 | — | PDF import: a wide character in a CMap hex code is skipped, not a panic (fuzz find) | The fuzz case imports without a panic; CI green | PDF import (`crates/` IO) | gated | in-review, waiting on the user | #402 | — |
 | H-9 | #349 (PR 3 review items 1 and 2) | Solver stage-2 stall: steps keep to the rows' solutions and stop on the step; carries the "let the line turn" decision (LOG 2026-11-12) and the `Shape::Direction` measure fix | Heavy drag matrix matches `expected.txt`; free-move seeds 3, 6, 17, 18, 19 pass again; no perf line slower than main; Linux matches Windows | `crates/drift-solver/` `newton` second stage, `Shape::Direction` | gated | parked (draft, by the user) | #400 | — |
 
-Nothing is running. Solver scope (PRs 2, 3 and 6) is merged; the stage-2 stall fix (#400) is parked as a draft, its state in the coordinator notes folder as `pr400-parked.md`. PR 1 (#352), PR 4 (#344) and PR 5 (#362) are parked as `later`. Next: the usability and bug batches; batch-1 waits on its Done when lines from the planning chat. #297 has a new macOS clamp panic (see batch-2).
+Nothing is running. Solver scope (PRs 2, 3 and 6) is merged; the stage-2 stall fix (#400) is parked as a draft, its state in the coordinator notes folder as `pr400-parked.md`. PR 1 (#352), PR 4 (#344) and PR 5 (#362) are parked as `later`. The solver audit addendum (`docs/solver-audit-references.md`, #408) changes none of this: its section 7 is "Nothing now". Follow this file and the audit's PR sequence and decisions as they stand (the 11-12 "solver stabilisation" plan was withdrawn; LOG 2026-11-12). Next: batch-1 and batch-2, both waiting on their Done when lines from the planning chat.
 
 ## Done
 
 | ID | Issue | Task | PR | Merged |
 |---|---|---|---|---|
+| H-10 | — | PDF import: a wide character in a CMap hex code is skipped, not a panic (fuzz find; merged by the user) | #402 | 2026-11-12 |
 | H-7 | #350, #284 (commit side) | Solver redesign PR 6: edits keep shapes (Parallel no longer stretches the lines it turns; merged without the separate Opus/Fable reviews) | #399 | 2026-11-12 |
 | H-8 | — | Main green after PR 3: whole-part slide removed ("stop the drag"), circles held as arcs, Linux `held_shapes` and Windows `regions_props` fixed; free-move seeds 3, 6, 17, 18, 19 now expected failures | #398 | 2026-11-12 |
 | H-1 | #264 | Shift+D then Esc leaves no copy stacked on the original (smoke test) | #379 | 2026-11-10 |
@@ -42,8 +42,8 @@ The trial is over: self-merge of `auto` tasks is on. #264 stays open for its fol
 Work a batch at a time, up to 5 issues, in this order: papercuts, flaky tests, perf, solver. Each issue gets its Done when in the planning chat before it starts.
 
 - **batch-1** (papercuts): #367, #338, #326, #306, #245
-- **batch-2** (flaky tests): #368, #353, #297 (2026-11-12, macOS: also a `f64::clamp` panic, `min = 1.0000000000000004, max = 1.0`, no seed), #296, #295 (walls join bug, not solver; its fix adds the four saved seeds)
+- **batch-2** (flaky tests): #368, #353, #297 (2026-11-12, macOS: also a `f64::clamp` panic, `min = 1.0000000000000004, max = 1.0`, no seed), #296, #295 (walls join bug, not solver; its fix adds the four saved seeds), #409 (2026-11-12, Windows `mutated_dxf_never_panics` timed out at 20 s; makes six, so one waits for the next round)
 - **batch-3** (big-drawing perf): #373, #372, #371, #370, #285, #253
 - **solver-audit** (PR 6 closes #350): #350, #351 (left open by PR 3: ~0.3 s on main and PR 3), #347 (blocked by #313), #187
-- **solver, not in an audit PR**: #392 (solve says converged, analyze disagrees; fails on main)
-- **later**: #352, #344, #362 (parked solver PRs 1, 4 and 5; still labelled solver-audit), #369, #345, #314, #313, #307, #305, #291, #290, #289, #244, #243, #231, #183
+- **solver, not in an audit PR**: #407 (some `newton()` exits say converged before re-reading the bar of the part as left; heavy seed 8; parked with #400 and decided with it, labelled `later`). #392 closed 2026-11-12, fixed by #394
+- **later**: #352, #344, #362 (parked solver PRs 1, 4 and 5; still labelled solver-audit), #407 (with #400), #369, #345, #314, #313, #307, #305, #291, #290, #289, #244, #243, #231, #183

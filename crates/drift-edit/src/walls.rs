@@ -11,7 +11,7 @@ use std::rc::Rc;
 
 use drift_core::{
     DVec2, Document, EntityId, EntityKind, FillStyle, Justify, Kind, LineKind, Owner, Owners, Path,
-    PropertyDim, PropertyRef, Shape, Wall, WallId,
+    PropertyDim, PropertyRef, Shape, Wall, WallEnd, WallId,
 };
 
 use crate::editor::{EditError, Editor};
@@ -578,8 +578,14 @@ impl Editor {
                 ) && self.doc.path_of(*c).is_none()
             })
             .collect();
-        let walls: Vec<(WallId, Wall)> = self.doc.walls().map(|(id, w)| (id, w.clone())).collect();
-        for (id, wall) in walls {
+        let ids: Vec<WallId> = self.doc.walls().map(|(id, _)| id).collect();
+        let (_, paths) = self.doc.walls_and_paths_touched_in_transaction();
+        // Each run cut in two (or with a piece gone): the walls its pieces are now.
+        let mut cut_runs: Vec<(WallId, Vec<WallId>)> = Vec::new();
+        for id in ids {
+            let Some(wall) = self.doc.wall(id).cloned() else {
+                continue;
+            };
             let Some(path) = self.doc.path(wall.centre).cloned() else {
                 continue;
             };
@@ -610,33 +616,207 @@ impl Editor {
                     }
                 }
             }
-            if !reshaped && own.len() == path.curves.len() {
+            // A deleted centreline curve is already gone from its path (the document drops
+            // it, #338): what is left may no longer run end to end. Checked in the path's
+            // order, as regeneration walks it (a run may start on a curve drawn end to start).
+            let broken = paths.contains(&wall.centre)
+                && !matches!(
+                    runs_in_order(&own, path.closed, |c| self.live_ends(c)).as_slice(),
+                    [r] if r.curves == own && r.closed == path.closed
+                );
+            // A curve gone from the run, even with the rest still end to end (its end
+            // segment trimmed away): the run has lost an end, or more.
+            let before = self.doc.path_before_transaction(wall.centre);
+            let lost = before
+                .as_ref()
+                .is_some_and(|p| p.curves.iter().any(|c| !self.doc.contains(*c)));
+            if !reshaped && !broken && !lost && own.len() == path.curves.len() {
                 self.keep_construction(&own);
                 continue;
             }
-            let chains = chains(&self.doc, &pool);
-            let Some(first) = chains.first().cloned() else {
-                continue;
+            let pieces: Vec<(Vec<EntityId>, bool)> = if reshaped {
+                chains(&self.doc, &pool)
+            } else {
+                // Only curves gone: the pieces left, each in the run's order.
+                let wrap = before.as_ref().map_or(path.closed, |p| p.closed);
+                runs_in_order(&own, wrap, |c| self.live_ends(c))
+                    .into_iter()
+                    .map(|r| (r.curves, r.closed))
+                    .collect()
             };
-            let (curves, closed) = first;
+            if pieces.is_empty() {
+                continue;
+            }
+            let cut = broken || lost || pieces.len() > 1;
+            // The run as it was, to keep each piece's way (whenever it is chained again) and,
+            // when it was cut, the ends that are still each piece's.
+            let was = before.and_then(|p| {
+                let then = |c: EntityId| {
+                    self.doc
+                        .entity_before_transaction(c)
+                        .and_then(|e| e.kind.ends())
+                };
+                let mut runs = runs_in_order(&p.curves, p.closed, then);
+                (runs.len() == 1).then(|| runs.remove(0))
+            });
+            let mut made: Vec<(Vec<EntityId>, bool, [WallEnd; 2])> = Vec::new();
+            for (k, (mut curves, closed)) in pieces.into_iter().enumerate() {
+                let mut ends = if k == 0 {
+                    wall.ends.clone()
+                } else {
+                    Default::default()
+                };
+                if let Some(was) = &was {
+                    if !closed && self.runs_against(&curves, was) {
+                        match curves.as_slice() {
+                            [c] => {
+                                // (A lone line turns round; a lone arc can't.)
+                                if let Some(EntityKind::Line { a, b }) =
+                                    self.doc.get(*c).map(|e| e.kind)
+                                {
+                                    let _ = self
+                                        .doc
+                                        .set_entity_kind(*c, EntityKind::Line { a: b, b: a });
+                                }
+                            }
+                            _ => curves.reverse(),
+                        }
+                    }
+                    if cut {
+                        ends = self.ends_still_at(&curves, closed, was, &wall);
+                    }
+                }
+                made.push((curves, closed, ends));
+            }
+            let mut pieces_made = vec![id];
+            let mut made = made.into_iter();
+            let (curves, closed, ends) = made.next().expect("a piece");
             let new_path = Path { curves, closed };
             if self.doc.path(wall.centre) != Some(&new_path) {
                 let _ = self.doc.set_path(wall.centre, new_path);
             }
+            if ends != wall.ends {
+                let mut first = wall.clone();
+                first.ends = ends;
+                let _ = self.doc.set_wall(id, first);
+            }
             self.keep_construction(&pool);
             // The other pieces of a run cut in two are walls of their own, like it.
-            for (curves, closed) in chains.into_iter().skip(1) {
+            for (curves, closed, ends) in made {
                 if let Ok(p) = self.doc.add_path(Path { curves, closed }) {
                     let mut copy = wall.clone();
                     copy.centre = p;
                     copy.made = Default::default();
-                    copy.ends = Default::default();
-                    let _ = self.doc.add_wall(copy);
+                    copy.ends = ends;
+                    if let Ok(w) = self.doc.add_wall(copy) {
+                        pieces_made.push(w);
+                    }
                 }
             }
-            let _ = id;
+            if cut {
+                cut_runs.push((id, pieces_made));
+            }
         }
+        self.retarget_tees(&cut_runs);
         self.follow_tees(None);
+    }
+
+    /// A curve's end points as it is now.
+    fn live_ends(&self, c: EntityId) -> Option<[EntityId; 2]> {
+        self.doc.get(c).and_then(|e| e.kind.ends())
+    }
+
+    /// `curves` walked as one open run, as they are now: None if they don't make one.
+    fn one_run(&self, curves: &[EntityId]) -> Option<Run> {
+        let mut runs = runs_in_order(curves, false, |c| self.live_ends(c));
+        (runs.len() == 1 && !runs[0].points.is_empty()).then(|| runs.remove(0))
+    }
+
+    /// Whether a piece of a run, `curves` in order, runs the other way to the run it was
+    /// (`was`): judged by the first curve both have.
+    fn runs_against(&self, curves: &[EntityId], was: &Run) -> bool {
+        let Some(now) = self.one_run(curves) else {
+            return false;
+        };
+        let n = was.points.len();
+        now.curves.iter().enumerate().find_map(|(i, c)| {
+            let j = was.curves.iter().position(|w| w == c)?;
+            let (s, e) = (now.points[i], now.points[i + 1]);
+            let (ws, we) = (*was.points.get(j)?, *was.points.get((j + 1) % n)?);
+            Some(s == we || e == ws)
+        }) == Some(true)
+    }
+
+    /// The ends a piece of a run keeps: those of the run (`wall`, as it was: `was`) that its
+    /// own start and end still are. A ring's pieces, and a piece's new ends, are free.
+    fn ends_still_at(
+        &self,
+        curves: &[EntityId],
+        closed: bool,
+        was: &Run,
+        wall: &Wall,
+    ) -> [WallEnd; 2] {
+        let mut out: [WallEnd; 2] = Default::default();
+        if closed || was.closed || was.points.is_empty() {
+            return out;
+        }
+        let Some(now) = self.one_run(curves) else {
+            return out;
+        };
+        let then = [was.points[0], was.points[was.points.len() - 1]];
+        let here = [now.points[0], now.points[now.points.len() - 1]];
+        for (k, p) in here.iter().enumerate() {
+            if let Some(w) = then.iter().position(|q| q == p) {
+                out[k] = wall.ends[w].clone();
+            }
+        }
+        out
+    }
+
+    /// Tee ends whose host run was cut (`cut_runs`: the run, the walls of its pieces): each
+    /// tees into the piece holding the segment it is on, or lets go where it is when that
+    /// segment is gone.
+    fn retarget_tees(&mut self, cut_runs: &[(WallId, Vec<WallId>)]) {
+        if cut_runs.is_empty() {
+            return;
+        }
+        let snap = drift_geom::walls::regen::snap(&self.doc);
+        let walls: Vec<(WallId, Wall)> = self.doc.walls().map(|(id, w)| (id, w.clone())).collect();
+        for (id, wall) in walls {
+            let mut changed = wall.clone();
+            for which in 0..2 {
+                let Some((host, _)) = wall.ends[which].tee else {
+                    continue;
+                };
+                let Some((_, pieces)) = cut_runs.iter().find(|(h, _)| *h == host) else {
+                    continue;
+                };
+                let at = self
+                    .run_end_point(&wall, which)
+                    .and_then(|p| self.doc.point(p).ok());
+                changed.ends[which].tee = at.and_then(|at| {
+                    pieces
+                        .iter()
+                        .filter_map(|pw| {
+                            let w = self.doc.wall(*pw)?;
+                            let (segs, ..) =
+                                drift_geom::walls::regen::centreline(&self.doc, w).ok()?;
+                            let reach = w.thickness / 2.0 + snap;
+                            segs.iter()
+                                .enumerate()
+                                .map(|(k, s)| (drift_geom::distance(&s.shape(), at), k))
+                                .filter(|(d, _)| *d <= reach)
+                                .min_by(|a, b| a.0.total_cmp(&b.0))
+                                .map(|(d, k)| (d, *pw, k as u16))
+                        })
+                        .min_by(|a, b| a.0.total_cmp(&b.0))
+                        .map(|(_, pw, k)| (pw, k))
+                });
+            }
+            if changed != wall {
+                let _ = self.doc.set_wall(id, changed);
+            }
+        }
     }
 
     fn keep_construction(&mut self, curves: &[EntityId]) {
@@ -1658,6 +1838,75 @@ pub fn thickness_dimension(
     let label = at + seg.tangent(0.0).perp() * d.out;
     let anchor = crate::labels::dimension_anchor(doc, &c)?;
     Some((c, label - anchor))
+}
+
+/// A run of centreline curves as regeneration walks it: its curves in order, its points
+/// (start, each joint, end; a ring's start once), and whether it closes.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Run {
+    curves: Vec<EntityId>,
+    points: Vec<EntityId>,
+    closed: bool,
+}
+
+/// `curves` cut into runs in their order, where one doesn't go on from the one before (as
+/// `drift_geom::walls::regen::centreline` walks a path: a run's first curve goes whichever
+/// way meets the next). With `wrap` (a ring's curves), the last run going on into the first
+/// is one with it, or the ring when it is the only one. `ends` gives each curve's ends.
+fn runs_in_order(
+    curves: &[EntityId],
+    wrap: bool,
+    ends: impl Fn(EntityId) -> Option<[EntityId; 2]>,
+) -> Vec<Run> {
+    let mut runs: Vec<Run> = Vec::new();
+    for &c in curves {
+        let Some([s, e]) = ends(c) else {
+            runs.push(Run {
+                curves: vec![c],
+                ..Default::default()
+            });
+            continue;
+        };
+        if let Some(r) = runs.last_mut()
+            && r.points.len() >= 2
+        {
+            let meets = |p: EntityId| p == s || p == e;
+            // A run of one curve turns round to meet this one if it must.
+            if r.curves.len() == 1 && !meets(r.points[1]) && meets(r.points[0]) {
+                r.points.reverse();
+            }
+            let at = r.points[r.points.len() - 1];
+            if meets(at) {
+                r.curves.push(c);
+                r.points.push(if at == s { e } else { s });
+                continue;
+            }
+        }
+        runs.push(Run {
+            curves: vec![c],
+            points: vec![s, e],
+            closed: false,
+        });
+    }
+    if wrap && !runs.is_empty() {
+        let joins = {
+            let (first, last) = (&runs[0], &runs[runs.len() - 1]);
+            !first.points.is_empty() && first.points.first() == last.points.last()
+        };
+        if runs.len() == 1 {
+            if joins && runs[0].curves.len() > 1 {
+                runs[0].closed = true;
+                runs[0].points.pop();
+            }
+        } else if joins {
+            let mut last = runs.pop().expect("more than one");
+            let first = runs.remove(0);
+            last.curves.extend(first.curves);
+            last.points.extend(first.points.into_iter().skip(1));
+            runs.insert(0, last);
+        }
+    }
+    runs
 }
 
 /// `curves` (lines and arcs) chained end to end through the points they share: each chain

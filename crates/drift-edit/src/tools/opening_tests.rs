@@ -400,6 +400,47 @@ fn splitting_a_wall_takes_its_openings_along() {
     assert_eq!(jambs(&ed, second), 2);
 }
 
+/// #338 review: a run cut in two by a deleted middle segment (a trim with nothing across
+/// it) takes the openings on its far piece to that piece's wall, where they were.
+#[test]
+fn a_run_cut_in_two_by_a_delete_takes_its_openings_along() {
+    let mut ed = editor();
+    let w = run(
+        &mut ed,
+        &[
+            v(0.0, 0.0),
+            v(4000.0, 0.0),
+            v(4000.0, 3000.0),
+            v(0.0, 3000.0),
+        ],
+    );
+    let a = place(&mut ed, v(2000.0, 0.0)).unwrap();
+    let b = place(&mut ed, v(2000.0, 3000.0)).unwrap();
+    assert_eq!(ed.doc.opening(b).unwrap().seg, 2);
+    let (at_a, at_b) = (span(&ed, a), span(&ed, b));
+    let middle = ed.wall_curves(w)[1];
+    ed.doc.begin();
+    ed.doc.delete([middle]);
+    ed.commit("Delete");
+    assert_eq!(ed.doc.walls().count(), 2);
+    let second = ed
+        .doc
+        .walls()
+        .map(|(id, _)| id)
+        .find(|id| *id != w)
+        .unwrap();
+    let oa = ed.doc.opening(a).unwrap();
+    assert_eq!((oa.wall, oa.seg), (w, 0));
+    let ob = ed.doc.opening(b).unwrap();
+    assert_eq!((ob.wall, ob.seg), (second, 0), "re-seated on the new wall");
+    assert_eq!(span(&ed, a), at_a);
+    assert!((span(&ed, b).0 - at_b.0).abs() < 1e-6);
+    assert!((span(&ed, b).1 - at_b.1).abs() < 1e-6);
+    assert_eq!(jambs(&ed, w), 2);
+    assert_eq!(jambs(&ed, second), 2);
+    assert!(!symbol(&ed, b).is_empty());
+}
+
 #[test]
 fn copying_a_wall_copies_its_openings() {
     let mut ed = editor();

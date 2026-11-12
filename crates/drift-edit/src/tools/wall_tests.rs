@@ -490,3 +490,371 @@ fn the_preview_shows_the_join_before_the_click() {
         .fold(f64::INFINITY, f64::min);
     assert!((lowest - 5.0).abs() < 1e-9, "the faces end at y = {lowest}");
 }
+
+/// What the walls made, to compare two drawings: walls, face lines (curves the walls own),
+/// curves nobody owns, fills, and the poché's area.
+fn wall_summary(ed: &mut Editor) -> (usize, usize, usize, usize, i64) {
+    let owners = ed.wall_owners();
+    let curves: Vec<EntityId> = ed
+        .doc
+        .iter()
+        .filter(|(_, e)| !e.kind.is_point())
+        .map(|(id, _)| id)
+        .collect();
+    let faces = curves.iter().filter(|id| owners.by_wall(**id)).count();
+    let loose = curves
+        .iter()
+        .filter(|id| owners.get(**id).is_none())
+        .count();
+    let area = poche_area(ed);
+    (
+        ed.doc.walls().count(),
+        faces,
+        loose,
+        ed.doc.fills().count(),
+        area.round() as i64,
+    )
+}
+
+/// One Trim drag through `pts`.
+fn trim_drag(ed: &mut Editor, pts: &[DVec2]) {
+    let mut tool = ToolKind::Trim.create();
+    let m = Modifiers::default();
+    tool.handle(Input::DragStart(Pointer::new(pts[0], TOL), m), ed);
+    for at in &pts[1..] {
+        tool.handle(Input::Drag(Pointer::new(*at, TOL)), ed);
+    }
+    let end = Pointer::new(*pts.last().unwrap(), TOL);
+    tool.handle(Input::DragEnd(end, m), ed);
+}
+
+/// #338: a Trim drag across two opposite walls of a closed room trims the walls whole. Their
+/// centrelines are cut (nothing else crosses them, so each crossed segment goes, corner to
+/// corner) and the faces, poché and outline follow: what is left is what drawing the two
+/// remaining walls from scratch makes, with no fill-less wall and no face lines left behind.
+#[test]
+fn a_trim_drag_across_walls_trims_them_whole() {
+    let mut ed = editor();
+    ed.show_centrelines = false;
+    run(
+        &mut ed,
+        &[
+            v(0.0, 0.0),
+            v(100.0, 0.0),
+            v(100.0, 60.0),
+            v(0.0, 60.0),
+            v(0.0, 0.0),
+        ],
+    );
+    assert_eq!(ed.doc.walls().count(), 1);
+    // Across the left wall and the right wall, in a few moves.
+    trim_drag(
+        &mut ed,
+        &[
+            v(-30.0, 30.0),
+            v(-10.0, 31.0),
+            v(20.0, 30.0),
+            v(60.0, 30.0),
+            v(130.0, 29.0),
+        ],
+    );
+    let got = wall_summary(&mut ed);
+
+    // The same two walls, drawn from scratch.
+    let mut fresh = editor();
+    run(&mut fresh, &[v(0.0, 0.0), v(100.0, 0.0)]);
+    run(&mut fresh, &[v(100.0, 60.0), v(0.0, 60.0)]);
+    let want = wall_summary(&mut fresh);
+    assert_eq!(want, (2, 8, 0, 2, 2 * 100 * 10));
+    assert_eq!(
+        got, want,
+        "(walls, face lines, loose curves, fills, poché area)"
+    );
+    // And a full rebuild of what is left changes nothing.
+    let before = ed.doc.len();
+    drift_geom::walls::regenerate(&mut ed.doc);
+    assert_eq!(ed.doc.len(), before);
+    assert_eq!(wall_summary(&mut ed), want);
+    // One undo step puts the room back.
+    ed.undo();
+    assert_eq!(ed.doc.walls().count(), 1);
+    assert_eq!(faces(&ed), 8);
+}
+
+/// A click-trim on the centreline of a closed room's side (with centrelines shown) opens the
+/// room there: the wall is the U that is left, as drawn from scratch.
+#[test]
+fn a_trim_click_on_a_rooms_centreline_opens_the_room() {
+    let mut ed = editor();
+    run(
+        &mut ed,
+        &[
+            v(0.0, 0.0),
+            v(100.0, 0.0),
+            v(100.0, 60.0),
+            v(0.0, 60.0),
+            v(0.0, 0.0),
+        ],
+    );
+    let mut tool = ToolKind::Trim.create();
+    click(&mut ed, tool.as_mut(), v(100.0, 30.0));
+    let got = wall_summary(&mut ed);
+    // The U, drawn from scratch.
+    let mut u = editor();
+    run(
+        &mut u,
+        &[v(100.0, 60.0), v(0.0, 60.0), v(0.0, 0.0), v(100.0, 0.0)],
+    );
+    assert_eq!(
+        got,
+        wall_summary(&mut u),
+        "(walls, face lines, loose curves, fills, poché area)"
+    );
+    assert_eq!(got.0, 1);
+}
+
+/// A single click on a wall face with the Trim tool still says why it can't trim it.
+#[test]
+fn a_trim_click_on_a_wall_face_says_to_trim_the_centreline() {
+    let mut ed = editor();
+    ed.show_centrelines = false;
+    run(&mut ed, &[v(0.0, 0.0), v(100.0, 0.0)]);
+    let before = wall_summary(&mut ed);
+    let mut tool = ToolKind::Trim.create();
+    click(&mut ed, tool.as_mut(), v(50.0, -5.0));
+    assert_eq!(wall_summary(&mut ed), before);
+    assert_eq!(
+        ed.out.notice.as_deref(),
+        Some("Trim: Wall faces follow the wall: trim its centreline, or Explode it")
+    );
+}
+
+/// A run's centreline points, start to end, as regeneration walks it.
+fn run_points(ed: &Editor, w: WallId) -> Vec<DVec2> {
+    let wall = ed.doc.wall(w).unwrap();
+    let (_, points, _) = drift_geom::walls::regen::centreline(&ed.doc, wall).unwrap();
+    points.iter().map(|p| ed.doc.point(*p).unwrap()).collect()
+}
+
+/// The wall whose run starts at `at`.
+fn wall_starting_at(ed: &Editor, at: DVec2) -> WallId {
+    ed.doc
+        .walls()
+        .map(|(id, _)| id)
+        .find(|w| run_points(ed, *w)[0].distance(at) < 1e-6)
+        .unwrap_or_else(|| panic!("a run starting at {at:?}"))
+}
+
+/// What is left is what the walls make again: a full rebuild changes nothing.
+fn assert_rebuilt(ed: &mut Editor) {
+    let before = (ed.doc.len(), wall_summary(ed));
+    drift_geom::walls::regenerate(&mut ed.doc);
+    assert_eq!((ed.doc.len(), wall_summary(ed)), before);
+}
+
+/// #338 review: a run cut in two by deleting a middle segment. The end teeing into a host
+/// goes with the piece that ends there; the first piece keeps no end it no longer has.
+#[test]
+fn a_run_cut_in_two_keeps_each_end_with_its_piece() {
+    let mut ed = editor();
+    run(&mut ed, &[v(300.0, -50.0), v(300.0, 200.0)]);
+    let host = ed.doc.walls().next().unwrap().0;
+    run(
+        &mut ed,
+        &[v(0.0, 0.0), v(100.0, 0.0), v(100.0, 100.0), v(295.0, 100.0)],
+    );
+    let w = ed
+        .doc
+        .walls()
+        .map(|(id, _)| id)
+        .find(|w| *w != host)
+        .unwrap();
+    assert_eq!(ed.doc.wall(w).unwrap().ends[1].tee.map(|t| t.0), Some(host));
+    let end = *run_points(&ed, w).last().unwrap();
+    let mut tool = ToolKind::Trim.create();
+    click(&mut ed, tool.as_mut(), v(100.0, 50.0));
+    assert_eq!(ed.doc.walls().count(), 3);
+    let first = wall_starting_at(&ed, v(0.0, 0.0));
+    assert_eq!(run_points(&ed, first), vec![v(0.0, 0.0), v(100.0, 0.0)]);
+    let ends = &ed.doc.wall(first).unwrap().ends;
+    assert_eq!(ends[1].tee, None, "the tee went with the other piece");
+    let second = wall_starting_at(&ed, v(100.0, 100.0));
+    assert_eq!(run_points(&ed, second), vec![v(100.0, 100.0), end]);
+    assert_eq!(
+        ed.doc.wall(second).unwrap().ends[1].tee.map(|t| t.0),
+        Some(host)
+    );
+    assert_eq!(ed.doc.wall(second).unwrap().ends[0].tee, None);
+    assert_rebuilt(&mut ed);
+}
+
+/// #338 review: a branch teeing into the piece a cut leaves on the far side stays where it
+/// is, teeing into that piece's wall now.
+#[test]
+fn a_branch_follows_its_host_segment_to_the_new_piece() {
+    let mut ed = editor();
+    run(
+        &mut ed,
+        &[v(0.0, 0.0), v(100.0, 0.0), v(100.0, 100.0), v(300.0, 100.0)],
+    );
+    let w = ed.doc.walls().next().unwrap().0;
+    run(&mut ed, &[v(200.0, 105.0), v(200.0, 200.0)]);
+    let branch = ed.doc.walls().map(|(id, _)| id).find(|b| *b != w).unwrap();
+    assert_eq!(
+        ed.doc.wall(branch).unwrap().ends[0].tee.map(|t| t.0),
+        Some(w)
+    );
+    let before = run_points(&ed, branch);
+    let mut tool = ToolKind::Trim.create();
+    click(&mut ed, tool.as_mut(), v(100.0, 50.0));
+    assert_eq!(run_points(&ed, branch), before, "the branch didn't move");
+    let second = wall_starting_at(&ed, v(100.0, 100.0));
+    assert_eq!(ed.doc.wall(branch).unwrap().ends[0].tee, Some((second, 0)));
+    assert_rebuilt(&mut ed);
+    // A branch whose host segment is deleted lets go where it is.
+    let mut ed = editor();
+    run(
+        &mut ed,
+        &[v(0.0, 0.0), v(100.0, 0.0), v(100.0, 100.0), v(300.0, 100.0)],
+    );
+    let w = ed.doc.walls().next().unwrap().0;
+    run(&mut ed, &[v(105.0, 50.0), v(200.0, 50.0)]);
+    let branch = ed.doc.walls().map(|(id, _)| id).find(|b| *b != w).unwrap();
+    assert_eq!(
+        ed.doc.wall(branch).unwrap().ends[0].tee.map(|t| t.0),
+        Some(w)
+    );
+    let before = run_points(&ed, branch);
+    let middle = ed.wall_curves(w)[1];
+    ed.doc.begin();
+    ed.doc.delete([middle]);
+    ed.commit("Delete");
+    assert_eq!(ed.doc.walls().count(), 3);
+    assert_eq!(run_points(&ed, branch), before, "the branch didn't move");
+    assert_eq!(ed.doc.wall(branch).unwrap().ends[0].tee, None);
+    assert_rebuilt(&mut ed);
+}
+
+/// The highest point of the walls' faces.
+fn top_of_faces(ed: &Editor) -> f64 {
+    let owners = ed.wall_owners();
+    ed.doc
+        .iter()
+        .filter(|(id, e)| !e.kind.is_point() && owners.by_wall(*id))
+        .filter_map(|(id, _)| ed.doc.shape(id))
+        .map(|s| s.bounds().max.y)
+        .fold(f64::MIN, f64::max)
+}
+
+/// #338 review: a run whose first curve runs backwards (end to start) keeps its direction,
+/// so a Left-justified wall stays on its side.
+#[test]
+fn a_run_starting_backwards_keeps_its_direction() {
+    // From curves: the first line is drawn (100, 0) to (0, 0), but the run starts at (0, 50).
+    let mut ed = editor();
+    ed.prefs.wall_justify = Justify::Left;
+    ed.doc.begin();
+    let p: Vec<EntityId> = [v(100.0, 0.0), v(0.0, 0.0), v(100.0, 50.0), v(0.0, 50.0)]
+        .iter()
+        .map(|q| ed.doc.add_point(*q))
+        .collect();
+    let l1 = ed.doc.add_line(p[0], p[1]).unwrap();
+    let l2 = ed.doc.add_line(p[0], p[2]).unwrap();
+    let l3 = ed.doc.add_line(p[2], p[3]).unwrap();
+    ed.commit("Lines");
+    let w = ed.walls_from_curves(&[l1, l2, l3]).unwrap()[0];
+    let points = run_points(&ed, w);
+    assert_eq!(points[0], v(0.0, 50.0));
+    // Left justified going (0, 50) → (100, 50): the wall is inside the U, below its top.
+    assert!((top_of_faces(&ed) - 50.0).abs() < 1e-9);
+    ed.set_wall_thickness(&[w], "20").unwrap();
+    assert_eq!(run_points(&ed, w), points);
+    assert!((top_of_faces(&ed) - 50.0).abs() < 1e-9);
+
+    // The Wall tool: a clockwise arc (stored end to start), then a line.
+    let mut ed = editor();
+    ed.prefs.wall_justify = Justify::Left;
+    ed.prefs.wall_arc = true;
+    let mut tool = ToolKind::Wall.create();
+    for at in [v(-50.0, 0.0), v(50.0, 0.0), v(0.0, 50.0)] {
+        click(&mut ed, tool.as_mut(), at);
+    }
+    tool.key(ToolKey::LineNext, None, &mut ed);
+    click(&mut ed, tool.as_mut(), v(50.0, -100.0));
+    tool.handle(Input::Finish, &mut ed);
+    let w = ed.doc.walls().next().unwrap().0;
+    assert_eq!(run_points(&ed, w)[0], v(-50.0, 0.0));
+    // Left justified along a clockwise arc: the wall is inside it.
+    assert!((top_of_faces(&ed) - 50.0).abs() < 1e-9);
+}
+
+/// #338 re-review (R7): trimming away the end segment of a run that tees into a wall at each
+/// end leaves the rest where it was: its new start is free, its far end keeps its tee.
+#[test]
+fn a_run_losing_its_end_segment_lets_that_tee_go() {
+    let mut ed = editor();
+    run(&mut ed, &[v(-50.0, -50.0), v(-50.0, 200.0)]);
+    run(&mut ed, &[v(300.0, -50.0), v(300.0, 200.0)]);
+    let hosts: Vec<WallId> = ed.doc.walls().map(|(id, _)| id).collect();
+    run(
+        &mut ed,
+        &[
+            v(-45.0, 0.0),
+            v(100.0, 0.0),
+            v(100.0, 100.0),
+            v(295.0, 100.0),
+        ],
+    );
+    let w = ed
+        .doc
+        .walls()
+        .map(|(id, _)| id)
+        .find(|w| !hosts.contains(w))
+        .unwrap();
+    let ends = ed.doc.wall(w).unwrap().ends.clone();
+    assert!(ends[0].tee.is_some() && ends[1].tee.is_some());
+    let far = *run_points(&ed, w).last().unwrap();
+    let mut tool = ToolKind::Trim.create();
+    click(&mut ed, tool.as_mut(), v(30.0, 0.0));
+    assert_eq!(
+        run_points(&ed, w),
+        vec![v(100.0, 0.0), v(100.0, 100.0), far]
+    );
+    let now = &ed.doc.wall(w).unwrap().ends;
+    assert_eq!(now[0].tee, None, "the start's tee went with its segment");
+    assert_eq!(now[1].tee.map(|t| t.0), ends[1].tee.map(|t| t.0));
+    assert_rebuilt(&mut ed);
+}
+
+/// #338 re-review (R5): a trim that only shortens a run starting on a clockwise arc keeps the
+/// run's direction, so a Left-justified wall stays on its side.
+#[test]
+fn shortening_a_run_starting_backwards_keeps_its_direction() {
+    let mut ed = editor();
+    ed.prefs.wall_justify = Justify::Left;
+    ed.prefs.wall_arc = true;
+    let mut tool = ToolKind::Wall.create();
+    for at in [v(-50.0, 0.0), v(50.0, 0.0), v(0.0, 50.0)] {
+        click(&mut ed, tool.as_mut(), at);
+    }
+    tool.key(ToolKey::LineNext, None, &mut ed);
+    click(&mut ed, tool.as_mut(), v(50.0, -100.0));
+    tool.handle(Input::Finish, &mut ed);
+    let w = ed.doc.walls().next().unwrap().0;
+    ed.doc.begin();
+    let a = ed.doc.add_point(v(0.0, -60.0));
+    let b = ed.doc.add_point(v(100.0, -60.0));
+    ed.doc.add_line(a, b).unwrap();
+    ed.commit("Line");
+    let top = top_of_faces(&ed);
+    let mut tool = ToolKind::Trim.create();
+    click(&mut ed, tool.as_mut(), v(50.0, -80.0));
+    let points = run_points(&ed, w);
+    assert_eq!(points[0], v(-50.0, 0.0));
+    assert!(points.last().unwrap().distance(v(50.0, -60.0)) < 1e-6);
+    assert!(
+        (top_of_faces(&ed) - top).abs() < 1e-9,
+        "the faces kept their side"
+    );
+    assert_rebuilt(&mut ed);
+}

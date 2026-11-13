@@ -326,6 +326,111 @@ fn smoke_annotation_scale_custom_scale_field_keeps_the_menu_open_to_type() {
     );
 }
 
+/// Opens the drawing-settings scale menu, types `text` in its Custom field (Enter too when
+/// `enter`), (Enter too when `enter`).
+fn type_in_custom_field(h: &mut Harness<'_, DriftApp>, text: &str, enter: bool) {
+    let placeholder = "1:37 or 5\" = 1'-0\"";
+    h.get_by_value("1:25").scroll_to_me();
+    h.run();
+    h.get_by_value("1:25").click();
+    h.run();
+    h.query_all_by_role(egui::accesskit::Role::TextInput)
+        .find(|n| n.accesskit_node().placeholder() == Some(placeholder))
+        .expect("the Custom field in the open menu")
+        .scroll_to_me();
+    h.run();
+    h.run();
+    let at = h
+        .query_all_by_role(egui::accesskit::Role::TextInput)
+        .find(|n| n.accesskit_node().placeholder() == Some(placeholder))
+        .map(|n| n.rect().center())
+        .expect("the menu is open");
+    h.hover_at(at);
+    h.run();
+    button(h, at, true);
+    h.run();
+    button(h, at, false);
+    h.run();
+    type_text(h, text);
+    if enter {
+        h.key_press(Key::Enter);
+    }
+    h.run();
+    h.run();
+}
+
+/// The Custom field's text, and whether an error line shows, if the menu is open.
+fn custom_field_state(h: &Harness<'_, DriftApp>) -> Option<(String, bool)> {
+    let placeholder = "1:37 or 5\" = 1'-0\"";
+    let field = h
+        .query_all_by_role(egui::accesskit::Role::TextInput)
+        .find(|n| {
+            // An empty field shows its placeholder; a typed one its text.
+            n.accesskit_node().placeholder() == Some(placeholder)
+                || n.value().as_deref() == Some("nonsense")
+        })?;
+    let text = field.value().unwrap_or_default().to_string();
+    let has_error = h.query_by_label_contains("Not a scale").is_some();
+    Some((text, has_error))
+}
+
+#[test]
+fn smoke_annotation_scale_custom_field_is_empty_after_esc_or_click_outside() {
+    for close_by_esc in [true, false] {
+        let Some(mut h) = harness() else { return };
+        {
+            let doc = &mut h.state_mut().drawing.editor.doc;
+            let style = doc.draft_style();
+            doc.set_draft_style(DraftStyle {
+                scale: 25.0,
+                ..style
+            });
+        }
+        h.state_mut().show_drawing_settings = true;
+        h.run();
+        h.run();
+        // A bad scale typed and entered: the field keeps it and shows an error.
+        type_in_custom_field(&mut h, "nonsense", true);
+        let (text, has_error) = custom_field_state(&h).expect("a bad scale keeps the menu open");
+        assert_eq!(text, "nonsense");
+        assert!(has_error, "the bad scale shows its error");
+        // Close it without applying.
+        if close_by_esc {
+            h.key_press(Key::Escape);
+        } else {
+            let out = egui::pos2(2.0, 2.0);
+            h.hover_at(out);
+            h.run();
+            button(&h, out, true);
+            h.run();
+            button(&h, out, false);
+        }
+        h.run();
+        h.run();
+        assert!(custom_field_state(&h).is_none(), "the menu closed");
+        assert_eq!(h.state().drawing.editor.doc.draft_style().scale, 25.0);
+        // Reopened (Esc may have closed the settings window too): empty field, no error.
+        h.state_mut().show_drawing_settings = true;
+        h.run();
+        h.run();
+        h.get_by_value("1:25").scroll_to_me();
+        h.run();
+        h.get_by_value("1:25").click();
+        h.run();
+        h.run();
+        let placeholder = "1:37 or 5\" = 1'-0\"";
+        h.query_all_by_role(egui::accesskit::Role::TextInput)
+            .find(|n| n.accesskit_node().placeholder() == Some(placeholder))
+            .expect("the Custom field")
+            .scroll_to_me();
+        h.run();
+        h.run();
+        let (text, has_error) = custom_field_state(&h).expect("the menu reopened");
+        assert_eq!(text, "", "the field starts empty (esc: {close_by_esc})");
+        assert!(!has_error, "no old error shows (esc: {close_by_esc})");
+    }
+}
+
 /// A 20 m dimensioned plan at 1:1 in view, its sheets showing views at `scales` (one sheet
 /// per scale; none for an empty list).
 fn plan_with_sheet_views(h: &mut Harness<'_, DriftApp>, scales: &[f64]) {

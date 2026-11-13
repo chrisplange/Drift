@@ -25,7 +25,7 @@ pub(crate) fn scale_menu(
     let id = egui::Id::new(("scale_menu", id));
     let text_id = id.with("custom");
     let error_id = id.with("error");
-    egui::ComboBox::from_id_salt(id)
+    let shown = egui::ComboBox::from_id_salt(id)
         .selected_text(scale_label(*scale, imperial))
         .width(width)
         .height(460.0)
@@ -82,7 +82,16 @@ pub(crate) fn scale_menu(
                         .color(egui::Color32::from_rgb(0xff, 0x5d, 0x5d)),
                 );
             }
-        })
+        });
+    // The list's closure only runs while the menu is open: once it is closed (Esc, a click
+    // outside, a pick), the Custom field starts empty again next time, with no old error.
+    if shown.inner.is_none() {
+        ui.data_mut(|d| {
+            d.remove::<String>(text_id);
+            d.remove::<String>(error_id);
+        });
+    }
+    shown
         .response
         .on_hover_text("Pick a scale, or type one under Custom and press Enter");
     !same_scale(*scale, before)

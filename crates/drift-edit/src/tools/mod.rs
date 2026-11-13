@@ -616,9 +616,72 @@ fn exact(p: &Pointer, at: DVec2) -> Pointer {
     Pointer::new(at, p.tolerance)
 }
 
-/// Add a relation if automatic relations are on; failures (e.g. redundancy) are ignored and
-/// the commit's solve decides whether the whole step is acceptable.
-fn auto_relation(
+/// Add the automatic relation `relation` (from a snap or guide) to `line`, a segment a tool
+/// has just drawn, if automatic relations are on. Left out, with a notice saying so, if the
+/// relations already there imply it or it would conflict with them; the segment is drawn
+/// either way (#204, #306). `onto_point`: the segment ends on an existing point (closing a
+/// loop, say). Call inside the segment's transaction.
+fn auto_relation(ed: &mut Editor, relation: Option<GuideKind>, line: EntityId, onto_point: bool) {
+    let Some(id) = add_auto_relation(ed, relation, line) else {
+        return;
+    };
+    // Ending on a point, a side drawn a hair off level only meets its relation once solved,
+    // so it is always checked. Elsewhere the relations already there are met as drawn, so
+    // one the new geometry doesn't meet isn't implied by them (the commit's solve decides
+    // it), and one it does meet can't conflict: it is checked unless a free end shows it
+    // isn't implied either. Most segments drawn on from a chain end in a new point.
+    if !onto_point && (!holds_as_drawn(ed, id) || has_free_end(ed, line, id)) {
+        return;
+    }
+    // Solved on a copy, only the part the segment joins (what the relation can reach), and
+    // judged against that part without it: the rest of the drawing has no say, and costs
+    // nothing however big it is.
+    let lowering = ed.lowering();
+    let scope = std::rc::Rc::new(part_of(ed, line, lowering.as_deref()));
+    let solved = |mut doc: drift_core::Document| {
+        drift_solver::solve(
+            &mut doc,
+            &drift_solver::SolveOptions {
+                analyze: true,
+                scope: Some(scope.clone()),
+                lowering: lowering.clone(),
+                ..Default::default()
+            },
+        )
+    };
+    let report = solved(ed.doc.clone());
+    let why = if ed.new_conflicts(&report) {
+        EditError::Conflict
+    } else if report.redundant.is_empty() && report.dependent_equations == 0 {
+        return;
+    } else {
+        let mut without = ed.doc.clone();
+        without.remove_constraint(id);
+        let before = solved(without);
+        if report
+            .redundant
+            .iter()
+            .any(|c| !before.redundant.contains(c))
+            || report.dependent_equations > before.dependent_equations
+        {
+            EditError::Redundant
+        } else {
+            return;
+        }
+    };
+    let name = ed.doc.constraint(id).map_or("Relation", |c| c.type_name());
+    ed.doc.remove_constraint(id);
+    let text = format!("{name} not added: {why}");
+    // (One that only repeats what the sketch holds already leaves nothing wrong.)
+    if matches!(why, EditError::Redundant) {
+        ed.out.inform(text);
+    } else {
+        ed.out.notice = Some(text);
+    }
+}
+
+/// The relation [`auto_relation`] adds, added.
+fn add_auto_relation(
     ed: &mut Editor,
     relation: Option<GuideKind>,
     line: EntityId,
@@ -646,45 +709,137 @@ fn auto_relation(
     ed.doc.add_constraint(constraint).ok()
 }
 
-/// [`auto_relation`] for a segment that ends on an existing point (closing a loop, say): its
-/// two ends may already be held, so the relation is checked first. Left out, with a notice
-/// saying so, if the relations already there imply it or it would conflict with them; the
-/// segment is drawn either way (#204). Call inside the segment's transaction.
-fn auto_relation_onto_point(ed: &mut Editor, relation: Option<GuideKind>, line: EntityId) {
-    let Some(id) = auto_relation(ed, relation, line) else {
-        return;
-    };
-    // Solved on a copy: a side drawn a hair off level only meets its relation once solved.
-    let mut solved = ed.doc.clone();
-    let report = drift_solver::solve(
-        &mut solved,
-        &drift_solver::SolveOptions {
-            analyze: true,
-            lowering: ed.lowering(),
-            ..Default::default()
-        },
-    );
-    let why = if ed.new_conflicts(&report) {
-        EditError::Conflict
-    } else if report
-        .redundant
-        .iter()
-        .any(|c| !ed.analysis().redundant.contains(c))
-        || report.dependent_equations > ed.analysis().dependent_equations
-    {
-        EditError::Redundant
-    } else {
-        return;
-    };
-    let name = ed.doc.constraint(id).map_or("Relation", |c| c.type_name());
-    ed.doc.remove_constraint(id);
-    let text = format!("{name} not added: {why}");
-    // (One that only repeats what the sketch holds already leaves nothing wrong.)
-    if matches!(why, EditError::Redundant) {
-        ed.out.inform(text);
-    } else {
-        ed.out.notice = Some(text);
+/// Which curves use a point the open transaction made: only entities it touched can (one
+/// it didn't touch is as it was, before the point was there), so no pass over the drawing
+/// is needed. Other points' curves aren't known without one.
+struct MadeHere {
+    made: std::collections::HashSet<EntityId>,
+    touched: Vec<EntityId>,
+}
+
+impl MadeHere {
+    fn of(doc: &drift_core::Document) -> Self {
+        Self {
+            made: doc.created_in_transaction().into_iter().collect(),
+            touched: doc.entities_touched_in_transaction(),
+        }
     }
+
+    /// The curves on `point`, if the transaction made it.
+    fn users<'a>(
+        &'a self,
+        doc: &'a drift_core::Document,
+        point: EntityId,
+    ) -> Option<impl Iterator<Item = EntityId> + 'a> {
+        self.made.contains(&point).then(|| {
+            self.touched.iter().copied().filter(move |&id| {
+                doc.get(id)
+                    .is_some_and(|e| !e.kind.is_point() && e.kind.points().any(|p| p == point))
+            })
+        })
+    }
+}
+
+/// Whether an end of `line` is free but for `relation`: a point nothing else holds. A line
+/// holds nothing of itself, so that is a point no other relation (stored, or of the
+/// geometry) names, directly or through a line it ends, and no curve with equations of its
+/// own (an arc, say) uses. Every automatic relation moves both of a segment's ends across
+/// it, so its equation is then the only one on that end's coordinates, and the others can't
+/// imply it. (A rectangle's sides each have such an end but the last; a segment drawn on
+/// from a chain, its new end.)
+fn has_free_end(ed: &Editor, line: EntityId, relation: ConstraintId) -> bool {
+    let Some(EntityKind::Line { a, b }) = ed.doc.get(line).map(|e| e.kind) else {
+        return false;
+    };
+    let lowering = ed.lowering();
+    let named = |id: EntityId| {
+        ed.doc.constraints_on(id).any(|c| c != relation)
+            || lowering
+                .as_ref()
+                .is_some_and(|l| l.extra.iter().any(|x| x.entities().contains(&id)))
+    };
+    if named(line) {
+        return false;
+    }
+    let holds = |user: EntityId| {
+        user != line
+            && (!matches!(
+                ed.doc.get(user).map(|e| e.kind),
+                Some(EntityKind::Line { .. })
+            ) || named(user))
+    };
+    let made = MadeHere::of(&ed.doc);
+    // Ends the transaction made first: their curves are known without a pass.
+    let mut ends = [a, b];
+    ends.sort_by_key(|end| !made.made.contains(end));
+    ends.into_iter().any(|end| {
+        !named(end)
+            && !match made.users(&ed.doc, end) {
+                Some(mut users) => users.any(holds),
+                None => ed.doc.users_of(end).any(holds),
+            }
+    })
+}
+
+/// What `line` is joined to through shared points and relations (stored, or of the
+/// geometry): [`drift_solver::connected_with`]'s answer. Walked out from the line while
+/// it meets only points the open transaction made (a shape drawn on its own, however big
+/// the drawing), else left to `connected_with`.
+fn part_of(
+    ed: &Editor,
+    line: EntityId,
+    lowering: Option<&drift_solver::Lowering>,
+) -> std::collections::HashSet<EntityId> {
+    let relations: Vec<Vec<EntityId>> = drift_solver::relations(&ed.doc, lowering)
+        .iter()
+        .map(|(_, l)| l.entities())
+        .collect();
+    let made = MadeHere::of(&ed.doc);
+    let mut part = std::collections::HashSet::from([line]);
+    let mut todo = vec![line];
+    while let Some(id) = todo.pop() {
+        let Some(e) = ed.doc.get(id) else { continue };
+        let mut near: Vec<EntityId> = e.kind.points().collect();
+        if e.kind.is_point() {
+            match made.users(&ed.doc, id) {
+                Some(users) => near.extend(users),
+                None => return drift_solver::connected_with(&ed.doc, [line], lowering),
+            }
+        }
+        for joined in relations.iter().filter(|r| r.contains(&id)) {
+            near.extend(joined);
+        }
+        for other in near {
+            if part.insert(other) {
+                todo.push(other);
+            }
+        }
+    }
+    part
+}
+
+/// Whether the geometry as drawn already meets `relation`, as a solve judges it (only it and
+/// what it relates are read).
+fn holds_as_drawn(ed: &Editor, relation: ConstraintId) -> bool {
+    let Some(c) = ed.doc.constraint(relation).copied() else {
+        return false;
+    };
+    let lowering = ed.lowering();
+    let lowered: Vec<drift_solver::Lowered> =
+        match lowering.as_ref().and_then(|l| l.of.get(&relation)) {
+            Some(list) => list.clone(),
+            None => vec![drift_solver::Lowered::Relation(c)],
+        };
+    let mut scope = std::collections::HashSet::new();
+    for entity in lowered.iter().flat_map(drift_solver::Lowered::entities) {
+        scope.insert(entity);
+        if let Some(e) = ed.doc.get(entity) {
+            scope.extend(e.kind.points());
+        }
+    }
+    let relations: drift_solver::Relations =
+        lowered.into_iter().map(|l| (Some(relation), l)).collect();
+    drift_solver::meets_within(&ed.doc, &scope, &relations, lowering.as_deref(), None)
 }
 
 /// Unit vector at `degrees`, exact for multiples of 90° (where `cos`/`sin` would leave ~1e-16

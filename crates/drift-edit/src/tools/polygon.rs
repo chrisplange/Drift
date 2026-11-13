@@ -149,7 +149,7 @@ impl PolygonTool {
                     None
                 }
             }) {
-                auto_relation(ed, Some(kind), lines[i]);
+                auto_relation(ed, Some(kind), lines[i], false);
             }
             if self.typed[0].is_some() {
                 let size = if circumscribed {

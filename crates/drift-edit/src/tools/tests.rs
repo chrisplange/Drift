@@ -7194,6 +7194,76 @@ fn a_direction_already_implied_is_left_out_and_said() {
     );
 }
 
+/// A quarter arc about the origin ending at (0, 5), where it leaves along -X, a line `other`
+/// from (`from`) to (`to`) already there, and the Line tool drawing on from the arc's end:
+/// (editor, tool, arc, `other`).
+fn drawing_on_from_an_arc(
+    from: DVec2,
+    to: DVec2,
+    tangent: bool,
+) -> (Editor, LineTool, EntityId, EntityId) {
+    let mut ed = with_auto_relations();
+    ed.prefs.auto_relations = true;
+    ed.doc.begin();
+    let c = ed.doc.add_point(v(0.0, 0.0));
+    let s = ed.doc.add_point(v(5.0, 0.0));
+    let e = ed.doc.add_point(v(0.0, 5.0));
+    let arc = ed.doc.add_arc(c, s, e).unwrap();
+    let a = if from == v(0.0, 5.0) {
+        e
+    } else {
+        ed.doc.add_point(from)
+    };
+    let b = ed.doc.add_point(to);
+    let other = ed.doc.add_line(a, b).unwrap();
+    if tangent {
+        ed.doc
+            .add_constraint(Constraint::Tangent { a: other, b: arc })
+            .unwrap();
+    }
+    assert!(ed.commit("Arc"));
+    let mut tool = LineTool::default();
+    click_square(&mut ed, &mut tool, v(0.1, 5.1)); // the arc's end
+    assert_eq!(tool.chain_end(), Some(e));
+    (ed, tool, arc, other)
+}
+
+#[test]
+fn a_tangent_already_implied_is_left_out_and_said() {
+    // #306: a line already tangent at the arc's end; drawing on along the tangent onto it,
+    // the new segment lies along it, so its Tangent is implied. Left out, as #204 leaves out
+    // a relation implied when a segment ends on an existing point, and said.
+    let (mut ed, mut tool, arc, other) = drawing_on_from_an_arc(v(0.0, 5.0), v(-20.0, 5.0), true);
+    let p = ptr_square(&ed, &tool, v(-8.0, 5.0));
+    assert_eq!(p.on_curve(), Some(other));
+    assert_eq!(p.auto_relation(), Some(GuideKind::Tangent(arc)));
+    tool.handle(Input::Click(p, Modifiers::default()), &mut ed);
+    assert_eq!(lines(&ed.doc), 2, "the line is drawn");
+    assert_eq!(tangents(&ed), 1, "only the first line's");
+    assert_eq!(
+        ed.out.info.as_deref(),
+        Some("Tangent not added: already implied by existing constraints")
+    );
+    assert!(ed.analysis().redundant.is_empty());
+    assert_eq!(ed.analysis().dependent_equations, 0);
+}
+
+#[test]
+fn a_tangent_not_yet_implied_is_kept() {
+    // #306: the same snap onto a line crossing the tangent (not tangent itself): checked, as
+    // the end is held on that line, and kept, as nothing else makes the segment tangent.
+    let (mut ed, mut tool, arc, other) =
+        drawing_on_from_an_arc(v(-10.0, 0.0), v(-4.0, 15.0), false);
+    let p = ptr_square(&ed, &tool, v(-8.0, 5.0));
+    assert_eq!(p.on_curve(), Some(other));
+    assert_eq!(p.auto_relation(), Some(GuideKind::Tangent(arc)));
+    tool.handle(Input::Click(p, Modifiers::default()), &mut ed);
+    let (line, ..) = newest_line(&ed);
+    assert!(constraints(&ed).contains(&Constraint::Tangent { a: line, b: arc }));
+    assert_eq!(ed.out.info, None);
+    assert_eq!(ed.out.notice, None);
+}
+
 // ---- #293: Fillet and Chamfer on several corners at once ----
 
 /// A `w` × `h` rectangle drawn with the Rectangle tool, and its four sides.

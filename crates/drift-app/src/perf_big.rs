@@ -248,6 +248,28 @@ fn perf_big() {
     edit("redo delete", &mut h, &mut |app| {
         assert!(app.drawing.editor.redo())
     });
+    // #306: a rectangle drawn with automatic relations on (its last side's relation is
+    // checked against the drawing), and undone.
+    let corner = h.state().drawing.editor.bounds().min;
+    edit("draw a rectangle", &mut h, &mut |app| {
+        use drift_edit::tools::{Input, Modifiers, RectangleTool, Tool};
+        let ed = &mut app.drawing.editor;
+        ed.prefs.auto_relations = true;
+        let before = ed.doc.constraint_count();
+        let mut tool = RectangleTool::default();
+        for at in [corner, corner + DVec2::new(400.0, 300.0)] {
+            let p = drift_edit::editor::Pointer::new(at, 0.01);
+            tool.handle(Input::Click(p, Modifiers::default()), ed);
+        }
+        assert_eq!(
+            ed.doc.constraint_count(),
+            before + 4,
+            "level and plumb sides"
+        );
+    });
+    edit("undo rectangle", &mut h, &mut |app| {
+        assert!(app.drawing.editor.undo())
+    });
     // The crossed fills' areas as remembered are those a fresh look finds.
     let ed = &mut h.state_mut().drawing.editor;
     ed.settle_areas();

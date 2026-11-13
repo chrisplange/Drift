@@ -66,11 +66,7 @@ impl LineTool {
         // A locked segment is drawn exactly along its axis either way; it is only kept there
         // by a relation when automatic relations are on.
         let relation = self.lock.map(Axis::relation).or(relation);
-        if anchor.existing == Some(b) {
-            auto_relation_onto_point(ed, relation, line);
-        } else {
-            auto_relation(ed, relation, line);
-        }
+        auto_relation(ed, relation, line, anchor.existing == Some(b));
         if let Some(value) = length {
             ed.add_typed_dimension(0, Constraint::Distance { a, b, value });
         }

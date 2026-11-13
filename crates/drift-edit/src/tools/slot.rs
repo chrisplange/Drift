@@ -285,9 +285,9 @@ impl SlotTool {
                     }
                     let scale = tolerance::same(c1.distance(c2));
                     if (c1.y - c2.y).abs() < scale {
-                        auto_relation(ed, Some(GuideKind::Horizontal), axis);
+                        auto_relation(ed, Some(GuideKind::Horizontal), axis, false);
                     } else if (c1.x - c2.x).abs() < scale {
-                        auto_relation(ed, Some(GuideKind::Vertical), axis);
+                        auto_relation(ed, Some(GuideKind::Vertical), axis, false);
                     }
                     if let Some(len) = length {
                         ed.add_typed_dimension(

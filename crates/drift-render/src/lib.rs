@@ -4,6 +4,15 @@
 //! they stay perfectly crisp at any zoom. The renderer only uses features available in WebGL2,
 //! so the same code runs natively and in every browser.
 
+#![deny(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::todo,
+    clippy::unimplemented
+)]
+
 mod camera;
 mod frame;
 mod palette;

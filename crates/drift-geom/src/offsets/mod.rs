@@ -14,6 +14,10 @@ use crate::offset::{OffsetError, offset_curve};
 
 pub mod regen;
 #[cfg(test)]
+#[allow(
+    clippy::unreachable,
+    reason = "a test fails loudly on a shape it didn't expect"
+)]
 mod tests;
 pub use regen::{Report, rechain, regenerate, regenerate_some};
 
@@ -61,39 +65,41 @@ pub fn chain_through(doc: &Document, id: EntityId) -> (Vec<(EntityId, bool)>, bo
             ),
         );
     };
-    let next_from = |point: EntityId, from: EntityId| -> Option<EntityId> {
-        let users: Vec<EntityId> = doc.users_of(point).filter(|u| ends(*u).is_some()).collect();
+    // The other curve at `point` (with its ends) when exactly two meet there.
+    let next_from = |point: EntityId, from: EntityId| -> Option<(EntityId, (EntityId, EntityId))> {
+        let users: Vec<(EntityId, (EntityId, EntityId))> = doc
+            .users_of(point)
+            .filter_map(|u| Some((u, ends(u)?)))
+            .collect();
         if users.len() == 2 {
-            users.into_iter().find(|u| *u != from)
+            users.into_iter().find(|(u, _)| *u != from)
         } else {
             None
         }
     };
     // Walk backwards from the start to find the chain's first curve.
     let mut first = (id, true);
+    let mut first_ends = (a0, b0);
     let mut point = a0;
     let mut seen = BTreeSet::from([id]);
-    while let Some(prev) = next_from(point, first.0) {
+    while let Some((prev, (pa, pb))) = next_from(point, first.0) {
         if seen.contains(&prev) {
             break; // closed loop
         }
         seen.insert(prev);
-        let (pa, pb) = ends(prev).expect("curve");
         // `prev` ends at `point` when traversed forward.
         let forward = pb == point;
         first = (prev, forward);
+        first_ends = (pa, pb);
         point = if forward { pa } else { pb };
     }
     // Walk forward from the first curve.
     let mut out = vec![first];
-    let (fa, fb) = ends(first.0).expect("curve");
+    let (fa, fb) = first_ends;
     let mut point = if first.1 { fb } else { fa };
+    let mut last = first.0;
     let mut closed = false;
-    loop {
-        let last = out.last().expect("non-empty").0;
-        let Some(next) = next_from(point, last) else {
-            break;
-        };
+    while let Some((next, (na, nb))) = next_from(point, last) {
         if next == first.0 {
             closed = true;
             break;
@@ -101,12 +107,11 @@ pub fn chain_through(doc: &Document, id: EntityId) -> (Vec<(EntityId, bool)>, bo
         if out.iter().any(|(c, _)| *c == next) {
             break;
         }
-        let (na, nb) = ends(next).expect("curve");
         let forward = na == point;
         out.push((next, forward));
+        last = next;
         point = if forward { nb } else { na };
     }
-    let _ = b0;
     (out, closed)
 }
 

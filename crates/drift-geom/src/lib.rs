@@ -1,6 +1,15 @@
 //! Exact 2D geometry for Drift: nearest points, intersections, hit testing, snapping and a
 //! spatial index over document entities. All computation is `f64`.
 
+#![deny(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::todo,
+    clippy::unimplemented
+)]
+
 mod index;
 pub mod intersect;
 pub mod offset;

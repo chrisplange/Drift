@@ -1,0 +1,5 @@
+# Test code may unwrap, expect and panic: a failing test should fail loudly. Non-test code in
+# crates that deny these lints (see #442) must handle the error or state the invariant.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true

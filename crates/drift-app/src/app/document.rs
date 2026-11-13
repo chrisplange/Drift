@@ -148,7 +148,7 @@ impl DriftApp {
         meta: Metadata,
         clean: bool,
     ) {
-        self.tool.cancel(&mut self.drawing.editor);
+        self.tool_cancel();
         self.tool = ToolKind::Select.create();
         // A file from before drawings kept their rules had this computer's.
         if meta.older_rules {

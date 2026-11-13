@@ -367,22 +367,23 @@ impl DriftApp {
             self.drawing.editor.doc.begin();
         }
         if let Some((id, end)) = self.drawing.ext_drag {
-            if let Some(p) = response.interact_pointer_pos()
-                && let Some((_, _, from, out)) = dims
-                    .iter()
+            let t = response.interact_pointer_pos().and_then(|p| {
+                dims.iter()
                     .find(|d| d.id == Some(id))
                     .and_then(|d| d.shape.extension_grips().into_iter().find(|g| g.0 == end))
-            {
-                let t = (map.to_world(p) - from).dot(out);
-                let _ = self
-                    .drawing
-                    .editor
-                    .doc
-                    .set_extension_start(id, end, Some(t));
-            }
-            if !response.dragged_by(PointerButton::Primary) {
+                    .map(|(_, _, from, out)| (map.to_world(p) - from).dot(out))
+            });
+            let done = !response.dragged_by(PointerButton::Primary);
+            let ok = self.guarded("moving the extension line", |app| {
+                if let Some(t) = t {
+                    let _ = app.drawing.editor.doc.set_extension_start(id, end, Some(t));
+                }
+                if done {
+                    app.drawing.editor.commit("Move extension line");
+                }
+            });
+            if done || ok.is_none() {
                 self.drawing.ext_drag = None;
-                self.drawing.editor.commit("Move extension line");
             }
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
             return true;
@@ -407,33 +408,43 @@ impl DriftApp {
             self.drawing.editor.doc.begin();
         }
         if let Some((id, grab)) = self.drawing.label_drag {
-            if let (Some(p), Some(c)) = (
-                response.interact_pointer_pos(),
-                self.drawing.editor.doc.constraint(id).copied(),
-            ) && let Some(anchor) =
-                drift_edit::labels::dimension_anchor(&self.drawing.editor.doc, &c)
-            {
-                let offset = map.to_world(p) - grab - anchor;
-                let space = self.anno_space(map);
-                // Level with another dimension's line when close (Ctrl places freely).
-                let (offset, guide) = if ui.input(|i| i.modifiers.command) {
-                    (offset, None)
-                } else {
-                    crate::app::dim_align::snap_label(
-                        &self.drawing.editor.doc,
-                        id,
-                        &c,
-                        offset,
-                        &space,
-                    )
-                };
-                self.drawing.dim_guide = guide;
-                self.drawing.editor.place_dimension(id, offset);
-            }
-            if !response.dragged_by(PointerButton::Primary) {
+            let at = response.interact_pointer_pos().map(|p| map.to_world(p));
+            // Ctrl places freely.
+            let free = ui.input(|i| i.modifiers.command);
+            let done = !response.dragged_by(PointerButton::Primary);
+            let ok = self.guarded("moving the dimension", |app| {
+                if let (Some(at), Some(c)) = (at, app.drawing.editor.doc.constraint(id).copied())
+                    && let Some(anchor) =
+                        drift_edit::labels::dimension_anchor(&app.drawing.editor.doc, &c)
+                {
+                    let offset = at - grab - anchor;
+                    let space = app.anno_space(map);
+                    // Level with another dimension's line when close.
+                    let (offset, guide) = if free {
+                        (offset, None)
+                    } else {
+                        crate::app::dim_align::snap_label(
+                            &app.drawing.editor.doc,
+                            id,
+                            &c,
+                            offset,
+                            &space,
+                        )
+                    };
+                    app.drawing.dim_guide = guide;
+                    app.drawing.editor.place_dimension(id, offset);
+                    #[cfg(test)]
+                    if crate::app::guard::PANIC_IN_DIMENSION_DRAG.get() {
+                        panic!("a dimension drag's bug (injected)");
+                    }
+                }
+                if done {
+                    app.drawing.editor.commit("Move dimension");
+                }
+            });
+            if done || ok.is_none() {
                 self.drawing.label_drag = None;
                 self.drawing.dim_guide = None;
-                self.drawing.editor.commit("Move dimension");
             }
             return true;
         }
@@ -445,9 +456,12 @@ impl DriftApp {
         // one keeps the dimension picked.
         if idle && let Some((id, end, ..)) = at.and_then(grip_at) {
             if response.double_clicked_by(PointerButton::Primary) {
-                self.drawing.editor.doc.begin();
-                let _ = self.drawing.editor.doc.set_extension_start(id, end, None);
-                self.drawing.editor.commit("Reset extension line");
+                self.guarded("resetting the extension line", |app| {
+                    let ed = &mut app.drawing.editor;
+                    ed.doc.begin();
+                    let _ = ed.doc.set_extension_start(id, end, None);
+                    ed.commit("Reset extension line");
+                });
                 return true;
             }
             if response.clicked_by(PointerButton::Primary) {
@@ -622,16 +636,16 @@ impl DriftApp {
         });
         if !focus && enter {
             let target = self.drawing.editor.doc.property_dim(q).map(|d| d.target);
-            let set = match target {
+            let set = self.guarded("setting the size", |app| match target {
                 Some(drift_core::PropertyRef::WallThickness(w)) => {
-                    self.drawing.editor.set_wall_thickness(&[w], &text)
+                    app.drawing.editor.set_wall_thickness(&[w], &text)
                 }
                 Some(drift_core::PropertyRef::OffsetDistance(x)) => {
-                    self.drawing.editor.set_offset_distance(&[x], &text)
+                    app.drawing.editor.set_offset_distance(&[x], &text)
                 }
                 None => Ok(()),
-            };
-            if let Err(e) = set {
+            });
+            if let Some(Err(e)) = set {
                 self.set_status(format!("Can't use {text}: {e}"), true, now);
             }
             return;
@@ -733,15 +747,26 @@ impl DriftApp {
         if !first
             && enter
             && Some(&edit.text) != self.drawing.editor.dimension_edit_text(edit.id).as_ref()
-            && let Err(e) = self.drawing.editor.set_dimension_text(edit.id, &edit.text)
         {
-            self.set_status(format!("Can't use {}: {e}", edit.text), true, now);
-            keep = false;
+            let set = self.guarded("setting the dimension", |app| {
+                app.drawing.editor.set_dimension_text(edit.id, &edit.text)
+            });
+            match set {
+                Some(Ok(())) => {}
+                Some(Err(e)) => {
+                    self.set_status(format!("Can't use {}: {e}", edit.text), true, now);
+                    keep = false;
+                }
+                None => keep = false,
+            }
         }
         if note != was {
-            self.drawing.editor.doc.begin();
-            self.drawing.editor.doc.set_dim_note(edit.id, Some(note));
-            self.drawing.editor.commit("Dimension text");
+            self.guarded("editing the dimension text", |app| {
+                let ed = &mut app.drawing.editor;
+                ed.doc.begin();
+                ed.doc.set_dim_note(edit.id, Some(note));
+                ed.commit("Dimension text");
+            });
         }
         if keep {
             self.drawing.dimension_edit = Some(edit);

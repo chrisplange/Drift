@@ -71,18 +71,45 @@ impl DriftApp {
         what: &str,
         step: impl FnOnce(&mut Self) -> T,
     ) -> Option<T> {
-        let recorded = self.drawing.editor.history.recorded();
+        self.guard(what, false, step)
+    }
+
+    /// [`DriftApp::guarded`] for Undo and Redo. They apply a step outside a transaction, so a
+    /// panic part way through can leave it half applied, with nothing to roll back: the status
+    /// line says the drawing may be partly changed.
+    pub(crate) fn guarded_history<T>(
+        &mut self,
+        what: &str,
+        step: impl FnOnce(&mut Self) -> T,
+    ) -> Option<T> {
+        self.guard(what, true, step)
+    }
+
+    fn guard<T>(
+        &mut self,
+        what: &str,
+        applies_history: bool,
+        step: impl FnOnce(&mut Self) -> T,
+    ) -> Option<T> {
+        let history = &self.drawing.editor.history;
+        let before = (history.recorded(), history.undo_depth());
         match drift_platform::crash::catch(|| step(self)) {
             Ok(out) => Some(out),
             Err(_) => {
-                self.recover_from_panic(what, recorded);
+                self.recover_from_panic(what, before, applies_history);
                 None
             }
         }
     }
 
-    /// A step that began with `recorded` steps in the history panicked: undo all of it.
-    fn recover_from_panic(&mut self, what: &str, recorded: u64) {
+    /// A step that began with `recorded` steps in the history, `depth` of them to undo,
+    /// panicked: undo all of it, and say how that went.
+    fn recover_from_panic(
+        &mut self,
+        what: &str,
+        (recorded, depth): (u64, usize),
+        applies_history: bool,
+    ) {
         let ed = &mut self.drawing.editor;
         if ed.doc.in_transaction() {
             ed.doc.rollback();
@@ -103,15 +130,27 @@ impl DriftApp {
         ed.region_motion = None;
         ed.hovered = None;
         ed.reach = None;
+        ed.hovered_fill = None;
+        ed.pick_cycle.reset();
         // The tool is put down without asking it to cancel: it is in a state nobody
         // planned for, and the drawing is already back.
         self.tool = ToolKind::Select.create();
         self.drawing.typing = None;
         self.drawing.inference_points.clear();
         self.drawing.editor.sync();
+        // Fewer steps to undo than before it: one it took off the history to amend (an
+        // edit's fills following it, on a big drawing) was rolled back with it, and is gone.
+        let lost = self.drawing.editor.history.undo_depth() < depth;
+        let outcome = if applies_history {
+            "the drawing may be partly changed, so check it"
+        } else if lost {
+            "your last edit was lost"
+        } else {
+            "your drawing is unchanged"
+        };
         self.status_error_next = Some(format!(
-            "Something went wrong in {what}, so it was stopped; your drawing is unchanged \
-             (the details are in Drift's crash log)"
+            "Something went wrong in {what}, so it was stopped; {outcome} (the details are in \
+             Drift's crash log)"
         ));
     }
 }
@@ -121,4 +160,7 @@ thread_local! {
     /// Tests: make this command panic part way through an edit, as a bug in it would.
     pub(crate) static PANIC_IN_COMMAND: std::cell::Cell<Option<Command>> =
         const { std::cell::Cell::new(None) };
+    /// Tests: make a dimension label's drag panic once it has moved the label.
+    pub(crate) static PANIC_IN_DIMENSION_DRAG: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
 }

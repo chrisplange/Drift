@@ -181,3 +181,54 @@ fn a_tool_that_panics_on_hover_is_put_down() {
     assert_eq!(h.state().tool.kind(), ToolKind::Select);
     assert!(status(&h).0.starts_with("Something went wrong in Circle"));
 }
+
+/// A bug while a dimension's label is dragged on the canvas: the drag stops, and the
+/// dimension, the drawing and its undo history are as before it.
+#[test]
+fn a_dimension_drag_that_panics_is_stopped_and_the_drawing_kept() {
+    let Some(mut h) = harness() else { return };
+    h.state_mut().grid_snap = false;
+    {
+        let ed = &mut h.state_mut().drawing.editor;
+        ed.doc.begin();
+        let a = ed.doc.add_point(DVec2::new(0.0, 0.0));
+        let b = ed.doc.add_point(DVec2::new(40.0, 0.0));
+        ed.doc.add_line(a, b).unwrap();
+        let id = ed
+            .doc
+            .add_constraint(drift_core::Constraint::Distance { a, b, value: 40.0 })
+            .unwrap();
+        ed.doc.set_placement(id, DVec2::new(0.0, 8.0)).unwrap();
+        ed.commit("Dimension");
+    }
+    h.state_mut().drawing.view.fit_target = Some(drift_core::Bounds {
+        min: DVec2::new(-10.0, -20.0),
+        max: DVec2::new(50.0, 30.0),
+    });
+    h.run();
+    h.state_mut().drawing.view.fit_target = None;
+    h.run();
+    let before = h.state().drawing.editor.doc.clone();
+    let recorded = h.state().drawing.editor.history.recorded();
+    let from = screen_map(&h).to_world(first_dimension(&h).handle);
+    crate::app::guard::PANIC_IN_DIMENSION_DRAG.set(true);
+
+    drag_world(&mut h, from, from + DVec2::new(0.0, 6.0));
+    crate::app::guard::PANIC_IN_DIMENSION_DRAG.set(false);
+    h.run_steps(2);
+
+    let app = h.state();
+    assert!(app.drawing.label_drag.is_none(), "the drag is cleared");
+    assert!(app.drawing.dim_guide.is_none());
+    let ed = &app.drawing.editor;
+    assert!(!ed.doc.in_transaction());
+    assert!(ed.doc == before, "the drawing is as it was");
+    assert_eq!(ed.history.recorded(), recorded);
+    assert_eq!(ed.history.undo_label(), Some("Dimension"));
+    let (text, error) = status(&h);
+    assert!(
+        error && text.starts_with("Something went wrong in moving the dimension"),
+        "{text}"
+    );
+    assert!(text.contains("your drawing is unchanged"), "{text}");
+}

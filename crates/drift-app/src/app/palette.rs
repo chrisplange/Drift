@@ -189,7 +189,12 @@ impl DriftApp {
     /// panic) stops it with the drawing as it was before (see [`DriftApp::guarded`]).
     pub(crate) fn run_command(&mut self, ctx: &egui::Context, command: Command) {
         let what = Self::command_name(command);
-        self.guarded(&what, |app| app.run_command_unguarded(ctx, command));
+        let step = |app: &mut Self| app.run_command_unguarded(ctx, command);
+        if matches!(command, Command::Undo | Command::Redo) {
+            self.guarded_history(&what, step);
+        } else {
+            self.guarded(&what, step);
+        }
     }
 
     /// [`DriftApp::run_command`], unguarded.

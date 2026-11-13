@@ -19,8 +19,8 @@ impl DriftApp {
         &mut self,
         f: impl FnOnce(&mut dyn Tool, &mut Editor) -> T,
     ) -> Option<T> {
-        let what = self.tool.kind().label();
-        self.guarded(what, |app| f(app.tool.as_mut(), &mut app.drawing.editor))
+        let what = Self::tool_name(self.tool.kind());
+        self.guarded(&what, |app| f(app.tool.as_mut(), &mut app.drawing.editor))
     }
 
     /// Hand `input` to the tool in hand, guarded.
@@ -51,13 +51,20 @@ impl DriftApp {
             .unwrap_or(false)
     }
 
-    /// What the status line calls `command` when it fails.
+    /// Where something went wrong in the tool `kind`, for the status line (see
+    /// [`DriftApp::guarded`]).
+    fn tool_name(kind: ToolKind) -> String {
+        format!("in the {} tool", kind.label())
+    }
+
+    /// Where something went wrong in `command`, for the status line (see
+    /// [`DriftApp::guarded`]).
     pub(crate) fn command_name(command: Command) -> String {
         match command {
-            Command::Tool(kind) => kind.label().to_owned(),
+            Command::Tool(kind) => Self::tool_name(kind),
             _ => commands::spec(command).map_or_else(
-                || "that command".to_owned(),
-                |s| s.title.trim_end_matches('…').to_owned(),
+                || "in that command".to_owned(),
+                |s| format!("in {}", s.title.trim_end_matches('…')),
             ),
         }
     }
@@ -65,7 +72,8 @@ impl DriftApp {
     /// Do `step`. If it panics: what it had begun is rolled back and the steps it had
     /// recorded taken off the undo history (unrecorded, so Redo can't bring them back), so the
     /// drawing and its history are as before it; the tool in hand is put down (the select
-    /// tool takes over); and the status line says `what` went wrong. `None` then.
+    /// tool takes over); and the status line says "Something went wrong `what`", so `what`
+    /// says where: "in the Line tool", "in Select all", "while moving the note". `None` then.
     pub(crate) fn guarded<T>(
         &mut self,
         what: &str,
@@ -149,7 +157,7 @@ impl DriftApp {
             "your drawing is unchanged"
         };
         self.status_error_next = Some(format!(
-            "Something went wrong in {what}, so it was stopped; {outcome} (the details are in \
+            "Something went wrong {what}, so it was stopped; {outcome} (the details are in \
              Drift's crash log)"
         ));
     }
@@ -160,6 +168,9 @@ thread_local! {
     /// Tests: make this command panic part way through an edit, as a bug in it would.
     pub(crate) static PANIC_IN_COMMAND: std::cell::Cell<Option<Command>> =
         const { std::cell::Cell::new(None) };
+    /// Tests: make a note's drag panic once it has moved the note.
+    pub(crate) static PANIC_IN_NOTE_DRAG: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
     /// Tests: make a dimension label's drag panic once it has moved the label.
     pub(crate) static PANIC_IN_DIMENSION_DRAG: std::cell::Cell<bool> =
         const { std::cell::Cell::new(false) };

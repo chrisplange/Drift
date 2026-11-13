@@ -90,7 +90,7 @@ fn a_tool_that_panics_on_a_click_is_put_down_and_the_drawing_kept() {
     );
     let (text, error) = status(&h);
     assert!(
-        error && text.starts_with("Something went wrong in Line"),
+        error && text.starts_with("Something went wrong in the Line tool"),
         "{text}"
     );
     assert!(text.contains("your drawing is unchanged"), "{text}");
@@ -179,7 +179,11 @@ fn a_tool_that_panics_on_hover_is_put_down() {
     h.hover_at(pos);
     h.run_steps(2);
     assert_eq!(h.state().tool.kind(), ToolKind::Select);
-    assert!(status(&h).0.starts_with("Something went wrong in Circle"));
+    assert!(
+        status(&h)
+            .0
+            .starts_with("Something went wrong in the Circle tool")
+    );
 }
 
 /// A bug while a dimension's label is dragged on the canvas: the drag stops, and the
@@ -227,7 +231,74 @@ fn a_dimension_drag_that_panics_is_stopped_and_the_drawing_kept() {
     assert_eq!(ed.history.undo_label(), Some("Dimension"));
     let (text, error) = status(&h);
     assert!(
-        error && text.starts_with("Something went wrong in moving the dimension"),
+        error && text.starts_with("Something went wrong while moving the dimension"),
+        "{text}"
+    );
+    assert!(text.contains("your drawing is unchanged"), "{text}");
+}
+
+/// A bug while a note is dragged on the canvas: the drag stops, and the note, the drawing
+/// and its undo history are as before it.
+#[test]
+fn a_note_drag_that_panics_is_stopped_and_the_drawing_kept() {
+    let Some(mut h) = harness() else { return };
+    h.state_mut().grid_snap = false;
+    let id = {
+        let ed = &mut h.state_mut().drawing.editor;
+        ed.doc.begin();
+        let id = ed
+            .doc
+            .add_annotation(drift_core::Annotation::Note {
+                text: "NOTE".into(),
+                at: DVec2::new(10.0, 10.0),
+                leaders: Vec::new(),
+                style: Default::default(),
+            })
+            .unwrap();
+        ed.commit("Note");
+        id
+    };
+    h.run();
+    let before = h.state().drawing.editor.doc.clone();
+    let recorded = h.state().drawing.editor.history.recorded();
+    let from = {
+        let app = h.state();
+        let painter = egui::Painter::new(
+            h.ctx.clone(),
+            egui::LayerId::background(),
+            app.drawing.view.canvas_rect,
+        );
+        app.layout_notes(&painter, &screen_map(&h))
+            .into_iter()
+            .find(|l| l.id == id)
+            .and_then(|l| l.text.map(|t| t.rect.center()))
+            .expect("the note is laid out")
+    };
+    crate::app::guard::PANIC_IN_NOTE_DRAG.set(true);
+
+    h.hover_at(from);
+    h.run();
+    button(&h, from, true);
+    h.run();
+    for k in 1..=5 {
+        h.hover_at(from + egui::vec2(8.0 * k as f32, 4.0 * k as f32));
+        h.run();
+    }
+    button(&h, from + egui::vec2(40.0, 20.0), false);
+    h.run();
+    crate::app::guard::PANIC_IN_NOTE_DRAG.set(false);
+    h.run_steps(2);
+
+    let app = h.state();
+    assert!(app.drawing.note_drag.is_none(), "the drag is cleared");
+    let ed = &app.drawing.editor;
+    assert!(!ed.doc.in_transaction());
+    assert!(ed.doc == before, "the drawing is as it was");
+    assert_eq!(ed.history.recorded(), recorded);
+    assert_eq!(ed.history.undo_label(), Some("Note"));
+    let (text, error) = status(&h);
+    assert!(
+        error && text.starts_with("Something went wrong while moving the note"),
         "{text}"
     );
     assert!(text.contains("your drawing is unchanged"), "{text}");

@@ -374,7 +374,7 @@ impl DriftApp {
                     .map(|(_, _, from, out)| (map.to_world(p) - from).dot(out))
             });
             let done = !response.dragged_by(PointerButton::Primary);
-            let ok = self.guarded("moving the extension line", |app| {
+            let ok = self.guarded("while moving the extension line", |app| {
                 if let Some(t) = t {
                     let _ = app.drawing.editor.doc.set_extension_start(id, end, Some(t));
                 }
@@ -412,7 +412,7 @@ impl DriftApp {
             // Ctrl places freely.
             let free = ui.input(|i| i.modifiers.command);
             let done = !response.dragged_by(PointerButton::Primary);
-            let ok = self.guarded("moving the dimension", |app| {
+            let ok = self.guarded("while moving the dimension", |app| {
                 if let (Some(at), Some(c)) = (at, app.drawing.editor.doc.constraint(id).copied())
                     && let Some(anchor) =
                         drift_edit::labels::dimension_anchor(&app.drawing.editor.doc, &c)
@@ -456,7 +456,7 @@ impl DriftApp {
         // one keeps the dimension picked.
         if idle && let Some((id, end, ..)) = at.and_then(grip_at) {
             if response.double_clicked_by(PointerButton::Primary) {
-                self.guarded("resetting the extension line", |app| {
+                self.guarded("while resetting the extension line", |app| {
                     let ed = &mut app.drawing.editor;
                     ed.doc.begin();
                     let _ = ed.doc.set_extension_start(id, end, None);
@@ -636,7 +636,7 @@ impl DriftApp {
         });
         if !focus && enter {
             let target = self.drawing.editor.doc.property_dim(q).map(|d| d.target);
-            let set = self.guarded("setting the size", |app| match target {
+            let set = self.guarded("while setting the size", |app| match target {
                 Some(drift_core::PropertyRef::WallThickness(w)) => {
                     app.drawing.editor.set_wall_thickness(&[w], &text)
                 }
@@ -744,11 +744,13 @@ impl DriftApp {
             )
         });
         let mut keep = first || !(enter || escape || outside);
+        // The value edit hit a bug: the text edit isn't made over what it left.
+        let mut failed = false;
         if !first
             && enter
             && Some(&edit.text) != self.drawing.editor.dimension_edit_text(edit.id).as_ref()
         {
-            let set = self.guarded("setting the dimension", |app| {
+            let set = self.guarded("while setting the dimension", |app| {
                 app.drawing.editor.set_dimension_text(edit.id, &edit.text)
             });
             match set {
@@ -757,11 +759,14 @@ impl DriftApp {
                     self.set_status(format!("Can't use {}: {e}", edit.text), true, now);
                     keep = false;
                 }
-                None => keep = false,
+                None => {
+                    keep = false;
+                    failed = true;
+                }
             }
         }
-        if note != was {
-            self.guarded("editing the dimension text", |app| {
+        if note != was && !failed {
+            self.guarded("while editing the dimension text", |app| {
                 let ed = &mut app.drawing.editor;
                 ed.doc.begin();
                 ed.doc.set_dim_note(edit.id, Some(note));

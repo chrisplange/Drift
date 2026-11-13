@@ -593,6 +593,10 @@ impl SceneIndex {
 
     /// The entity to select at `p`: the nearest point within tolerance if any, otherwise the
     /// nearest curve. `accept` filters candidates.
+    #[expect(
+        clippy::unwrap_used,
+        reason = "`near` keeps only distances <= tolerance, so none is NaN and they all compare"
+    )]
     pub fn pick(
         &self,
         p: DVec2,

@@ -4,6 +4,15 @@
 //! later as [`FileEvent`]s. Call [`Files::take_events`] each frame; the `wake` callback passed to
 //! [`Files::new`] is invoked when an event arrives so the UI can repaint.
 
+#![deny(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::todo,
+    clippy::unimplemented
+)]
+
 pub mod crash;
 pub mod fonts;
 #[cfg(not(target_arch = "wasm32"))]
@@ -139,14 +148,20 @@ impl Files {
 
     /// Events that arrived since the last call.
     pub fn take_events(&self) -> Vec<FileEvent> {
-        std::mem::take(&mut *self.events.lock().expect("file event lock poisoned"))
+        std::mem::take(&mut *self.events())
+    }
+
+    /// The event queue. A thread that panicked while holding the lock can only have been in
+    /// the middle of a push or a take, which leave the queue whole, so a poisoned lock still
+    /// hands over the queue rather than taking the app down with it.
+    fn events(&self) -> std::sync::MutexGuard<'_, Vec<FileEvent>> {
+        self.events
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     fn post(&self, event: FileEvent) {
-        self.events
-            .lock()
-            .expect("file event lock poisoned")
-            .push(event);
+        self.events().push(event);
         (self.wake)();
     }
 
@@ -550,6 +565,10 @@ mod web {
 }
 
 #[cfg(all(test, not(target_arch = "wasm32"), not(feature = "demo")))]
+#[allow(
+    clippy::unwrap_used,
+    reason = "test code (clippy's allow-unwrap-in-tests misses a `cfg(all(test, ..))` module)"
+)]
 mod tests {
     use super::*;
 

@@ -2,6 +2,15 @@
 //! lines clipped exactly to closed regions, the page display list that output formats share,
 //! and sheet borders, title blocks and revision tables.
 
+#![deny(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::todo,
+    clippy::unimplemented
+)]
+
 pub mod crop;
 pub mod font;
 pub mod hatch;

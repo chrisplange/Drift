@@ -426,6 +426,17 @@ impl Strip {
     }
 }
 
+/// The piece of line `n`, which is a face: only lines with a piece become faces, and every
+/// line this is asked about came from the faces (directly, or through the pairs and the tree
+/// built from them).
+#[expect(
+    clippy::expect_used,
+    reason = "only called with faces, and every face has a piece"
+)]
+fn face(pieces: &[Option<Piece>], n: usize) -> Piece {
+    pieces[n].expect("a face has a piece")
+}
+
 /// Find the walls among `lines`.
 pub fn find(lines: &[LineIn], s: &Settings) -> Found {
     let pieces: Vec<Option<Piece>> = lines.iter().map(|l| Piece::of(&l.seg)).collect();
@@ -439,19 +450,19 @@ pub fn find(lines: &[LineIn], s: &Settings) -> Found {
         faces
             .iter()
             .map(|&n| Boxed {
-                env: pieces[n].expect("a piece").bounds(),
+                env: face(&pieces, n).bounds(),
                 n,
             })
             .collect(),
     );
     let mut pairs: Vec<Pair> = Vec::new();
     for &i in &faces {
-        let pi = pieces[i].expect("a piece");
+        let pi = face(&pieces, i);
         for j in query(&tree, &grow(&pi.bounds(), s.max_thickness + s.tol())) {
             if j <= i || lines[j].group != lines[i].group {
                 continue;
             }
-            if let Some(p) = pair(i, &pi, j, &pieces[j].expect("a piece"), s) {
+            if let Some(p) = pair(i, &pi, j, &face(&pieces, j), s) {
                 pairs.push(p);
             }
         }
@@ -548,7 +559,7 @@ pub fn find(lines: &[LineIn], s: &Settings) -> Found {
         patterns.entry(pattern.find(n)).or_default().push(n);
     }
     for (_, ns) in patterns {
-        let at = pieces[ns[0]].expect("a piece").ends()[0];
+        let at = face(&pieces, ns[0]).ends()[0];
         found.skipped.push(Skip {
             lines: ns.iter().map(|n| lines[*n].id).collect(),
             why: Why::Pattern,
@@ -1347,7 +1358,7 @@ fn runs(
                 u >= lo && u <= hi
             };
             for &f in &st.faces {
-                let p = pieces[f].expect("a piece");
+                let p = face(pieces, f);
                 if p.ends().iter().all(|x| within(*x)) {
                     used.insert(f);
                 } else {
@@ -1364,7 +1375,7 @@ fn runs(
                 if skipped.contains(&lines[c].id) {
                     continue;
                 }
-                let p = pieces[c].expect("a piece");
+                let p = face(pieces, c);
                 let ends = p.ends();
                 let offs: Vec<f64> = ends.iter().map(|x| st.carrier.offset(*x)).collect();
                 let on = |o: f64, want: f64| (o - want).abs() <= tol;

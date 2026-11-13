@@ -120,7 +120,8 @@ pub fn centreline(doc: &Document, wall: &Wall) -> Result<(Vec<Seg>, Vec<EntityId
                     }
                 }
             }
-            _ => unreachable!("checked above"),
+            // (`ends` above already turned these away.)
+            _ => return Err("its centreline has a curve that isn't a line or an arc".into()),
         });
     }
     Ok((segs, points, closed))
@@ -510,10 +511,10 @@ fn write(doc: &mut Document, g: &Generated, report: &mut Report) {
         boundary.sort_unstable();
         boundary.dedup();
         let existing = pick(&old_fills, lo, &in_loop)
-            .filter(|f| doc.fill(*f).is_some() && !used_fills.contains(f));
+            .filter(|f| !used_fills.contains(f))
+            .and_then(|f| Some((f, doc.fill(f)?.clone())));
         let fid = match existing {
-            Some(f) => {
-                let mut fill = doc.fill(f).cloned().expect("checked");
+            Some((f, mut fill)) => {
                 let kept = match (&fill.kind, &style.kind) {
                     // A hatch aligned by hand on the fill keeps its layout.
                     (FillKind::Hatch(h), FillKind::Hatch(s)) if h.pattern == s.pattern => {
@@ -548,6 +549,7 @@ fn write(doc: &mut Document, g: &Generated, report: &mut Report) {
                 hatch_opacity(&mut fill);
                 fill.path = Some(pid);
                 let f = doc.add_fill(fill.clone());
+                #[expect(clippy::expect_used, reason = "`add_fill` just inserted `f`")]
                 let mut placed = doc.fill(f).cloned().expect("just added");
                 placed.layer = lead.layer;
                 placed.order = order.unwrap_or_else(|| {

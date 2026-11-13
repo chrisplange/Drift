@@ -924,6 +924,10 @@ pub fn styled_width(text: &str, height: f64, style: TextStyle) -> f64 {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unreachable,
+    reason = "a test fails loudly on a shape it didn't expect"
+)]
 mod tests {
     use super::*;
 

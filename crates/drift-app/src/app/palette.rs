@@ -185,8 +185,31 @@ impl DriftApp {
         scored.into_iter().map(|(_, _, e)| e).collect()
     }
 
-    /// Do a command (from a menu, the palette, a key or Enter to repeat it).
+    /// Do a command (from a menu, the palette, a key or Enter to repeat it). A bug in it (a
+    /// panic) stops it with the drawing as it was before (see [`DriftApp::guarded`]).
     pub(crate) fn run_command(&mut self, ctx: &egui::Context, command: Command) {
+        let what = Self::command_name(command);
+        let step = |app: &mut Self| app.run_command_unguarded(ctx, command);
+        if matches!(command, Command::Undo | Command::Redo) {
+            self.guarded_history(&what, step);
+        } else {
+            self.guarded(&what, step);
+        }
+    }
+
+    /// [`DriftApp::run_command`], unguarded.
+    fn run_command_unguarded(&mut self, ctx: &egui::Context, command: Command) {
+        #[cfg(test)]
+        if crate::app::guard::PANIC_IN_COMMAND.get() == Some(command) {
+            // A command with a bug: one step made, the next part way through.
+            let ed = &mut self.drawing.editor;
+            ed.doc.begin();
+            ed.doc.add_point(drift_core::DVec2::new(1.0, 2.0));
+            ed.commit("Point");
+            ed.doc.begin();
+            ed.doc.add_point(drift_core::DVec2::new(3.0, 4.0));
+            panic!("a command's bug (injected)");
+        }
         if commands::spec(command).is_some_and(|s| s.repeatable) {
             self.last_command = Some(command);
         }

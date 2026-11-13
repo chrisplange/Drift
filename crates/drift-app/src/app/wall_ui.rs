@@ -61,14 +61,13 @@ impl DriftApp {
             &[(false, "Straight"), (true, "Arc")],
         ) {
             self.drawing.editor.prefs.wall_arc = arc;
-            self.tool.key(
+            self.tool_modal_key_at(
                 if arc {
                     ToolKey::ArcNext
                 } else {
                     ToolKey::LineNext
                 },
                 None,
-                &mut self.drawing.editor,
             );
         }
         ui.label(egui::RichText::new("W").size(12.0).weak());

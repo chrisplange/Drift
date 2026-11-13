@@ -659,7 +659,7 @@ impl DriftApp {
                     "U again switches to the next",
                 ) {
                     self.drawing.editor.prefs.slot_mode = m;
-                    self.tool.cancel(&mut self.drawing.editor);
+                    self.tool_cancel();
                 }
             }
             ToolKind::Fillet | ToolKind::Chamfer => {
@@ -967,8 +967,7 @@ impl DriftApp {
         if self.drawing.editor.duplicate_selection() == 0 {
             return;
         }
-        self.tool
-            .key(ToolKey::G, Some(&pointer), &mut self.drawing.editor);
+        self.tool_modal_key_at(ToolKey::G, Some(pointer));
         if self.tool.is_busy() {
             self.tool.grab_from_copy(originals);
             return;

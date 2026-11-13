@@ -19,6 +19,8 @@ mod audit_sheets;
 mod commands;
 /// Screenshots for the user guide.
 mod docs;
+/// The last-resort guard: a panic in a tool, a command or a file's reader (#440).
+mod guard;
 /// Aligning a hatch on a shape: handles, Pattern alignment, Align to edge, Alt-click.
 #[cfg(not(feature = "demo"))]
 mod hatch_align;

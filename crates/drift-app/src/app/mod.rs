@@ -15,6 +15,7 @@ mod drafting_ui;
 mod edit;
 mod fill_ui;
 mod groups_ui;
+pub(crate) mod guard;
 pub(crate) mod hatch_ui;
 pub(crate) mod import_ui;
 mod keyboard;

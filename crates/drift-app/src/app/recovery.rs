@@ -9,6 +9,7 @@ use std::path::Path;
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 
+use crate::app::document::Unreadable;
 use crate::*;
 
 /// A session that couldn't be restored: what to tell the user, and where it was kept.
@@ -20,7 +21,10 @@ pub(crate) struct Unrestored {
 }
 
 /// Why the stored session can't be opened, as the first sentence of the message.
-fn why(error: &drift_io::LoadError) -> String {
+fn why(error: &Unreadable) -> String {
+    let Unreadable::File(error) = error else {
+        return format!("The last session couldn't be opened: {error}.");
+    };
     match error {
         drift_io::LoadError::UnsupportedVersion(v)
             if *v > drift_io::FORMAT_VERSION && *v < u32::MAX =>
@@ -119,7 +123,7 @@ impl DriftApp {
     pub(crate) fn keep_unrestored(
         &mut self,
         text: &str,
-        error: &drift_io::LoadError,
+        error: &Unreadable,
         dir: Option<std::path::PathBuf>,
     ) -> bool {
         log::warn!("could not restore the previous session: {error}");

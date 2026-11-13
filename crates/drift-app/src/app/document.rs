@@ -18,6 +18,45 @@ pub(crate) const OLDER_RULES: &str =
 pub(crate) const LOSSY_SAVE: &str = "This drawing has things from a newer Drift that this \
      version doesn't know; saving here may lose them.";
 
+/// Why a `.drift` file's text couldn't be read.
+pub(crate) enum Unreadable {
+    /// The file is not one this Drift can read (it says why).
+    File(drift_io::LoadError),
+    /// Reading it hit a bug in Drift (a panic, caught and logged).
+    Bug,
+}
+
+impl std::fmt::Display for Unreadable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Unreadable::File(e) => e.fmt(f),
+            Unreadable::Bug => {
+                f.write_str("reading it hit a bug in Drift (the details are in Drift's crash log)")
+            }
+        }
+    }
+}
+
+/// Read a `.drift` file's text (see `drift_io::load_with_notes`). A bug in the reader (a
+/// panic) is an error like any other: the window stays open and the drawing open now with it.
+pub(crate) fn read_drawing(text: &str) -> Result<(Document, Metadata, Vec<String>), Unreadable> {
+    drift_platform::crash::catch(|| {
+        #[cfg(test)]
+        if PANIC_IN_LOADER.get() {
+            panic!("the loader's bug (injected)");
+        }
+        drift_io::load_with_notes(text)
+    })
+    .map_err(|_| Unreadable::Bug)?
+    .map_err(Unreadable::File)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests: make the next `.drift` read panic, as a bug in the loader would.
+    pub(crate) static PANIC_IN_LOADER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// What a file picker was opened for: the file chosen there is used for that, whatever its
 /// name (#151: a logo is an SVG, which Import also takes). Files opened otherwise (dropped,
 /// File → Open, a recent file) go by their name and content.
@@ -109,7 +148,7 @@ impl DriftApp {
         meta: Metadata,
         clean: bool,
     ) {
-        self.tool.cancel(&mut self.drawing.editor);
+        self.tool_cancel();
         self.tool = ToolKind::Select.create();
         // A file from before drawings kept their rules had this computer's.
         if meta.older_rules {
@@ -373,8 +412,8 @@ impl DriftApp {
         dirty: bool,
         dir: Option<std::path::PathBuf>,
     ) {
-        match drift_io::load(text) {
-            Ok((doc, meta)) => {
+        match read_drawing(text) {
+            Ok((doc, meta, _)) => {
                 let name = name.unwrap_or_else(|| UNTITLED.into());
                 let path = path
                     .filter(|p| !p.is_empty() && cfg!(not(target_arch = "wasm32")))
@@ -792,7 +831,7 @@ impl DriftApp {
                     }
                     let text = String::from_utf8_lossy(&contents);
                     let started = web_time::Instant::now();
-                    match drift_io::load_with_notes(&text) {
+                    match read_drawing(&text) {
                         Ok((doc, meta, dropped)) => {
                             log::info!(
                                 "opened {name}: {} KB in {} ms",
@@ -1032,7 +1071,7 @@ impl DriftApp {
 
     pub(crate) fn abort_operation(&mut self) {
         if self.tool.is_busy() {
-            self.tool.cancel(&mut self.drawing.editor);
+            self.tool_cancel();
         }
     }
 

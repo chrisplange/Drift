@@ -159,19 +159,25 @@ impl DriftApp {
             self.drawing.editor.doc.begin();
         }
         if let Some((id, grab)) = self.drawing.note_drag {
-            if let (Some(p), Some(a)) = (
-                response.interact_pointer_pos(),
-                self.drawing.editor.doc.annotation(id).cloned(),
-            ) && let Some(moved) = drift_edit::labels::with_label_at(
-                &self.drawing.editor.doc,
-                &a,
-                map.to_world(p) - grab,
-            ) {
-                let _ = self.drawing.editor.doc.set_annotation(id, moved);
-            }
-            if !response.dragged_by(PointerButton::Primary) {
+            let at = response.interact_pointer_pos().map(|p| map.to_world(p));
+            let done = !response.dragged_by(PointerButton::Primary);
+            let ok = self.guarded("while moving the note", |app| {
+                if let (Some(at), Some(a)) = (at, app.drawing.editor.doc.annotation(id).cloned())
+                    && let Some(moved) =
+                        drift_edit::labels::with_label_at(&app.drawing.editor.doc, &a, at - grab)
+                {
+                    let _ = app.drawing.editor.doc.set_annotation(id, moved);
+                    #[cfg(test)]
+                    if crate::app::guard::PANIC_IN_NOTE_DRAG.get() {
+                        panic!("a note drag's bug (injected)");
+                    }
+                }
+                if done {
+                    app.drawing.editor.commit("Move note");
+                }
+            });
+            if done || ok.is_none() {
                 self.drawing.note_drag = None;
-                self.drawing.editor.commit("Move note");
             }
             return true;
         }
@@ -363,10 +369,12 @@ impl DriftApp {
             if response.clicked_by(PointerButton::Primary)
                 && let Some(at) = released()
             {
-                let to = self.leader_anchor(map, at);
-                self.drawing.editor.doc.begin();
-                self.change_leaders(id, |leaders| leaders.push(Leader::to(to)));
-                self.drawing.editor.commit("Add leader");
+                self.guarded("while adding the leader", |app| {
+                    let to = app.leader_anchor(map, at);
+                    app.drawing.editor.doc.begin();
+                    app.change_leaders(id, |leaders| leaders.push(Leader::to(to)));
+                    app.drawing.editor.commit("Add leader");
+                });
                 self.drawing.adding_leader = None;
                 return true;
             }
@@ -398,92 +406,97 @@ impl DriftApp {
         let Some((id, grip)) = self.drawing.leader_grip else {
             return false;
         };
-        if let Some(p) = response.interact_pointer_pos() {
-            match grip {
-                LeaderGrip::Tip(k) => {
-                    let to = self.leader_anchor(map, p);
-                    self.change_leaders(id, |leaders| {
-                        if let Some(l) = leaders.get_mut(k) {
-                            l.to = to;
-                        }
-                    });
-                }
-                LeaderGrip::Bend(k) => {
-                    let at = map.to_world(p);
-                    let doc = &self.drawing.editor.doc;
-                    let tip = match doc.annotation(id) {
-                        Some(Annotation::Note { leaders, .. }) => {
-                            leaders.get(k).and_then(|l| doc.anchor_pos(&l.to))
-                        }
-                        _ => None,
-                    };
-                    if let Some(tip) = tip {
-                        self.change_leaders(id, |leaders| {
+        let done = !response.dragged_by(PointerButton::Primary);
+        let ok = self.guarded("while moving the leader", |app| {
+            if let Some(p) = response.interact_pointer_pos() {
+                match grip {
+                    LeaderGrip::Tip(k) => {
+                        let to = app.leader_anchor(map, p);
+                        app.change_leaders(id, |leaders| {
                             if let Some(l) = leaders.get_mut(k) {
-                                l.shape = LeaderShape::Bent(at - tip);
+                                l.to = to;
                             }
                         });
                     }
-                }
-                LeaderGrip::Shoulder(k) => {
-                    // Along the text's line, out from where it meets the text; very short
-                    // turns the shoulder off.
-                    let landing = layouts
-                        .iter()
-                        .find(|l| l.id == id)
-                        .and_then(|l| l.leaders.get(k))
-                        .map(|l| l.landing);
-                    if let Some(landing) = landing {
-                        // On paper: screen points over the canvas's points per paper point.
-                        let zoom = self.anno_space(map).zoom.map_or(1.0, |z| z.k);
-                        let reach = (p.x - landing.x).abs() / zoom;
-                        self.change_leaders(id, |leaders| {
-                            if let Some(l) = leaders.get_mut(k) {
-                                l.shoulder = reach >= 2.0;
-                                if l.shoulder {
-                                    l.shoulder_len =
-                                        f64::from(reach / annotations::PT_PER_MM).min(100.0);
+                    LeaderGrip::Bend(k) => {
+                        let at = map.to_world(p);
+                        let doc = &app.drawing.editor.doc;
+                        let tip = match doc.annotation(id) {
+                            Some(Annotation::Note { leaders, .. }) => {
+                                leaders.get(k).and_then(|l| doc.anchor_pos(&l.to))
+                            }
+                            _ => None,
+                        };
+                        if let Some(tip) = tip {
+                            app.change_leaders(id, |leaders| {
+                                if let Some(l) = leaders.get_mut(k) {
+                                    l.shape = LeaderShape::Bent(at - tip);
                                 }
-                            }
-                        });
+                            });
+                        }
                     }
-                }
-                LeaderGrip::Curve(k) => {
-                    let chord = layouts
-                        .iter()
-                        .find(|l| l.id == id)
-                        .and_then(|l| l.leaders.get(k))
-                        .and_then(|l| l.curve)
-                        .map(|(_, chord)| chord);
-                    if let Some(chord) = chord {
-                        let bow = notes::bow_through(p, chord);
-                        self.change_leaders(id, |leaders| {
-                            if let Some(l) = leaders.get_mut(k) {
-                                l.shape = LeaderShape::Curved(bow);
-                            }
-                        });
+                    LeaderGrip::Shoulder(k) => {
+                        // Along the text's line, out from where it meets the text; very short
+                        // turns the shoulder off.
+                        let landing = layouts
+                            .iter()
+                            .find(|l| l.id == id)
+                            .and_then(|l| l.leaders.get(k))
+                            .map(|l| l.landing);
+                        if let Some(landing) = landing {
+                            // On paper: screen points over the canvas's points per paper point.
+                            let zoom = app.anno_space(map).zoom.map_or(1.0, |z| z.k);
+                            let reach = (p.x - landing.x).abs() / zoom;
+                            app.change_leaders(id, |leaders| {
+                                if let Some(l) = leaders.get_mut(k) {
+                                    l.shoulder = reach >= 2.0;
+                                    if l.shoulder {
+                                        l.shoulder_len =
+                                            f64::from(reach / annotations::PT_PER_MM).min(100.0);
+                                    }
+                                }
+                            });
+                        }
                     }
+                    LeaderGrip::Curve(k) => {
+                        let chord = layouts
+                            .iter()
+                            .find(|l| l.id == id)
+                            .and_then(|l| l.leaders.get(k))
+                            .and_then(|l| l.curve)
+                            .map(|(_, chord)| chord);
+                        if let Some(chord) = chord {
+                            let bow = notes::bow_through(p, chord);
+                            app.change_leaders(id, |leaders| {
+                                if let Some(l) = leaders.get_mut(k) {
+                                    l.shape = LeaderShape::Curved(bow);
+                                }
+                            });
+                        }
+                    }
+                    // Drawn by `paint_notes` until it's let go.
+                    LeaderGrip::New(_) => {}
                 }
-                // Drawn by `paint_notes` until it's let go.
-                LeaderGrip::New(_) => {}
             }
-        }
-        if !response.dragged_by(PointerButton::Primary) {
-            let label = match grip {
-                LeaderGrip::New(_) => {
-                    if let Some(at) = released() {
-                        let to = self.leader_anchor(map, at);
-                        self.change_leaders(id, |leaders| leaders.push(Leader::to(to)));
+            if done {
+                let label = match grip {
+                    LeaderGrip::New(_) => {
+                        if let Some(at) = released() {
+                            let to = app.leader_anchor(map, at);
+                            app.change_leaders(id, |leaders| leaders.push(Leader::to(to)));
+                        }
+                        "Add leader"
                     }
-                    "Add leader"
-                }
-                LeaderGrip::Tip(_) => "Move leader",
-                LeaderGrip::Bend(_) => "Bend leader",
-                LeaderGrip::Shoulder(_) => "Shoulder length",
-                LeaderGrip::Curve(_) => "Curve leader",
-            };
+                    LeaderGrip::Tip(_) => "Move leader",
+                    LeaderGrip::Bend(_) => "Bend leader",
+                    LeaderGrip::Shoulder(_) => "Shoulder length",
+                    LeaderGrip::Curve(_) => "Curve leader",
+                };
+                app.drawing.editor.commit(label);
+            }
+        });
+        if done || ok.is_none() {
             self.drawing.leader_grip = None;
-            self.drawing.editor.commit(label);
         }
         true
     }

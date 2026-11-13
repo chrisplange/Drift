@@ -147,11 +147,7 @@ impl DriftApp {
                 // Straight into a move, to put the copy where it belongs (as after
                 // duplicating); Esc removes it again (#264).
                 if !in_place && self.drawing.view.pointer.is_some() {
-                    self.tool.key(
-                        ToolKey::G,
-                        self.drawing.view.pointer.as_ref(),
-                        &mut self.drawing.editor,
-                    );
+                    self.tool_modal_key(ToolKey::G);
                     self.tool.grab_from_copy(Default::default());
                 }
             }

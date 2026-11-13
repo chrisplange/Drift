@@ -903,8 +903,7 @@ impl DriftApp {
             && let Some(origin) = ui.input(|i| i.pointer.press_origin())
         {
             let p = self.make_pointer(&map, origin, snap);
-            self.tool
-                .handle(Input::DragStart(p, mods), &mut self.drawing.editor);
+            self.tool_input(Input::DragStart(p, mods));
         }
         if !consumed {
             self.drawing.view.pointer = pos.map(|pos| self.make_pointer(&map, pos, snap));
@@ -916,9 +915,9 @@ impl DriftApp {
             // The annotation took this frame's input.
         } else if let Some(p) = self.drawing.view.pointer {
             if dragging {
-                self.tool.handle(Input::Drag(p), &mut self.drawing.editor);
+                self.tool_input(Input::Drag(p));
             } else {
-                self.tool.handle(Input::Hover(p), &mut self.drawing.editor);
+                self.tool_input(Input::Hover(p));
                 // The next click goes past the annotation to what the hover shows.
                 if self.drawing.editor.pick_cycle.hover_passes_annotation() {
                     self.drawing.hovered_constraint = None;
@@ -929,16 +928,13 @@ impl DriftApp {
             let released = release_pos(ui, PointerButton::Primary)
                 .map_or(p, |pos| self.make_pointer(&map, pos, snap));
             if response.drag_stopped_by(PointerButton::Primary) {
-                self.tool
-                    .handle(Input::DragEnd(released, mods), &mut self.drawing.editor);
+                self.tool_input(Input::DragEnd(released, mods));
             }
             if response.clicked_by(PointerButton::Primary) {
-                self.tool
-                    .handle(Input::Click(released, mods), &mut self.drawing.editor);
+                self.tool_input(Input::Click(released, mods));
             }
             if response.double_clicked_by(PointerButton::Primary) {
-                self.tool
-                    .handle(Input::DoubleClick(p), &mut self.drawing.editor);
+                self.tool_input(Input::DoubleClick(p));
             }
         } else {
             self.drawing.editor.hovered = None;
@@ -950,8 +946,7 @@ impl DriftApp {
                     .or_else(|| ui.input(|i| i.pointer.latest_pos()))
             {
                 let released = self.make_pointer(&map, at, snap);
-                self.tool
-                    .handle(Input::DragEnd(released, mods), &mut self.drawing.editor);
+                self.tool_input(Input::DragEnd(released, mods));
             }
         }
         self.take_box_pick(&map, &pick_dims, &pick_notes);
@@ -1012,9 +1007,9 @@ impl DriftApp {
         if response.clicked_by(PointerButton::Secondary) {
             if self.tool.is_modal() {
                 // Right-click cancels a grab, as in Blender.
-                self.tool.cancel(&mut self.drawing.editor);
+                self.tool_cancel();
             } else {
-                self.tool.secondary_click(&mut self.drawing.editor);
+                self.with_tool(|tool, ed| tool.secondary_click(ed));
             }
         }
         if !self.tool.is_busy() {

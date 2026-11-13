@@ -621,6 +621,8 @@ pub struct DriftApp {
     hatch_patterns: fills::PatternLibrary,
     /// A message to show in the next frame (from code that doesn't know the time).
     status_next: Option<String>,
+    /// An error to show in the next frame (from code that doesn't know the time).
+    status_error_next: Option<String>,
     /// Model exports (SVG and PDF at 1 : 1) include dimensions and notes.
     model_annotations: bool,
     /// The Export DWG / DXF dialog is open, and the format it has chosen (for this session).
@@ -822,6 +824,7 @@ impl DriftApp {
             show_axes: true,
             hatch_patterns: Default::default(),
             status_next: None,
+            status_error_next: None,
             model_annotations: true,
             #[cfg(not(feature = "demo"))]
             cad_dialog: false,
@@ -1165,6 +1168,9 @@ impl eframe::App for DriftApp {
         }
         if let Some(text) = self.status_next.take() {
             self.set_status(text, false, now);
+        }
+        if let Some(text) = self.status_error_next.take() {
+            self.set_status(text, true, now);
         }
         self.check_memory(now);
         #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]

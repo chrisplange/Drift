@@ -140,14 +140,7 @@ impl DriftApp {
 
         // Modal keys go to the tool first: X / Y lock an axis, G grabs (moves) the selection,
         // B picks a move's base point.
-        let mut claimed = |key, tool_key| {
-            pressed(key)
-                && self.tool.key(
-                    tool_key,
-                    self.drawing.view.pointer.as_ref(),
-                    &mut self.drawing.editor,
-                )
-        };
+        let mut claimed = |key, tool_key| pressed(key) && self.tool_modal_key(tool_key);
         claimed(Key::X, ToolKey::X);
         claimed(Key::Y, ToolKey::Y);
         let g_claimed = claimed(Key::G, ToolKey::G);
@@ -168,19 +161,15 @@ impl DriftApp {
             && !self.tool.is_busy()
         {
             self.set_tool(ToolKind::Select);
-            self.tool.key(
-                ToolKey::G,
-                self.drawing.view.pointer.as_ref(),
-                &mut self.drawing.editor,
-            );
+            self.tool_modal_key(ToolKey::G);
         }
         if self.tool.is_modal() {
             // Only Esc and Enter (and the modal keys above) act during a grab.
             if pressed(Key::Escape) {
-                self.tool.cancel(&mut self.drawing.editor);
+                self.tool_cancel();
             }
             if pressed(Key::Enter) {
-                self.tool.handle(Input::Finish, &mut self.drawing.editor);
+                self.tool_input(Input::Finish);
             }
             return;
         }
@@ -197,7 +186,7 @@ impl DriftApp {
                 || self.drawing.picked_view.take().is_some()
             {
                 // First Esc just clears a picked relation, dimension, annotation or view.
-            } else if !self.tool.cancel(&mut self.drawing.editor) {
+            } else if !self.tool_cancel() {
                 self.set_tool(ToolKind::Select);
             }
         }
@@ -206,7 +195,7 @@ impl DriftApp {
         let idle = self.tool.kind() == ToolKind::Select && !self.tool.is_busy();
         let again = idle && (pressed(Key::Enter) || pressed(Key::Space));
         if !(again && self.repeat_last_command(ctx)) && pressed(Key::Enter) {
-            self.tool.handle(Input::Finish, &mut self.drawing.editor);
+            self.tool_input(Input::Finish);
         }
         self.key_commands(
             ctx,
@@ -320,11 +309,7 @@ impl DriftApp {
                 _ => None,
             };
             if let Some(key) = key {
-                self.tool.key(
-                    key,
-                    self.drawing.view.pointer.as_ref(),
-                    &mut self.drawing.editor,
-                );
+                self.tool_modal_key(key);
                 let now = ctx.input(|i| i.time);
                 let what = if self.drawing.editor.prefs.wall_arc {
                     "Arc walls: click the end, then a point the wall curves through"
@@ -338,7 +323,7 @@ impl DriftApp {
         if kind == ToolKind::Slot && current == ToolKind::Slot {
             // U again: the next kind of slot.
             self.drawing.editor.prefs.slot_mode = self.drawing.editor.prefs.slot_mode.next();
-            self.tool.cancel(&mut self.drawing.editor);
+            self.tool_cancel();
             let now = ctx.input(|i| i.time);
             self.set_status(
                 self.drawing.editor.prefs.slot_mode.label().to_owned(),
@@ -428,7 +413,7 @@ impl DriftApp {
         if let Some(point) = chain
             && matches!(kind, ToolKind::Line | ToolKind::TangentArc)
         {
-            self.tool.continue_from(point, &mut self.drawing.editor);
+            self.with_tool(|tool, ed| tool.continue_from(point, ed));
         }
         // The last tool picked (however it was picked) is what Enter repeats.
         if commands::spec(Command::Tool(kind)).is_some_and(|s| s.repeatable) {
@@ -545,8 +530,10 @@ impl DriftApp {
                         p.units = self.drawing.editor.doc.units();
                         p
                     });
-                    self.tool.set_typed(values);
-                    self.tool.commit_typed(&pointer, &mut self.drawing.editor);
+                    self.with_tool(|tool, ed| {
+                        tool.set_typed(values);
+                        tool.commit_typed(&pointer, ed);
+                    });
                     self.drawing.editor.typed_exprs = [None, None];
                 }
             }

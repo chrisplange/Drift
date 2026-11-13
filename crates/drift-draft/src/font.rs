@@ -167,6 +167,10 @@ pub const STANDARD_FAMILY: &str = "Liberation Sans";
 
 thread_local! {
     static STANDARD: Rc<DrawingFont> = {
+        #[expect(
+            clippy::expect_used,
+            reason = "the bundled fonts are fixed bytes compiled in, and the tests load them"
+        )]
         let face = |bytes: &'static [u8]| {
             Face::new(Arc::new(bytes.to_vec()), 0).expect("the bundled font is a font")
         };

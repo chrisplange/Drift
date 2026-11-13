@@ -37,6 +37,10 @@ pub use regen::{
 #[cfg(test)]
 mod openings_tests;
 #[cfg(test)]
+#[allow(
+    clippy::unreachable,
+    reason = "a test fails loudly on a shape it didn't expect"
+)]
 mod tests;
 
 /// A corner further from its node than this many times the thicker wall is cut square
@@ -721,6 +725,10 @@ impl Gen<'_> {
         }
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "face refs are only made for walls whose faces were made"
+    )]
     fn face(&self, f: FaceRef) -> Curve {
         let faces = self.faces[f.0].as_ref().expect("made");
         match f.2 {
@@ -1339,6 +1347,10 @@ impl Gen<'_> {
             return;
         }
         // Different materials: the thickest wall runs through (ties: the wall drawn first).
+        #[expect(
+            clippy::expect_used,
+            reason = "`ends` is not empty: `owner` came from it"
+        )]
         let through = ends
             .iter()
             .max_by(|a, b| a.thick.total_cmp(&b.thick).then(b.wall().cmp(&a.wall())))
@@ -1770,6 +1782,10 @@ impl Gen<'_> {
             };
             let area = lp.signed_area();
             let bounds: drift_core::Bounds = lp.edges.iter().map(|e| e.shape().bounds()).collect();
+            #[expect(
+                clippy::expect_used,
+                reason = "every loop starts with the curve it was walked from"
+            )]
             let min = *edges.iter().min().expect("a loop has edges");
             all.push(L {
                 edges,
@@ -1787,6 +1803,10 @@ impl Gen<'_> {
             // A point a little inside the hole's material side, off the middle of its longest
             // edge. (Not off a corner: a hole's corner can lie on the outer loop, where a
             // flush face runs on through the node, and a point just off it may fall outside.)
+            #[expect(
+                clippy::expect_used,
+                reason = "every loop has edges, and `loop_of` keeps one edge per key"
+            )]
             let probe = all[h]
                 .lp
                 .edges
@@ -1822,6 +1842,7 @@ impl Gen<'_> {
         for &o in &outers {
             let mut holes = holes_of.remove(&o).unwrap_or_default();
             holes.sort_by_key(|&h| all[h].min);
+            #[expect(clippy::expect_used, reason = "the outer loop `o` has edges")]
             let lead = std::iter::once(o)
                 .chain(holes.iter().copied())
                 .flat_map(|i| all[i].edges.iter().map(|(w, _)| *w))

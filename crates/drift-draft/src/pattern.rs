@@ -194,6 +194,10 @@ const BUILTIN: &str = "\
 ";
 
 /// The built-in pattern library.
+#[expect(
+    clippy::expect_used,
+    reason = "the library is a fixed string compiled in, and the tests parse it"
+)]
 pub fn builtin() -> &'static [Pattern] {
     static PATTERNS: OnceLock<Vec<Pattern>> = OnceLock::new();
     PATTERNS.get_or_init(|| parse_pat(BUILTIN).expect("built-in patterns parse"))

@@ -557,6 +557,10 @@ pub fn contours_in(
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unreachable,
+    reason = "a test fails loudly on a shape it didn't expect"
+)]
 mod tests {
     use super::*;
 

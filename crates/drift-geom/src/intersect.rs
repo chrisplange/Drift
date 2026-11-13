@@ -710,6 +710,10 @@ pub fn on_sweep(angle: f64, start: f64, sweep: f64) -> bool {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unreachable,
+    reason = "a test fails loudly on a shape it didn't expect"
+)]
 mod tests {
     use std::f64::consts::PI;
 

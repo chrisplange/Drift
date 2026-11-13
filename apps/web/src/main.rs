@@ -1,5 +1,14 @@
 //! Browser entry point. Build and serve with `trunk serve` from this directory.
 
+#![deny(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::todo,
+    clippy::unimplemented
+)]
+
 #[cfg(target_arch = "wasm32")]
 fn main() {
     use eframe::wasm_bindgen::JsCast as _;
@@ -7,7 +16,10 @@ fn main() {
 
     eframe::WebLogger::init(log::LevelFilter::Info).ok();
 
-    let window = web_sys::window().expect("no window");
+    let Some(window) = web_sys::window() else {
+        log::error!("Drift failed to start: there is no window (not running in a page)");
+        return;
+    };
     let mut web_options = eframe::WebOptions::default();
     let search = window.location().search().unwrap_or_default();
     // `?bench` logs solver timings to the console at startup (works even in a hidden tab).
@@ -25,12 +37,21 @@ fn main() {
     }
 
     wasm_bindgen_futures::spawn_local(async move {
-        let document = window.document().expect("no document");
-        let canvas = document
-            .get_element_by_id("drift_canvas")
-            .expect("missing #drift_canvas")
-            .dyn_into::<web_sys::HtmlCanvasElement>()
-            .expect("#drift_canvas is not a canvas");
+        let Some(document) = window.document() else {
+            log::error!("Drift failed to start: the window has no document");
+            return;
+        };
+        let canvas = match document.get_element_by_id("drift_canvas") {
+            Some(element) => element.dyn_into::<web_sys::HtmlCanvasElement>(),
+            None => {
+                log::error!("Drift failed to start: the page has no #drift_canvas");
+                return;
+            }
+        };
+        let Ok(canvas) = canvas else {
+            log::error!("Drift failed to start: #drift_canvas is not a canvas");
+            return;
+        };
 
         let result = eframe::WebRunner::new()
             .start(

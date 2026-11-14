@@ -27,7 +27,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
+    # ubuntu-latest became Ubuntu 26.04 (Mesa 26.0.8), where drift-app's UI tests segfault
+    # under lavapipe (#450). Run them on 24.04 until that is fixed; the check keeps its name.
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && 'ubuntu-24.04' || matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

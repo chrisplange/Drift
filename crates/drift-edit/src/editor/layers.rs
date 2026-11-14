@@ -492,7 +492,7 @@ impl Editor {
         before
     }
 
-    /// Delete a layer; its geometry moves to layer "0".
+    /// Delete a layer; its geometry moves to the drawing's first layer.
     pub fn remove_layer(&mut self, id: LayerId) -> Result<(), String> {
         self.doc.begin();
         if let Err(e) = self.doc.remove_layer(id) {

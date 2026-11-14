@@ -1339,7 +1339,7 @@ fn file_out<'a>(doc: &'a Document, meta: &'a Metadata) -> FileOut<'a> {
         let mut layers = doc.layers();
         matches!(
             (layers.next(), layers.next()),
-            (Some((LayerId::DEFAULT, l)), None) if *l == Layer::new("0")
+            (Some((LayerId::DEFAULT, l)), None) if *l == Layer::new(Layer::CAD_ZERO)
         )
     };
     let layers = (!default_layers).then(|| {
@@ -1904,6 +1904,10 @@ fn load_value(value: serde_json::Value) -> Result<(Document, Metadata, Vec<Strin
     if let Some(rules) = &file.rules {
         doc.set_rules(rules.to_rules()?);
     }
+    // A file that doesn't list its first layer (`l0`) has it as layer "0": every build
+    // before #423 gave a drawing one, and left it out of a file that had no other layer.
+    // (A new drawing's first layer is "Layer 1", and is listed.)
+    doc.set_layer(LayerId::DEFAULT, Layer::new(Layer::CAD_ZERO));
     for (rank, l) in file.layers.into_iter().enumerate() {
         let id = parse_layer_id(&l.id)?;
         let line_type = LineType::from_name(&l.linetype).ok_or(LoadError::MissingField {
@@ -2417,6 +2421,9 @@ mod tests {
   "version": 44,
   "reader": 44,
   "meta": {"units":"mm"},
+  "layers": [
+    {"id":"l0","name":"Layer 1","weight":0.25,"linetype":"continuous"}
+  ],
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
     {"type":"point","id":"e2","at":[10.5,0.0]},
@@ -2856,8 +2863,13 @@ mod tests {
         let (loaded, _) = load(&text).unwrap();
         assert_eq!(loaded, doc);
         assert_eq!(save(&loaded, &Metadata::default()), text);
-        // A plain document writes no layer section.
-        assert!(!save(&Document::new(), &Metadata::default()).contains("layers"));
+        // A drawing with nothing but a plain layer 0 (as every drawing started before #423)
+        // writes no layer section; a new drawing lists its "Layer 1".
+        let mut plain = Document::new();
+        plain.set_layer(LayerId::DEFAULT, Layer::new("0"));
+        assert!(!save(&plain, &Metadata::default()).contains("layers"));
+        let new = save(&Document::new(), &Metadata::default());
+        assert!(new.contains(r#""name":"Layer 1""#), "{new}");
         // An entity on a missing layer is rejected.
         let broken = text.replace(r#""id":"l2""#, r#""id":"l9""#);
         assert!(load(&broken).is_err());

@@ -418,3 +418,37 @@ fn the_selection_exported_during_a_block_edit_is_drawn_once() {
     let d = crate::output::model_page(&mut ed, &patterns, &painter, only.as_ref(), false);
     assert_eq!(d.items.len(), 1, "{:?}", d.items);
 }
+
+/// Every DXF and DWG export has a layer 0, as those formats need; a new drawing has none of
+/// its own, so its export's layer 0 is empty and what was drawn is on the drawing's layer
+/// (#423).
+#[cfg(all(feature = "dwg", not(feature = "demo")))]
+#[test]
+fn every_dxf_and_dwg_export_contains_a_layer_0_empty_when_the_drawing_has_none() {
+    use crate::output::{CadFormat, cad_file};
+    let painter = output_painter();
+    let patterns = drift_edit::fills::PatternLibrary::default();
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let (a, b) = (
+        ed.doc.add_point(v(0.0, 0.0)),
+        ed.doc.add_point(v(100.0, 0.0)),
+    );
+    ed.doc.add_line(a, b).unwrap();
+    ed.commit("Line");
+    assert!(ed.doc.layers().all(|(_, l)| l.name != "0"));
+    for format in CadFormat::ALL {
+        let bytes = cad_file(&mut ed, &patterns, &painter, format).unwrap();
+        let back = match format {
+            CadFormat::Dwg => drift_io::dwg_import::read(&bytes, 1.0),
+            CadFormat::Dxf | CadFormat::DxfR12 => {
+                drift_io::dxf::read(&String::from_utf8(bytes).unwrap(), 1.0)
+            }
+        }
+        .unwrap();
+        let name = format.label();
+        assert!(back.layers.iter().any(|l| l.name == "0"), "{name}");
+        assert_eq!(back.entities.len(), 1, "{name}");
+        assert_ne!(back.entities[0].layer, "0", "{name}");
+    }
+}

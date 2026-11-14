@@ -167,7 +167,7 @@ migration is named, the change was additive and older files read unchanged.
 | 3 | Diameter, horizontal/vertical and point–line distances; a dimension's `label` offset (M3). |
 | 4 | Tangent, concentric, coradial, collinear, point-on-curve and symmetric relations; `driven` dimensions (M4). |
 | 5 | `display` units, `variables`, a dimension's `expr`, `measurements` and `variants` (M5). |
-| 6 | `layers`, `current_layer`, and an entity's `layer`, `color`, `weight` (mm) and `linetype` (M6). |
+| 6 | `layers`, `current_layer`, and an entity's `layer`, `color`, `weight` (mm) and `linetype` (M6). The first layer is `l0`: what has no `layer` is on it, and a file that doesn't list it has it as layer "0" (a drawing with nothing but a plain layer 0 writes no `layers`). Since #423 a new drawing's `l0` is named "Layer 1" and is listed; no version change, as a layer's name was always free. |
 | 7 | `drafting` (the dimension style), `fills` (solid and hatch), `annotations` (notes, centre marks, callouts, ordinates), a dimension's `prefix`, `suffix` and `tol` (M7). |
 | 8 | `sheets` (paper, scale, view, title block, revisions) (M8). |
 | 9 | `groups`. |

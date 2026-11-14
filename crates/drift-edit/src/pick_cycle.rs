@@ -144,11 +144,12 @@ impl PickCycle {
 
     /// The candidate a double-click's first click picked, of the tool's, when the second
     /// click (this frame) went on to the next: the double-click acts on that one, as before.
-    /// (With the spot, where the candidates were gathered.)
+    /// (With the spot, where the candidates were gathered.) None when there was nothing to
+    /// pick there (say the only thing under the pointer is on a locked layer, #446).
     pub(crate) fn step_back(&mut self) -> Option<(usize, DVec2)> {
         let s = self.last.as_mut().filter(|_| self.fresh)?;
-        let len = s.len.filter(|_| s.advanced)?;
-        let prev = (s.step + len - 1) % len;
+        let len = s.len.filter(|&len| s.advanced && len > 0)?;
+        let prev = (s.step + len).checked_sub(1)? % len;
         let k = prev.checked_sub(s.lead)?;
         s.step = prev;
         Some((k, s.at))
@@ -192,6 +193,20 @@ mod tests {
         // A click that went elsewhere (a grip, a drag) doesn't.
         c.end_frame(true);
         assert_eq!(c.position(), None);
+    }
+
+    #[test]
+    fn stepping_back_with_nothing_to_pick_is_none() {
+        let mut c = PickCycle::default();
+        c.record(Spot {
+            len: Some(0),
+            advanced: true,
+            ..spot(AT, 0, 0)
+        });
+        assert_eq!(c.step_back(), None);
+        // With three there, back from the second to the first.
+        c.record(spot(AT, 1, 0));
+        assert_eq!(c.step_back(), Some((0, AT)));
     }
 
     #[test]

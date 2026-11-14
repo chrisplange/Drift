@@ -192,7 +192,6 @@ fn locked_and_hidden_layers_are_passed_over() {
 /// #446: with nothing to pick under the pointer (the only line is on a locked layer), the
 /// double-click's step back divided by a count of zero and Drift quit.
 #[test]
-#[ignore = "#446: a double-click with nothing to pick under it panics in step_back"]
 fn a_double_click_on_a_line_on_a_locked_layer_does_nothing() {
     let mut ed = Editor::default();
     let locked = ed.add_layer("Locked");

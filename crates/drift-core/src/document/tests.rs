@@ -853,3 +853,22 @@ mod reopened {
         assert!(rolled_back > 30);
     }
 }
+
+/// Layer 0 is a DWG / DXF requirement, not something a Drift drawing starts with (#423).
+#[cfg(test)]
+mod first_layer {
+    use super::*;
+
+    #[test]
+    #[ignore = "#423: a new drawing still starts with a layer 0"]
+    fn a_new_drawing_has_one_layer_named_layer_1_and_no_layer_0() {
+        let doc = Document::new();
+        let names: Vec<&str> = doc.layers().map(|(_, l)| l.name.as_str()).collect();
+        assert_eq!(names, ["Layer 1"]);
+        assert_eq!(doc.layer(doc.current_layer()).unwrap().name, "Layer 1");
+        // What is drawn goes on it.
+        let mut doc = doc;
+        let p = doc.add_point(DVec2::new(1.0, 2.0));
+        assert_eq!(doc.layer_of(p).name, "Layer 1");
+    }
+}

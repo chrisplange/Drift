@@ -3,7 +3,6 @@
 use super::*;
 
 impl Document {
-    /// All layers in id order (layer "0" first).
     /// The layers in draw order, bottom first.
     pub fn layers(&self) -> impl Iterator<Item = (LayerId, &Layer)> {
         let mut layers: Vec<(LayerId, &Layer)> =
@@ -40,7 +39,7 @@ impl Document {
         self.layers.get(&id)
     }
 
-    /// The layer an entity is on (layer "0" if its layer is missing).
+    /// The layer an entity is on (the first layer if its layer is missing).
     pub fn layer_of(&self, entity: EntityId) -> &Layer {
         let id = self
             .entities
@@ -49,7 +48,7 @@ impl Document {
         self.layers
             .get(&id)
             .or_else(|| self.layers.get(&LayerId::DEFAULT))
-            .expect("layer 0 exists")
+            .expect("the first layer exists")
     }
 
     /// Add a layer, on top of the others.
@@ -70,10 +69,13 @@ impl Document {
         }
     }
 
-    /// Delete a layer, moving its entities to layer "0". Layer "0" can't be deleted.
+    /// Delete a layer, moving its entities to the drawing's first layer, which can't be
+    /// deleted itself.
     pub fn remove_layer(&mut self, id: LayerId) -> Result<(), DocumentError> {
         if id == LayerId::DEFAULT {
-            return Err(DocumentError::BadName("layer 0 can't be deleted".into()));
+            return Err(DocumentError::BadName(
+                "the drawing's first layer can't be deleted".into(),
+            ));
         }
         if !self.layers.contains_key(&id) {
             return Err(DocumentError::MissingLayer(id));

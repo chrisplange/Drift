@@ -472,6 +472,9 @@ fn line(doc: &mut Document, a: EntityId, b: EntityId) -> EntityId {
 /// view, a traced PDF underlay with a picture, and one design option of each kind.
 fn fixture_drawing() -> Document {
     let mut doc = Document::new();
+    // The fixtures' drawing has a layer 0, as every drawing did when they were first
+    // written (#423): a file that has one keeps it.
+    doc.set_layer(drift_core::LayerId::DEFAULT, Layer::new("0"));
     // A plan at 1:50 (44.2: label offsets are kept on paper).
     doc.set_draft_style(drift_core::DraftStyle {
         scale: 50.0,

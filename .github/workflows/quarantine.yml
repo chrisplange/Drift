@@ -8,7 +8,6 @@ name: Quarantine
 #   #409  mutated_dxf_never_panics                                  Windows
 #   #368  large_import_commits_quickly,
 #         many_filled_rectangles_made_shapes_commit_quickly         Windows (busy machine)
-#   #295  face_dimensions_hold_through_drags                        all three
 #   #296  faces_move_with_the_drawing                               Windows, macOS
 #   #297  openings_props_follow_edits_and_match_a_full_rebuild      macOS
 
@@ -45,10 +44,6 @@ jobs:
           cargo test -p drift-edit --lib -- --ignored --exact
           fill_tests::large_import_commits_quickly
           fill_tests::many_filled_rectangles_made_shapes_commit_quickly
-
-      - name: "#295 face_dimensions_hold_through_drags"
-        if: ${{ !cancelled() }}
-        run: cargo test -p drift-edit --lib -- --ignored --exact drag_props::face_dimensions_hold_through_drags
 
       - name: "#296 faces_move_with_the_drawing"
         if: ${{ !cancelled() && runner.os != 'Linux' }}

@@ -189,6 +189,32 @@ fn locked_and_hidden_layers_are_passed_over() {
     }
 }
 
+/// #446: with nothing to pick under the pointer (the only line is on a locked layer), the
+/// double-click's step back divided by a count of zero and Drift quit.
+#[test]
+#[ignore = "#446: a double-click with nothing to pick under it panics in step_back"]
+fn a_double_click_on_a_line_on_a_locked_layer_does_nothing() {
+    let mut ed = Editor::default();
+    let locked = ed.add_layer("Locked");
+    ed.doc.begin();
+    let from = ed.doc.add_point(v(-10.0, 0.0));
+    let to = ed.doc.add_point(v(30.0, 0.0));
+    let line = ed.doc.add_line(from, to).unwrap();
+    ed.doc.set_entity_layer(line, locked).unwrap();
+    ed.commit("Line");
+    let mut l = ed.doc.layer(locked).cloned().unwrap();
+    l.locked = true;
+    ed.update_layer(locked, l);
+    let mut sel = SelectTool::default();
+    // A double-click comes as a click, then a click and a double-click together.
+    click(&mut ed, &mut sel, SPOT);
+    click(&mut ed, &mut sel, SPOT);
+    sel.handle(Input::DoubleClick(Pointer::new(SPOT, TOL)), &mut ed);
+    assert!(ed.selection.is_empty());
+    assert_eq!(ed.open_group, None);
+    assert_eq!(ed.out.info.take(), None);
+}
+
 #[test]
 fn the_cycle_goes_on_to_the_fill_under_an_edge() {
     let mut ed = Editor::default();

@@ -105,11 +105,15 @@ Ctrl+L shows or hides it.
 - Click a row's arrow (**Colours and line settings**) to open it: **Stroke** colour
   (**Auto** is black or white to suit the theme), **Fill** colour (**Same as stroke** by
   default), **Line** weight and type, **Output** (**Printed and exported**), **Select all**,
-  **Move selection here** and **Delete** (its geometry moves to layer 0).
+  **Move selection here** and **Delete** (its geometry moves to the drawing's first layer).
 - Right-click a row to make it current, rename it, isolate it, select its curves, move the
   selection there, show all layers, or delete it.
 - **New layer** adds a layer, makes it current and lets you type its name.
-- Layer **0** always exists and can't be deleted.
+- A new drawing starts with one layer, **Layer 1**. The drawing's first layer can't be
+  deleted. Layer **0** is something DWG and DXF files need: a drawing has one only when an
+  imported file drew on it or the drawing was made before Drift stopped adding it (there
+  it is the first layer, and keeps its name), and every DWG and DXF export has one, empty
+  when the drawing has none.
 
 Hidden layers aren't drawn, picked or snapped to, but their geometry still solves. That
 goes for the end and centre points of their curves too, even when the points themselves

@@ -907,7 +907,7 @@ impl DriftApp {
                     ui.close();
                 }
                 if ui
-                    .add_enabled(id != LayerId::DEFAULT, egui::Button::new("Rename"))
+                    .add_enabled(can_rename(id, &layer), egui::Button::new("Rename"))
                     .clicked()
                 {
                     self.drawing.renaming_layer = Some(id);
@@ -1219,7 +1219,7 @@ impl DriftApp {
         edited: &mut Layer,
         is_current: bool,
     ) {
-        if self.drawing.renaming_layer == Some(id) && id != LayerId::DEFAULT {
+        if self.drawing.renaming_layer == Some(id) && can_rename(id, layer) {
             let name = self
                 .drawing
                 .layer_names
@@ -1269,7 +1269,7 @@ impl DriftApp {
         if r.clicked() && !is_current {
             self.drawing.editor.set_current_layer(id);
         }
-        if r.double_clicked() && id != LayerId::DEFAULT {
+        if r.double_clicked() && can_rename(id, layer) {
             self.drawing.renaming_layer = Some(id);
         }
     }
@@ -1425,4 +1425,11 @@ impl DriftApp {
         }
         ui.end_row();
     }
+}
+
+/// Whether a layer's name can be changed: any but a first layer named "0" (the layer DWG and
+/// DXF files always have, which keeps its name as it does there). A new drawing's first
+/// layer, "Layer 1", is renamed like any other (#423).
+fn can_rename(id: LayerId, layer: &Layer) -> bool {
+    id != LayerId::DEFAULT || layer.name != Layer::CAD_ZERO
 }

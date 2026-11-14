@@ -1,11 +1,13 @@
 //! Layers and line appearance: colour, ISO 128 line weights and line types.
 
-/// Stable identifier of a layer. Layer `l0` ("0") always exists.
+/// Stable identifier of a layer. Layer `l0`, the drawing's first layer, always exists: it is
+/// "Layer 1" in a new drawing, and "0" in one from before #423 or one that has kept that name.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct LayerId(pub u32);
 
 impl LayerId {
-    /// The default layer, which can't be deleted.
+    /// The drawing's first layer, which can't be deleted: where what has no layer of its own
+    /// is, and where a deleted layer's geometry goes.
     pub const DEFAULT: LayerId = LayerId(0);
 }
 
@@ -244,6 +246,13 @@ pub struct Layer {
 }
 
 impl Layer {
+    /// The name of a new drawing's first layer. (Layer "0" is a DWG / DXF requirement: a
+    /// drawing has one only when it came with one, and every DWG / DXF export writes one.)
+    pub const FIRST_NAME: &'static str = "Layer 1";
+    /// The name of the layer DWG and DXF files always have, and of the first layer of
+    /// drawings saved before #423.
+    pub const CAD_ZERO: &'static str = "0";
+
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),

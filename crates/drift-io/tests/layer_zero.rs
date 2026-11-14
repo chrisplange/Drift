@@ -44,7 +44,6 @@ fn curve_layers(doc: &Document) -> Vec<String> {
 }
 
 #[test]
-#[ignore = "#423: a new drawing still has a layer 0, so its file does too"]
 fn a_drift_file_with_no_layer_0_opens_without_one() {
     let text = save(&new_drawing_with_a_line(), &Metadata::default());
     let (doc, _) = load(&text).expect("a file with no layer 0 opens");

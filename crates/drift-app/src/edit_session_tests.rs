@@ -424,7 +424,6 @@ fn the_selection_exported_during_a_block_edit_is_drawn_once() {
 /// (#423).
 #[cfg(all(feature = "dwg", not(feature = "demo")))]
 #[test]
-#[ignore = "#423: a new drawing still has a layer 0, which its exports draw on"]
 fn every_dxf_and_dwg_export_contains_a_layer_0_empty_when_the_drawing_has_none() {
     use crate::output::{CadFormat, cad_file};
     let painter = output_painter();

@@ -259,7 +259,7 @@ impl Default for Document {
             variants: BTreeMap::new().into(),
             measurements: BTreeMap::new().into(),
             units: Units::default(),
-            layers: BTreeMap::from([(LayerId::DEFAULT, Layer::new("0"))]).into(),
+            layers: BTreeMap::from([(LayerId::DEFAULT, Layer::new(Layer::FIRST_NAME))]).into(),
             current_layer: LayerId::DEFAULT,
             fills: BTreeMap::new().into(),
             annotations: BTreeMap::new().into(),

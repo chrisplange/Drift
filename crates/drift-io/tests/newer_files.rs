@@ -88,8 +88,24 @@ fn newer_file(version: u32) -> String {
     );
     t = edit(
         &t,
-        r#""title_block":"modern","fields":{}}"#,
-        r#""title_block":"modern","fields":{"reviewer":"CL"},"stamp":true}"#,
+        r#""title_block":"modern","fields":{},"annotations":["#,
+        r#""title_block":"modern","fields":{"reviewer":"CL"},"stamp":true,"annotations":["#,
+    );
+    // A sheet's own annotations (45), and the viewport one is tied to.
+    t = edit(
+        &t,
+        r#""at":[200.0,150.0],"id":"r27"}]"#,
+        r#""at":[200.0,150.0],"id":"r27","locked":true}]"#,
+    );
+    t = edit(
+        &t,
+        r#""measure":{"type":"horizontal_distance","a":"e1","b":"e2"},"label":[0.0,-8.0],"#,
+        r#""measure":{"type":"horizontal_distance","a":"e1","b":"e2","to":"face"},"witness":[1.0,2.0],"label":[0.0,-8.0],"#,
+    );
+    t = edit(
+        &t,
+        r#"{"leader":{"to":{"at":[310.0,200.0]}}}],"frame":"box","bold":true}"#,
+        r#"{"leader":{"to":{"at":[310.0,200.0]},"arrow":"big"},"layer":"l1"}],"frame":"box","bold":true,"revision":"B"}"#,
     );
     t = edit(
         &t,

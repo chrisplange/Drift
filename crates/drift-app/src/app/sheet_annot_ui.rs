@@ -434,15 +434,15 @@ impl DriftApp {
             }
             ToolKind::Dimension => {
                 "Sheet dimension: click a line, circle or arc inside a view, or two points · \
-                 it reads the model's true size · Esc for Select"
+                 Esc for Select"
             }
             _ if busy => {
                 "Click where the text goes · Shift+click more geometry for more leaders · \
                  Esc cancels"
             }
             _ => {
-                "Sheet note: click the paper for a note, or geometry inside a view first for \
-                 a leader to it (Alt+click: to that spot) · Esc for Select"
+                "Sheet note: click the paper, or geometry inside a view first for a leader \
+                 (Alt+click: to that spot) · Esc for Select"
             }
         };
         let galley = painter.layout_no_wrap(
@@ -450,7 +450,8 @@ impl DriftApp {
             egui::FontId::proportional(theme::size::BODY),
             n.text,
         );
-        let at = egui::pos2(rect.center().x - galley.size().x / 2.0, rect.top() + 12.0);
+        // (Under the paper's own label at the canvas's top left.)
+        let at = egui::pos2(rect.center().x - galley.size().x / 2.0, rect.top() + 44.0);
         let back = egui::Rect::from_min_size(at, galley.size()).expand2(egui::vec2(12.0, 6.0));
         painter.rect_filled(back, theme::radius::MENU, n.raised);
         painter.rect_stroke(

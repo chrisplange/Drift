@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 44,
+//!   "version": 45,
 //!   "reader": 44,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
@@ -1339,6 +1339,18 @@ fn write(doc: &Document, meta: &Metadata) -> String {
 /// The records of the file for `doc`.
 #[cfg(not(feature = "demo"))]
 fn file_out<'a>(doc: &'a Document, meta: &'a Metadata) -> FileOut<'a> {
+    file_out_as_read(doc, meta, &[])
+}
+
+/// [`file_out`], with the sheets in `as_read` written as given instead of as `doc` has them:
+/// what this build writes for a file as it was read, before a sheet's annotations were
+/// repaired (see [`load_with_notes`]).
+#[cfg(not(feature = "demo"))]
+fn file_out_as_read<'a>(
+    doc: &'a Document,
+    meta: &'a Metadata,
+    as_read: &[(drift_core::SheetId, drift_core::Sheet)],
+) -> FileOut<'a> {
     let default_layers = {
         let mut layers = doc.layers();
         matches!(
@@ -1479,7 +1491,10 @@ fn file_out<'a>(doc: &'a Document, meta: &'a Metadata) -> FileOut<'a> {
             .collect(),
         sheets: doc
             .sheets()
-            .map(|(id, s)| sheets::sheet_record(id, s))
+            .map(|(id, s)| {
+                let s = as_read.iter().find(|(i, _)| *i == id).map_or(s, |(_, s)| s);
+                sheets::sheet_record(id, s)
+            })
             .collect(),
         groups: doc
             .groups()
@@ -1593,11 +1608,19 @@ pub fn load_with_notes(text: &str) -> Result<(Document, Metadata, Vec<String>), 
         .get("version")
         .and_then(serde_json::Value::as_u64)
         .is_some_and(|v| v >= u64::from(FORMAT_VERSION));
-    #[cfg_attr(feature = "demo", allow(unused_mut))]
-    let (mut doc, mut meta, notes) = load_value(value)?;
+    #[cfg_attr(feature = "demo", allow(unused_mut, unused_variables))]
+    let (mut doc, mut meta, notes, as_read) = load_value_as_read(value)?;
+    // What this build writes for the file as it was read: with a sheet whose annotations
+    // were repaired written as the file had it. So a repair is a change (the next save
+    // writes it), not something of the file's this build doesn't know (which it would keep,
+    // and repair again on every opening).
     #[cfg(not(feature = "demo"))]
     if may_carry
-        && let Some(kept) = carry::Kept::find(text, write(&doc, &meta), |id| doc.holds_id(id))
+        && let Some(kept) = carry::Kept::find(
+            text,
+            layout::to_file(&file_out_as_read(&doc, &meta, &as_read)),
+            |id| doc.holds_id(id),
+        )
     {
         // What it names keeps referring to what the newer build meant, never to something
         // made here.
@@ -1609,6 +1632,21 @@ pub fn load_with_notes(text: &str) -> Result<(Document, Metadata, Vec<String>), 
 
 /// [`load_with_notes`] from parsed JSON.
 fn load_value(value: serde_json::Value) -> Result<(Document, Metadata, Vec<String>), LoadError> {
+    load_value_as_read(value).map(|(doc, meta, notes, _)| (doc, meta, notes))
+}
+
+/// A drawing, its metadata, what was said on reading, and the sheets whose annotations were
+/// repaired, as the file had them.
+type Loaded = (
+    Document,
+    Metadata,
+    Vec<String>,
+    Vec<(drift_core::SheetId, drift_core::Sheet)>,
+);
+
+/// [`load_value`], with the sheets whose own annotations were repaired on reading (v45), as
+/// the file had them.
+fn load_value_as_read(value: serde_json::Value) -> Result<Loaded, LoadError> {
     let older_rules = value
         .get("version")
         .and_then(serde_json::Value::as_u64)
@@ -2086,6 +2124,7 @@ fn load_value(value: serde_json::Value) -> Result<(Document, Metadata, Vec<Strin
     }
     let mut old_views = Vec::new();
     let mut sheet_annotation_ids = std::collections::BTreeSet::new();
+    let mut sheets_as_read = Vec::new();
     for r in file.sheets {
         let id_text = r.id.clone();
         let (id, sheet, old) = sheets::parse_sheet(r)?;
@@ -2099,12 +2138,14 @@ fn load_value(value: serde_json::Value) -> Result<(Document, Metadata, Vec<Strin
         // passes them over may have deleted the geometry or taken off the view one is tied
         // to. Those go (a note keeps its text and loses that leader), and the file says so.
         let mut sheet = sheet;
-        let before = sheet.annotations.clone();
+        let before = sheet.clone();
         if sheet.settle_annotations(&|e| doc.get(e).is_some()) {
             let changed = before
+                .annotations
                 .iter()
                 .filter(|(a, was)| sheet.annotations.get(a) != Some(was))
                 .count();
+            sheets_as_read.push((id, before));
             if changed > 0 {
                 notes_out.push(format!(
                     "Sheet {}: {changed} annotation{} tied to a view or geometry that is no \
@@ -2250,7 +2291,7 @@ fn load_value(value: serde_json::Value) -> Result<(Document, Metadata, Vec<Strin
         }
         doc.set_variant(id, option);
     }
-    Ok((doc, file.meta, notes_out))
+    Ok((doc, file.meta, notes_out, sheets_as_read))
 }
 
 /// A file without a project (from before v30): a title or company every sheet shares
@@ -2454,7 +2495,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 44,
+  "version": 45,
   "reader": 44,
   "meta": {"units":"mm"},
   "layers": [

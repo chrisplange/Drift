@@ -14,20 +14,55 @@ use crate::editor::{EditError, Editor};
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct OnSheet {
     pub sheet: SheetId,
-    /// The viewport (its index on the sheet) the pointer's model position is seen through:
-    /// the one under it, or the one a tool's first pick was made in.
-    pub viewport: Option<usize>,
+    /// The viewport the pointer's model position is seen through: the one under it, or the
+    /// one a tool's first pick was made in.
+    pub viewport: Option<SheetPort>,
     /// The pointer on the paper (mm).
     pub paper: DVec2,
+}
+
+/// A viewport of a sheet as it was when a tool picked through it: its place in the sheet's
+/// list, the view it shows and where it sits. A pick is only as good as the viewport it was
+/// made through, and a sheet can change between two clicks (an undo, a view taken off or
+/// moved, another sheet shown), so what a tool holds is checked against the sheet again
+/// before anything is made from it ([`SheetPort::index_on`]); an index alone would then
+/// name whatever viewport is in that place now.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SheetPort {
+    pub index: usize,
+    pub view: drift_core::ViewId,
+    pub at: DVec2,
+}
+
+impl SheetPort {
+    /// The viewport at `index` of `sheet`, as it is now.
+    pub fn of(sheet: &drift_core::Sheet, index: usize) -> Option<Self> {
+        sheet.viewports.get(index).map(|p| SheetPort {
+            index,
+            view: p.view,
+            at: p.at,
+        })
+    }
+
+    /// Its index on `sheet`, if the viewport there is still the one that was picked through
+    /// (the same view in the same place).
+    pub fn index_on(&self, sheet: &drift_core::Sheet) -> Option<usize> {
+        (Self::of(sheet, self.index) == Some(*self)).then_some(self.index)
+    }
 }
 
 /// What a sheet note's leader points at, as the Note tool picked it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SheetTarget {
-    /// The viewport (its index on the sheet) it was picked through; `None`: a paper point.
-    pub viewport: Option<usize>,
+    /// The sheet it was picked on.
+    pub sheet: SheetId,
+    /// The viewport it was picked through; `None`: a paper point.
+    pub viewport: Option<SheetPort>,
     pub to: Anchor,
 }
+
+/// Said when what a tool picked through is no longer what is on the sheet.
+const STALE: &str = "the view changed since it was picked: pick again";
 
 impl Editor {
     /// A step that only changes a sheet: `f` between `begin` and `commit`, rolled back (and
@@ -51,9 +86,19 @@ impl Editor {
         }
     }
 
-    /// The id sheet annotations name `sheet`'s viewport `index` by (given now if it has
-    /// none), inside the open step.
-    fn tied(&mut self, sheet: SheetId, index: usize) -> Result<PortId, drift_core::DocumentError> {
+    /// The id sheet annotations name `sheet`'s viewport `port` by (given now if it has
+    /// none), inside the open step. Refused if the sheet's viewport there is no longer the
+    /// one that was picked through.
+    fn tied(
+        &mut self,
+        sheet: SheetId,
+        port: SheetPort,
+    ) -> Result<PortId, drift_core::DocumentError> {
+        let index = self
+            .doc
+            .sheet(sheet)
+            .and_then(|s| port.index_on(s))
+            .ok_or(drift_core::DocumentError::Degenerate(STALE))?;
         self.doc
             .tie_viewport(sheet, index)
             .ok_or(drift_core::DocumentError::Degenerate(
@@ -68,18 +113,18 @@ impl Editor {
     pub fn add_sheet_dimension(
         &mut self,
         sheet: SheetId,
-        viewport: usize,
+        viewport: SheetPort,
         measure: Constraint,
         offset: Option<DVec2>,
     ) -> Result<SheetAnnotationId, EditError> {
         let scale = self
             .doc
             .sheet(sheet)
-            .and_then(|s| s.viewports.get(viewport))
-            .and_then(|p| self.doc.view(p.view))
+            .and_then(|s| viewport.index_on(s))
+            .and_then(|_| self.doc.view(viewport.view))
             .map(|v| v.scale)
             .filter(|n| n.is_finite() && *n > 0.0)
-            .ok_or_else(|| EditError::Invalid("click inside a view to dimension it".into()))?;
+            .ok_or_else(|| EditError::Invalid(STALE.into()))?;
         let id = self.sheet_step("Sheet dimension", |ed| {
             let port = ed.tied(sheet, viewport)?;
             // The label is kept in paper mm: the same distance whatever the view's scale.
@@ -99,11 +144,15 @@ impl Editor {
         targets: &[SheetTarget],
         at: DVec2,
     ) -> Result<SheetAnnotationId, EditError> {
+        // Each leader was picked on this sheet (a pick doesn't carry to another).
+        if targets.iter().any(|t| t.sheet != sheet) {
+            return Err(EditError::Invalid(STALE.into()));
+        }
         let id = self.sheet_step("Sheet note", |ed| {
             let mut leaders = Vec::new();
             for t in targets {
                 let port = match t.viewport {
-                    Some(i) => Some(ed.tied(sheet, i)?),
+                    Some(port) => Some(ed.tied(sheet, port)?),
                     None => None,
                 };
                 leaders.push(SheetLeader {
@@ -243,6 +292,7 @@ mod tests {
             let views = self.ed.doc.placed_views(sheet);
             // (Outside every view the model position means nothing: the first view's.)
             let world = views[viewport.unwrap_or(0)].to_world(paper);
+            let viewport = viewport.and_then(|i| SheetPort::of(sheet, i));
             self.ed.on_sheet = Some(OnSheet {
                 sheet: self.sheet,
                 viewport,
@@ -419,6 +469,142 @@ mod tests {
     }
 
     #[test]
+    fn a_pick_is_not_finished_on_another_sheet_or_through_a_changed_viewport() {
+        let mut p = plan();
+        // A second sheet with an unrelated view of its own, at another scale.
+        let elsewhere = p.ed.doc.add_view(View::new(
+            "Elsewhere",
+            Bounds {
+                min: V(5000.0, 5000.0),
+                max: V(5400.0, 5300.0),
+            },
+            2.0,
+        ));
+        let mut s = Sheet::new("A-102");
+        s.viewports.push(Viewport::new(elsewhere, V(200.0, 150.0)));
+        let other = p.ed.doc.add_sheet(s);
+        let on_other = |p: &Plan, paper: DVec2| OnSheet {
+            sheet: other,
+            viewport: SheetPort::of(p.ed.doc.sheet(other).unwrap(), 0),
+            paper,
+        };
+        let count =
+            |p: &Plan| -> usize { p.ed.doc.sheets().map(|(_, s)| s.annotations.len()).sum() };
+
+        // The Dimension tool: the edge picked on the first sheet, then a click on the other.
+        let mut tool = DimensionTool::default();
+        p.click(&mut tool, Some(0), V(180.0, 125.0));
+        assert!(tool.is_busy());
+        p.ed.on_sheet = Some(on_other(&p, V(200.0, 135.0)));
+        let at = Pointer::new(V(5200.0, 5120.0), TOL);
+        tool.handle(Input::Click(at, Modifiers::default()), &mut p.ed);
+        assert_eq!(count(&p), 0, "nothing is made from a pick on another sheet");
+        assert!(!tool.is_busy(), "the pick is let go");
+        assert!(p.ed.out.notice.take().is_some(), "and it says so");
+
+        // The Note tool: a leader started on the first sheet, then the text on the other.
+        // The note is placed there without it: leaders don't carry between sheets.
+        let mut tool = NoteTool::default();
+        p.click(&mut tool, Some(0), V(180.0, 125.0));
+        assert_eq!(tool.sheet_targets().len(), 1);
+        p.ed.on_sheet = Some(OnSheet {
+            viewport: None,
+            ..on_other(&p, V(60.0, 60.0))
+        });
+        let at = Pointer::new(V(60.0, 60.0), TOL);
+        tool.handle(Input::Click(at, Modifiers::default()), &mut p.ed);
+        let made: Vec<_> =
+            p.ed.doc
+                .sheet(other)
+                .unwrap()
+                .annotations
+                .values()
+                .cloned()
+                .collect();
+        assert!(
+            matches!(&made[..], [SheetAnnotation::Note { leaders, at, .. }]
+                if leaders.is_empty() && *at == V(60.0, 60.0)),
+            "{made:?}"
+        );
+        assert!(p.annotations().is_empty());
+        assert!(p.ed.undo());
+
+        // The viewport a leader was picked through goes (an undo of placing it, a view
+        // taken off) before the text is clicked: the other viewport is now first in the
+        // list, and the leader must not be tied through it.
+        let mut tool = NoteTool::default();
+        p.click(&mut tool, Some(0), V(180.0, 125.0));
+        let targets = tool.sheet_targets();
+        p.ed.doc.begin();
+        let mut s = p.ed.doc.sheet(p.sheet).unwrap().clone();
+        s.viewports.remove(0);
+        p.ed.doc.set_sheet(p.sheet, s);
+        p.ed.commit("Remove view from sheet");
+        let depth = p.ed.history.undo_depth();
+        assert!(
+            p.ed.add_sheet_note(p.sheet, &targets, V(300.0, 250.0))
+                .is_err()
+        );
+        p.click(&mut tool, None, V(300.0, 250.0));
+        assert!(p.annotations().is_empty(), "{:?}", p.annotations());
+        assert_eq!(
+            p.ed.history.undo_depth(),
+            depth,
+            "a refused note makes no step"
+        );
+        assert!(p.ed.out.notice.take().is_some());
+        // The same for a dimension: its viewport moved on the sheet since the pick.
+        let port = SheetPort::of(p.ed.doc.sheet(p.sheet).unwrap(), 0).unwrap();
+        p.ed.doc.begin();
+        let mut s = p.ed.doc.sheet(p.sheet).unwrap().clone();
+        s.viewports[0].at = V(10.0, 10.0);
+        p.ed.doc.set_sheet(p.sheet, s);
+        p.ed.commit("Move view on sheet");
+        let c = Constraint::Distance {
+            a: p.points[0],
+            b: p.points[1],
+            value: 0.0,
+        };
+        assert!(p.ed.add_sheet_dimension(p.sheet, port, c, None).is_err());
+        assert!(p.annotations().is_empty());
+        // Picked through it as it is now, it is made.
+        let port = SheetPort::of(p.ed.doc.sheet(p.sheet).unwrap(), 0).unwrap();
+        assert!(p.ed.add_sheet_dimension(p.sheet, port, c, None).is_ok());
+    }
+
+    #[test]
+    fn making_a_block_of_tied_geometry_takes_what_was_tied_to_it() {
+        let mut p = plan();
+        // A dimension of the bottom edge and a note with a leader to it, through the view.
+        let mut tool = DimensionTool::default();
+        p.click(&mut tool, Some(0), V(180.0, 125.0));
+        p.click(&mut tool, Some(0), V(200.0, 80.0));
+        let mut tool = NoteTool::default();
+        p.click(&mut tool, Some(0), V(180.0, 125.0));
+        p.click(&mut tool, None, V(300.0, 250.0));
+        assert_eq!(p.annotations().len(), 2);
+        let before = p.ed.doc.clone();
+        // The rectangle made into a block: its curves leave the sketch for the block, so
+        // (as when they are deleted) the dimension goes and the note's leader lets go, in
+        // the block's own step.
+        p.ed.selection = p.lines.iter().chain(&p.points).copied().collect();
+        let depth = p.ed.history.undo_depth();
+        p.ed.make_block("Room").unwrap();
+        assert_eq!(p.ed.history.undo_depth(), depth + 1);
+        let left = p.annotations();
+        assert!(
+            matches!(&left[..], [(_, SheetAnnotation::Note { leaders, at, .. })]
+                if leaders.is_empty() && *at == V(300.0, 250.0)),
+            "{left:?}"
+        );
+        // One undo brings the geometry back with both, as they were; redo takes them again.
+        assert!(p.ed.undo());
+        assert_eq!(p.ed.doc, before);
+        assert!(p.ed.redo());
+        assert_eq!(p.annotations().len(), 1);
+    }
+
+    #[test]
     fn in_the_model_the_tools_make_what_they_always_did() {
         let mut p = plan();
         assert!(p.ed.on_sheet.is_none());
@@ -572,7 +758,8 @@ mod wall_tests {
             line: faces[1],
             value: 0.0,
         };
-        let id = ed.add_sheet_dimension(sheet, 0, across, None).unwrap();
+        let port = SheetPort::of(ed.doc.sheet(sheet).unwrap(), 0).unwrap();
+        let id = ed.add_sheet_dimension(sheet, port, across, None).unwrap();
         let read = |ed: &Editor| {
             ed.doc.sheet_annotation(sheet, id).and_then(|a| match a {
                 SheetAnnotation::Dimension { measure, .. } => {

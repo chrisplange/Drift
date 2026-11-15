@@ -617,6 +617,60 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn nothing_that_is_not_a_number_reaches_the_page() {
+        // A leader to a model point so far off that its place on the paper is past what
+        // the layout's 32-bit points hold (a model point may be anywhere; only paper is
+        // bounded). The page leaves out what it can't place rather than write `inf` or
+        // `NaN`, and the rest of the sheet is as it was.
+        let mut p = plan();
+        p.dimension();
+        let far = SheetAnnotation::Note {
+            text: "FAR".into(),
+            at: V(300.0, 220.0),
+            leaders: vec![SheetLeader::through(p.port, Anchor::Free(V(1e300, -1e300)))],
+            style: NoteStyle::default(),
+            look: StyleOverride::default(),
+        };
+        p.ed.doc.add_sheet_annotation(p.sheet, far).unwrap();
+        let d = p.page(p.sheet);
+        let finite = |q: &DVec2| q.is_finite();
+        for i in d.items.iter().filter(|i| i.layer == "ANNOTATIONS") {
+            let ok = match &i.prim {
+                Prim::Line(a, b) => finite(a) && finite(b),
+                Prim::Polyline { points, .. } => points.iter().all(finite),
+                Prim::Fill {
+                    rings, triangles, ..
+                } => rings.iter().flatten().all(finite) && triangles.iter().flatten().all(finite),
+                Prim::Text { at, height, .. } => finite(at) && height.is_finite(),
+                _ => true,
+            };
+            assert!(ok, "{:?}", i.prim);
+        }
+        let shown: Vec<String> = texts(&d).into_iter().map(|t| t.0).collect();
+        assert!(shown.contains(&"1000".to_owned()) && shown.contains(&"FAR".to_owned()));
+        let pdf = drift_io::pdf::write(&[d.clone()], "Test");
+        let pdf_text = String::from_utf8_lossy(&pdf);
+        let svg = drift_io::svg::write(&d);
+        for bad in ["inf", "NaN", "nan"] {
+            assert!(!svg.contains(bad), "{bad} in the SVG");
+            assert!(!pdf_text.contains(&format!(" {bad} ")), "{bad} in the PDF");
+        }
+        // On screen it is laid out without a panic too.
+        let sheet = p.ed.doc.sheet(p.sheet).unwrap().clone();
+        let paper = ScreenMap {
+            rect: egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(900.0, 700.0)),
+            camera: drift_render::Camera {
+                center: V(210.0, 148.0),
+                scale: 2.0,
+            },
+        };
+        assert_eq!(
+            layout_sheet_annotations(&painter(), &p.ed.doc, &sheet, &paper).len(),
+            2
+        );
+    }
+
+    #[test]
     fn the_screen_layout_matches_the_page_at_any_zoom() {
         let mut p = plan();
         let dim = p.dimension();

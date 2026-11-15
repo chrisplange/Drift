@@ -1588,6 +1588,7 @@ impl DriftApp {
         // Note and Dimension tools work on the paper; else the pointer picks and drags an
         // annotation under it, or the views.
         let paper = self.paper_map(rect);
+        let laid_out_at = self.drawing.editor.doc.revision();
         let layouts = crate::sheet_notes::layout_sheet_annotations(
             &painter,
             &self.drawing.editor.doc,
@@ -1634,8 +1635,11 @@ impl DriftApp {
             );
         }
         self.paint_view_frames(&painter, rect, &sheet, &views, ui.visuals().dark_mode);
-        // As they are now (a drag or a tool may have changed them since they were laid out).
-        if let Some(now) = self.drawing.editor.doc.sheet(id).cloned() {
+        // As they are now: laid out again only if a drag or a tool changed the drawing since
+        // (one pass a frame otherwise).
+        if self.drawing.editor.doc.revision() == laid_out_at {
+            self.paint_sheet_annotations(&painter, rect, &sheet, &layouts, ui.visuals().dark_mode);
+        } else if let Some(now) = self.drawing.editor.doc.sheet(id).cloned() {
             let layouts = crate::sheet_notes::layout_sheet_annotations(
                 &painter,
                 &self.drawing.editor.doc,

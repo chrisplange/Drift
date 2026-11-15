@@ -476,3 +476,248 @@ fn removing_views_deleting_geometry_and_copying_sheets_leave_nothing_dangling() 
     assert_eq!(annotations(&h, copy).len(), 1);
     assert_eq!(tied(&h, p.sheet), (1, 1));
 }
+
+/// A second sheet for the plan: an unrelated view "Elsewhere" at 1:2, placed where the
+/// first sheet's view is.
+fn sheet_elsewhere(h: &mut Harness<'_, DriftApp>, other: SheetId) {
+    let ed = &mut h.state_mut().drawing.editor;
+    ed.doc.begin();
+    let view = ed.doc.add_view(drift_core::View::new(
+        "Elsewhere",
+        drift_core::Bounds {
+            min: V(5000.0, 5000.0),
+            max: V(5400.0, 5300.0),
+        },
+        2.0,
+    ));
+    let mut s = ed.doc.sheet(other).unwrap().clone();
+    s.viewports
+        .push(drift_core::Viewport::new(view, V(200.0, 150.0)));
+    ed.doc.set_sheet(other, s);
+    ed.commit("Elsewhere");
+}
+
+fn all_annotations(h: &Harness<'_, DriftApp>) -> usize {
+    let doc = &h.state().drawing.editor.doc;
+    doc.sheets().map(|(_, s)| s.annotations.len()).sum()
+}
+
+#[test]
+fn a_pick_made_on_one_sheet_is_not_finished_on_another() {
+    let Some((mut h, p)) = on_sheet() else { return };
+    sheet_elsewhere(&mut h, p.other);
+    h.run();
+    // The Dimension tool: the line picked in Plan on the first sheet, then the other
+    // sheet's tab, then a click there.
+    h.state_mut().set_tool(ToolKind::Dimension);
+    h.run();
+    click_paper(&mut h, V(170.0, 150.0));
+    assert!(h.state().tool.is_busy());
+    h.state_mut().show_sheet(Some(p.other));
+    h.run();
+    h.run();
+    assert!(
+        !h.state().tool.is_busy(),
+        "the pick is let go with the sheet"
+    );
+    click_paper(&mut h, V(200.0, 135.0));
+    assert_eq!(all_annotations(&h), 0, "nothing is made on either sheet");
+
+    // The Note tool: a leader started on the first sheet, then the other sheet's tab. The
+    // click there places a note on the paper, with no leader carried over.
+    h.state_mut().show_sheet(Some(p.sheet));
+    h.state_mut().set_tool(ToolKind::Note);
+    h.run();
+    h.run();
+    click_paper(&mut h, V(170.0, 150.0));
+    assert!(h.state().tool.is_busy());
+    h.state_mut().show_sheet(Some(p.other));
+    h.run();
+    h.run();
+    assert!(!h.state().tool.is_busy());
+    click_paper(&mut h, V(60.0, 60.0));
+    assert!(annotations(&h, p.sheet).is_empty());
+    let made = annotations(&h, p.other);
+    assert!(
+        matches!(&made[..], [(_, SheetAnnotation::Note { leaders, .. })] if leaders.is_empty()),
+        "{made:?}"
+    );
+}
+
+#[test]
+fn an_undo_between_a_leaders_click_and_its_text_lets_the_leader_go() {
+    let Some((mut h, p)) = on_sheet() else { return };
+    // A second view put on the sheet, as one undo step; the leader is picked through it.
+    {
+        let ed = &mut h.state_mut().drawing.editor;
+        ed.doc.begin();
+        let mut s = ed.doc.sheet(p.sheet).unwrap().clone();
+        s.viewports
+            .insert(0, drift_core::Viewport::new(p.view, V(200.0, 60.0)));
+        ed.doc.set_sheet(p.sheet, s);
+        ed.commit("Place view on sheet");
+    }
+    h.run();
+    h.state_mut().set_tool(ToolKind::Note);
+    h.run();
+    // The line in the new viewport (the first in the list): it is at y = 60 there.
+    click_paper(&mut h, V(170.0, 60.0));
+    assert!(h.state().tool.is_busy());
+    // Undo takes that viewport off again: the one left is now first in the list.
+    h.state_mut().undo();
+    h.run();
+    h.run();
+    assert_eq!(
+        h.state()
+            .drawing
+            .editor
+            .doc
+            .sheet(p.sheet)
+            .unwrap()
+            .viewports
+            .len(),
+        1
+    );
+    assert!(!h.state().tool.is_busy(), "the leader is let go");
+    // The text click places a plain note: nothing is tied through the other viewport.
+    click_paper(&mut h, V(60.0, 250.0));
+    let made = annotations(&h, p.sheet);
+    assert!(
+        matches!(&made[..], [(_, SheetAnnotation::Note { leaders, .. })] if leaders.is_empty()),
+        "{made:?}"
+    );
+
+    // A Dimension tool's pick whose viewport is moved (by a change that is not an undo)
+    // before the label is placed: let go the same way, and nothing is made.
+    h.key_press(Key::Escape);
+    h.run();
+    h.state_mut().set_tool(ToolKind::Dimension);
+    h.run();
+    let before = all_annotations(&h);
+    click_paper(&mut h, V(170.0, 150.0));
+    assert!(h.state().tool.is_busy());
+    {
+        let ed = &mut h.state_mut().drawing.editor;
+        ed.doc.begin();
+        let mut s = ed.doc.sheet(p.sheet).unwrap().clone();
+        s.viewports[0].at = V(260.0, 150.0);
+        ed.doc.set_sheet(p.sheet, s);
+        ed.commit("Move view on sheet");
+    }
+    click_paper(&mut h, V(200.0, 135.0));
+    assert!(!h.state().tool.is_busy());
+    assert_eq!(all_annotations(&h), before);
+}
+
+#[test]
+fn undo_during_a_drag_puts_the_note_back_and_keeps_the_history() {
+    let Some((mut h, p)) = on_sheet() else { return };
+    // One step in the history: a note added.
+    let id = {
+        let ed = &mut h.state_mut().drawing.editor;
+        ed.doc.begin();
+        let id = ed
+            .doc
+            .add_sheet_annotation(
+                p.sheet,
+                SheetAnnotation::note("ISSUED FOR PERMIT", V(100.0, 60.0)),
+            )
+            .unwrap();
+        ed.commit("Note");
+        id
+    };
+    h.run();
+    h.run();
+    let before = depth(&h);
+    let at = text_of(&h, p.sheet, id);
+    // Press on it, move 30 points, and undo with the button still down.
+    h.hover_at(at);
+    h.run();
+    button(&h, at, true);
+    h.run();
+    for k in 1..=3 {
+        h.hover_at(at + egui::vec2(10.0 * k as f32, 0.0));
+        h.run();
+    }
+    assert!(h.state().drawing.view.sheet_anno_drag.is_some());
+    h.state_mut().undo();
+    assert!(
+        h.state().drawing.view.sheet_anno_drag.is_none(),
+        "the drag is given up"
+    );
+    assert!(!h.state().drawing.editor.doc.in_transaction());
+    // The undo took the step before the drag (the note), whole; the drag left no step.
+    assert_eq!(depth(&h), before - 1);
+    assert!(annotations(&h, p.sheet).is_empty());
+    // Moving on and letting go changes nothing more.
+    h.hover_at(at + egui::vec2(60.0, 0.0));
+    h.run();
+    button(&h, at + egui::vec2(60.0, 0.0), false);
+    h.run();
+    assert_eq!(depth(&h), before - 1);
+    assert!(annotations(&h, p.sheet).is_empty());
+    // Redo is still there, and brings the note back where it was.
+    h.state_mut().redo();
+    h.run();
+    assert!(matches!(
+        &annotations(&h, p.sheet)[..],
+        [(_, SheetAnnotation::Note { at, .. })] if *at == V(100.0, 60.0)
+    ));
+    assert_eq!(depth(&h), before);
+
+    // Redo during a drag: the same. (Undo, then drag the note... there is none to drag, so
+    // drag it now and redo with nothing to redo: the drag is given up, nothing changes.)
+    let at = text_of(&h, p.sheet, id);
+    h.hover_at(at);
+    h.run();
+    button(&h, at, true);
+    h.run();
+    h.hover_at(at + egui::vec2(25.0, 0.0));
+    h.run();
+    h.hover_at(at + egui::vec2(40.0, 0.0));
+    h.run();
+    assert!(h.state().drawing.view.sheet_anno_drag.is_some());
+    h.state_mut().redo();
+    assert!(h.state().drawing.view.sheet_anno_drag.is_none());
+    assert!(!h.state().drawing.editor.doc.in_transaction());
+    button(&h, at + egui::vec2(40.0, 0.0), false);
+    h.run();
+    assert_eq!(depth(&h), before);
+    assert!(matches!(
+        &annotations(&h, p.sheet)[..],
+        [(_, SheetAnnotation::Note { at, .. })] if *at == V(100.0, 60.0)
+    ));
+}
+
+#[test]
+fn an_empty_note_is_not_brought_back_by_undo() {
+    let Some((mut h, p)) = on_sheet() else { return };
+    h.get_by_label("Note").click();
+    h.run();
+    click_paper(&mut h, V(60.0, 250.0));
+    assert_eq!(annotations(&h, p.sheet).len(), 1);
+    // Nothing typed; Esc out of the field, the tool and the pick.
+    for _ in 0..3 {
+        h.key_press(Key::Escape);
+        h.run();
+    }
+    assert!(annotations(&h, p.sheet).is_empty());
+    // Undo, as often as there is anything to undo, never shows an empty note again; nor
+    // does redo.
+    for _ in 0..3 {
+        h.state_mut().undo();
+        h.run();
+        assert!(annotations(&h, p.sheet).is_empty());
+    }
+    for _ in 0..3 {
+        h.state_mut().redo();
+        h.run();
+        assert!(annotations(&h, p.sheet).is_empty());
+    }
+    // And none is saved.
+    let text = drift_io::save(
+        &h.state().drawing.editor.doc,
+        &drift_io::Metadata::default(),
+    );
+    assert!(!text.contains("\"annotations\""), "{text}");
+}

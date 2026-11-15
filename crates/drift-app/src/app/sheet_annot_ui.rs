@@ -5,7 +5,7 @@ use drift_core::{
     ArrowStyle, DVec2, LeaderEnd, NoteFrame, PlacedView, Sheet, SheetAnnotation, SheetAnnotationId,
     SheetId, TextAlign,
 };
-use drift_edit::sheet_annotations::{OnSheet, moved};
+use drift_edit::sheet_annotations::{OnSheet, SheetPort, moved};
 use eframe::egui::{self, PointerButton};
 
 use crate::annotations::{AnnotationColors, AnnotationState, DimOwn};
@@ -87,8 +87,20 @@ impl DriftApp {
             Some(SheetAnnotation::Note { text, leaders, .. })
                 if text.trim().is_empty() && leaders.is_empty()
         );
-        if empty {
-            self.drawing.editor.delete_sheet_annotation(sheet, id);
+        if !empty {
+            return;
+        }
+        let ed = &mut self.drawing.editor;
+        if ed.history.undo_label() == Some("Sheet note") {
+            // Just placed and never typed in: taken back in the step that placed it, so
+            // no undo brings an empty note back.
+            ed.doc.begin();
+            ed.doc.remove_sheet_annotation(sheet, id);
+            let tx = ed.doc.commit("Sheet note");
+            ed.history.merge_into_last(tx);
+            ed.sync();
+        } else {
+            ed.delete_sheet_annotation(sheet, id);
         }
     }
 
@@ -221,19 +233,40 @@ impl DriftApp {
     /// The viewport the tool in hand sees the model through, for a pointer at `paper`: the
     /// one a Dimension tool's first pick was made in while it has one (its label may be
     /// placed outside the view's frame), else the one under the pointer.
-    fn sheet_tool_viewport(&mut self, sheet: &Sheet, paper: DVec2) -> Option<(usize, PlacedView)> {
+    fn sheet_tool_viewport(
+        &mut self,
+        sheet: &Sheet,
+        paper: DVec2,
+    ) -> Option<(SheetPort, PlacedView)> {
+        let held = self
+            .drawing
+            .view
+            .sheet_tool_port
+            .filter(|_| self.tool.is_busy() && self.tool.kind() == ToolKind::Dimension);
+        // The viewport a pick was made through is gone, moved or shows another view (an
+        // undo, the Inspector): the pick is let go rather than finished through another.
+        if held.is_some_and(|port| port.index_on(sheet).is_none()) {
+            self.tool_cancel();
+            self.drawing.view.sheet_tool_port = None;
+            self.status_next = Some("The view changed: pick again".to_owned());
+        }
         let doc = &self.drawing.editor.doc;
+        let placed = |i: usize| {
+            let p = sheet.viewports.get(i)?;
+            Some((
+                SheetPort::of(sheet, i)?,
+                PlacedView::new(p.view, doc.view(p.view)?, p),
+            ))
+        };
         let locked = self
             .drawing
             .view
             .sheet_tool_port
             .filter(|_| self.tool.is_busy() && self.tool.kind() == ToolKind::Dimension)
-            .and_then(|i| {
-                let p = sheet.viewports.get(i)?;
-                Some((i, PlacedView::new(p.view, doc.view(p.view)?, p)))
-            });
-        let found = locked.or_else(|| sheet_notes::port_at(doc, sheet, paper));
-        self.drawing.view.sheet_tool_port = found.as_ref().map(|(i, _)| *i);
+            .and_then(|port| placed(port.index_on(sheet)?));
+        let found =
+            locked.or_else(|| sheet_notes::port_at(doc, sheet, paper).and_then(|(i, _)| placed(i)));
+        self.drawing.view.sheet_tool_port = found.as_ref().map(|(port, _)| *port);
         found
     }
 
@@ -283,7 +316,7 @@ impl DriftApp {
         // mistaken for the sheet's.
         let on = OnSheet {
             sheet: id,
-            viewport: port.as_ref().map(|(i, _)| *i),
+            viewport: port.as_ref().map(|(port, _)| *port),
             paper,
         };
         let mods = Modifiers {
@@ -354,8 +387,8 @@ impl DriftApp {
         let doc = &self.drawing.editor.doc;
         let map = self.paper_map(rect);
         let accent = theme::accent(dark);
-        let port = self.drawing.view.sheet_tool_port.and_then(|i| {
-            let p = sheet.viewports.get(i)?;
+        let port = self.drawing.view.sheet_tool_port.and_then(|port| {
+            let p = sheet.viewports.get(port.index_on(sheet)?)?;
             Some(PlacedView::new(p.view, doc.view(p.view)?, p))
         });
         // The view the tool is picking in.
@@ -418,8 +451,8 @@ impl DriftApp {
         for t in self.tool.sheet_targets() {
             let tip = t
                 .viewport
-                .and_then(|i| {
-                    let p = sheet.viewports.get(i)?;
+                .and_then(|port| {
+                    let p = sheet.viewports.get(port.index_on(sheet)?)?;
                     let v = PlacedView::new(p.view, doc.view(p.view)?, p);
                     Some(v.to_paper(doc.anchor_pos(&t.to)?))
                 })

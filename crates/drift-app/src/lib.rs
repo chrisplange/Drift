@@ -429,17 +429,19 @@ struct CanvasView {
     sheet_anno_hover: Option<drift_core::SheetAnnotationId>,
     /// A sheet annotation being dragged.
     sheet_anno_drag: Option<app::sheet_annot_ui::AnnoDrag>,
-    /// The viewport (its index on the sheet shown) the Note or Dimension tool sees the model
-    /// through.
-    sheet_tool_port: Option<usize>,
+    /// The viewport of the sheet shown that the Note or Dimension tool sees the model
+    /// through, as it was when the tool last used it (checked against the sheet every frame:
+    /// see [`drift_edit::sheet_annotations::SheetPort`]).
+    sheet_tool_port: Option<drift_edit::sheet_annotations::SheetPort>,
     /// The picked sheet note's text field takes the keyboard next frame (just placed, or
     /// double-clicked).
     focus_sheet_note: bool,
     /// The sheet annotation whose text is being typed: its typing merges into one undo step.
     sheet_note_typing: Option<drift_core::SheetAnnotationId>,
-    /// The canvas showed a sheet last frame (a tool's unfinished picks don't carry between
-    /// the model and a sheet).
-    was_on_sheet: bool,
+    /// What the canvas showed last frame: a sheet, or the model (`None`). A tool's
+    /// unfinished picks don't carry between the model and a sheet, or from one sheet to
+    /// another.
+    shown_last: Option<drift_core::SheetId>,
     /// A drag on a view's crop on the canvas.
     crop_drag: Option<app::views_ui::CropDrag>,
     /// Shift and Ctrl (Cmd) as they are held this frame, for the pointer.
@@ -547,7 +549,7 @@ impl CanvasView {
             sheet_tool_port: None,
             focus_sheet_note: false,
             sheet_note_typing: None,
-            was_on_sheet: false,
+            shown_last: None,
             sheet_pick: Default::default(),
             crop_drag: None,
             keys_held: (false, false),
@@ -1272,10 +1274,12 @@ impl eframe::App for DriftApp {
             // Between the model and a sheet a tool starts afresh: a pick made in one means
             // nothing in the other. And nothing made in the model is ever the sheet's.
             let on_sheet = self.drawing.view.sheet_preview;
-            if on_sheet != self.drawing.view.was_on_sheet {
-                self.drawing.view.was_on_sheet = on_sheet;
+            // (Another sheet counts as much as the model: what was picked through a view of
+            // one sheet is not finished on another.)
+            let shown = self.current_sheet().filter(|_| on_sheet);
+            if shown != self.drawing.view.shown_last {
+                self.drawing.view.shown_last = shown;
                 self.abort_operation();
-                self.cancel_sheet_annotation_drag();
                 self.drawing.view.sheet_tool_port = None;
                 // Back in the model: a sheet note left without text goes.
                 if !on_sheet

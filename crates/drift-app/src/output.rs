@@ -942,7 +942,29 @@ fn push_recorded(
                 font: None,
             },
         };
-        d.items.push(item(ANNOTATION_LAYER, pen, prim, clip));
+        // (Nothing that isn't a number reaches a page: a place too far off to draw exactly
+        // is left out rather than written as `inf` or `NaN`.)
+        if prim_is_finite(&prim) {
+            d.items.push(item(ANNOTATION_LAYER, pen, prim, clip));
+        }
+    }
+}
+
+/// Whether every number of an annotation's page item is finite.
+fn prim_is_finite(prim: &Prim) -> bool {
+    match prim {
+        Prim::Line(a, b) => a.is_finite() && b.is_finite(),
+        Prim::Polyline { points, .. } => points.iter().all(|p| p.is_finite()),
+        Prim::Fill {
+            rings, triangles, ..
+        } => {
+            rings.iter().flatten().all(|p| p.is_finite())
+                && triangles.iter().flatten().all(|p| p.is_finite())
+        }
+        Prim::Text {
+            at, height, angle, ..
+        } => at.is_finite() && height.is_finite() && angle.is_finite(),
+        _ => true,
     }
 }
 

@@ -75,6 +75,10 @@ impl NoteTool {
         ed: &mut Editor,
     ) {
         use crate::sheet_annotations::SheetTarget;
+        // Leaders started on another sheet don't carry to this one.
+        if self.sheet_targets.iter().any(|t| t.sheet != on.sheet) {
+            self.sheet_targets.clear();
+        }
         if let Some(viewport) = on.viewport
             && (self.sheet_targets.is_empty() || mods.shift || p.alt)
         {
@@ -85,6 +89,7 @@ impl NoteTool {
             };
             if let Some(to) = to {
                 self.sheet_targets.push(SheetTarget {
+                    sheet: on.sheet,
                     viewport: Some(viewport),
                     to,
                 });

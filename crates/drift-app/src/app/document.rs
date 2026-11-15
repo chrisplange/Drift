@@ -1070,6 +1070,9 @@ impl DriftApp {
     }
 
     pub(crate) fn abort_operation(&mut self) {
+        // A sheet annotation being dragged goes back first: its drag holds a step open, and
+        // an undo, a redo or a change of tool inside it would end up in that step.
+        self.cancel_sheet_annotation_drag();
         if self.tool.is_busy() {
             self.tool_cancel();
         }

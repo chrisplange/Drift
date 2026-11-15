@@ -585,6 +585,12 @@ pub trait Tool {
     ) -> Option<(Constraint, DVec2)> {
         None
     }
+
+    /// While a sheet is shown ([`Editor::on_sheet`]): what a sheet note being placed points
+    /// at so far, for the sheet to preview its leaders.
+    fn sheet_targets(&self) -> Vec<crate::sheet_annotations::SheetTarget> {
+        Vec::new()
+    }
 }
 
 fn preview(shape: Shape) -> SketchItem {

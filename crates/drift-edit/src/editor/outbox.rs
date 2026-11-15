@@ -25,6 +25,10 @@ pub struct Outbox {
     pub box_pick: Option<crate::picks::BoxPick>,
     /// A note just placed by a tool, whose text the UI should let the user type.
     pub pending_note_edit: Option<drift_core::AnnotationId>,
+    /// A sheet note just placed by a tool (#432), whose text the UI should let the user type.
+    pub pending_sheet_note_edit: Option<drift_core::SheetAnnotationId>,
+    /// A sheet annotation just made by a tool, for the UI to pick.
+    pub new_sheet_annotation: Option<drift_core::SheetAnnotationId>,
     /// A view just drawn with the View tool, for the UI to pick.
     pub new_view: Option<drift_core::ViewId>,
     /// The Base point tool has done its one pick (the app goes back to the select tool).

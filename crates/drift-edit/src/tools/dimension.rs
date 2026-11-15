@@ -201,11 +201,43 @@ impl DimensionTool {
         Some(c.with_value(value))
     }
 
+    /// While a sheet is shown (#432): put `c` on the sheet as a dimension of its own,
+    /// measured through the viewport the pointer is in, its label `offset` from its anchor
+    /// (world mm). It is never a constraint. Returns whether it was added.
+    fn add_to_sheet(
+        ed: &mut Editor,
+        on: crate::sheet_annotations::OnSheet,
+        c: Constraint,
+        offset: Option<DVec2>,
+    ) -> bool {
+        let added = match on.viewport {
+            Some(viewport) => ed.add_sheet_dimension(on.sheet, viewport, c, offset),
+            None => Err(crate::editor::EditError::Invalid(
+                "click inside a view to dimension it".into(),
+            )),
+        };
+        match added {
+            Ok(_) => true,
+            Err(e) => {
+                ed.out.notice = Some(format!("{}: {e}", c.type_name()));
+                false
+            }
+        }
+    }
+
     pub(super) fn place(&mut self, ed: &mut Editor, base: DimBase, at: DVec2) {
         self.reset(ed);
         let Some(c) = Self::dimension(ed, base, at) else {
             return;
         };
+        // On a sheet: the sheet's own dimension, a reference by nature (no value to type,
+        // no row to go on with).
+        if let Some(on) = ed.on_sheet {
+            let offset = crate::labels::dimension_anchor(&ed.doc, &c)
+                .map(|anchor| crate::labels::centred_offset(&ed.doc, &c, at - anchor));
+            Self::add_to_sheet(ed, on, c, offset);
+            return;
+        }
         // Across one wall, face to face: its thickness dimension.
         if ed.thickness_dimension_across(&c, at) {
             return;

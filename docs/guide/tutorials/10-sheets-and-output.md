@@ -259,6 +259,9 @@ When what one is tied to goes, it goes the way the model's own do, in the same u
 
 - Delete the geometry, and a dimension on it is deleted with it. A note loses the leaders
   that pointed at it and keeps its text where it was.
+- Make the geometry into a block, or change a curve into one of another kind that the
+  dimension can't measure, and the same happens: in the model it is no longer there to
+  point at.
 - Take the view off the sheet, or delete the view, and the same happens to what was tied
   to the model through it.
 - **Duplicate sheet** with its views copies them onto the copy, tied to the copy's views.

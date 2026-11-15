@@ -648,7 +648,7 @@ pub(crate) mod tests {
         }
         let shown: Vec<String> = texts(&d).into_iter().map(|t| t.0).collect();
         assert!(shown.contains(&"1000".to_owned()) && shown.contains(&"FAR".to_owned()));
-        let pdf = drift_io::pdf::write(&[d.clone()], "Test");
+        let pdf = drift_io::pdf::write(std::slice::from_ref(&d), "Test");
         let pdf_text = String::from_utf8_lossy(&pdf);
         let svg = drift_io::svg::write(&d);
         for bad in ["inf", "NaN", "nan"] {

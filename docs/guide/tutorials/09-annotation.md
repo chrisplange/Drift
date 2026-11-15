@@ -146,6 +146,15 @@ them and switch them back on. Alt+H again hides them.
 Alt+D hides or shows every dimension and note at once (**View → Dimensions and notes**).
 That's a view setting; it doesn't change the drawing.
 
+## Notes and dimensions for one sheet
+
+Everything above is drawn in the model, so it shows in every view of it. A note or
+dimension meant for one sheet, at that sheet's scale, goes on the sheet instead: open the
+sheet's tab and use **Note** or **Dimension** there. It shows only on that sheet, its text
+is a paper size, and a dimension reads the model's true size through the view you clicked
+in. See
+[Notes and dimensions on the sheet](10-sheets-and-output.md#notes-and-dimensions-on-the-sheet).
+
 ## Annotations at print size
 
 On the canvas, dimensions, notes, leaders and section and elevation marks show at the size

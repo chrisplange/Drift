@@ -215,10 +215,15 @@ impl Document {
     /// Sheets' annotations follow the model: after geometry is deleted, what was tied to it
     /// goes (a dimension) or lets go of it (a note's leader), in the deleting step.
     pub(super) fn settle_sheets(&mut self) {
+        // (Only the sheets with something tied to what went are copied and written.)
         let ids: Vec<SheetId> = self
             .sheets
             .iter()
-            .filter(|(_, s)| !s.annotations.is_empty())
+            .filter(|(_, s)| {
+                s.annotations
+                    .values()
+                    .any(|a| a.entities().iter().any(|e| !self.entities.contains_key(e)))
+            })
             .map(|(id, _)| *id)
             .collect();
         for id in ids {

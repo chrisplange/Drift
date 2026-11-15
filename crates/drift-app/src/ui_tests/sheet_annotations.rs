@@ -330,3 +330,149 @@ fn in_the_model_the_tools_are_the_models_and_a_drawing_tool_leaves_the_sheet() {
     );
     assert!(annotations(&h, p.sheet).is_empty());
 }
+
+/// The sheet's dimensions and the leaders of its notes, counted.
+fn tied(h: &Harness<'_, DriftApp>, sheet: SheetId) -> (usize, usize) {
+    let all = annotations(h, sheet);
+    let dimensions = all
+        .iter()
+        .filter(|(_, a)| matches!(a, SheetAnnotation::Dimension { .. }))
+        .count();
+    let leaders = all
+        .iter()
+        .map(|(_, a)| match a {
+            SheetAnnotation::Note { leaders, .. } => leaders.len(),
+            SheetAnnotation::Dimension { .. } => 0,
+        })
+        .sum();
+    (dimensions, leaders)
+}
+
+#[test]
+fn removing_views_deleting_geometry_and_copying_sheets_leave_nothing_dangling() {
+    let Some((mut h, mut p)) = on_sheet() else {
+        return;
+    };
+    // A dimension of the line and a note with a leader to it, both through the view.
+    p.dimension();
+    p.note();
+    h.state_mut().drawing.editor = drift_edit::editor::Editor::new(p.ed.doc.clone());
+    h.run();
+    h.run();
+    assert_eq!(tied(&h, p.sheet), (1, 1));
+    let sound = |h: &mut Harness<'_, DriftApp>| {
+        // Drawn (the sheet is shown), and nothing on any sheet names what isn't there.
+        h.run();
+        h.run();
+        let doc = &h.state().drawing.editor.doc;
+        for (_, s) in doc.sheets() {
+            for a in s.annotations.values() {
+                assert!(
+                    a.ports()
+                        .iter()
+                        .all(|port| doc.port_view(s, *port).is_some())
+                );
+                assert!(a.entities().iter().all(|e| doc.get(*e).is_some()));
+            }
+        }
+    };
+    let whole = h.state().drawing.editor.doc.clone();
+
+    // The view taken off the sheet: the dimension goes, the note keeps its text and loses
+    // its leader. One undo brings all of it back; redo takes it again.
+    h.state_mut().drawing.view.sheet_pick = SheetPick::View;
+    h.state_mut().remove_viewport(p.sheet);
+    sound(&mut h);
+    assert_eq!(tied(&h, p.sheet), (0, 0));
+    assert_eq!(annotations(&h, p.sheet).len(), 1, "the note's text stays");
+    h.state_mut().undo();
+    sound(&mut h);
+    assert_eq!(h.state().drawing.editor.doc, whole);
+    h.state_mut().redo();
+    sound(&mut h);
+    assert_eq!(tied(&h, p.sheet), (0, 0));
+    h.state_mut().undo();
+
+    // The view deleted from the drawing: the same, in one step.
+    h.state_mut().delete_view(p.view);
+    sound(&mut h);
+    assert_eq!(tied(&h, p.sheet), (0, 0));
+    h.state_mut().undo();
+    sound(&mut h);
+    assert_eq!(h.state().drawing.editor.doc, whole);
+
+    // The view moved on the sheet and rescaled: everything stays tied, nothing is lost.
+    {
+        let ed = &mut h.state_mut().drawing.editor;
+        ed.doc.begin();
+        let mut s = ed.doc.sheet(p.sheet).unwrap().clone();
+        s.viewports[0].at = V(260.0, 120.0);
+        ed.doc.set_sheet(p.sheet, s);
+        let mut v = ed.doc.view(p.view).unwrap().clone();
+        v.scale = 25.0;
+        ed.doc.set_view(p.view, v);
+        ed.commit("Move and rescale");
+    }
+    sound(&mut h);
+    assert_eq!(tied(&h, p.sheet), (1, 1));
+    h.state_mut().undo();
+
+    // The line deleted in the model: the dimension goes with it and the leader lets go;
+    // undo brings them back; redo takes them again.
+    {
+        let ed = &mut h.state_mut().drawing.editor;
+        ed.doc.begin();
+        ed.doc.delete([p.line]);
+        ed.commit("Delete");
+    }
+    sound(&mut h);
+    assert_eq!(tied(&h, p.sheet), (0, 0));
+    h.state_mut().undo();
+    sound(&mut h);
+    assert_eq!(h.state().drawing.editor.doc, whole);
+    h.state_mut().redo();
+    sound(&mut h);
+    assert_eq!(tied(&h, p.sheet), (0, 0));
+    h.state_mut().undo();
+
+    // Duplicate sheet with its views: the copy has its own, tied to its own view.
+    let sheets = |h: &Harness<'_, DriftApp>| -> Vec<SheetId> {
+        h.state()
+            .drawing
+            .editor
+            .doc
+            .sheets()
+            .map(|(id, _)| id)
+            .collect()
+    };
+    let before = sheets(&h);
+    h.state_mut().duplicate_sheet(p.sheet, true);
+    sound(&mut h);
+    let copy = h.state().current_sheet().expect("the copy is shown");
+    assert_eq!(sheets(&h).len(), before.len() + 1);
+    assert_eq!(tied(&h, copy), (1, 1));
+    assert_eq!(tied(&h, p.sheet), (1, 1));
+    let doc = &h.state().drawing.editor.doc;
+    let (first, second) = (doc.sheet(p.sheet).unwrap(), doc.sheet(copy).unwrap());
+    assert_ne!(first.viewports[0].view, second.viewports[0].view);
+    assert_ne!(first.viewports[0].id, second.viewports[0].id);
+    assert!(
+        first
+            .annotations
+            .keys()
+            .all(|a| !second.annotations.contains_key(a)),
+        "ids of its own"
+    );
+    h.state_mut().undo();
+    sound(&mut h);
+    assert_eq!(sheets(&h), before);
+
+    // Duplicate without views: nothing tied comes along; the note's text does.
+    h.state_mut().show_sheet(Some(p.sheet));
+    h.state_mut().duplicate_sheet(p.sheet, false);
+    sound(&mut h);
+    let copy = h.state().current_sheet().expect("the copy is shown");
+    assert_eq!(tied(&h, copy), (0, 0));
+    assert_eq!(annotations(&h, copy).len(), 1);
+    assert_eq!(tied(&h, p.sheet), (1, 1));
+}

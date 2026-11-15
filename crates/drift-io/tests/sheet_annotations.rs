@@ -502,9 +502,14 @@ fn text() -> impl Strategy<Value = String> {
     ]
 }
 
+/// What a generated leader is made from: its viewport (or the paper), what it points at
+/// (a model point, a sketch point or a spot on a line) and which, a point and a number for
+/// those, its shape and end, and whether it has a shoulder.
+type LeaderSeed = (Option<usize>, u8, usize, DVec2, f64, u8, u8, bool);
+
 /// A leader: to the paper, or through viewport `port` (0–2) to a model point, a sketch
 /// point (0–3) or a spot on a line (0–3).
-fn leader() -> impl Strategy<Value = (Option<usize>, u8, usize, DVec2, f64, u8, u8, bool)> {
+fn leader() -> impl Strategy<Value = LeaderSeed> {
     (
         prop::option::of(0..3usize),
         0..3u8,
@@ -522,7 +527,7 @@ enum Made {
     Note {
         text: String,
         at: DVec2,
-        leaders: Vec<(Option<usize>, u8, usize, DVec2, f64, u8, u8, bool)>,
+        leaders: Vec<LeaderSeed>,
         bold: bool,
         frame: u8,
         height: Option<f64>,

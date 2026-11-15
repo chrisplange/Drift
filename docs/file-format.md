@@ -1,6 +1,6 @@
 # The `.drift` file format: versions and stability
 
-*2026-10-24, against `main` at 6a625ec (format 42, reader 42); format 43, reader 43 since 2026-10-27; format 44, reader 44 since 2026-10-29; Beta 1.6 ships format 44.*
+*2026-10-24, against `main` at 6a625ec (format 42, reader 42); format 43, reader 43 since 2026-10-27; format 44, reader 44 since 2026-10-29; Beta 1.6 ships format 44; format 45, reader 44 since 2026-11-15.*
 
 A `.drift` file is UTF-8 JSON with one entity, constraint or record per line, so drawings
 diff and merge cleanly. The reader and writer are in `crates/drift-io/src/lib.rs`; the
@@ -14,7 +14,7 @@ from 38 to 41 in two days in October 2026; this document sets the rules that kee
 ```json
 {
   "format": "drift",
-  "version": 44,
+  "version": 45,
   "reader": 44,
   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
   ...
@@ -90,6 +90,7 @@ drawing rules, an option of values and a whole-sketch option) as each format ver
 
 | Fixture | Written by | Shipped in |
 |---|---|---|
+| `v45.drift` | `drift-io` with a sheet's own `annotations` (#432) | — |
 | `v44.2.drift` | `drift-io` with a dimension's `paper_label` | — |
 | `v44.1.drift` | `drift-io` with `offsets` (#247) | Beta 1.6 |
 | `v44.drift` | `drift-io` with `corner`, `midpoint_of` and `equal_distance` (#238) | — |
@@ -206,6 +207,7 @@ migration is named, the change was additive and older files read unchanged.
 | 42 | `reader` (the oldest version that reads the file). Reading passes over what it doesn't know and keeps it for saving (section 4). No migration. Older builds refuse 42 files with "please update Drift" (they were strict, so they couldn't read a `reader` field anyway). |
 | 43 | `fix_x` and `fix_y` relations: a point's x or y alone held where it is (what Fix pins of a point something else partly holds, #203). Breaking (a new relation type), so `reader` is 43 too. No migration. |
 | 44 | Three relations a fillet or chamfer uses to keep what was measured to its corner and along its sides (#238): `corner` (`point`, curves `a` and `b`: the point held where the two lines, or circles of arcs, cross; the sharp corner the fillet or chamfer cut off, kept as a construction point), `midpoint_of` (`point` midway between points `a` and `b`: a midpoint relation on a side that was cut short, still from corner to corner) and `equal_distance` (the distance from `a` to `b` equal to the one from `c` to `d`: an equal-length relation on such a side). When both of a `corner`'s curves are deleted, the point goes with them, as a sharp corner's point goes with its curves, along with what was measured to it. When only one is deleted, the relation goes and the point stays only if something else names it. Breaking (new relation types), so `reader` is 44 too. No migration. *(Beta 1.6)* |
+| 45 | A sheet's own `annotations` (#432): notes, leaders and dimensions placed on the sheet in paper mm, shown nowhere else, and a viewport's `id` (`r5`: what those annotations name it by; a sheet can hold the same view twice, so the view's id isn't enough; written only once something is tied to it). A `note` has its `text`, `at` (the text's middle on the paper), the text style fields a model note has, and `leaders`: each a model note's `leader` record plus an optional `port`. With a `port` the leader's `to` means what it means in the model (`point`, `curve` and `t`, or `at` as a fixed model point), seen through that viewport; without one, `at` is a paper point. A `dimension` has its `port`, a `measure` (a dimension's `type` and the entities it is on, as a constraint names them, with no value: the label shows what the geometry measures), its `label` (offset from its anchor in paper mm) and the `prefix`, `suffix`, `tol`, `below` and `text` a model dimension has. Either may have a `style` (its own settings over the drafting style, as a `styles` record without `of`). It is never among `constraints`, so nothing solves for it. **An addition (rule 2) that also bumps `version`, to mark it: `reader` stays 44.** A 44 build opens the file, shows the sheet without them and keeps them when it saves. Rule 3: such a build may have deleted the geometry, or taken the view off the sheet, that one is tied to; reading, an annotation naming a viewport the sheet doesn't have (or whose id two viewports share: the later loses it) or an entity that isn't there is repaired as the app does it (a dimension goes, a note keeps its text and loses that leader), the reader says so in its notes, and the next save writes the sheet repaired. A 44 build that reorders sheets moves their contents between ids and leaves what it doesn't know behind, so notes on the paper alone can end up on another sheet; what was tied to a viewport is dropped by the same check. A malformed record (an unknown `type` or `measure`, a non-finite number, a leader to geometry without a `port`, an id used twice) is refused. No migration: older files have neither field. |
 
 ### Additions without a bump (from 42)
 

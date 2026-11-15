@@ -497,6 +497,10 @@ pub(crate) mod tests {
         let pdf = drift_io::pdf::write(&pages, "Test");
         let words = crate::ui_tests::pdf_words(&pdf);
         assert!(words.contains("1000") && words.contains("DOOR"), "{words}");
+        // The sheet's SVG has them too.
+        let svg = drift_io::svg::write(&pages[0]);
+        assert!(svg.contains("DOOR") && svg.contains("1000"), "{svg}");
+        assert!(!drift_io::svg::write(&pages[1]).contains("DOOR"));
         // Once each: on its own sheet's page only.
         assert_eq!(words.matches("DOOR").count(), 1, "{words}");
         assert_eq!(words.matches("1000").count(), 1, "{words}");

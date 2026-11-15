@@ -123,7 +123,7 @@ Seeded 2026-11-09 from the command registry, importers/exporters, agent schema a
 
 ## Automation and AI
 - Standalone stdio MCP server. `apps/mcp/src/router.rs`
-- Agent tools: files, geometry, relations, dimensions, fills, text, offset, fillet/chamfer, trim/extend/split, transform, measure, analyze, render, batch, undo/redo, import, export, layers. `crates/drift-app/src/agent/schema.rs`
+- Agent tools: files, geometry, relations, dimensions, fills, text, offset, fillet/chamfer, trim/extend/split, transform, measure, analyze, render, batch, undo/redo, import, export, layers, blocks (make, place, explode, block ↔ group). `crates/drift-app/src/agent/schema.rs`
 - Render to PNG with ids and status colours. `crates/drift-app/src/agent/render.rs`
 - Analyze: DOF, conflicts, open ends, closed areas. `crates/drift-app/src/agent/analyze.rs`
 - Drift script (rooms, walls, openings, grids, arrays, relations, dimensions; one undo step). `crates/drift-app/src/agent/script/run.rs`
@@ -131,7 +131,7 @@ Seeded 2026-11-09 from the command registry, importers/exporters, agent schema a
 - Blender add-on imports Drift profiles. `integrations/blender/drift_profiles` (unverified: behaviour)
 
 ## Not features (don't claim)
-- Making, placing or exploding blocks through MCP / AI link (#231).
+- Blocks in Drift script: the `blocks` tool makes, places and explodes them, the script has no words for them (#456).
 - Script `room … walls` making real walls; it makes offset lines today (#314).
 - Non-PDF-compatible `.ai` files.
 - Web build (`apps/web`) is a build target, not a shipped product. (unverified)

@@ -33,6 +33,8 @@ pub(crate) enum Command {
     Tool(ToolKind),
     Arrange(Arrange),
     Toggle(ViewFlag),
+    /// Step which relations show their symbols: off, picked only, all.
+    Relations,
     Panel(Panel),
     HideAllPanels,
     ResetPanels,
@@ -137,7 +139,6 @@ pub(crate) enum ViewFlag {
     Dimensions,
     /// Dimensions and notes at their printed size for the drawing scale.
     PrintSize,
-    Relations,
     Hidden,
     Free,
     Combs,
@@ -1424,9 +1425,9 @@ fn table() -> Vec<Spec> {
         Spec::new(
             "view.relations",
             C::View,
-            K::Toggle(ViewFlag::Relations),
+            K::Relations,
             "Relations",
-            "Show or hide relation symbols",
+            "Relation symbols: off, for what is picked only, or all (each press steps on)",
         )
         .keys(const { &[alt(Key::R)] }),
         Spec::new(

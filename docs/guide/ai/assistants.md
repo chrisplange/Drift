@@ -139,12 +139,13 @@ away from your open drawings altogether, start it with `--no-link`. If it's star
 | Tools | For |
 |---|---|
 | `new_drawing`, `open_drawing`, `save_drawing`, `drawing_info` | Files and an overview: units, scale, layers, variables, degrees of freedom. |
-| `list_entities`, `list_constraints`, `measure` | Reading the drawing: ids, coordinates, lengths, relations, dimensions. |
+| `list_entities`, `list_constraints`, `measure` | Reading the drawing: ids, coordinates, lengths, relations, dimensions, and where each block copy is. |
 | `add_geometry` | Points, lines, polylines, rectangles, regular polygons, circles, arcs, ellipses and Bézier curves. Shapes that share a point are joined. |
 | `add_relations` | Horizontal, vertical, parallel, perpendicular, equal, tangent, concentric, coradial, collinear, coincident, symmetric, midpoint, point on curve and fix. |
 | `add_dimensions`, `set_dimension`, `set_variables`, `remove_constraints` | Driving (or reference) dimensions, with values such as `3600`, `"3.6 m"`, `"12'6\""` or expressions of variables like `"W/2"`. |
 | `move_point`, `transform`, `offset`, `trim_extend_split`, `fillet_chamfer`, `delete`, `set_construction` | Editing: move, rotate, scale, mirror, arrays; offsets that follow their source; trim (also one shape by another), extend, split; fillets and chamfers, on several corners at once. |
 | `layers`, `add_fill`, `add_text` | Layers, solid fills and hatches, and text. |
+| `blocks` | [Blocks](../tutorials/07-blocks.md): make one from curves, place copies, explode a copy, and turn a group into a block or a copy into a group. See [Blocks](#blocks) below. |
 | `import_file` | DWG, DXF, SVG, PDF or Illustrator, as geometry or as an underlay to trace, at a scale such as `"1:50"`. |
 | `render`, `analyze` | Checking: a picture of the drawing, and its degrees of freedom, conflicts, open ends and closed areas. |
 | `export` | PDF or SVG of the sheets, DWG or DXF (AutoCAD 2018, or R12 for laser cutters) of model space, or a PNG. |
@@ -163,6 +164,33 @@ degrees, counter-clockwise. The exception is a value written as text, and Drift 
 plain number there is in the drawing's display unit, as when you type it into Drift, also
 when it's added to a length (`"W/2 + 100"` adds 100 inches in a feet-and-inches drawing). A
 value given as a plain JSON number is always millimetres.
+
+## Blocks
+
+For a part that repeats (a desk, a door leaf, a fixture), the assistant draws it once and
+makes it a block, as you would with **Make block**. The `blocks` tool does four things:
+
+| `op` | What it does |
+|---|---|
+| `make` | Turns the curves it names into a block, with a name and a base point (the middle of the curves unless it gives one). One copy takes the curves' place. Fills the curves enclose go into the block. |
+| `place` | Puts a copy of a block, named by id or by name, with its base point at a position. The copy can be turned by an angle, mirrored and scaled, and put on a layer. |
+| `explode` | Turns copies back into ordinary curves. With `to_group` each copy becomes a group named after its block, as **Explode to group** does. |
+| `from_group` | Turns a group into a block named after it, with one copy in its place, as **Make block from group** does. |
+
+`drawing_info` lists the drawing's blocks (with how many copies each has) and its groups.
+`list_entities` lists the copies: each one's block, position, angle, scale, mirror, layer
+and extent. A block has an id like `b1`, a copy `i5` and a group `g2`. `delete` removes a
+copy by its id.
+
+Each of these is one undo step, like every other change. Copies aren't solved: a copy sits
+where it was placed and takes no relations or dimensions, and the curves that go into a
+block lose theirs. While you are editing a block in place, the assistant's `blocks` calls
+are refused until you finish.
+
+Not through the assistant yet: moving or turning a copy that is already placed (it deletes
+the copy and places it again), editing a block's curves in place (it explodes a copy,
+changes the curves and makes a new block), and renaming or deleting a block. Drift script
+has no words for blocks.
 
 ## Drift scripts
 
@@ -196,6 +224,8 @@ choose **Build → Walls from lines** ([Walls](../tutorials/14-walls.md)).
 - "Import `site-plan.pdf` at 1:200 as an underlay on a layer called Site. Trace the
   boundary as a closed polyline and tell me its area."
 - "Hatch the walls with ANSI31 and put the room names in the middle of each room."
+- "Draw a 1600 × 800 desk, make it a block called Desk with its base point at the back left
+  corner, and place six of them in two rows."
 - "Export the drawing as a PDF on an A3 sheet."
 
 For good results, ask for intent and let the assistant constrain it: "the walls are

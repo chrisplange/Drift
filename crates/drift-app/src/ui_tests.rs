@@ -7,6 +7,7 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable as _;
 
 use crate::DriftApp;
+use crate::app::view::ShowRelations;
 use crate::dock::{Panel, Place, Side};
 use crate::overlay::ScreenMap;
 use drift_edit::tools::{Overlay, ToolKind};
@@ -38,6 +39,8 @@ mod layer_toggles;
 mod link;
 /// Selection filters you can combine.
 mod pick_filters;
+/// Which relations show their symbols: Off, Picked only, All (#337).
+mod relations_shown;
 /// Picking and moving: G with a midpoint, axis locks in a drag, hidden areas.
 mod selection_move;
 /// A filled shape as one object in the Inspector: Stroke and Fill.
@@ -4619,14 +4622,14 @@ fn end_points_light_up_and_hide_until_used() {
 #[test]
 fn view_and_tool_hotkeys() {
     let Some(mut h) = harness() else { return };
-    // Alt+D / Alt+R hide and show dimensions and relations.
+    // Alt+D hides and shows dimensions; Alt+R steps which relations show.
     let (dims, rels) = (h.state().show_dimensions, h.state().show_relations);
     h.key_press_modifiers(EguiModifiers::ALT, Key::D);
     h.run();
     h.key_press_modifiers(EguiModifiers::ALT, Key::R);
     h.run();
     assert_eq!(h.state().show_dimensions, !dims);
-    assert_eq!(h.state().show_relations, !rels);
+    assert_eq!(h.state().show_relations, rels.next());
     assert_eq!(
         h.state().tool.kind(),
         ToolKind::Select,
@@ -9995,7 +9998,7 @@ fn tangent_arcs_and_lines_start_on_a_partial_ellipse_and_a_pen_curve() {
 }
 
 #[test]
-fn view_switches_say_so_and_hidden_dimensions_and_relations_come_back_each_start() {
+fn view_switches_say_so_and_hidden_dimensions_come_back_each_start() {
     let Some(mut h) = harness() else { return };
     let status = |h: &Harness<'static, DriftApp>| {
         h.state()
@@ -10016,7 +10019,7 @@ fn view_switches_say_so_and_hidden_dimensions_and_relations_come_back_each_start
     h.key_press_modifiers(EguiModifiers::ALT, Key::R);
     h.run();
     h.run();
-    assert!(!h.state().show_relations);
+    assert_eq!(h.state().show_relations, ShowRelations::Off);
     assert!(status(&h).starts_with("Relations hidden"), "{}", status(&h));
     h.key_press_modifiers(EguiModifiers::SHIFT | EguiModifiers::ALT, Key::W);
     h.run();
@@ -10028,13 +10031,13 @@ fn view_switches_say_so_and_hidden_dimensions_and_relations_come_back_each_start
     h.get_by_label("Relations off · Show").click();
     h.run();
     h.run();
-    assert!(h.state().show_relations);
+    assert_eq!(h.state().show_relations, ShowRelations::All);
     assert_eq!(status(&h), "Relations shown");
     assert!(h.query_by_label("Relations off · Show").is_none());
-    h.state_mut().show_relations = false;
+    h.state_mut().show_relations = ShowRelations::Off;
     h.run();
 
-    // Hidden dimensions and relations aren't kept; thin lines are.
+    // Hidden dimensions aren't kept; which relations show, and thin lines, are.
     let mut storage = MemoryStorage::default();
     eframe::App::save(h.state_mut(), &mut storage);
     let prefs = h.state().view_prefs();
@@ -10042,18 +10045,17 @@ fn view_switches_say_so_and_hidden_dimensions_and_relations_come_back_each_start
         .split(';')
         .filter_map(|p| p.split('=').next())
         .collect();
-    assert!(
-        !keys.contains(&"dims") && !keys.contains(&"rels"),
-        "{prefs}"
-    );
+    assert!(!keys.contains(&"dims"), "{prefs}");
+    assert!(prefs.split(';').any(|p| p == "rels=off"), "{prefs}");
     let Some(mut fresh) = harness() else { return };
     fresh.state_mut().restore_session(&storage);
     fresh.run();
-    assert!(fresh.state().show_dimensions && fresh.state().show_relations);
+    assert!(fresh.state().show_dimensions);
+    assert_eq!(fresh.state().show_relations, ShowRelations::Off);
     assert!(fresh.state().thin_lines);
-    // Preferences saved by an older build that hid them don't either.
-    fresh.state_mut().apply_view_prefs("dims=0;rels=0");
-    assert!(fresh.state().show_dimensions && fresh.state().show_relations);
+    // Preferences saved by an older build that hid dimensions don't hide them either.
+    fresh.state_mut().apply_view_prefs("dims=0");
+    assert!(fresh.state().show_dimensions);
 }
 
 /// The assistant's server reads the rules new drawings start with from the app's saved
@@ -10194,7 +10196,8 @@ fn saved_preferences_read_back_unchanged() {
         drift_edit::walls_from_lines::UsedLines::Layer
     );
     assert_eq!(prefs.fill_alone_picks, 2);
-    assert_eq!(h.state().view_prefs(), SAVED);
+    // (Which relations show is saved since #337: a key those builds didn't write.)
+    assert_eq!(h.state().view_prefs().replace("rels=all;", ""), SAVED);
 }
 
 #[test]

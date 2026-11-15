@@ -240,6 +240,20 @@ pub(super) fn info(s: &mut Session) -> Res {
             json!({ "name": v.name, "expression": v.expr, "kind": v.kind.label(), "value": value })
         })
         .collect();
+    let blocks: Vec<Value> = doc
+        .blocks()
+        .map(|(id, b)| {
+            let copies = doc.instances().filter(|(_, i)| i.block == id).count();
+            json!({
+                "id": id.to_string(), "name": b.name, "curves": b.items.len(),
+                "fills": b.fills.len(), "copies": copies,
+            })
+        })
+        .collect();
+    let groups: Vec<Value> = doc
+        .groups()
+        .map(|(id, g)| json!({ "id": id.to_string(), "name": g.name, "members": g.members.len() }))
+        .collect();
     let b = s.editor.bounds();
     let bounds =
         (!b.is_empty()).then(|| json!([num(b.min.x), num(b.min.y), num(b.max.x), num(b.max.y)]));
@@ -254,6 +268,9 @@ pub(super) fn info(s: &mut Session) -> Res {
         "dimensions": dims,
         "fills": doc.fills().count(),
         "texts": doc.texts().count(),
+        "blocks": blocks,
+        "block_copies": doc.instances().count(),
+        "groups": groups,
         "sheets": doc.sheets().map(|(id, sh)| json!({"id": id.to_string(), "name": sh.name})).collect::<Vec<_>>(),
         "underlays": doc.underlays().map(|(id, u)| json!({"id": id.to_string(), "name": u.name})).collect::<Vec<_>>(),
         "layers": layers,
@@ -289,10 +306,14 @@ pub(super) fn list_entities(s: &mut Session, a: &Value) -> Res {
     };
     let mut out = Vec::new();
     let mut total = 0;
+    // Block copies are listed after the curves (they are not entities): all of them, or
+    // those the layer and region ask for; not when particular entities are asked for.
+    let list_copies = ids.is_none() && kind.is_none_or(|k| k == "block_copy");
     let candidates: Vec<EntityId> = match ids {
         Some(ids) => ids,
         None => doc.iter().map(|(id, _)| id).collect(),
     };
+    let groups = doc.group_index();
     for id in candidates {
         let Some(e) = doc.get(id) else { continue };
         if (e.kind.is_point() && !points && a.get("ids").is_none())
@@ -310,10 +331,43 @@ pub(super) fn list_entities(s: &mut Session, a: &Value) -> Res {
         }
         total += 1;
         if out.len() < limit {
-            out.push(describe_entity(doc, id));
+            let mut v = describe_entity(doc, id);
+            if let Some(g) = groups.get(&id) {
+                v["group"] = json!(g.to_string());
+            }
+            out.push(v);
         }
     }
-    Ok(json!({ "count": total, "entities": out, "truncated": total > out.len() }))
+    let mut result = json!({ "count": total, "entities": out, "truncated": total > out.len() });
+    if list_copies && doc.instances().next().is_some() {
+        let ed = &s.editor;
+        let mut copies = Vec::new();
+        let mut count = 0;
+        for (id, i) in doc.instances() {
+            if layer.is_some_and(|l| l != i.layer) {
+                continue;
+            }
+            if let Some((lo, hi)) = within {
+                let b = ed.instance_bounds(id);
+                if b.is_empty()
+                    || b.max.x < lo.x
+                    || b.min.x > hi.x
+                    || b.max.y < lo.y
+                    || b.min.y > hi.y
+                {
+                    continue;
+                }
+            }
+            count += 1;
+            if copies.len() < limit {
+                copies.push(super::blocks::describe_copy(ed, id));
+            }
+        }
+        result["block_copy_count"] = json!(count);
+        result["block_copies_truncated"] = json!(count > copies.len());
+        result["block_copies"] = json!(copies);
+    }
+    Ok(result)
 }
 
 pub(super) fn list_constraints(s: &mut Session, a: &Value) -> Res {

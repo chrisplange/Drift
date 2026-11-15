@@ -7,7 +7,7 @@ use drift_edit::prefs::rules_pref;
 pub(crate) const LIVE_PROFILES_S: f64 = 0.1;
 
 /// How many switches the View menu has (see `view_flags`).
-pub(crate) const VIEW_FLAGS: usize = 13;
+pub(crate) const VIEW_FLAGS: usize = 12;
 
 /// What an older file's rules are taken from, said once as it opens.
 pub(crate) const OLDER_RULES: &str =
@@ -174,7 +174,7 @@ impl DriftApp {
     }
 
     /// Preferences and view settings as `key=0|1` pairs (unknown keys are ignored when
-    /// reading). Hidden dimensions and relations aren't kept: they are back each start.
+    /// reading). Hidden dimensions aren't kept: they are back each start.
     pub(crate) fn view_prefs(&self) -> String {
         let rules = self.new_rules;
         let flags = [
@@ -208,6 +208,7 @@ impl DriftApp {
             .iter()
             .map(|(k, v)| format!("{k}={}", u8::from(*v)))
             .collect();
+        prefs.push(format!("rels={}", self.show_relations.key()));
         prefs.push(format!("wheel={}", self.wheel.mode.key()));
         prefs.push(format!("layerpick={}", self.layer_on_pick.key()));
         prefs.push(format!("asnap={}", self.angle_snap.unwrap_or(0.0)));
@@ -262,6 +263,11 @@ impl DriftApp {
                         .parse::<f64>()
                         .ok()
                         .filter(|step| ANGLE_STEPS.contains(step));
+                }
+                "rels" => {
+                    if let Some(mode) = crate::app::view::ShowRelations::from_key(value) {
+                        self.show_relations = mode;
+                    }
                 }
                 "wheel" => {
                     if let Some(mode) = crate::app::view::WheelMode::from_key(value) {
@@ -1028,11 +1034,6 @@ impl DriftApp {
                 "Hidden annotations not shown",
             ),
             (
-                self.show_relations,
-                "Relations shown",
-                "Relations hidden (Alt+R shows them)",
-            ),
-            (
                 self.show_combs,
                 "Curvature combs shown",
                 "Curvature combs hidden",
@@ -1061,6 +1062,12 @@ impl DriftApp {
             self.set_status(if on { shown } else { hidden }.into(), false, now);
         }
         self.view_seen = Some(values);
+        // (Relations have three states, each with its own words.)
+        let relations = self.show_relations;
+        if self.relations_seen.is_some_and(|seen| seen != relations) {
+            self.set_status(relations.status().into(), false, now);
+        }
+        self.relations_seen = Some(relations);
     }
 
     /// Abort the active tool's operation in progress, keeping the selection.

@@ -258,7 +258,10 @@ back.
   tolerance) moved to Drawing settings and is saved in the file. Older drawings keep the
   values they had on your computer.
 - **View switches** live in the View menu and the status bar, and say what they did. Hidden
-  dimensions or relations show a chip to bring them back, and come back at each start.
+  dimensions or relations show a chip to bring them back; hidden dimensions come back at
+  each start.
+- **Relations** can show for what is picked only: View → Relations is Off, Picked only or
+  All, Alt+R steps through them, and the choice is kept.
 
 ## Output
 

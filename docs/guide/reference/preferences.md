@@ -107,7 +107,7 @@ says in the status bar what it just did.
 | **Dimensions and notes** | Alt+D | No: shown again at each start |
 | **Annotations at print size** (dimensions and notes at their printed size for the drawing scale, so they zoom with the drawing; off: one size on screen) | | Yes |
 | **Hidden annotations (faded)** | Alt+H | Yes |
-| **Relations** | Alt+R | No: shown again at each start |
+| **Relations** (**Off**, **Picked only**: the relations of what is picked, on everything each one holds, or **All**) | Alt+R steps through them | Yes |
 | **Curvature combs** (on picked Bézier curves, while 50 or fewer are picked) | | Yes |
 | **View crops** | Shift+Alt+B | Yes |
 | **Wall centrelines** (every wall's centreline, not only a picked or hovered wall's; command palette) | | Yes |

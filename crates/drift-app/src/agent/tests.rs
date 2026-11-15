@@ -1078,3 +1078,373 @@ fn a_relation_a_trim_takes_off_is_reported() {
     let notice = v["notice"].as_str().unwrap_or_default();
     assert!(notice.contains("Equal"), "{v}");
 }
+
+/// A 100 × 50 rectangle with its lower-left corner at the origin; its four sides.
+fn desk(s: &mut Session) -> Vec<String> {
+    let made = ok(
+        s,
+        "add_geometry",
+        json!({ "items": [{ "type": "rectangle", "corner": [0, 0], "width": 100, "height": 50 }] }),
+    );
+    ["bottom", "right", "top", "left"]
+        .iter()
+        .map(|side| str_at(&made["created"][0], &["sides", side]).to_owned())
+        .collect()
+}
+
+/// The desk as a block called Desk with its base point at the origin: (block, copy).
+fn desk_block(s: &mut Session) -> (String, String) {
+    let sides = desk(s);
+    let v = ok(
+        s,
+        "blocks",
+        json!({ "op": "make", "ids": sides, "name": "Desk", "base": [0, 0] }),
+    );
+    (
+        str_at(&v, &["block"]).to_owned(),
+        str_at(&v, &["copy", "id"]).to_owned(),
+    )
+}
+
+fn numbers(v: &Value) -> Vec<f64> {
+    v.as_array()
+        .unwrap_or_else(|| panic!("not a list: {v}"))
+        .iter()
+        .map(|x| x.as_f64().unwrap())
+        .collect()
+}
+
+/// #231: curves become a named block with a base point, in one undo step.
+#[test]
+fn blocks_make_turns_curves_into_a_named_block_and_a_copy() {
+    let mut s = Session::new();
+    let sides = desk(&mut s);
+    let steps = s.editor.history.undo_depth();
+    let v = ok(
+        &mut s,
+        "blocks",
+        json!({ "op": "make", "ids": sides, "name": "Desk", "base": [0, 0] }),
+    );
+    assert_eq!(v["name"], "Desk", "{v}");
+    assert_eq!(v["curves"], 4, "{v}");
+    assert_eq!(numbers(&v["copy"]["at"]), [0.0, 0.0], "{v}");
+    assert_eq!(numbers(&v["copy"]["bounds"]), [0.0, 0.0, 100.0, 50.0]);
+    // The curves went into the block: one copy stands where they were.
+    assert_eq!(s.editor.doc.iter().count(), 0);
+    assert_eq!(s.editor.history.undo_depth(), steps + 1);
+    let info = ok(&mut s, "drawing_info", json!({}));
+    assert_eq!(info["blocks"][0]["name"], "Desk", "{info}");
+    assert_eq!(info["blocks"][0]["id"], v["block"]);
+    assert_eq!(info["blocks"][0]["copies"], 1);
+    assert_eq!(info["block_copies"], 1);
+    assert_eq!(info["undo"], "Assistant: make block");
+    // A name that is taken fails, and changes nothing.
+    let more = desk(&mut s);
+    let before = s.editor.doc.clone();
+    let steps = s.editor.history.undo_depth();
+    let e = err(
+        &mut s,
+        "blocks",
+        json!({ "op": "make", "ids": more, "name": "Desk" }),
+    );
+    assert!(e.contains("already a block called Desk"), "{e}");
+    assert!(e.contains("nothing was changed"), "{e}");
+    assert_eq!(s.editor.doc, before);
+    assert_eq!(s.editor.history.undo_depth(), steps);
+    // Undo (the second desk, then the block) brings the first desk's lines back.
+    ok(&mut s, "undo", json!({ "steps": 2 }));
+    assert_eq!(s.editor.doc.blocks().count(), 0);
+    assert_eq!(s.editor.doc.instances().count(), 0);
+    let lines = ok(&mut s, "list_entities", json!({ "kind": "line" }));
+    assert_eq!(lines["count"], 4, "{lines}");
+}
+
+/// #231: a copy is placed by its base point, turned, mirrored and scaled, in one undo step.
+#[test]
+fn blocks_place_puts_a_copy_turned_mirrored_and_scaled() {
+    let mut s = Session::new();
+    let (block, _) = desk_block(&mut s);
+    let steps = s.editor.history.undo_depth();
+    // By id: turned a quarter and twice the size.
+    let v = ok(
+        &mut s,
+        "blocks",
+        json!({ "op": "place", "block": block, "at": [1000, 0], "angle": 90, "scale": 2 }),
+    );
+    let copy = &v["copy"];
+    assert_eq!(copy["block"], block, "{v}");
+    assert_eq!(copy["angle"], 90.0);
+    assert_eq!(copy["scale"], 2.0);
+    assert_eq!(copy["mirror"], false);
+    assert_eq!(numbers(&copy["bounds"]), [900.0, 0.0, 1000.0, 200.0], "{v}");
+    assert_eq!(s.editor.history.undo_depth(), steps + 1, "one step");
+    // By name, on a layer: mirrored left to right, then turned.
+    ok(
+        &mut s,
+        "layers",
+        json!({ "create": [{ "name": "Furniture" }] }),
+    );
+    let v = ok(
+        &mut s,
+        "blocks",
+        json!({ "op": "place", "block": "Desk", "at": [2000, 0], "angle": 90, "mirror": true,
+                "scale": 2, "layer": "Furniture" }),
+    );
+    assert_eq!(v["copy"]["mirror"], true, "{v}");
+    assert_eq!(
+        numbers(&v["copy"]["bounds"]),
+        [1900.0, -200.0, 2000.0, 0.0],
+        "{v}"
+    );
+    assert!(str_at(&v, &["copy", "layer"]).contains("Furniture"), "{v}");
+    assert_eq!(s.editor.doc.instances().count(), 3);
+    // Undo takes the whole copy away (placing and sizing it were one step).
+    ok(&mut s, "undo", json!({}));
+    assert_eq!(s.editor.doc.instances().count(), 2);
+    // Bad calls change nothing.
+    let before = s.editor.doc.clone();
+    let e = err(
+        &mut s,
+        "blocks",
+        json!({ "op": "place", "block": "Chair", "at": [0, 0] }),
+    );
+    assert!(e.contains("no block"), "{e}");
+    let e = err(
+        &mut s,
+        "blocks",
+        json!({ "op": "place", "block": "Desk", "at": [0, 0], "scale": 0 }),
+    );
+    assert!(e.contains("`scale` must be positive"), "{e}");
+    // In a batch, a copy placed before a call that fails is not kept.
+    let e = err(
+        &mut s,
+        "batch",
+        json!({ "calls": [
+            { "tool": "blocks", "args": { "op": "place", "block": "Desk", "at": [5000, 0] } },
+            { "tool": "blocks", "args": { "op": "place", "block": "Chair", "at": [0, 0] } }
+        ]}),
+    );
+    assert!(e.contains("calls[1]"), "{e}");
+    assert_eq!(s.editor.doc, before);
+}
+
+/// #231: blocks show in drawing_info, their copies in list_entities.
+#[test]
+fn blocks_and_their_copies_are_listed() {
+    let mut s = Session::new();
+    let (block, first) = desk_block(&mut s);
+    ok(
+        &mut s,
+        "layers",
+        json!({ "create": [{ "name": "Furniture" }] }),
+    );
+    let v = ok(
+        &mut s,
+        "blocks",
+        json!({ "op": "place", "block": "Desk", "at": [1000, 0], "layer": "Furniture" }),
+    );
+    let second = str_at(&v, &["copy", "id"]).to_owned();
+    ok(
+        &mut s,
+        "add_geometry",
+        json!({ "items": [{ "type": "line", "from": [0, 500], "to": [300, 500] }] }),
+    );
+    let info = ok(&mut s, "drawing_info", json!({}));
+    assert_eq!(
+        info["blocks"],
+        json!([{ "id": block, "name": "Desk", "curves": 4, "fills": 0, "copies": 2 }]),
+        "{info}"
+    );
+    let all = ok(&mut s, "list_entities", json!({}));
+    assert_eq!(all["count"], 1, "the line: {all}");
+    assert_eq!(all["block_copy_count"], 2, "{all}");
+    let copy = &all["block_copies"][1];
+    assert_eq!(copy["id"], second, "{all}");
+    assert_eq!(copy["block"], block);
+    assert_eq!(copy["name"], "Desk");
+    assert_eq!(numbers(&copy["at"]), [1000.0, 0.0]);
+    assert_eq!(numbers(&copy["bounds"]), [1000.0, 0.0, 1100.0, 50.0]);
+    // They follow the layer and the region, and stay out of a list of curves.
+    let on = ok(&mut s, "list_entities", json!({ "layer": "Furniture" }));
+    assert_eq!(on["block_copy_count"], 1, "{on}");
+    assert_eq!(on["block_copies"][0]["id"], second);
+    let within = ok(
+        &mut s,
+        "list_entities",
+        json!({ "within": [-10, -10, 200, 100] }),
+    );
+    assert_eq!(within["block_copy_count"], 1, "{within}");
+    assert_eq!(within["block_copies"][0]["id"], first);
+    let lines = ok(&mut s, "list_entities", json!({ "kind": "line" }));
+    assert!(lines.get("block_copies").is_none(), "{lines}");
+    let only = ok(&mut s, "list_entities", json!({ "kind": "block_copy" }));
+    assert_eq!(only["count"], 0, "{only}");
+    assert_eq!(only["block_copy_count"], 2);
+    // A copy is deleted by its id, in one step.
+    ok(&mut s, "delete", json!({ "ids": [second] }));
+    assert_eq!(s.editor.doc.instances().count(), 1);
+    ok(&mut s, "undo", json!({}));
+    assert_eq!(s.editor.doc.instances().count(), 2);
+}
+
+/// #231: a copy explodes into plain curves where it stood, in one undo step.
+#[test]
+fn blocks_explode_turns_a_copy_back_into_curves() {
+    let mut s = Session::new();
+    let (block, first) = desk_block(&mut s);
+    let v = ok(
+        &mut s,
+        "blocks",
+        json!({ "op": "place", "block": block, "at": [1000, 0], "angle": 90, "scale": 2 }),
+    );
+    let second = str_at(&v, &["copy", "id"]).to_owned();
+    let steps = s.editor.history.undo_depth();
+    let v = ok(
+        &mut s,
+        "blocks",
+        json!({ "op": "explode", "copies": [second] }),
+    );
+    let created = v["created"].as_array().expect("created").clone();
+    assert_eq!(created.len(), 4, "{v}");
+    assert_eq!(s.editor.history.undo_depth(), steps + 1);
+    // The other copy and the block are still there.
+    assert_eq!(s.editor.doc.instances().count(), 1);
+    assert_eq!(s.editor.doc.blocks().count(), 1);
+    // The curves are where the copy was, turned and scaled.
+    let listed = ok(&mut s, "list_entities", json!({ "ids": created }));
+    assert_eq!(listed["count"], 4, "{listed}");
+    let curves: Vec<_> = created
+        .iter()
+        .map(|id| args::entity(&s.editor.doc, id).unwrap())
+        .collect();
+    let b = s.editor.bounds_of(&curves).expect("bounds");
+    assert!((b.min - drift_core::DVec2::new(900.0, 0.0)).length() < 1e-9);
+    assert!((b.max - drift_core::DVec2::new(1000.0, 200.0)).length() < 1e-9);
+    // An id that names no copy fails and changes nothing.
+    let before = s.editor.doc.clone();
+    let e = err(
+        &mut s,
+        "blocks",
+        json!({ "op": "explode", "copies": [first, "i999"] }),
+    );
+    assert!(e.contains("i999 does not exist"), "{e}");
+    assert_eq!(s.editor.doc, before);
+    // Undo puts the copy back.
+    ok(&mut s, "undo", json!({}));
+    assert_eq!(s.editor.doc.instances().count(), 2);
+    assert_eq!(s.editor.doc.iter().count(), 0);
+}
+
+/// #231: a copy becomes a group named after its block, and a group becomes a block.
+#[test]
+fn a_block_copy_becomes_a_group_and_a_group_a_block() {
+    let mut s = Session::new();
+    let (_, copy) = desk_block(&mut s);
+    let steps = s.editor.history.undo_depth();
+    let v = ok(
+        &mut s,
+        "blocks",
+        json!({ "op": "explode", "copies": [copy], "to_group": true }),
+    );
+    assert_eq!(s.editor.history.undo_depth(), steps + 1);
+    let group = v["groups"][0]["id"].as_str().expect("a group").to_owned();
+    assert_eq!(v["groups"][0]["name"], "Desk", "{v}");
+    assert_eq!(
+        v["groups"][0]["members"].as_array().map(Vec::len),
+        Some(4),
+        "{v}"
+    );
+    assert_eq!(s.editor.doc.instances().count(), 0);
+    let info = ok(&mut s, "drawing_info", json!({}));
+    assert_eq!(
+        info["groups"],
+        json!([{ "id": group, "name": "Desk", "members": 4 }]),
+        "{info}"
+    );
+    let lines = ok(&mut s, "list_entities", json!({ "kind": "line" }));
+    assert_eq!(lines["entities"][0]["group"], group, "{lines}");
+    // The group back into a block: the block Desk is still there, so it takes a free name.
+    let steps = s.editor.history.undo_depth();
+    let v = ok(
+        &mut s,
+        "blocks",
+        json!({ "op": "from_group", "group": group }),
+    );
+    assert_eq!(v["name"], "Desk 2", "{v}");
+    assert_eq!(v["curves"], 4);
+    assert_eq!(
+        numbers(&v["copy"]["bounds"]),
+        [0.0, 0.0, 100.0, 50.0],
+        "{v}"
+    );
+    assert_eq!(s.editor.history.undo_depth(), steps + 1);
+    assert_eq!(s.editor.doc.groups().count(), 0);
+    assert_eq!(s.editor.doc.iter().count(), 0);
+    // A group that is gone fails and changes nothing.
+    let before = s.editor.doc.clone();
+    let e = err(
+        &mut s,
+        "blocks",
+        json!({ "op": "from_group", "group": group }),
+    );
+    assert!(e.contains("no group"), "{e}");
+    assert_eq!(s.editor.doc, before);
+    // Undo: the group and its lines are back.
+    ok(&mut s, "undo", json!({}));
+    assert_eq!(s.editor.doc.groups().count(), 1);
+    assert_eq!(s.editor.doc.instances().count(), 0);
+}
+
+/// #231, on the drawing open in Drift: a block made through the link is one step in Drift's
+/// own history with its copy picked, and nothing is done to blocks while the user is
+/// editing one in place.
+#[test]
+fn blocks_work_over_the_link_and_wait_for_a_block_edit() {
+    let mut ed = Editor::new(drift_core::Document::new());
+    let live = |ed: &mut Editor, tool: &str, args: Value| {
+        let doc = LiveDoc {
+            editor: ed,
+            path: None,
+            meta: Default::default(),
+            dirty: true,
+            ctx: eframe::egui::Context::default(),
+            new_rules: Default::default(),
+        };
+        call_live(doc, tool, &args, None).0
+    };
+    let made = live(
+        &mut ed,
+        "add_geometry",
+        json!({ "items": [{ "type": "rectangle", "corner": [0, 0], "width": 100, "height": 50 }] }),
+    );
+    assert!(!made.is_error, "{}", made.json);
+    let sides: Vec<&str> = ["bottom", "right", "top", "left"]
+        .iter()
+        .map(|side| str_at(&made.json["created"][0], &["sides", side]))
+        .collect();
+    let steps = ed.history.undo_depth();
+    let out = live(
+        &mut ed,
+        "blocks",
+        json!({ "op": "make", "ids": sides, "name": "Desk" }),
+    );
+    assert!(!out.is_error, "{}", out.json);
+    assert_eq!(ed.history.undo_depth(), steps + 1);
+    assert_eq!(ed.history.undo_label(), Some("Assistant: make block"));
+    let copy = *ed.selected_instances.first().expect("the copy is picked");
+    assert_eq!(out.json["copy"]["id"], copy.to_string());
+    // The user opens the block to edit it in place: the assistant's block calls wait.
+    ed.edit_block(copy);
+    let before = ed.doc.clone();
+    for args in [
+        json!({ "op": "place", "block": "Desk", "at": [500, 0] }),
+        json!({ "op": "explode", "copies": [copy.to_string()] }),
+    ] {
+        let out = live(&mut ed, "blocks", args);
+        assert!(out.is_error, "{}", out.json);
+        let e = out.json["error"].as_str().unwrap_or_default();
+        assert!(e.contains("being edited in place"), "{e}");
+    }
+    assert_eq!(ed.doc, before);
+    assert!(ed.block_edit.is_some(), "the edit goes on");
+}

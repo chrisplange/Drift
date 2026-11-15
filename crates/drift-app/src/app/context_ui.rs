@@ -2,6 +2,7 @@
 //! selection, as in Affinity's context toolbar) and the canvas's right-click menu.
 
 use crate::app::palette::{Command, ViewFlag};
+use crate::app::view::ShowRelations;
 use crate::icons::{self, Glyph};
 use crate::*;
 use drift_edit::tools::SlotMode;
@@ -756,8 +757,14 @@ impl DriftApp {
                 if matches!(kind, ToolKind::Dimension | ToolKind::Ordinate) {
                     ui.checkbox(&mut self.show_dimensions, "Show dimensions")
                         .on_hover_text("Alt+D");
-                    ui.checkbox(&mut self.show_relations, "Show relations")
-                        .on_hover_text("Alt+R");
+                    ui.label("Relations").on_hover_text("Alt+R");
+                    if let Some(m) = choice(
+                        ui,
+                        self.show_relations,
+                        &ShowRelations::ALL.map(|m| (m, m.label())),
+                    ) {
+                        self.show_relations = m;
+                    }
                 }
             }
             // Tools without options: the bar names the tool, the status bar says what to do.

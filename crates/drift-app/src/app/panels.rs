@@ -1,6 +1,7 @@
 //! Menu bar, toolbar, inspector (properties) and status bar.
 
 use crate::app::palette::{Command, ViewFlag};
+use crate::app::view::ShowRelations;
 use crate::commands::{self, Category};
 use crate::icons::{self, Glyph};
 use crate::*;
@@ -434,6 +435,29 @@ impl DriftApp {
         true
     }
 
+    /// View → Relations: which relations show their symbols (Alt+R steps through them).
+    fn relations_menu(&mut self, ui: &mut egui::Ui) {
+        let Some(spec) = commands::spec(Command::Relations) else {
+            return;
+        };
+        let keys = spec.key_text(cfg!(target_os = "macos"));
+        ui.menu_button("Relations", |ui| {
+            for mode in ShowRelations::ALL {
+                let on = self.show_relations == mode;
+                if theme::menu_check(ui, on, mode.label(), "").clicked() {
+                    self.show_relations = mode;
+                    ui.close();
+                }
+            }
+            if !keys.is_empty() {
+                ui.separator();
+                ui.label(egui::RichText::new(format!("{keys} steps through them")).weak());
+            }
+        })
+        .response
+        .on_hover_text(spec.description);
+    }
+
     /// Menu items for commands, in order; `None` is a separator.
     pub(crate) fn command_items(&mut self, ui: &mut egui::Ui, items: &[Option<Command>]) {
         for item in items {
@@ -582,7 +606,12 @@ impl DriftApp {
                         Some(C::Toggle(ViewFlag::Dimensions)),
                         Some(C::Toggle(ViewFlag::PrintSize)),
                         Some(C::Toggle(ViewFlag::Hidden)),
-                        Some(C::Toggle(ViewFlag::Relations)),
+                    ],
+                );
+                self.relations_menu(ui);
+                self.command_items(
+                    ui,
+                    &[
                         Some(C::Toggle(ViewFlag::Free)),
                         Some(C::Toggle(ViewFlag::Combs)),
                         Some(C::Toggle(ViewFlag::Crops)),
@@ -1583,7 +1612,11 @@ impl DriftApp {
                     // again on a click.
                     let grey = ui.visuals().weak_text_color();
                     for (shown, text, keys) in [
-                        (self.show_relations, "Relations off · Show", "Alt+R"),
+                        (
+                            self.show_relations != ShowRelations::Off,
+                            "Relations off · Show",
+                            "Alt+R",
+                        ),
                         (self.show_dimensions, "Dims & notes off · Show", "Alt+D"),
                     ] {
                         if shown {
@@ -1600,7 +1633,7 @@ impl DriftApp {
                             .clicked()
                         {
                             if text.starts_with("Rel") {
-                                self.show_relations = true;
+                                self.show_relations = ShowRelations::All;
                             } else {
                                 self.show_dimensions = true;
                             }

@@ -605,7 +605,7 @@ pub struct DriftApp {
     /// Results of Help → Run solver benchmark (in development builds).
     benchmark: Option<Vec<String>>,
     show_dimensions: bool,
-    show_relations: bool,
+    show_relations: app::view::ShowRelations,
     /// Dimensions and notes on the canvas at their printed size for the drawing scale (View →
     /// Annotations at Print Size), or (off) at a fixed size on screen.
     print_annotations: bool,
@@ -648,6 +648,8 @@ pub struct DriftApp {
     /// The View menu's switches as of the last frame, to say in the status bar when one
     /// changes (by a key, a menu, the status bar or the palette).
     view_seen: Option<[bool; app::document::VIEW_FLAGS]>,
+    /// Which relations showed when the status bar last looked (see `view_seen`).
+    relations_seen: Option<app::view::ShowRelations>,
     /// The name typed for a new block.
     new_block_name: String,
     /// The Blocks tab's search, over the drawing's blocks and the library.
@@ -815,7 +817,7 @@ impl DriftApp {
             window_title: String::new(),
             benchmark: None,
             show_dimensions: true,
-            show_relations: true,
+            show_relations: app::view::ShowRelations::All,
             patterns: Default::default(),
             print_annotations: true,
             thin_lines: false,
@@ -838,6 +840,7 @@ impl DriftApp {
             layer_on_pick: Default::default(),
             new_rules: drift_core::DrawingRules::default(),
             view_seen: None,
+            relations_seen: None,
             new_block_name: String::new(),
             block_search: String::new(),
             library_category: Some(library::Category::Doors),

@@ -83,7 +83,7 @@ and **Explode walls** are in the **Build** menu; **Walls from curves** and
 
 | Tool | Key | What it does |
 |---|---|---|
-| **Dimension** | D | Click geometry, then place the label; the kind follows what you clicked and where the label goes. Top bar: **Single** / **Chain** / **Baseline**, **Overall**, **Show dimensions**, **Show relations**. See [Constraints and dimensions](../tutorials/02-constraints-and-dimensions.md). |
+| **Dimension** | D | Click geometry, then place the label; the kind follows what you clicked and where the label goes. Top bar: **Single** / **Chain** / **Baseline**, **Overall**, **Show dimensions**, **Relations** (**Off** / **Picked only** / **All**). See [Constraints and dimensions](../tutorials/02-constraints-and-dimensions.md). |
 | **Note** | N | Click for a note, or click geometry first for a leader to it. Type; Enter finishes, Shift+Enter adds a line. |
 | **Centre mark** | — | Click a circle or arc for a centre mark; then another circle, arc or point for a centre line between them. Two lines give a centre line midway. |
 | **Section mark** | — | Two clicks for the cutting line, with a lettered flag at each end. X / Y keep it to an axis. |

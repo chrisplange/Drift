@@ -1182,11 +1182,30 @@ pub fn dimension_style(doc: &Document, id: Option<ConstraintId>) -> DraftStyle {
     )
 }
 
+/// What a dimension that is not one of the drawing's constraints brings of its own: the
+/// style it is drawn in and the text round its value (a sheet's dimension, #432, which
+/// measures the model without being in it).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DimOwn {
+    pub style: DraftStyle,
+    pub note: drift_core::DimNote,
+}
+
 /// The full label of a dimension: value (measured, in parentheses, if driven; marked Σ if
 /// linked to an expression), prefix, suffix, tolerance and alternate units.
 pub fn dimension_label(doc: &Document, id: Option<ConstraintId>, c: &Constraint) -> DimText {
+    dimension_label_own(doc, id, c, None)
+}
+
+/// [`dimension_label`], for a dimension with a style and note of its own (`own`), if any.
+fn dimension_label_own(
+    doc: &Document,
+    id: Option<ConstraintId>,
+    c: &Constraint,
+    own: Option<&DimOwn>,
+) -> DimText {
     let units = doc.units();
-    let style = dimension_style(doc, id);
+    let style = own.map_or_else(|| dimension_style(doc, id), |o| o.style);
     let driven = id.is_some_and(|id| doc.is_driven(id));
     let shown = if driven {
         drift_solver::measure(doc, c)
@@ -1214,10 +1233,13 @@ pub fn dimension_label(doc: &Document, id: Option<ConstraintId>, c: &Constraint)
         }
     };
     let main = dimension_text_styled(&shown, &units, &style);
-    let note = id
-        .and_then(|id| doc.dim_note(id))
-        .cloned()
-        .unwrap_or_default();
+    let note = match own {
+        Some(o) => o.note.clone(),
+        None => id
+            .and_then(|id| doc.dim_note(id))
+            .cloned()
+            .unwrap_or_default(),
+    };
     let prefix = if note.prefix.is_empty() {
         String::new()
     } else {
@@ -1663,8 +1685,22 @@ pub fn layout_dimension(
     placement: Option<DVec2>,
     space: &AnnoSpace,
 ) -> Option<DimLayout> {
+    layout_dimension_own(painter, doc, id, c, placement, space, None)
+}
+
+/// [`layout_dimension`], for a dimension with a style and note of its own (`own`), if any:
+/// one that is not among the drawing's constraints (`id` is `None` for it).
+pub fn layout_dimension_own(
+    painter: &egui::Painter,
+    doc: &Document,
+    id: Option<ConstraintId>,
+    c: &Constraint,
+    placement: Option<DVec2>,
+    space: &AnnoSpace,
+    own: Option<&DimOwn>,
+) -> Option<DimLayout> {
     let map = &space.map;
-    let style = space.style(&dimension_style(doc, id));
+    let style = space.style(&own.map_or_else(|| dimension_style(doc, id), |o| o.style));
     let anchor = dimension_anchor(doc, c)?;
     let offset = placement.unwrap_or_else(|| default_offset(doc, c, map.camera.scale));
     let label = map.to_screen(anchor + offset);
@@ -1781,7 +1817,7 @@ pub fn layout_dimension(
         _ => return None,
     };
     Some(finish_layout(
-        painter, doc, id, c, shape, text_pos, measured, map, style,
+        painter, doc, id, c, shape, text_pos, measured, map, style, own,
     ))
 }
 
@@ -1830,7 +1866,7 @@ pub fn layout_gap(
     );
     let measured = Some(([gap.from, gap.to], (gap.to - gap.from).perp()));
     Some(finish_layout(
-        painter, doc, None, &c, shape, text_pos, measured, map, style,
+        painter, doc, None, &c, shape, text_pos, measured, map, style, None,
     ))
 }
 
@@ -1847,6 +1883,7 @@ fn finish_layout(
     measured: Option<([DVec2; 2], DVec2)>,
     map: &ScreenMap,
     style: DimStyle,
+    own: Option<&DimOwn>,
 ) -> DimLayout {
     let s = |p: DVec2| map.to_screen(p);
     let mut shape = shape;
@@ -1885,7 +1922,7 @@ fn finish_layout(
         }
     }
     let driven = id.is_some_and(|id| doc.is_driven(id));
-    let text = dimension_label(doc, id, c);
+    let text = dimension_label_own(doc, id, c, own);
     let straddles = matches!(shape, DimShape::Linear { .. }) && style.aligned;
     let galleys = label_galleys(painter, &text, style.text, Color32::WHITE, straddles);
     let text_pos = match &shape {

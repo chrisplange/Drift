@@ -820,8 +820,63 @@ fn annotations(ed: &Editor, painter: &egui::Painter, s: &Space, d: &mut Drawing)
     }
     let to_page = |p: Pos2| s.at(map.to_world(p));
     let len = |v: f32| f64::from(v) / pt_per_world * s.k;
+    push_recorded(recorder.take(), &to_page, &len, s.clip, d);
+    d.layer(LayerInfo {
+        name: ANNOTATION_LAYER.into(),
+        color: Pen::BLACK,
+        width: THIN,
+        line_type: LineType::Continuous,
+    });
+}
+
+/// A sheet's own annotations (#432), on the page: laid out on the paper at full size (each
+/// dimension through its viewport, each note in paper space) by the code that lays them out
+/// on screen, and never clipped to a view's frame. They are above everything else.
+fn sheet_annotations(
+    doc: &drift_core::Document,
+    painter: &egui::Painter,
+    sheet: &Sheet,
+    d: &mut Drawing,
+) {
+    if sheet.annotations.is_empty() {
+        return;
+    }
+    // The paper as a screen: a point per paper mm at 96 dpi, the origin at its middle.
+    let pt = f64::from(PT_PER_MM);
+    let paper = ScreenMap {
+        rect: egui::Rect::from_center_size(Pos2::ZERO, egui::vec2(1.0, 1.0)),
+        camera: Camera {
+            center: DVec2::ZERO,
+            scale: pt,
+        },
+    };
+    let recorder = Recorder::new(painter);
+    let colors = print_colors();
+    for layout in crate::sheet_notes::layout_sheet_annotations(painter, doc, sheet, &paper) {
+        layout.paint(&recorder, AnnotationState::Normal, &colors);
+    }
+    let to_page = |p: Pos2| paper.to_world(p);
+    let len = |v: f32| f64::from(v) / pt;
+    push_recorded(recorder.take(), &to_page, &len, None, d);
+    d.layer(LayerInfo {
+        name: ANNOTATION_LAYER.into(),
+        color: Pen::BLACK,
+        width: THIN,
+        line_type: LineType::Continuous,
+    });
+}
+
+/// What a recorder drew, as page items on the annotation layer: `to_page` takes its screen
+/// points to the page and `len` its screen lengths to page mm.
+fn push_recorded(
+    recorded: Vec<Recorded>,
+    to_page: &dyn Fn(Pos2) -> DVec2,
+    len: &dyn Fn(f32) -> f64,
+    clip: Option<Bounds>,
+    d: &mut Drawing,
+) {
     let pen = Pen::new(THIN);
-    for r in recorder.take() {
+    for r in recorded {
         let prim = match r {
             Recorded::Line(points, _) => {
                 let points: Vec<DVec2> = points.into_iter().map(to_page).collect();
@@ -887,14 +942,8 @@ fn annotations(ed: &Editor, painter: &egui::Painter, s: &Space, d: &mut Drawing)
                 font: None,
             },
         };
-        d.items.push(item(ANNOTATION_LAYER, pen, prim, s.clip));
+        d.items.push(item(ANNOTATION_LAYER, pen, prim, clip));
     }
-    d.layer(LayerInfo {
-        name: ANNOTATION_LAYER.into(),
-        color: Pen::BLACK,
-        width: THIN,
-        line_type: LineType::Continuous,
-    });
 }
 
 /// Everything in the view: the drawing stacked as the canvas draws it (or every fill under
@@ -997,6 +1046,7 @@ pub(crate) fn uncropped_sheet(
         logo.as_ref(),
         &mut d,
     );
+    sheet_annotations(&ed.doc, painter, sheet, &mut d);
     // In the sheet's colours: what the preview shows is what prints.
     d.set_colours(sheet.colours);
     d

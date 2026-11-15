@@ -32,6 +32,7 @@ mod perf_big;
 #[cfg(test)]
 mod perf_tests;
 mod picks;
+mod sheet_notes;
 mod soak;
 #[cfg(test)]
 mod test_gpu;

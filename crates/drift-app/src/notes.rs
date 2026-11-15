@@ -598,6 +598,36 @@ fn leader_to(tip: Pos2, text: &NoteText) -> Vec<Pos2> {
     vec![tip, shoulder, landing]
 }
 
+/// A note laid out from where its text's middle (`pos`) and its leaders' tips and bends are
+/// on the map it is drawn on: a model note's, or a sheet's own (#432), whose places come
+/// through a viewport or are on the paper.
+#[allow(clippy::too_many_arguments)]
+pub fn layout_note(
+    painter: &egui::Painter,
+    id: AnnotationId,
+    text: &str,
+    pos: Pos2,
+    leaders: &[(Leader, Pos2, Option<Pos2>)],
+    style: &NoteStyle,
+    font: f32,
+    sizing: Sizing,
+) -> NoteLayout {
+    let shown = if text.is_empty() { " " } else { text };
+    let t = place_note_text(painter, shown.to_owned(), pos, style, font, sizing);
+    NoteLayout {
+        id,
+        leaders: leaders
+            .iter()
+            .map(|(l, tip, bend)| note_leader(*tip, *bend, l, &t))
+            .collect(),
+        frame: style.frame,
+        mask: style.mask,
+        text: Some(t),
+        segments: Vec::new(),
+        marks: Vec::new(),
+    }
+}
+
 /// Lay out every annotation.
 pub fn layout_annotations(
     painter: &egui::Painter,
@@ -634,22 +664,18 @@ pub fn layout_annotations(
                 let Some(pos) = doc.note_text_pos(*at, leaders) else {
                     continue;
                 };
-                let shown = if text.is_empty() { " " } else { text };
-                let t =
-                    place_note_text(painter, shown.to_owned(), s(pos), style, font, space.sizing);
-                for l in leaders {
-                    let Some(tip) = doc.anchor_pos(&l.to) else {
-                        continue;
-                    };
-                    let bend = match l.shape {
-                        LeaderShape::Bent(b) => Some(s(tip + b)),
-                        _ => None,
-                    };
-                    layout.leaders.push(note_leader(s(tip), bend, l, &t));
-                }
-                layout.frame = style.frame;
-                layout.mask = style.mask;
-                layout.text = Some(t);
+                let tips: Vec<(Leader, Pos2, Option<Pos2>)> = leaders
+                    .iter()
+                    .filter_map(|l| {
+                        let tip = doc.anchor_pos(&l.to)?;
+                        let bend = match l.shape {
+                            LeaderShape::Bent(b) => Some(s(tip + b)),
+                            _ => None,
+                        };
+                        Some((*l, s(tip), bend))
+                    })
+                    .collect();
+                layout = layout_note(painter, id, text, s(pos), &tips, style, font, space.sizing);
             }
             Annotation::CentreMark { .. } | Annotation::Centreline { .. } => {}
             Annotation::Section { a, b, flip, .. } => {

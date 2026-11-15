@@ -226,7 +226,8 @@ stays in the drawing, in the **Views** list, to place again. A sheet can be empt
 Notes and dimensions drawn in the model show in every view of it, at the model's one size.
 For a sheet that needs its own, at its own scale, put them on the sheet itself, as in
 AutoCAD's paper space or a Vectorworks viewport's annotations. With a sheet's tab open, the
-rail has **Note** and **Dimension** beside **Select**.
+rail has **Note** (N) and **Dimension** (D) beside **Select** (S). Esc gives up a pick in
+progress, then puts the tool down.
 
 - **Dimension:** click a line, circle or arc inside a view (or two points, two lines, or a
   point and a line), then click where the dimension goes, inside the view's frame or out
@@ -248,7 +249,8 @@ follow the model: change the geometry, move the view on the sheet, pan its crop 
 its scale, and they go along. A note's text stays where you put it on the paper.
 
 With **Select**, click one to pick it. Drag a note's text or a dimension's label to move
-it; double-click a note to type in it; Delete deletes it. The Inspector has a note's text,
+it (Esc during the drag puts it back); double-click a note to type in it; Delete deletes
+it. The Inspector has a note's text,
 height, alignment, frame, bold and italic, mask and leader end, and a dimension's prefix,
 suffix, the line below, text in place of the value, text height and arrows. Each change is
 one undo step.

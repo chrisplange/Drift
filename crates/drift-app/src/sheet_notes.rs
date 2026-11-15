@@ -165,6 +165,16 @@ pub fn layout_sheet_annotation(
             ..
         } => {
             let view = doc.port_view(sheet, *port)?;
+            // Left out with its geometry, as a model dimension is: when every curve it is on
+            // is on a layer its view hides (it comes back with the layer).
+            let hidden = !view.hidden_layers.is_empty()
+                && measure.entities().all(|e| {
+                    doc.get(e)
+                        .is_some_and(|x| view.hidden_layers.contains(&x.layer))
+                });
+            if hidden {
+                return None;
+            }
             let own = DimOwn {
                 style,
                 note: note.clone(),
@@ -455,6 +465,95 @@ pub(crate) mod tests {
         let d = p.page(p.sheet);
         assert_eq!(texts(&d)[0].0, "750");
         assert!(dimension_line(&d, 37.5).is_some());
+
+        // The view hides the layer its geometry is on: it is left out with it, as the
+        // model's own dimensions are, and comes back with the layer.
+        let layer = p.ed.doc.get(p.line).unwrap().layer;
+        let mut v = p.ed.doc.view(p.view).unwrap().clone();
+        v.hidden_layers.insert(layer);
+        p.ed.doc.set_view(p.view, v.clone());
+        assert!(texts(&p.page(p.sheet)).is_empty());
+        v.hidden_layers.clear();
+        p.ed.doc.set_view(p.view, v);
+        assert_eq!(texts(&p.page(p.sheet))[0].0, "750");
+    }
+
+    #[test]
+    fn every_kind_of_sheet_dimension_is_drawn() {
+        let mut p = plan();
+        let (a, line, sheet, port) = (p.a, p.line, p.sheet, p.port);
+        let doc = &mut p.ed.doc;
+        // A circle, a point 400 above the line, and a second line at 45° from its start.
+        let c = doc.add_point(V(500.0, 250.0));
+        let circle = doc.add_circle(c, 200.0).unwrap();
+        let above = doc.add_point(V(250.0, 400.0));
+        let far = doc.add_point(V(500.0, 500.0));
+        let slope = doc.add_line(a, far).unwrap();
+        let measures = [
+            Constraint::Distance {
+                a,
+                b: above,
+                value: 0.0,
+            },
+            Constraint::HorizontalDistance {
+                a,
+                b: far,
+                value: 0.0,
+            },
+            Constraint::VerticalDistance {
+                a,
+                b: above,
+                value: 0.0,
+            },
+            Constraint::PointLineDistance {
+                point: c,
+                line,
+                value: 0.0,
+            },
+            Constraint::Radius {
+                curve: circle,
+                value: 0.0,
+            },
+            Constraint::Diameter {
+                curve: circle,
+                value: 0.0,
+            },
+            Constraint::Angle {
+                a: line,
+                b: slope,
+                degrees: 0.0,
+            },
+        ];
+        for m in measures {
+            doc.add_sheet_annotation(sheet, SheetAnnotation::dimension(port, m, None))
+                .unwrap();
+        }
+        let d = p.page(sheet);
+        let shown: Vec<String> = texts(&d).into_iter().map(|t| t.0).collect();
+        // Each reads what the model measures, at 1:10 as at any scale.
+        assert_eq!(shown.len(), 7, "{shown:?}");
+        for want in ["500", "400", "250", "R200", "Ø400", "45°"] {
+            assert!(shown.iter().any(|t| t == want), "{want} in {shown:?}");
+        }
+        // (The slanted distance from the origin to (250, 400) is not a round number.)
+        assert!(shown.iter().any(|t| t.contains("471.69")), "{shown:?}");
+        // On screen each is laid out too, and can be picked by its text.
+        let s = p.ed.doc.sheet(sheet).unwrap().clone();
+        let paper = ScreenMap {
+            rect: egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(900.0, 700.0)),
+            camera: drift_render::Camera {
+                center: V(210.0, 148.0),
+                scale: 2.0,
+            },
+        };
+        let layouts = layout_sheet_annotations(&painter(), &p.ed.doc, &s, &paper);
+        assert_eq!(layouts.len(), 7);
+        for l in &layouts {
+            let SheetShape::Dimension(dim) = &l.shape else {
+                panic!("a dimension");
+            };
+            assert!(l.hit(dim.text_rect.center()), "{:?}", dim.label);
+        }
     }
 
     #[test]

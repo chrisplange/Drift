@@ -503,3 +503,95 @@ mod tests {
         ));
     }
 }
+
+#[cfg(test)]
+mod wall_tests {
+    use drift_core::{Bounds, EntityId, EntityKind, Owner, Sheet, View, Viewport};
+    use drift_geom::SnapOptions;
+
+    use super::*;
+    use crate::editor::Pointer;
+    use crate::tools::{Input, Modifiers, ToolKind};
+
+    const V: fn(f64, f64) -> DVec2 = DVec2::new;
+
+    fn run(ed: &mut Editor, pts: &[DVec2]) {
+        let mut tool = ToolKind::Wall.create();
+        for at in pts {
+            let mut p = Pointer::new(*at, 0.5);
+            p.snap = ed.index.snap(
+                *at,
+                SnapOptions {
+                    tolerance: 0.5,
+                    grid: None,
+                    from: None,
+                },
+                |_| false,
+            );
+            tool.handle(Input::Hover(p), ed);
+            tool.handle(Input::Click(p, Modifiers::default()), ed);
+        }
+        tool.handle(Input::Finish, ed);
+    }
+
+    /// The wall's face lines at least `min` long.
+    fn long_faces(ed: &Editor, min: f64) -> Vec<EntityId> {
+        ed.doc
+            .iter()
+            .filter(|(id, e)| {
+                matches!(e.kind, EntityKind::Line { .. })
+                    && matches!(ed.wall_owners().get(*id), Some(Owner::Wall(_)))
+                    && matches!(ed.doc.shape(*id), Some(drift_core::Shape::Line { a, b }) if a.distance(b) >= min)
+            })
+            .map(|(id, _)| id)
+            .collect()
+    }
+
+    #[test]
+    fn a_dimension_across_a_wall_follows_its_thickness_and_survives_a_join() {
+        let mut ed = Editor::default();
+        ed.prefs.auto_relations = false;
+        ed.prefs.wall_thickness = 100.0;
+        run(&mut ed, &[V(0.0, 0.0), V(2000.0, 0.0)]);
+        let faces = long_faces(&ed, 1500.0);
+        assert_eq!(faces.len(), 2);
+        let view = ed.doc.add_view(View::new(
+            "Plan",
+            Bounds {
+                min: V(-500.0, -1500.0),
+                max: V(2500.0, 1500.0),
+            },
+            20.0,
+        ));
+        let mut s = Sheet::new("A-101");
+        s.viewports.push(Viewport::new(view, V(200.0, 150.0)));
+        let sheet = ed.doc.add_sheet(s);
+        // Face to face, as the Dimension tool measures two lines alongside each other.
+        let across = Constraint::PointLineDistance {
+            point: faces[0],
+            line: faces[1],
+            value: 0.0,
+        };
+        let id = ed.add_sheet_dimension(sheet, 0, across, None).unwrap();
+        let read = |ed: &Editor| {
+            ed.doc.sheet_annotation(sheet, id).and_then(|a| match a {
+                SheetAnnotation::Dimension { measure, .. } => {
+                    drift_solver::measure(&ed.doc, measure)
+                }
+                SheetAnnotation::Note { .. } => None,
+            })
+        };
+        let near = |v: Option<f64>, want: f64| v.is_some_and(|v| (v - want).abs() < 1e-6);
+        assert!(near(read(&ed), 100.0), "{:?}", read(&ed));
+        // The wall made thicker (it is rebuilt): the dimension is still there and reads it.
+        let walls: Vec<_> = ed.doc.walls().map(|(w, _)| w).collect();
+        ed.set_wall_thickness(&walls, "250 mm").unwrap();
+        assert!(near(read(&ed), 250.0), "{:?}", read(&ed));
+        // Another wall run into it (its face is cut for the join): still there.
+        run(&mut ed, &[V(1000.0, -1000.0), V(1000.0, -125.0)]);
+        assert!(ed.doc.walls().count() >= 2);
+        assert!(near(read(&ed), 250.0), "{:?}", read(&ed));
+        // It added no constraint to the walls' sketch.
+        assert!(ed.doc.constraints().all(|(_, c)| !c.is_dimension()));
+    }
+}

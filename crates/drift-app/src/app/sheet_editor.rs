@@ -569,16 +569,18 @@ impl DriftApp {
         }
         // The annotation tools that work on paper: what they make is this sheet's own.
         let mut picked_tool = None;
-        for (tool, name, hint) in [
+        for (tool, name, key, hint) in [
             (
                 ToolKind::Note,
                 "Note",
+                "N",
                 "A note on this sheet: click the paper for its text, or geometry inside a \
                  view first for a leader tied to it. It shows only on this sheet",
             ),
             (
                 ToolKind::Dimension,
                 "Dimension",
+                "D",
                 "A dimension on this sheet: click a line, circle or arc inside a view, or \
                  two points, then where it goes. It reads the model's true size at any \
                  view scale and never holds the geometry",
@@ -589,7 +591,7 @@ impl DriftApp {
             };
             let selected = kind == tool;
             let clicked = if wide {
-                icons::tool_row(ui, selected, name, None, draw)
+                icons::tool_row(ui, selected, name, Some(key), draw)
             } else {
                 icons::button(ui, 38.0, selected, name, draw)
             }

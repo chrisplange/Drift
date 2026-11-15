@@ -51,10 +51,23 @@ impl DriftApp {
                 self.start_add_view(id);
                 return;
             }
+            // S, N and D: the tools that work on paper, by the keys they have in the model.
+            for (key, tool) in [
+                (Key::S, ToolKind::Select),
+                (Key::N, ToolKind::Note),
+                (Key::D, ToolKind::Dimension),
+            ] {
+                if ctx.input(|i| i.modifiers.is_none() && i.key_pressed(key)) {
+                    self.set_tool(tool);
+                    return;
+                }
+            }
             // Esc gives up what the Note or Dimension tool has picked, then the tool, then
             // a picked annotation, then several picked views; then it returns to the model.
             if ctx.input(|i| i.key_pressed(Key::Escape)) {
-                if self.sheet_tool() {
+                if self.cancel_sheet_annotation_drag() {
+                    // (A note or label being dragged went back to where it was.)
+                } else if self.sheet_tool() {
                     if self.tool.is_busy() {
                         self.tool_cancel();
                     } else {

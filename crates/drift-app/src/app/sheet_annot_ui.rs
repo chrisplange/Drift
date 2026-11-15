@@ -103,6 +103,17 @@ impl DriftApp {
         true
     }
 
+    /// Give up a drag of a sheet annotation in progress: it goes back to where it was, and
+    /// no undo step is made. Returns whether one was in progress.
+    pub(crate) fn cancel_sheet_annotation_drag(&mut self) -> bool {
+        if self.drawing.view.sheet_anno_drag.take().is_none() {
+            return false;
+        }
+        self.drawing.editor.doc.rollback();
+        self.drawing.editor.sync();
+        true
+    }
+
     /// The annotation of `layouts` under `pos`: the topmost (drawn last).
     fn sheet_annotation_at(layouts: &[SheetLayout], pos: egui::Pos2) -> Option<SheetAnnotationId> {
         layouts.iter().rev().find(|l| l.hit(pos)).map(|l| l.id)

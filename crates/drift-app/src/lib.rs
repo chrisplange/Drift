@@ -1275,7 +1275,7 @@ impl eframe::App for DriftApp {
             if on_sheet != self.drawing.view.was_on_sheet {
                 self.drawing.view.was_on_sheet = on_sheet;
                 self.abort_operation();
-                self.drawing.view.sheet_anno_drag = None;
+                self.cancel_sheet_annotation_drag();
                 self.drawing.view.sheet_tool_port = None;
                 // Back in the model: a sheet note left without text goes.
                 if !on_sheet

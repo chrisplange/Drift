@@ -157,6 +157,7 @@ fn lists_its_tools() {
         "render",
         "analyze",
         "import_file",
+        "blocks",
         "batch",
         "run_script",
     ] {

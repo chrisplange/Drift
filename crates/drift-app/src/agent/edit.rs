@@ -402,6 +402,7 @@ pub(super) fn delete(s: &mut Session, a: &Value) -> Res {
     for id in &ids {
         match *id {
             AnyId::Entity(e) => entities.push(e),
+            AnyId::Instance(i) => ed.doc.remove_instance(i),
             AnyId::Constraint(c) => ed.doc.remove_constraint(c),
             AnyId::Fill(f) => ed.doc.remove_fill(f),
             AnyId::Text(t) => ed.doc.remove_text(t),

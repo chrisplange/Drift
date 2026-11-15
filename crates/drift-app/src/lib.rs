@@ -438,6 +438,9 @@ struct CanvasView {
     focus_sheet_note: bool,
     /// The sheet annotation whose text is being typed: its typing merges into one undo step.
     sheet_note_typing: Option<drift_core::SheetAnnotationId>,
+    /// The sheet note the Note tool placed last. While the last undo step is still the one
+    /// that placed it, taking it back (it was left empty) is folded into that step.
+    sheet_note_placed: Option<drift_core::SheetAnnotationId>,
     /// What the canvas showed last frame: a sheet, or the model (`None`). A tool's
     /// unfinished picks don't carry between the model and a sheet, or from one sheet to
     /// another.
@@ -549,6 +552,7 @@ impl CanvasView {
             sheet_tool_port: None,
             focus_sheet_note: false,
             sheet_note_typing: None,
+            sheet_note_placed: None,
             shown_last: None,
             sheet_pick: Default::default(),
             crop_drag: None,

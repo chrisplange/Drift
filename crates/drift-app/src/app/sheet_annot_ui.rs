@@ -90,8 +90,11 @@ impl DriftApp {
         if !empty {
             return;
         }
+        // (By the note the step made, not by the step's name alone: the last step may have
+        // placed another note.)
+        let placed_last = self.drawing.view.sheet_note_placed == Some(id);
         let ed = &mut self.drawing.editor;
-        if ed.history.undo_label() == Some("Sheet note") {
+        if placed_last && ed.history.undo_label() == Some("Sheet note") {
             // Just placed and never typed in: taken back in the step that placed it, so
             // no undo brings an empty note back.
             ed.doc.begin();
@@ -329,6 +332,11 @@ impl DriftApp {
         self.drawing.editor.on_sheet = Some(on);
         self.tool_input(Input::Hover(pointer));
         if primary {
+            // A note just placed and left empty goes before this click makes anything, so
+            // it is taken back in its own step and not in the next note's.
+            if self.picked_sheet_annotation().is_some() {
+                self.pick_sheet_annotation(None);
+            }
             self.tool_input(Input::Click(pointer, mods));
         } else if secondary {
             self.with_tool(|tool, ed| tool.secondary_click(ed));
@@ -341,15 +349,9 @@ impl DriftApp {
             self.pick_sheet_annotation(Some(made));
             self.show_panel(crate::dock::Panel::Inspector);
         }
-        if self
-            .drawing
-            .editor
-            .out
-            .pending_sheet_note_edit
-            .take()
-            .is_some()
-        {
+        if let Some(note) = self.drawing.editor.out.pending_sheet_note_edit.take() {
             self.drawing.view.focus_sheet_note = true;
+            self.drawing.view.sheet_note_placed = Some(note);
         }
         ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
     }

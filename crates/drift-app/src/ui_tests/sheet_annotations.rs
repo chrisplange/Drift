@@ -593,7 +593,6 @@ fn an_undo_between_a_leaders_click_and_its_text_lets_the_leader_go() {
     h.run();
     h.state_mut().set_tool(ToolKind::Dimension);
     h.run();
-    let before = all_annotations(&h);
     click_paper(&mut h, V(170.0, 150.0));
     assert!(h.state().tool.is_busy());
     {
@@ -606,7 +605,8 @@ fn an_undo_between_a_leaders_click_and_its_text_lets_the_leader_go() {
     }
     click_paper(&mut h, V(200.0, 135.0));
     assert!(!h.state().tool.is_busy());
-    assert_eq!(all_annotations(&h), before);
+    // (The note left empty above went with the first click; no dimension was made.)
+    assert_eq!(all_annotations(&h), 0);
 }
 
 #[test]
@@ -720,4 +720,76 @@ fn an_empty_note_is_not_brought_back_by_undo() {
         &drift_io::Metadata::default(),
     );
     assert!(!text.contains("\"annotations\""), "{text}");
+}
+
+#[test]
+fn two_notes_placed_without_typing_leave_no_empty_note_for_undo() {
+    let Some((mut h, p)) = on_sheet() else { return };
+    let empty = |h: &Harness<'_, DriftApp>| {
+        annotations(h, p.sheet)
+            .iter()
+            .filter(|(_, a)| matches!(a, SheetAnnotation::Note { text, .. } if text.is_empty()))
+            .count()
+    };
+    h.state_mut().set_tool(ToolKind::Note);
+    h.run();
+    // Note A, nothing typed; then note B: the pick moves, and A goes.
+    click_paper(&mut h, V(60.0, 250.0));
+    let a = annotations(&h, p.sheet)[0].0;
+    click_paper(&mut h, V(60.0, 60.0));
+    h.run();
+    let now = annotations(&h, p.sheet);
+    assert_eq!(now.len(), 1, "{now:?}");
+    assert_ne!(now[0].0, a, "the one left is B");
+    // Undo takes B back and does not bring A back; further undos and redos never show A.
+    h.state_mut().undo();
+    h.run();
+    assert!(
+        annotations(&h, p.sheet).is_empty(),
+        "{:?}",
+        annotations(&h, p.sheet)
+    );
+    for _ in 0..3 {
+        h.state_mut().undo();
+        h.run();
+        assert!(annotations(&h, p.sheet).iter().all(|(id, _)| *id != a));
+    }
+    for _ in 0..4 {
+        h.state_mut().redo();
+        h.run();
+        assert!(annotations(&h, p.sheet).iter().all(|(id, _)| *id != a));
+    }
+    // A note with text placed before an empty one is not touched by the empty one going.
+    for _ in 0..4 {
+        h.state_mut().undo();
+    }
+    h.run();
+    click_paper(&mut h, V(60.0, 250.0));
+    h.run();
+    h.event(Event::Text("KEEP".into()));
+    h.run();
+    click_paper(&mut h, V(60.0, 60.0));
+    click_paper(&mut h, V(120.0, 60.0));
+    h.run();
+    let texts: Vec<String> = annotations(&h, p.sheet)
+        .iter()
+        .map(|(_, a)| match a {
+            SheetAnnotation::Note { text, .. } => text.clone(),
+            SheetAnnotation::Dimension { .. } => String::new(),
+        })
+        .collect();
+    assert_eq!(
+        texts.iter().filter(|t| *t == "KEEP").count(),
+        1,
+        "{texts:?}"
+    );
+    assert_eq!(
+        empty(&h),
+        1,
+        "only the note just placed is empty: {texts:?}"
+    );
+    h.state_mut().undo();
+    h.run();
+    assert_eq!(empty(&h), 0, "undo brings no empty note back");
+    assert_eq!(annotations(&h, p.sheet).len(), 1);
 }

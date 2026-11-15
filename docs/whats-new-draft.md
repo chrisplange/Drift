@@ -18,8 +18,8 @@ The next release's notes, as they land (Beta 1.6's are below).
   one is tied to takes a dimension with it and a note's leader off, in the same step.
 - They print and export with the sheet (PDF and SVG; DWG and DXF are the model, so
   they have none), and save with the drawing.
-  Older drawings open as they were; the file format is 45, which Beta 1.6 still opens
-  (without these annotations, keeping them when it saves).
+  Older drawings open as they were. The file format is 45: Beta 1.6 and earlier ask
+  you to update Drift before opening a drawing saved by this version.
 
 <!-- PRs: sheet-annot (#432, part 1) -->
 

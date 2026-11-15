@@ -283,14 +283,15 @@ fn an_older_file_opens_unchanged() {
         assert!(s.annotations.is_empty());
         assert!(s.viewports.iter().all(|p| p.id.is_none()));
     }
-    // Saved by this build it is the same file but for the version line.
+    // Saved by this build it is the same file but for the version and reader lines.
     let saved = save(&doc, &meta);
     // (The fixture's whole-sketch option is a file of its own, with its own version.)
     let bumped = old
         .replace(
-            "\"version\": 44,",
-            &format!("\"version\": {FORMAT_VERSION},"),
+            "\"version\": 44,\n  \"reader\": 44,",
+            &format!("\"version\": {FORMAT_VERSION},\n  \"reader\": {READER_VERSION},"),
         )
+        .replace("\"reader\":44,", &format!("\"reader\":{READER_VERSION},"))
         .replace("\"version\":44,", &format!("\"version\":{FORMAT_VERSION},"));
     for (now, was) in saved.lines().zip(bumped.lines()) {
         assert_eq!(now, was);
@@ -416,6 +417,116 @@ fn what_an_older_build_left_dangling_is_repaired_and_said() {
 }
 
 #[test]
+fn a_dimension_its_geometry_no_longer_fits_is_dropped_not_refused() {
+    // In the app: an angle between two edges, one of which then becomes an arc in place
+    // (it keeps its id). The dimension goes in that step, so what is saved opens again.
+    let mut d = drawing();
+    let angle = d.add(SheetAnnotation::dimension(
+        d.ports[0],
+        Constraint::Angle {
+            a: d.lines[0],
+            b: d.lines[3],
+            degrees: 0.0,
+        },
+        None,
+    ));
+    let c = d.doc.add_point(V(2000.0, -5000.0));
+    let arc = drift_core::EntityKind::Arc {
+        center: c,
+        start: d.points[0],
+        end: d.points[1],
+    };
+    let before = save(&d.doc, &Metadata::default());
+    d.doc.set_entity_kind(d.lines[0], arc).unwrap();
+    assert!(d.doc.sheet_annotation(d.sheet, angle).is_none());
+    round_trip(&d.doc);
+
+    // A file that has one all the same (written before the kind check, or by hand): the
+    // angle dimension as it was, with its line now an arc. It opens; the dimension is
+    // dropped and the file says so; saved, it opens clean.
+    let after = save(&d.doc, &Metadata::default());
+    let sheet_line = |t: &str| {
+        t.lines()
+            .find(|l| l.contains("\"name\":\"A-101\""))
+            .unwrap()
+            .to_owned()
+    };
+    let stale = after.replacen(&sheet_line(&after), &sheet_line(&before), 1);
+    assert!(stale.contains("\"type\":\"angle\""), "{stale}");
+    let (doc, meta, notes) =
+        load_with_notes(&stale).expect("a wrong-kind dimension is no reason to refuse the file");
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(
+        notes[0].contains("A-101") && notes[0].contains("1 annotation "),
+        "{notes:?}"
+    );
+    assert!(doc.sheet(d.sheet).unwrap().annotations.is_empty());
+    let (again, _, notes) = load_with_notes(&save(&doc, &meta)).unwrap();
+    assert!(notes.is_empty(), "{notes:?}");
+    assert_eq!(again, doc);
+
+    // A radius of a point (not a curve at all): dropped the same way.
+    let (t, text) = tied();
+    let a = t.points[0].to_string();
+    let from = format!("\"measure\":{{\"type\":\"distance\",\"a\":\"{a}\"");
+    assert!(text.contains(&from), "{text}");
+    let radius = text.replacen(
+        &from,
+        &format!("\"measure\":{{\"type\":\"radius\",\"curve\":\"{a}\",\"a\":\"{a}\""),
+        1,
+    );
+    let (doc, _, notes) = load_with_notes(&radius).unwrap();
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(
+        sheet_notes(&doc, t.sheet)
+            .iter()
+            .all(|a| matches!(a, SheetAnnotation::Note { .. }))
+    );
+
+    // A leader "on a curve" that names a point is at that point: it has a place, so it
+    // is kept and drawn there, with nothing to say.
+    let line = t.lines[1].to_string();
+    let on_point = text.replace(
+        &format!("\"curve\":\"{line}\""),
+        &format!("\"curve\":\"{a}\""),
+    );
+    assert_ne!(on_point, text);
+    let (doc, _, notes) = load_with_notes(&on_point).unwrap();
+    assert!(notes.is_empty(), "{notes:?}");
+    let sheet = doc.sheet(t.sheet).unwrap();
+    let tips: Vec<DVec2> = sheet
+        .annotations
+        .values()
+        .filter_map(|a| match a {
+            SheetAnnotation::Note { leaders, .. } => leaders.iter().find(|l| l.port.is_some()),
+            SheetAnnotation::Dimension { .. } => None,
+        })
+        .filter_map(|l| doc.sheet_leader_tip(sheet, l))
+        .collect();
+    let view = doc.port_view(sheet, t.ports[0]).unwrap();
+    assert_eq!(tips, [view.to_paper(V(0.0, 0.0))]);
+}
+
+#[test]
+fn paper_numbers_far_off_the_paper_are_refused() {
+    // Finite, but so large that drawn through 32-bit screen points they would reach the PDF
+    // and SVG as `inf` or `NaN`: refused on reading, like any number that isn't one.
+    let (_, text) = tied();
+    for (from, to) in [
+        ("\"at\":[60.0,260.0]", "\"at\":[1e300,-1e300]"),
+        ("\"label\":[0.0,-8.0]", "\"label\":[1e308,1e308]"),
+        ("\"at\":[70.0,240.0]", "\"at\":[0.0,2.5e5]"),
+    ] {
+        assert!(text.contains(from), "{from}");
+        let bad = text.replacen(from, to, 1);
+        assert!(load(&bad).is_err(), "{to}");
+    }
+    // Within reach (100 m of paper) it opens.
+    let ok = text.replacen("\"at\":[60.0,260.0]", "\"at\":[99999.0,-99999.0]", 1);
+    assert!(load(&ok).is_ok());
+}
+
+#[test]
 fn a_bad_sheet_annotation_is_refused() {
     let (d, text) = tied();
     let edit = |from: &str, to: &str| {
@@ -432,11 +543,6 @@ fn a_bad_sheet_annotation_is_refused() {
         edit(
             "\"measure\":{\"type\":\"distance\"",
             "\"measure\":{\"type\":\"coincident\"",
-        ),
-        // A radius of a point: the wrong kind of entity for it.
-        edit(
-            &format!("\"measure\":{{\"type\":\"distance\",\"a\":\"{a}\""),
-            &format!("\"measure\":{{\"type\":\"radius\",\"curve\":\"{a}\",\"a\":\"{a}\""),
         ),
         // Missing what it measures; ids that aren't ids; numbers that aren't numbers.
         edit(&format!("\"a\":\"{a}\",\"b\""), "\"b\""),
@@ -486,7 +592,7 @@ fn coordinate() -> impl Strategy<Value = f64> {
         Just(0.0),
         Just(-0.0),
         Just(1e-9),
-        Just(123_456.789),
+        Just(12_345.678),
     ]
 }
 
@@ -665,12 +771,7 @@ fn settled(doc: &Document) {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig {
-        cases: 96,
-        ..ProptestConfig::default()
-    })]
-
-    /// Any annotations the document accepts save and reload exactly.
+        /// Any annotations the document accepts save and reload exactly.
     #[test]
     fn whatever_is_put_on_a_sheet_round_trips(all in prop::collection::vec(made(), 0..12)) {
         let mut d = drawing();

@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc f094fbc59ab51fcb1bea342a4c786917dd8df2a012983094534a65f1b29e112d # shrinks to all = [Note { text: "", at: DVec2(0.0, 0.0), leaders: [(None, 0, 0, DVec2(123456.789, 0.0), 0.0, 0, 0, false)], bold: false, frame: 0, height: None }], edits = [(Index(0), 0, 0)]
+cc 04911d519b83da2d3c0f1b3582cd97527429b5b60ea1aee17506d0fc8499024f # shrinks to all = [Note { text: "", at: DVec2(0.0, 0.0), leaders: [(None, 0, 0, DVec2(0.0, 123456.789), 0.0, 0, 0, false)], bold: false, frame: 0, height: None }]

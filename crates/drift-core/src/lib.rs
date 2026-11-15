@@ -55,7 +55,7 @@ pub use paths::{Path, PathId};
 pub use rules::DrawingRules;
 pub use shape::{CanvasImage, DofState, Emphasis, FillMesh, LineKind, Shape, SketchItem};
 pub use shared::Shared;
-pub use sheet_annotations::{PortId, SheetAnnotation, SheetAnnotationId, SheetLeader};
+pub use sheet_annotations::{PortId, SheetAnnotation, SheetAnnotationId, SheetLeader, Tie};
 pub use sheets::{
     FieldSet, PaperSize, PlacedView, Project, Revision, Sheet, SheetColours, SheetId, TitleBlock,
     TitleFields, View, ViewFrame, ViewId, Viewport,

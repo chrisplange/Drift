@@ -256,6 +256,8 @@ impl Document {
             for cid in stale {
                 self.remove_constraint(cid);
             }
+            // A sheet's own dimension that the new kind can't be measured by goes too.
+            self.settle_sheets();
         }
         Ok(())
     }
@@ -303,6 +305,8 @@ impl Document {
             for cid in stale {
                 self.remove_constraint(cid);
             }
+            // A sheet's own dimension that the new kind can't be measured by goes too.
+            self.settle_sheets();
         }
         Ok(())
     }

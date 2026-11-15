@@ -64,6 +64,20 @@ impl SheetLeader {
     }
 }
 
+/// One thing a sheet annotation is tied to in the model, for asking whether it still holds
+/// (see [`SheetAnnotation::surviving`]).
+#[derive(Clone, Copy, Debug)]
+pub enum Tie<'a> {
+    /// What a dimension measures: its geometry must be there and of the kind it measures.
+    Measure(&'a Constraint),
+    /// What a leader through a viewport points at: it must have a place in the model.
+    Anchor(&'a Anchor),
+}
+
+/// The furthest from the paper's origin a sheet annotation's paper numbers may be (mm): far
+/// more paper than any sheet, and small enough to draw exactly.
+pub const PAPER_REACH: f64 = 100_000.0;
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum SheetAnnotation {
     /// Text at `at` (its middle, paper mm), from any number of leaders. The text stays where
@@ -159,8 +173,10 @@ impl SheetAnnotation {
     }
 
     /// Whether it is well formed apart from what it refers to: a dimension measures with a
-    /// dimension, a leader without a viewport points at the paper, and its numbers are finite.
+    /// dimension, a leader without a viewport points at the paper, its numbers are finite, and
+    /// its places on the paper are within [`PAPER_REACH`] (a model point may be anywhere).
     pub fn is_valid(&self) -> bool {
+        let paper = |p: DVec2| p.is_finite() && p.abs().max_element() <= PAPER_REACH;
         let look_ok = |look: &StyleOverride| {
             [
                 look.text_height,
@@ -180,19 +196,20 @@ impl SheetAnnotation {
                 look,
                 ..
             } => {
-                at.is_finite()
+                paper(*at)
                     && look_ok(look)
                     && style.height.is_none_or(|h| h.is_finite() && h > 0.0)
                     && style.wrap.is_none_or(|w| w.is_finite() && w > 0.0)
                     && leaders.iter().all(|l| {
                         let to_ok = match l.leader.to {
+                            Anchor::Free(p) if l.port.is_none() => paper(p),
                             Anchor::Free(p) => p.is_finite(),
                             Anchor::Point(_) => l.port.is_some(),
                             Anchor::Curve { t, .. } => l.port.is_some() && t.is_finite(),
                         };
                         let shape_ok = match l.leader.shape {
                             crate::LeaderShape::Straight => true,
-                            crate::LeaderShape::Bent(b) => b.is_finite(),
+                            crate::LeaderShape::Bent(b) => paper(b),
                             crate::LeaderShape::Curved(k) => k.is_finite(),
                         };
                         to_ok
@@ -206,23 +223,38 @@ impl SheetAnnotation {
                 label,
                 look,
                 ..
-            } => measure.is_dimension() && label.is_none_or(|l| l.is_finite()) && look_ok(look),
+            } => measure.is_dimension() && label.is_none_or(paper) && look_ok(look),
         }
     }
 
-    /// What is left of it when some of what it is tied to has gone (`port` and `entity` say
-    /// what is still there): a dimension goes with its viewport or any of its geometry
-    /// (`None`), as a model dimension goes with its geometry; a note keeps its text where it
-    /// is and loses only the leaders whose viewport or geometry went, as a model note does.
+    /// Whether everything it is tied to holds (`port` says which viewports are there, `tie`
+    /// which ties to the model still hold): nothing for [`Self::surviving`] to take away.
+    pub fn holds(&self, port: &dyn Fn(PortId) -> bool, tie: &dyn Fn(Tie) -> bool) -> bool {
+        match self {
+            SheetAnnotation::Dimension {
+                port: p, measure, ..
+            } => port(*p) && tie(Tie::Measure(measure)),
+            SheetAnnotation::Note { leaders, .. } => leaders.iter().all(|l| match l.port {
+                Some(p) => port(p) && tie(Tie::Anchor(&l.leader.to)),
+                None => true,
+            }),
+        }
+    }
+
+    /// What is left of it when some of what it is tied to has gone, or no longer fits (`port`
+    /// and `tie` say what still holds): a dimension goes with its viewport, with any of its
+    /// geometry, or when its geometry is no longer of the kind it measures (`None`), as a
+    /// model dimension does; a note keeps its text where it is and loses only the leaders
+    /// whose viewport or geometry went, as a model note does.
     pub fn surviving(
         &self,
         port: &dyn Fn(PortId) -> bool,
-        entity: &dyn Fn(EntityId) -> bool,
+        tie: &dyn Fn(Tie) -> bool,
     ) -> Option<SheetAnnotation> {
         match self {
             SheetAnnotation::Dimension {
                 port: p, measure, ..
-            } => (port(*p) && measure.entities().all(entity)).then(|| self.clone()),
+            } => (port(*p) && tie(Tie::Measure(measure))).then(|| self.clone()),
             SheetAnnotation::Note {
                 text,
                 at,
@@ -233,7 +265,7 @@ impl SheetAnnotation {
                 let leaders = leaders
                     .iter()
                     .filter(|l| match l.port {
-                        Some(p) => port(p) && l.leader.to.entity().is_none_or(entity),
+                        Some(p) => port(p) && tie(Tie::Anchor(&l.leader.to)),
                         None => true,
                     })
                     .copied()
@@ -739,6 +771,121 @@ mod tests {
             value: 0.0,
         };
         assert!(f.doc.add_sheet_annotation(sheet, dim(port, radius)).is_ok());
+    }
+
+    #[test]
+    fn a_curve_that_becomes_another_kind_takes_what_can_no_longer_measure_it() {
+        let mut f = fixture();
+        let (sheet, port) = (f.sheet, f.port);
+        let (bottom, left, a, b) = (f.lines[0], f.lines[3], f.points[0], f.points[1]);
+        // The angle between two edges, and a note with a leader to a spot on the bottom one.
+        let angle = f.step(|doc| {
+            doc.add_sheet_annotation(
+                sheet,
+                SheetAnnotation::dimension(
+                    port,
+                    Constraint::Angle {
+                        a: bottom,
+                        b: left,
+                        degrees: 0.0,
+                    },
+                    None,
+                ),
+            )
+            .unwrap()
+        });
+        let width = f.width();
+        let note = f.note();
+        let before = f.doc.clone();
+        // The bottom edge becomes an arc on the same two points: it keeps its id.
+        f.step(|doc| {
+            let c = doc.add_point(V(50.0, -200.0));
+            doc.set_entity_kind(
+                bottom,
+                crate::EntityKind::Arc {
+                    center: c,
+                    start: a,
+                    end: b,
+                },
+            )
+            .unwrap();
+        });
+        // An angle needs two lines: it goes, as the model's own would. What still fits
+        // stays: the distance between its ends, and the leader to a spot on the curve.
+        assert!(f.get(angle).is_none());
+        assert!(f.get(width).is_some());
+        assert_eq!(f.leaders(note).len(), 2);
+        assert!(f.tip(note, 0).is_some());
+        // Nothing on any sheet is tied to what it can't be measured by or drawn at.
+        for (_, s) in f.doc.sheets() {
+            let mut settled = s.clone();
+            assert!(!f.doc.settle_sheet(&mut settled), "already settled");
+        }
+        // In the same step: one undo brings the line and the angle back.
+        assert!(f.history.undo(&mut f.doc));
+        assert_eq!(f.doc, before);
+        assert!(f.history.redo(&mut f.doc));
+        assert!(f.get(angle).is_none());
+        // The same through the exact form.
+        assert!(f.history.undo(&mut f.doc));
+        f.step(|doc| {
+            let c = doc.add_point(V(50.0, -200.0));
+            doc.set_entity_kind_exact(
+                bottom,
+                crate::EntityKind::Arc {
+                    center: c,
+                    start: a,
+                    end: b,
+                },
+            )
+            .unwrap();
+        });
+        assert!(f.get(angle).is_none() && f.get(width).is_some());
+    }
+
+    #[test]
+    fn places_far_off_the_paper_are_refused() {
+        let mut f = fixture();
+        let (sheet, port) = (f.sheet, f.port);
+        let (a, b) = (f.points[0], f.points[1]);
+        let far = PAPER_REACH * 2.0;
+        let before = f.doc.clone();
+        let note = |at| SheetAnnotation::note("x", at);
+        assert!(
+            f.doc
+                .add_sheet_annotation(sheet, note(V(far, 0.0)))
+                .is_err()
+        );
+        assert!(
+            f.doc
+                .add_sheet_annotation(sheet, note(V(0.0, -1e300)))
+                .is_err()
+        );
+        let mut led = note(V(10.0, 10.0));
+        if let SheetAnnotation::Note { leaders, .. } = &mut led {
+            leaders.push(SheetLeader::on_paper(V(1e308, 1e308)));
+        }
+        assert!(f.doc.add_sheet_annotation(sheet, led).is_err());
+        let dim = |label| {
+            SheetAnnotation::dimension(port, Constraint::Distance { a, b, value: 0.0 }, label)
+        };
+        assert!(
+            f.doc
+                .add_sheet_annotation(sheet, dim(Some(V(far, far))))
+                .is_err()
+        );
+        assert_eq!(f.doc, before);
+        // A model point may be anywhere (a site's coordinates): only paper is bounded.
+        let mut site = note(V(10.0, 10.0));
+        if let SheetAnnotation::Note { leaders, .. } = &mut site {
+            leaders.push(SheetLeader::through(port, Anchor::Free(V(5.0e8, 4.0e8))));
+        }
+        assert!(f.doc.add_sheet_annotation(sheet, site).is_ok());
+        assert!(
+            f.doc
+                .add_sheet_annotation(sheet, dim(Some(V(PAPER_REACH, 0.0))))
+                .is_ok()
+        );
     }
 
     #[test]

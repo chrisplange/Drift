@@ -560,10 +560,14 @@ impl Sheet {
 
     /// Make the sheet consistent, as a document keeps it: no two viewports share an id (a
     /// later one loses its own), and no annotation is tied to a viewport the sheet doesn't
-    /// have or to geometry that is gone (`entity` says what is there). A dimension tied to
-    /// what is gone goes; a note loses those leaders and keeps its text. Returns whether
-    /// anything changed.
-    pub fn settle_annotations(&mut self, entity: &dyn Fn(crate::EntityId) -> bool) -> bool {
+    /// have, to geometry that is gone or to geometry it no longer fits (`tie` says which ties
+    /// to the model hold: see [`Document::settle_sheet`](crate::Document::settle_sheet)). A
+    /// dimension tied to what is gone goes; a note loses those leaders and keeps its text.
+    /// Returns whether anything changed.
+    pub fn settle_annotations(
+        &mut self,
+        tie: &dyn Fn(crate::sheet_annotations::Tie) -> bool,
+    ) -> bool {
         let mut changed = false;
         let mut seen = BTreeSet::new();
         for p in &mut self.viewports {
@@ -581,7 +585,7 @@ impl Sheet {
         let ids: Vec<SheetAnnotationId> = self.annotations.keys().copied().collect();
         for id in ids {
             let a = &self.annotations[&id];
-            match a.surviving(&port, entity) {
+            match a.surviving(&port, tie) {
                 Some(kept) if kept == *a => {}
                 Some(kept) => {
                     self.annotations.insert(id, kept);

@@ -17,7 +17,7 @@ impl Document {
     /// [`Sheet::settle_annotations`]).
     pub fn add_sheet(&mut self, mut sheet: Sheet) -> SheetId {
         let id = SheetId(self.next_drafting());
-        self.settle(&mut sheet);
+        self.settle_sheet(&mut sheet);
         let mut ports = BTreeMap::new();
         for p in &mut sheet.viewports {
             if let Some(old) = p.id {
@@ -44,9 +44,27 @@ impl Document {
         id
     }
 
-    /// `sheet` as a document keeps it: see [`Sheet::settle_annotations`].
-    fn settle(&self, sheet: &mut Sheet) -> bool {
-        sheet.settle_annotations(&|e| self.entities.contains_key(&e))
+    /// Whether a sheet annotation's tie to the model holds in this drawing: a dimension's
+    /// geometry is all there and of the kind it measures (a radius of a line isn't); a
+    /// leader's anchor has a place.
+    fn tie_holds(&self, tie: crate::sheet_annotations::Tie) -> bool {
+        use crate::sheet_annotations::Tie;
+        match tie {
+            Tie::Measure(c) => {
+                c.is_dimension()
+                    && c.entities().all(|e| self.entities.contains_key(&e))
+                    // (The value is irrelevant: the references are what is checked.)
+                    && self.validate(&c.with_value(1.0)).is_ok()
+            }
+            Tie::Anchor(a) => self.anchor_pos(a).is_some(),
+        }
+    }
+
+    /// `sheet` as this drawing keeps it (see [`Sheet::settle_annotations`]): what is tied to
+    /// a viewport it lacks, to geometry that isn't there, or to geometry of a kind it can't
+    /// measure, goes or lets go. Returns whether anything changed.
+    pub fn settle_sheet(&self, sheet: &mut Sheet) -> bool {
+        sheet.settle_annotations(&|tie| self.tie_holds(tie))
     }
 
     /// Insert a sheet with a known id (loading a file). An annotation of it tied to a
@@ -54,7 +72,7 @@ impl Document {
     /// leader (see [`Sheet::settle_annotations`]; a reader that wants to say so settles the
     /// sheet itself first).
     pub fn insert_sheet(&mut self, id: SheetId, mut sheet: Sheet) {
-        self.settle(&mut sheet);
+        self.settle_sheet(&mut sheet);
         let top = sheet
             .annotations
             .keys()
@@ -72,7 +90,7 @@ impl Document {
     /// off the sheet takes the dimensions through it along, and the leaders through it off
     /// their notes, in the same step (see [`Sheet::settle_annotations`]).
     pub fn set_sheet(&mut self, id: SheetId, mut sheet: Sheet) {
-        self.settle(&mut sheet);
+        self.settle_sheet(&mut sheet);
         if self.sheets.get(&id).is_some_and(|s| *s != sheet) {
             self.touch_key(Key::Sheet(id));
             self.sheets.insert(id, sheet);
@@ -212,17 +230,18 @@ impl Document {
         }
     }
 
-    /// Sheets' annotations follow the model: after geometry is deleted, what was tied to it
-    /// goes (a dimension) or lets go of it (a note's leader), in the deleting step.
+    /// Sheets' annotations follow the model: after geometry is deleted, or a curve becomes
+    /// one of another kind, what was tied to it and no longer fits goes (a dimension) or lets
+    /// go of it (a note's leader), in the same step.
     pub(super) fn settle_sheets(&mut self) {
-        // (Only the sheets with something tied to what went are copied and written.)
+        // (Only the sheets with something that no longer holds are copied and written.)
         let ids: Vec<SheetId> = self
             .sheets
             .iter()
             .filter(|(_, s)| {
                 s.annotations
                     .values()
-                    .any(|a| a.entities().iter().any(|e| !self.entities.contains_key(e)))
+                    .any(|a| !a.holds(&|_| true, &|tie| self.tie_holds(tie)))
             })
             .map(|(id, _)| *id)
             .collect();

@@ -2783,9 +2783,15 @@ fn face_dimensions_hold(
     let unmet = |ed: &Editor| broken(&ed.doc, ed.lowering().as_deref());
     prop_assert!(unmet(ed).is_none(), "holds to begin with");
     ed.doc.begin();
+    // (`Editor::drag` takes each step's move, not the way so far. #295: given the way so far,
+    // a 5-step drag went three times as far, and drew a T's host out from under its branch.)
+    let mut applied = DVec2::ZERO;
     for k in 1..=steps {
         let to = offset * (f64::from(k) / f64::from(steps));
-        let ok = ed.drag(&[p], to, &dragged);
+        let ok = ed.drag(&[p], to - applied, &dragged);
+        if ok {
+            applied = to;
+        }
         prop_assert!(
             unmet(ed).is_none(),
             "step {k} (moved: {ok}): {:?}",
@@ -2818,8 +2824,6 @@ proptest! {
     #![proptest_config(ProptestConfig { cases: LIGHT, ..ProptestConfig::default() })]
 
     #[test]
-    // Flaky: a big 5-step drag can break a face relation or flip a join (quarantine.yml runs it).
-    #[ignore = "flaky: #295"]
     fn face_dimensions_hold_through_drags(
         kind in 0u8..3,
         which in 0usize..8,

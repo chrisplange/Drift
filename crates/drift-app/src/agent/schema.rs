@@ -18,7 +18,8 @@ pub const INSTRUCTIONS: &str = "\
 Drift is a parametric 2D CAD sketcher. These tools create and edit one Drift drawing at a time.
 
 Coordinates and lengths are millimetres with y up; angles are degrees counter-clockwise from +x. \
-Ids: entities e12 (points and curves), constraints c3, layers l1, fills f2, texts t4.
+Ids: entities e12 (points and curves), constraints c3, layers l1, fills f2, texts t4, \
+blocks b1, block copies i5, groups g2.
 
 Work the way Drift is meant to be used, not by computing exact coordinates:
 1. To build or change geometry, write a Drift script and call run_script: rooms, walls, openings, \
@@ -34,6 +35,10 @@ geometry to satisfy them.
 PNG with ids, relation tags and colours: blue can still move, black is fully defined, red \
 conflicts). Fix what's wrong and repeat. A drawing is done when analyze says it is fully defined \
 (fix one point, e.g. a corner at the origin, to pin the whole sketch in place).
+
+For a part that repeats (a fixture, a door leaf, a profile), draw it once, make it a block with \
+blocks, and place copies of the block instead of drawing it again. Copies are not solved: each \
+sits where it is placed, at its angle and scale.
 
 Every change is one undo step and all or nothing: a failed call changes nothing. Use undo to \
 step back, and batch to make several calls one step. Save with save_drawing.";
@@ -104,7 +109,7 @@ pub fn tools() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "drawing_info",
-            description: "Summary of the drawing: units, scale, bounds, counts, layers, variables, sheets, degrees of freedom.",
+            description: "Summary of the drawing: units, scale, bounds, counts, layers, variables, sheets, blocks (id, name, how many curves, fills and copies), groups, degrees of freedom.",
             schema: object(json!({}), &[]),
             read_only: true,
         },
@@ -122,10 +127,10 @@ pub fn tools() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "list_entities",
-            description: "List curves (and optionally points) with their ids, defining point ids, coordinates, lengths, radii and layers.",
+            description: "List curves (and optionally points) with their ids, defining point ids, coordinates, lengths, radii, layers and the group they are in. When the drawing has block copies they are listed too, as `block_copies` (id, block, name, at, angle, scale, mirror, layer, bounds): they are not entities, so they follow `layer` and `within` but are left out when `ids` or a curve `kind` is given (`kind: block_copy` lists only them).",
             schema: object(
                 json!({
-                    "kind": { "type": "string", "enum": ["point", "line", "circle", "arc", "ellipse", "ellipse_arc", "bezier"] },
+                    "kind": { "type": "string", "enum": ["point", "line", "circle", "arc", "ellipse", "ellipse_arc", "bezier", "block_copy"] },
                     "layer": layer,
                     "within": region,
                     "ids": ids("Only these entities"),
@@ -334,8 +339,11 @@ Two filled shapes trimmed into one outline keep one fill, the top one's.",
         },
         ToolSpec {
             name: "delete",
-            description: "Delete entities (with their relations), constraints, fills or texts by id.",
-            schema: object(json!({ "ids": ids("Ids: e.., c.., f.., t..") }), &["ids"]),
+            description: "Delete entities (with their relations), constraints, fills, texts or block copies by id.",
+            schema: object(
+                json!({ "ids": ids("Ids: e.., c.., f.., t.., i..") }),
+                &["ids"],
+            ),
             read_only: false,
         },
         ToolSpec {
@@ -391,6 +399,34 @@ Two filled shapes trimmed into one outline keep one fill, the top one's.",
                     "layer": layer
                 }),
                 &["text", "at"],
+            ),
+            read_only: false,
+        },
+        ToolSpec {
+            name: "blocks",
+            description: "Blocks: a part drawn once and placed many times. ops: \
+make {ids, name?, base?}: the curves `ids` (with the fills they enclose) become a block, and one copy of it takes their place; `base` is the block's base point ([x, y], default the middle of the curves), the point a copy is placed by. The curves' relations and dimensions go: a block's curves are rigid. Returns the block (b..) and its copy (i..). \
+place {block, at, angle?, mirror?, scale?, layer?}: put a copy of `block` (id or name) with its base point at `at`, turned `angle` degrees counter-clockwise, mirrored left to right (before turning), `scale` times its size (default 1); it goes on the current layer unless `layer` is given. \
+explode {copies, to_group?}: turn copies (i..) back into ordinary curves, which are returned as `created`; with `to_group`, each copy becomes a group named after its block (`groups`). The block stays, for other copies. \
+from_group {group}: turn a group (id or name) into a block named after it, with one copy in its place. \
+drawing_info lists the blocks and groups, list_entities the copies. Copies are not solved and take no relations or dimensions; delete removes one by its id.",
+            schema: object(
+                json!({
+                    "op": { "type": "string", "enum": ["make", "place", "explode", "from_group"] },
+                    "ids": ids("make: the curves to make a block of"),
+                    "name": { "type": "string", "description": "make: the block's name (default Block 1, Block 2, ...); it must not be taken" },
+                    "base": coord(),
+                    "block": id("place: block id (\"b1\") or name"),
+                    "at": coord(),
+                    "angle": { "type": "number", "description": "place: degrees counter-clockwise (default 0)" },
+                    "mirror": { "type": "boolean", "description": "place: mirrored left to right, before turning (default false)" },
+                    "scale": { "type": "number", "description": "place: times the block's size (default 1)" },
+                    "layer": layer,
+                    "copies": ids("explode: block copy ids (\"i5\")"),
+                    "to_group": { "type": "boolean", "description": "explode: make each copy a group named after its block (default false)" },
+                    "group": id("from_group: group id (\"g2\") or name")
+                }),
+                &["op"],
             ),
             read_only: false,
         },

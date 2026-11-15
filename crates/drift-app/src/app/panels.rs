@@ -441,7 +441,9 @@ impl DriftApp {
             return;
         };
         let keys = spec.key_text(cfg!(target_os = "macos"));
-        ui.menu_button("Relations", |ui| {
+        // (Set in from the edge like the switches round it, which have a check mark's room.)
+        let room = egui::Atom::custom(egui::Id::new("menu_check"), egui::vec2(14.0, 14.0));
+        ui.menu_button((room, "Relations"), |ui| {
             for mode in ShowRelations::ALL {
                 let on = self.show_relations == mode;
                 if theme::menu_check(ui, on, mode.label(), "").clicked() {

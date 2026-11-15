@@ -51,9 +51,31 @@ impl DriftApp {
                 self.start_add_view(id);
                 return;
             }
-            // Esc lets go of several picked views first, then returns to the model.
+            // S, N and D: the tools that work on paper, by the keys they have in the model.
+            for (key, tool) in [
+                (Key::S, ToolKind::Select),
+                (Key::N, ToolKind::Note),
+                (Key::D, ToolKind::Dimension),
+            ] {
+                if ctx.input(|i| i.modifiers.is_none() && i.key_pressed(key)) {
+                    self.set_tool(tool);
+                    return;
+                }
+            }
+            // Esc gives up what the Note or Dimension tool has picked, then the tool, then
+            // a picked annotation, then several picked views; then it returns to the model.
             if ctx.input(|i| i.key_pressed(Key::Escape)) {
-                if self.drawing.view.view_set.take().is_some() {
+                if self.cancel_sheet_annotation_drag() {
+                    // (A note or label being dragged went back to where it was.)
+                } else if self.sheet_tool() {
+                    if self.tool.is_busy() {
+                        self.tool_cancel();
+                    } else {
+                        self.set_tool(ToolKind::Select);
+                    }
+                } else if self.picked_sheet_annotation().is_some() {
+                    self.pick_sheet_annotation(None);
+                } else if self.drawing.view.view_set.take().is_some() {
                     self.drawing.view.sheet_pick = crate::app::sheet_editor::SheetPick::Paper;
                 } else {
                     self.drawing.view.sheet_preview = false;
@@ -66,11 +88,14 @@ impl DriftApp {
             if ctx.input(|i| i.modifiers.command_only() && i.key_pressed(Key::A)) {
                 self.pick_all_views();
             }
-            // Delete takes the picked views off the sheet (they stay in the model).
+            // Delete deletes a picked annotation of the sheet's, or takes the picked views
+            // off the sheet (they stay in the model).
             if ctx.input(|i| {
                 i.modifiers.is_none()
                     && (i.key_pressed(Key::Delete) || i.key_pressed(Key::Backspace))
             }) && let Some(id) = self.current_sheet()
+                && !self.delete_picked_sheet_annotation()
+                && self.drawing.view.sheet_pick != crate::app::sheet_editor::SheetPick::Annotation
             {
                 self.remove_picked_views(id);
             }
@@ -358,6 +383,10 @@ impl DriftApp {
     /// Delete what is picked: geometry, text, annotations and dimensions together; or a
     /// picked leader on its own, or a picked view's crop (asking first if it's on a sheet).
     pub(crate) fn delete_picked(&mut self) {
+        // On a sheet: its own picked annotation.
+        if self.drawing.view.sheet_preview && self.delete_picked_sheet_annotation() {
+            return;
+        }
         if let Some((id, k)) = self.drawing.selected_leader.take()
             && self.drawing.editor.selection.is_empty()
             && self.drawing.editor.selected_texts.is_empty()

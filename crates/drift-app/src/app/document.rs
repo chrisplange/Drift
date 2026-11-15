@@ -1077,6 +1077,9 @@ impl DriftApp {
     }
 
     pub(crate) fn abort_operation(&mut self) {
+        // A sheet annotation being dragged goes back first: its drag holds a step open, and
+        // an undo, a redo or a change of tool inside it would end up in that step.
+        self.cancel_sheet_annotation_drag();
         if self.tool.is_busy() {
             self.tool_cancel();
         }
@@ -1087,7 +1090,13 @@ impl DriftApp {
         if kind != ToolKind::View {
             self.drawing.add_view_on = None;
         }
-        if self.drawing.view.sheet_preview && kind != ToolKind::Select {
+        // On a sheet the Note and Dimension tools work on the paper (#432); any other tool
+        // draws in the model.
+        let on_paper = matches!(
+            kind,
+            ToolKind::Select | ToolKind::Note | ToolKind::Dimension
+        );
+        if self.drawing.view.sheet_preview && !on_paper {
             self.show_sheet(None);
             self.status_next = Some("Back in the model to draw".to_owned());
         }

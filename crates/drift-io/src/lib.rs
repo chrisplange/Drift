@@ -6,8 +6,8 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 44,
-//!   "reader": 44,
+//!   "version": 45,
+//!   "reader": 45,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -136,8 +136,11 @@ pub const EXTENSION: &str = "drift";
 /// geometry something else already partly holds); 44 = adds `corner` (a point held where two
 /// curves cross: the sharp corner a fillet or chamfer cut off), `midpoint_of` (a point midway
 /// between two points) and `equal_distance` (two point-to-point distances kept equal), so a
-/// fillet or chamfer keeps what was measured to its corner and along its sides (#238).
-pub const FORMAT_VERSION: u32 = 44;
+/// fillet or chamfer keeps what was measured to its corner and along its sides (#238);
+/// 45 = adds a sheet's own `annotations` (notes, leaders and dimensions placed on the sheet in
+/// paper mm, tied to model geometry through a viewport) and a viewport's `id` (what those
+/// annotations name it by) (#432). Breaking: `reader` is 45 too (see [`READER_VERSION`]).
+pub const FORMAT_VERSION: u32 = 45;
 /// The oldest version that reads what this build writes: the last breaking change, written as
 /// a file's `"reader"`. A reader refuses a file only when its `reader` is above the reader's
 /// own [`FORMAT_VERSION`] (a file without one, from before 42, gives its `version`).
@@ -145,8 +148,14 @@ pub const FORMAT_VERSION: u32 = 44;
 /// History: 42 = files carry `reader` (the strict readers before 42 refused any field they
 /// didn't know); 43 = `fix_x` and `fix_y` relations (a 42 reader refuses a relation type it
 /// doesn't know); 44 = `corner`, `midpoint_of` and `equal_distance` relations (a 43 reader
-/// refuses them the same way).
-pub const READER_VERSION: u32 = 44;
+/// refuses them the same way); 45 = a sheet's own `annotations`, tied to a viewport by its
+/// `id` (#432). A 44 reader would pass them over and keep them, but it knows viewports only by
+/// their place in the list: after it takes one view off a sheet and puts another on, the
+/// `id` it kept sits on the other view, and the annotations are tied through the wrong one
+/// with nothing to tell (and reordering sheets leaves a sheet's notes on another sheet). An
+/// addition that can't survive an older build's edits is breaking, so a 44 reader refuses
+/// the file instead.
+pub const READER_VERSION: u32 = 45;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -1335,6 +1344,18 @@ fn write(doc: &Document, meta: &Metadata) -> String {
 /// The records of the file for `doc`.
 #[cfg(not(feature = "demo"))]
 fn file_out<'a>(doc: &'a Document, meta: &'a Metadata) -> FileOut<'a> {
+    file_out_as_read(doc, meta, &[])
+}
+
+/// [`file_out`], with the sheets in `as_read` written as given instead of as `doc` has them:
+/// what this build writes for a file as it was read, before a sheet's annotations were
+/// repaired (see [`load_with_notes`]).
+#[cfg(not(feature = "demo"))]
+fn file_out_as_read<'a>(
+    doc: &'a Document,
+    meta: &'a Metadata,
+    as_read: &[(drift_core::SheetId, drift_core::Sheet)],
+) -> FileOut<'a> {
     let default_layers = {
         let mut layers = doc.layers();
         matches!(
@@ -1475,7 +1496,10 @@ fn file_out<'a>(doc: &'a Document, meta: &'a Metadata) -> FileOut<'a> {
             .collect(),
         sheets: doc
             .sheets()
-            .map(|(id, s)| sheets::sheet_record(id, s))
+            .map(|(id, s)| {
+                let s = as_read.iter().find(|(i, _)| *i == id).map_or(s, |(_, s)| s);
+                sheets::sheet_record(id, s)
+            })
             .collect(),
         groups: doc
             .groups()
@@ -1589,11 +1613,19 @@ pub fn load_with_notes(text: &str) -> Result<(Document, Metadata, Vec<String>), 
         .get("version")
         .and_then(serde_json::Value::as_u64)
         .is_some_and(|v| v >= u64::from(FORMAT_VERSION));
-    #[cfg_attr(feature = "demo", allow(unused_mut))]
-    let (mut doc, mut meta, notes) = load_value(value)?;
+    #[cfg_attr(feature = "demo", allow(unused_mut, unused_variables))]
+    let (mut doc, mut meta, notes, as_read) = load_value_as_read(value)?;
+    // What this build writes for the file as it was read: with a sheet whose annotations
+    // were repaired written as the file had it. So a repair is a change (the next save
+    // writes it), not something of the file's this build doesn't know (which it would keep,
+    // and repair again on every opening).
     #[cfg(not(feature = "demo"))]
     if may_carry
-        && let Some(kept) = carry::Kept::find(text, write(&doc, &meta), |id| doc.holds_id(id))
+        && let Some(kept) = carry::Kept::find(
+            text,
+            layout::to_file(&file_out_as_read(&doc, &meta, &as_read)),
+            |id| doc.holds_id(id),
+        )
     {
         // What it names keeps referring to what the newer build meant, never to something
         // made here.
@@ -1605,6 +1637,21 @@ pub fn load_with_notes(text: &str) -> Result<(Document, Metadata, Vec<String>), 
 
 /// [`load_with_notes`] from parsed JSON.
 fn load_value(value: serde_json::Value) -> Result<(Document, Metadata, Vec<String>), LoadError> {
+    load_value_as_read(value).map(|(doc, meta, notes, _)| (doc, meta, notes))
+}
+
+/// A drawing, its metadata, what was said on reading, and the sheets whose annotations were
+/// repaired, as the file had them.
+type Loaded = (
+    Document,
+    Metadata,
+    Vec<String>,
+    Vec<(drift_core::SheetId, drift_core::Sheet)>,
+);
+
+/// [`load_value`], with the sheets whose own annotations were repaired on reading (v45), as
+/// the file had them.
+fn load_value_as_read(value: serde_json::Value) -> Result<Loaded, LoadError> {
     let older_rules = value
         .get("version")
         .and_then(serde_json::Value::as_u64)
@@ -2081,6 +2128,8 @@ fn load_value(value: serde_json::Value) -> Result<(Document, Metadata, Vec<Strin
         doc.set_only_in(of, views);
     }
     let mut old_views = Vec::new();
+    let mut sheet_annotation_ids = std::collections::BTreeSet::new();
+    let mut sheets_as_read = Vec::new();
     for r in file.sheets {
         let id_text = r.id.clone();
         let (id, sheet, old) = sheets::parse_sheet(r)?;
@@ -2089,6 +2138,35 @@ fn load_value(value: serde_json::Value) -> Result<(Document, Metadata, Vec<Strin
         }
         if let Some(p) = sheet.viewports.iter().find(|p| doc.view(p.view).is_none()) {
             return Err(LoadError::UnknownView(p.view.to_string()));
+        }
+        // Its own annotations (v45), checked against the drawing as the document itself
+        // keeps them: one tied to a viewport the sheet doesn't have, to geometry that isn't
+        // there, or to geometry of a kind it can't measure (a radius of a line) goes, a note
+        // keeping its text and losing that leader, and the file says so. Never a reason to
+        // refuse the file: a drawing that held one must still open.
+        let mut sheet = sheet;
+        let before = sheet.clone();
+        if doc.settle_sheet(&mut sheet) {
+            let changed = before
+                .annotations
+                .iter()
+                .filter(|(a, was)| sheet.annotations.get(a) != Some(was))
+                .count();
+            sheets_as_read.push((id, before));
+            if changed > 0 {
+                notes_out.push(format!(
+                    "Sheet {}: {changed} annotation{} tied to a view or geometry that is no \
+                     longer there, or no longer fits, {} dropped or let go of it",
+                    sheet.name,
+                    if changed == 1 { "" } else { "s" },
+                    if changed == 1 { "was" } else { "were" },
+                ));
+            }
+        }
+        for aid in sheet.annotations.keys() {
+            if !sheet_annotation_ids.insert(*aid) {
+                return Err(LoadError::DuplicateId(aid.to_string()));
+            }
         }
         doc.insert_sheet(id, sheet);
         old_views.push((id, old));
@@ -2214,7 +2292,7 @@ fn load_value(value: serde_json::Value) -> Result<(Document, Metadata, Vec<Strin
         }
         doc.set_variant(id, option);
     }
-    Ok((doc, file.meta, notes_out))
+    Ok((doc, file.meta, notes_out, sheets_as_read))
 }
 
 /// A file without a project (from before v30): a title or company every sheet shares
@@ -2266,6 +2344,12 @@ fn paper_placement(
     }
 }
 
+/// The rule every build from 42 on reads by: a build of format `build` refuses a file whose
+/// `reader` is above it (and reads any other, passing over what it doesn't know).
+fn refuses(reader: u32, build: u32) -> bool {
+    reader > build
+}
+
 /// Upgrade a parsed file of any supported version to the current [`FORMAT_VERSION`].
 pub fn migrate(value: serde_json::Value) -> Result<serde_json::Value, LoadError> {
     if value.get("format").and_then(|f| f.as_str()) != Some(FORMAT_TAG) {
@@ -2285,7 +2369,7 @@ pub fn migrate(value: serde_json::Value) -> Result<serde_json::Value, LoadError>
             .filter(|r| *r > 0)
             .ok_or(LoadError::NotADriftFile)?,
     };
-    if version == 0 || reader > FORMAT_VERSION {
+    if version == 0 || refuses(reader, FORMAT_VERSION) {
         return Err(LoadError::UnsupportedVersion(version.max(reader)));
     }
     let mut value = value;
@@ -2418,8 +2502,8 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 44,
-  "reader": 44,
+  "version": 45,
+  "reader": 45,
   "meta": {"units":"mm"},
   "layers": [
     {"id":"l0","name":"Layer 1","weight":0.25,"linetype":"continuous"}
@@ -2931,6 +3015,59 @@ mod tests {
             Err(LoadError::NotADriftFile)
         ));
         assert!(matches!(load("not json"), Err(LoadError::Json(_))));
+    }
+
+    #[test]
+    fn a_format_44_build_refuses_what_this_build_writes() {
+        // A 44 build would re-tie a sheet's annotations to another view after editing the
+        // sheet's views (it knows viewports by their place alone), so it must not open the
+        // file at all (#432). Every file this build writes says so: its `reader` is 45, and
+        // by the rule every build reads by, a build at 44 refuses that.
+        let mut doc = Document::new();
+        let a = doc.add_point(DVec2::ZERO);
+        let b = doc.add_point(DVec2::new(100.0, 0.0));
+        let view = doc.add_view(drift_core::View::new(
+            "Plan",
+            drift_core::Bounds {
+                min: DVec2::new(-50.0, -50.0),
+                max: DVec2::new(150.0, 50.0),
+            },
+            1.0,
+        ));
+        let mut sheet = drift_core::Sheet::new("A-101");
+        sheet
+            .viewports
+            .push(drift_core::Viewport::new(view, DVec2::new(200.0, 150.0)));
+        let sheet = doc.add_sheet(sheet);
+        let port = doc.tie_viewport(sheet, 0).unwrap();
+        doc.add_sheet_annotation(
+            sheet,
+            drift_core::SheetAnnotation::dimension(
+                port,
+                Constraint::Distance { a, b, value: 0.0 },
+                None,
+            ),
+        )
+        .unwrap();
+        for doc in [doc, Document::new()] {
+            let text = save(&doc, &Metadata::default());
+            let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+            let reader = u32::try_from(value["reader"].as_u64().unwrap()).unwrap();
+            assert_eq!(reader, 45, "{text}");
+            assert!(refuses(reader, 44), "a 44 build refuses it");
+            assert!(!refuses(reader, FORMAT_VERSION));
+            // The same rule, end to end in this build: a file asking for a newer reader
+            // than this build is refused with "please update Drift".
+            let newer = text.replacen(
+                &format!("\"reader\": {READER_VERSION},"),
+                &format!("\"reader\": {},", FORMAT_VERSION + 1),
+                1,
+            );
+            assert_ne!(newer, text);
+            let err = load(&newer).unwrap_err();
+            assert!(matches!(err, LoadError::UnsupportedVersion(_)), "{err}");
+            assert!(err.to_string().contains("please update Drift"), "{err}");
+        }
     }
 
     #[test]

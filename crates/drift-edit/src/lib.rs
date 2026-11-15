@@ -33,6 +33,7 @@ mod perf_tests;
 pub mod pick_cycle;
 pub mod picks;
 pub mod prefs;
+pub mod sheet_annotations;
 pub mod stack;
 pub mod temp_dims;
 #[cfg(any(test, feature = "test-support"))]

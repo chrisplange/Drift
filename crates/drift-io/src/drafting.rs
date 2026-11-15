@@ -231,7 +231,7 @@ pub(crate) struct LeaderRecord {
 }
 
 #[cfg(not(feature = "demo"))]
-fn leader_record(l: &Leader) -> LeaderRecord {
+pub(crate) fn leader_record(l: &Leader) -> LeaderRecord {
     LeaderRecord {
         to: match l.to {
             Anchor::Free(p) => AnchorRecord {
@@ -262,7 +262,7 @@ fn leader_record(l: &Leader) -> LeaderRecord {
     }
 }
 
-fn parse_leader(id: &str, l: &LeaderRecord) -> Result<Leader, LoadError> {
+pub(crate) fn parse_leader(id: &str, l: &LeaderRecord) -> Result<Leader, LoadError> {
     let missing = |field| LoadError::MissingField {
         id: id.to_owned(),
         field,
@@ -781,6 +781,9 @@ pub(crate) fn parse_shown(r: ShownRecord) -> Result<ParsedShown, LoadError> {
 /// the drawing has".
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct StyleRecord {
+    /// Whose it is; left out where the record sits inside what it styles (a sheet
+    /// annotation's `style`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     of: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     text_height: Option<f64>,
@@ -806,11 +809,20 @@ pub(crate) struct StyleRecord {
 
 #[cfg(not(feature = "demo"))]
 pub(crate) fn override_record(r: AnnotationRef, s: &StyleOverride) -> StyleRecord {
-    StyleRecord {
-        of: match r {
+    look_record(
+        match r {
             AnnotationRef::Dimension(id) => id.to_string(),
             AnnotationRef::Annotation(id) => id.to_string(),
         },
+        s,
+    )
+}
+
+/// `s` as a record of `of` (empty: a record that sits inside what it styles).
+#[cfg(not(feature = "demo"))]
+pub(crate) fn look_record(of: String, s: &StyleOverride) -> StyleRecord {
+    StyleRecord {
+        of,
         text_height: s.text_height,
         arrow: s.arrow.map(|a| a.key().to_owned()),
         arrow_size: s.arrow_size,
@@ -838,46 +850,49 @@ pub(crate) fn parse_override(r: StyleRecord) -> Result<(AnnotationRef, StyleOver
     } else {
         AnnotationRef::Annotation(AnnotationId(parse_prefixed(&r.of, 'n')?))
     };
+    let id = r.of.clone();
+    Ok((of, parse_look(&id, r)?))
+}
+
+/// The settings in a style record, whoever's it is (`id` names it in an error).
+pub(crate) fn parse_look(id: &str, r: StyleRecord) -> Result<StyleOverride, LoadError> {
     let bad = |field| LoadError::MissingField {
-        id: r.of.clone(),
+        id: id.to_owned(),
         field,
     };
     let size = |v: Option<f64>, field, min: f64| match v {
         Some(v) if !(v.is_finite() && v >= min) => Err(bad(field)),
         v => Ok(v),
     };
-    Ok((
-        of,
-        StyleOverride {
-            text_height: size(r.text_height, "text_height", f64::MIN_POSITIVE)?,
-            arrow: match &r.arrow {
-                Some(a) => Some(ArrowStyle::parse(a).ok_or_else(|| bad("arrow"))?),
-                None => None,
-            },
-            arrow_size: size(r.arrow_size, "arrow_size", f64::MIN_POSITIVE)?,
-            extension_gap: size(r.extension_gap, "extension_gap", 0.0)?,
-            extension_overshoot: size(r.extension_overshoot, "extension_overshoot", 0.0)?,
-            aligned_text: r.aligned_text,
-            trailing_zeros: r.trailing_zeros,
-            leading_zero: r.leading_zero,
-            alt_units: match r.alt_units.as_deref() {
-                None => None,
-                Some("none") => Some(None),
-                Some(u) => Some(Some(
-                    LENGTH_FORMATS
-                        .iter()
-                        .find(|(_, n)| *n == u)
-                        .map(|(f, _)| *f)
-                        .ok_or_else(|| bad("alt_units"))?,
-                )),
-            },
-            color: match r.color.as_deref() {
-                None => None,
-                Some("none") => Some(None),
-                Some(c) => Some(Some(Rgb::parse(c).ok_or_else(|| bad("color"))?)),
-            },
+    Ok(StyleOverride {
+        text_height: size(r.text_height, "text_height", f64::MIN_POSITIVE)?,
+        arrow: match &r.arrow {
+            Some(a) => Some(ArrowStyle::parse(a).ok_or_else(|| bad("arrow"))?),
+            None => None,
         },
-    ))
+        arrow_size: size(r.arrow_size, "arrow_size", f64::MIN_POSITIVE)?,
+        extension_gap: size(r.extension_gap, "extension_gap", 0.0)?,
+        extension_overshoot: size(r.extension_overshoot, "extension_overshoot", 0.0)?,
+        aligned_text: r.aligned_text,
+        trailing_zeros: r.trailing_zeros,
+        leading_zero: r.leading_zero,
+        alt_units: match r.alt_units.as_deref() {
+            None => None,
+            Some("none") => Some(None),
+            Some(u) => Some(Some(
+                LENGTH_FORMATS
+                    .iter()
+                    .find(|(_, n)| *n == u)
+                    .map(|(f, _)| *f)
+                    .ok_or_else(|| bad("alt_units"))?,
+            )),
+        },
+        color: match r.color.as_deref() {
+            None => None,
+            Some("none") => Some(None),
+            Some(c) => Some(Some(Rgb::parse(c).ok_or_else(|| bad("color"))?)),
+        },
+    })
 }
 
 /// The drafting style; written in full when it isn't the default.

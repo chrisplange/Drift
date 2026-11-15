@@ -83,8 +83,8 @@ and **Explode walls** are in the **Build** menu; **Walls from curves** and
 
 | Tool | Key | What it does |
 |---|---|---|
-| **Dimension** | D | Click geometry, then place the label; the kind follows what you clicked and where the label goes. Top bar: **Single** / **Chain** / **Baseline**, **Overall**, **Show dimensions**, **Relations** (**Off** / **Picked only** / **All**). See [Constraints and dimensions](../tutorials/02-constraints-and-dimensions.md). |
-| **Note** | N | Click for a note, or click geometry first for a leader to it. Type; Enter finishes, Shift+Enter adds a line. |
+| **Dimension** | D | Click geometry, then place the label; the kind follows what you clicked and where the label goes. Top bar: **Single** / **Chain** / **Baseline**, **Overall**, **Show dimensions**, **Show relations**. See [Constraints and dimensions](../tutorials/02-constraints-and-dimensions.md). On a sheet's tab it makes a reference dimension that belongs to the sheet and reads the model's true size through the view you click in: see [Notes and dimensions on the sheet](../tutorials/10-sheets-and-output.md#notes-and-dimensions-on-the-sheet). |
+| **Note** | N | Click for a note, or click geometry first for a leader to it. Type; Enter finishes, Shift+Enter adds a line. On a sheet's tab it makes a note that belongs to the sheet, its leaders tied to the model through a view; its text is typed in the Inspector. |
 | **Centre mark** | — | Click a circle or arc for a centre mark; then another circle, arc or point for a centre line between them. Two lines give a centre line midway. |
 | **Section mark** | — | Two clicks for the cutting line, with a lettered flag at each end. X / Y keep it to an axis. |
 | **Elevation mark** | — | Click where it goes, then towards what it looks at. X / Y keep it to an axis; Alt allows any angle. |

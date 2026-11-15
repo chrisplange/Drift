@@ -264,6 +264,10 @@ pub struct Editor {
     pub repick_fill: Option<drift_core::FillId>,
     /// The Fill tool's next click picks up a fill's style instead of filling.
     pub fill_eyedropper: bool,
+    /// Set while a sheet is shown and the tools work on it (#432): the Note and Dimension
+    /// tools then make the sheet's own annotations. See
+    /// [`OnSheet`](crate::sheet_annotations::OnSheet).
+    pub on_sheet: Option<crate::sheet_annotations::OnSheet>,
     pub selected_annotation: Option<drift_core::AnnotationId>,
     /// Dimensions and annotations picked besides the primary ones (the app's picked
     /// dimension and `selected_annotation`): added with Shift, or by a box.

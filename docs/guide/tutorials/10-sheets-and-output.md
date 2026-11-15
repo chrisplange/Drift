@@ -221,6 +221,56 @@ See [Annotation](09-annotation.md) for **Make view**.
 the sheet. The view
 stays in the drawing, in the **Views** list, to place again. A sheet can be empty.
 
+### Notes and dimensions on the sheet
+
+Notes and dimensions drawn in the model show in every view of it, at the model's one size.
+For a sheet that needs its own, at its own scale, put them on the sheet itself, as in
+AutoCAD's paper space or a Vectorworks viewport's annotations. With a sheet's tab open, the
+rail has **Note** (N) and **Dimension** (D) beside **Select** (S). Esc gives up a pick in
+progress, then puts the tool down.
+
+- **Dimension:** click a line, circle or arc inside a view (or two points, two lines, or a
+  point and a line), then click where the dimension goes, inside the view's frame or out
+  of it. It measures the model through that view and reads the model's true size whatever
+  the view's scale: 4200 at 1:50 and at 1:20 alike. Its text and arrows are their paper
+  size, so a 1:100 plan and a 5:1 detail both read at 3.5 mm.
+- **Note:** click the paper for a note there. Click geometry inside a view first for a
+  leader tied to it, then where the text goes; Shift+click more geometry for more leaders.
+  Alt+click inside a view starts a leader at that spot of the model, on geometry or not.
+  Type the text in the Inspector.
+
+What they make belongs to the sheet. It shows on that sheet only: not in the model, and not
+on another sheet that shows the same view. It prints with the sheet and is in its PDF and
+SVG. DWG and DXF export the model, so they don't have it.
+
+A sheet dimension is a reference: it reports the size and never holds it, so it can't
+over-define the sketch and never moves anything. A dimension's two ends and a leader's tip
+follow the model: change the geometry, move the view on the sheet, pan its crop or change
+its scale, and they go along. A note's text stays where you put it on the paper.
+
+With **Select**, click one to pick it. Drag a note's text or a dimension's label to move
+it (Esc during the drag puts it back); double-click a note to type in it; Delete deletes
+it. The Inspector has a note's text,
+height, alignment, frame, bold and italic, mask and leader end, and a dimension's prefix,
+suffix, the line below, text in place of the value, text height and arrows. Each change is
+one undo step.
+
+When what one is tied to goes, it goes the way the model's own do, in the same undo step:
+
+- Delete the geometry, and a dimension on it is deleted with it. A note loses the leaders
+  that pointed at it and keeps its text where it was.
+- Make the geometry into a block, or change a curve into one of another kind that the
+  dimension can't measure, and the same happens: in the model it is no longer there to
+  point at.
+- Take the view off the sheet, or delete the view, and the same happens to what was tied
+  to the model through it.
+- **Duplicate sheet** with its views copies them onto the copy, tied to the copy's views.
+  Without views, only notes on the paper alone come along.
+
+Undo brings the geometry or view back with everything that was tied to it.
+
+Centre marks, callouts, ordinates and section and elevation marks are drawn in the model.
+
 ### Drawings from before views
 
 In drawings made before views came in, each view a sheet held becomes a view of its own.
@@ -352,6 +402,9 @@ drawing's layouts come in as sheets, and each of their viewports as a view.
 - **Model as SVG…** and **Model as PDF…** export the model, or the selection, at 1 : 1 with
   no sheet.
 - Each sheet prints in colour, greyscale or black & white, as its preview shows.
+- **Note** and **Dimension** on a sheet's tab make notes and reference dimensions that
+  belong to that sheet: paper-size text, true model sizes, tied to the model through a
+  view.
 
 ## Next
 

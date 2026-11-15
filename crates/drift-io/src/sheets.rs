@@ -1,13 +1,19 @@
-//! File records for sheets (format 8) and views (format 27).
+//! File records for sheets (format 8), views (format 27) and a sheet's own annotations
+//! (format 45).
 
 #[cfg(not(feature = "demo"))]
 use drift_core::LayerId;
 use drift_core::{
     Bounds, DVec2, PaperSize, Revision, Sheet, SheetColours, SheetId, TitleBlock, TitleFields,
 };
+use drift_core::{
+    Constraint, NoteFrame, NoteStyle, PortId, SheetAnnotation, SheetAnnotationId, SheetLeader,
+    StyleOverride, TextAlign,
+};
 use drift_core::{FieldSet, Project, View, ViewFrame, ViewId, Viewport};
 use serde::{Deserialize, Serialize};
 
+use crate::drafting::{LeaderRecord, StyleRecord, ToleranceRecord};
 use crate::{LoadError, parse_prefixed};
 
 fn is_false(b: &bool) -> bool {
@@ -189,6 +195,291 @@ struct ViewportRecord {
     title: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     border: bool,
+    /// What the sheet's annotations name it by (`r5`), once one is tied to it (v45).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
+}
+
+/// A leader of a sheet note (v45): the leader as a model note's is written, and the
+/// viewport its tip is seen through. Without `port`, its `to` is a paper point (`at`).
+#[derive(Debug, Serialize, Deserialize)]
+struct SheetLeaderRecord {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    port: Option<String>,
+    leader: LeaderRecord,
+}
+
+/// What a sheet dimension measures (v45): a dimension's `type` and the entities it is on,
+/// as a constraint names them, without a value.
+#[derive(Debug, Serialize, Deserialize)]
+struct MeasureRecord {
+    #[serde(rename = "type")]
+    kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    a: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    b: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    line: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    point: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    curve: Option<String>,
+}
+
+/// The kinds of dimension a sheet dimension can be.
+const MEASURES: [&str; 7] = [
+    "distance",
+    "horizontal_distance",
+    "vertical_distance",
+    "point_line_distance",
+    "radius",
+    "diameter",
+    "angle",
+];
+
+/// An annotation placed on a sheet (v45): a note (text at a paper point, with leaders) or
+/// a dimension of model geometry through one of the sheet's viewports.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum SheetAnnotationRecord {
+    Note {
+        id: String,
+        text: String,
+        /// The text's middle on the paper (mm).
+        at: [f64; 2],
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        leaders: Vec<SheetLeaderRecord>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        align: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        wrap: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        frame: Option<String>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        mask: bool,
+        #[serde(default, skip_serializing_if = "is_false")]
+        bold: bool,
+        #[serde(default, skip_serializing_if = "is_false")]
+        italic: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        height: Option<f64>,
+        /// Its own settings over the drafting style.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        style: Option<StyleRecord>,
+    },
+    Dimension {
+        id: String,
+        /// The viewport it measures through.
+        port: String,
+        measure: MeasureRecord,
+        /// The label's offset from the dimension's anchor (paper mm); absent while it sits
+        /// where a new dimension's does.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<[f64; 2]>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        prefix: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        suffix: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tol: Option<ToleranceRecord>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        below: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        style: Option<StyleRecord>,
+    },
+}
+
+#[cfg(not(feature = "demo"))]
+fn sheet_annotation_record(id: SheetAnnotationId, a: &SheetAnnotation) -> SheetAnnotationRecord {
+    let look = |look: &StyleOverride| {
+        (!look.is_empty()).then(|| crate::drafting::look_record(String::new(), look))
+    };
+    match a {
+        SheetAnnotation::Note {
+            text,
+            at,
+            leaders,
+            style,
+            look: own,
+        } => SheetAnnotationRecord::Note {
+            id: id.to_string(),
+            text: text.clone(),
+            at: at.to_array(),
+            leaders: leaders
+                .iter()
+                .map(|l| SheetLeaderRecord {
+                    port: l.port.map(|p| p.to_string()),
+                    leader: crate::drafting::leader_record(&l.leader),
+                })
+                .collect(),
+            align: (style.align != TextAlign::Left).then(|| style.align.name().to_owned()),
+            wrap: style.wrap,
+            frame: (style.frame != NoteFrame::None).then(|| style.frame.key().to_owned()),
+            mask: style.mask,
+            bold: style.bold,
+            italic: style.italic,
+            height: style.height,
+            style: look(own),
+        },
+        SheetAnnotation::Dimension {
+            port,
+            measure,
+            label,
+            note,
+            look: own,
+        } => {
+            let r = crate::constraint_record(drift_core::ConstraintId(1), measure, None, false);
+            let some = |s: &String| (!s.is_empty()).then(|| s.clone());
+            SheetAnnotationRecord::Dimension {
+                id: id.to_string(),
+                port: port.to_string(),
+                measure: MeasureRecord {
+                    kind: r.kind,
+                    a: r.a,
+                    b: r.b,
+                    line: r.line,
+                    point: r.point,
+                    curve: r.curve,
+                },
+                label: label.map(|l| l.to_array()),
+                prefix: some(&note.prefix),
+                suffix: some(&note.suffix),
+                tol: crate::drafting::tolerance_record(&note.tolerance),
+                below: some(&note.below),
+                text: some(&note.text),
+                style: look(own),
+            }
+        }
+    }
+}
+
+fn parse_sheet_annotation(
+    r: SheetAnnotationRecord,
+) -> Result<(SheetAnnotationId, SheetAnnotation), LoadError> {
+    let missing = |id: &str, field| LoadError::MissingField {
+        id: id.to_owned(),
+        field,
+    };
+    let finite = |id: &str, v: [f64; 2]| {
+        let p = DVec2::from_array(v);
+        p.is_finite()
+            .then_some(p)
+            .ok_or_else(|| LoadError::NonFinite(id.to_owned()))
+    };
+    let port = |p: &str| parse_prefixed(p, 'r').map(PortId);
+    let look = |id: &str, style: Option<StyleRecord>| match style {
+        Some(s) => crate::drafting::parse_look(id, s),
+        None => Ok(StyleOverride::default()),
+    };
+    let (id_text, a) = match r {
+        SheetAnnotationRecord::Note {
+            id,
+            text,
+            at,
+            leaders,
+            align,
+            wrap,
+            frame,
+            mask,
+            bold,
+            italic,
+            height,
+            style,
+        } => {
+            let leaders = leaders
+                .iter()
+                .map(|l| {
+                    Ok(SheetLeader {
+                        leader: crate::drafting::parse_leader(&id, &l.leader)?,
+                        port: l.port.as_deref().map(port).transpose()?,
+                    })
+                })
+                .collect::<Result<Vec<_>, LoadError>>()?;
+            let positive = |v: Option<f64>, field| match v {
+                Some(v) if v.is_finite() && v > 0.0 => Ok(Some(v)),
+                Some(_) => Err(missing(&id, field)),
+                None => Ok(None),
+            };
+            let note_style = NoteStyle {
+                align: match &align {
+                    Some(a) => TextAlign::ALL
+                        .into_iter()
+                        .find(|x| x.name() == a)
+                        .ok_or_else(|| missing(&id, "align"))?,
+                    None => TextAlign::Left,
+                },
+                wrap: positive(wrap, "wrap")?,
+                frame: match &frame {
+                    Some(f) => NoteFrame::parse(f).ok_or_else(|| missing(&id, "frame"))?,
+                    None => NoteFrame::None,
+                },
+                mask,
+                bold,
+                italic,
+                height: positive(height, "height")?,
+            };
+            let a = SheetAnnotation::Note {
+                text,
+                at: finite(&id, at)?,
+                leaders,
+                style: note_style,
+                look: look(&id, style)?,
+            };
+            (id, a)
+        }
+        SheetAnnotationRecord::Dimension {
+            id,
+            port: p,
+            measure,
+            label,
+            prefix,
+            suffix,
+            tol,
+            below,
+            text,
+            style,
+        } => {
+            if !MEASURES.contains(&measure.kind.as_str()) {
+                return Err(missing(&id, "measure"));
+            }
+            // Parsed as a dimension with a placeholder value (it has none of its own).
+            let angle = measure.kind == "angle";
+            let rec = crate::ConstraintRecord {
+                kind: measure.kind,
+                id: "c1".to_owned(),
+                a: measure.a,
+                b: measure.b,
+                line: measure.line,
+                point: measure.point,
+                curve: measure.curve,
+                value: (!angle).then_some(1.0),
+                degrees: angle.then_some(1.0),
+                ..Default::default()
+            };
+            let (_, c, ..): (_, Constraint, _, _) =
+                crate::parse_constraint(rec).map_err(|e| match e {
+                    // (Named by the annotation, not the placeholder.)
+                    LoadError::MissingField { field, .. } => missing(&id, field),
+                    e => e,
+                })?;
+            let a = SheetAnnotation::Dimension {
+                port: port(&p)?,
+                measure: c,
+                label: label.map(|l| finite(&id, l)).transpose()?,
+                note: crate::drafting::dim_note(prefix, suffix, tol, below, text)
+                    .unwrap_or_default(),
+                look: look(&id, style)?,
+            };
+            (id, a)
+        }
+    };
+    if !a.is_valid() {
+        return Err(LoadError::NonFinite(id_text));
+    }
+    Ok((SheetAnnotationId(parse_prefixed(&id_text, 'a')?), a))
 }
 
 /// A view of the sketch on a sheet, as written from v18 to v25 (read only: each becomes a
@@ -248,6 +539,9 @@ pub(crate) struct SheetRecord {
     /// `greyscale` or `mono` (black & white); left out for colour (and before v25).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     colours: Option<String>,
+    /// The notes, leaders and dimensions placed on the sheet (v45).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    annotations: Vec<SheetAnnotationRecord>,
 }
 
 #[cfg(not(feature = "demo"))]
@@ -275,6 +569,7 @@ pub(crate) fn sheet_record(id: SheetId, s: &Sheet) -> SheetRecord {
                 at: p.at.to_array(),
                 title: p.title,
                 border: p.border,
+                id: p.id.map(|id| id.to_string()),
             })
             .collect(),
         title_block: s.title_block.key().into(),
@@ -299,6 +594,11 @@ pub(crate) fn sheet_record(id: SheetId, s: &Sheet) -> SheetRecord {
             })
             .collect(),
         colours: (s.colours != SheetColours::Colour).then(|| s.colours.key().into()),
+        annotations: s
+            .annotations
+            .iter()
+            .map(|(id, a)| sheet_annotation_record(*id, a))
+            .collect(),
     }
 }
 
@@ -345,6 +645,7 @@ impl OldView {
             at: frame.at,
             title: self.title,
             border: self.border,
+            id: None,
         };
         (view, port)
     }
@@ -394,9 +695,20 @@ pub(crate) fn parse_sheet(r: SheetRecord) -> Result<(SheetId, Sheet, Vec<OldView
                 at,
                 title: p.title,
                 border: p.border,
+                id: match &p.id {
+                    Some(id) => Some(PortId(parse_prefixed(id, 'r')?)),
+                    None => None,
+                },
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let mut annotations = std::collections::BTreeMap::new();
+    for a in r.annotations {
+        let (id, a) = parse_sheet_annotation(a)?;
+        if annotations.insert(id, a).is_some() {
+            return Err(LoadError::DuplicateId(id.to_string()));
+        }
+    }
     let old_views = match &r.views {
         Some(records) => records
             .iter()
@@ -466,6 +778,7 @@ pub(crate) fn parse_sheet(r: SheetRecord) -> Result<(SheetId, Sheet, Vec<OldView
             })
             .collect(),
         colours,
+        annotations,
     };
     Ok((SheetId(parse_prefixed(&r.id, 's')?), sheet, old_views))
 }

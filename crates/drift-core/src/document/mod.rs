@@ -20,6 +20,7 @@ use crate::layers::{Appearance, Layer, LayerId};
 use crate::offsets::{Offset, OffsetId};
 use crate::openings::{Opening, OpeningId};
 use crate::paths::{Path, PathId};
+use crate::sheet_annotations::{PortId, SheetAnnotation, SheetAnnotationId};
 use crate::sheets::{PlacedView, Sheet, SheetId, View, ViewId};
 use crate::texts::{SketchText, TextId};
 use crate::underlays::{Underlay, UnderlayId};
@@ -370,8 +371,9 @@ impl Document {
                 // Variables, options, measurements and layers.
                 'v' | 'k' | 'm' | 'l' => self.next_param_id = self.next_param_id.max(next),
                 // Fills, annotations, blocks, instances, groups, paths, sheets, texts,
-                // underlays and views (`w`, like walls).
-                'f' | 'n' | 'b' | 'i' | 'g' | 'p' | 's' | 't' | 'u' => {
+                // underlays, sheets' own annotations (`a`) and their viewports' ids (`r`),
+                // and views (`w`, like walls).
+                'f' | 'n' | 'b' | 'i' | 'g' | 'p' | 's' | 't' | 'u' | 'a' | 'r' => {
                     self.next_drafting_id = self.next_drafting_id.max(next);
                 }
                 'w' => {
@@ -415,6 +417,14 @@ impl Document {
             'o' => self.opening(OpeningId(n)).is_some(),
             'q' => self.property_dim(PropertyDimId(n)).is_some(),
             'x' => self.offset(OffsetId(n)).is_some(),
+            'a' => self
+                .sheets
+                .values()
+                .any(|s| s.annotations.contains_key(&SheetAnnotationId(n))),
+            'r' => self
+                .sheets
+                .values()
+                .any(|s| s.viewports.iter().any(|p| p.id == Some(PortId(n)))),
             _ => false,
         }
     }

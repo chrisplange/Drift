@@ -9,13 +9,15 @@ use crate::icons::{self, Glyph};
 use crate::overlay::ScreenMap;
 use crate::*;
 
-/// What is picked on the sheet shown: one of its views, or the sheet itself (its paper,
-/// title block and revisions).
+/// What is picked on the sheet shown: one of its views, one of its own annotations (#432),
+/// or the sheet itself (its paper, title block and revisions).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum SheetPick {
     #[default]
     Paper,
     View,
+    /// The annotation in `sheet_annotation`.
+    Annotation,
 }
 
 /// A sheet as it is listed and named on its tab: "A-101  Ground floor", or just the name
@@ -219,6 +221,13 @@ impl DriftApp {
     /// Show a sheet (or the model, with `None`) on the canvas.
     pub(crate) fn show_sheet(&mut self, id: Option<SheetId>) {
         self.drawing.add_view_on = None;
+        // Leaving a sheet (for the model or another sheet) lets go of its picked annotation.
+        if self.drawing.view.sheet_preview
+            && id != self.drawing.view.active_sheet
+            && self.drawing.view.sheet_pick == SheetPick::Annotation
+        {
+            self.pick_sheet_annotation(None);
+        }
         match id {
             Some(id) => {
                 if self.drawing.view.active_sheet != Some(id) || !self.drawing.view.sheet_preview {
@@ -547,8 +556,54 @@ impl DriftApp {
                     icons::button(ui, 38.0, selected, label, draw)
                 }
             };
-        row(ui, true, "Select", "S", None)
-            .on_hover_text("Pick a view, or the paper; drag a view to move it");
+        let kind = self.tool.kind();
+        let on_tool = self.sheet_tool();
+        if row(ui, !on_tool, "Select", "S", None)
+            .on_hover_text(
+                "Pick a view, a note, a dimension or the paper; drag a view, a note's text \
+                 or a dimension's label to move it",
+            )
+            .clicked()
+        {
+            self.set_tool(ToolKind::Select);
+        }
+        // The annotation tools that work on paper: what they make is this sheet's own.
+        let mut picked_tool = None;
+        for (tool, name, key, hint) in [
+            (
+                ToolKind::Note,
+                "Note",
+                "N",
+                "A note on this sheet: click the paper for its text, or geometry inside a \
+                 view first for a leader tied to it. It shows only on this sheet",
+            ),
+            (
+                ToolKind::Dimension,
+                "Dimension",
+                "D",
+                "A dimension on this sheet: click a line, circle or arc inside a view, or \
+                 two points, then where it goes. It reads the model's true size at any \
+                 view scale and never holds the geometry",
+            ),
+        ] {
+            let draw = move |p: &egui::Painter, r: egui::Rect, c: egui::Color32| {
+                icons::tool(p, r, tool, c);
+            };
+            let selected = kind == tool;
+            let clicked = if wide {
+                icons::tool_row(ui, selected, name, Some(key), draw)
+            } else {
+                icons::button(ui, 38.0, selected, name, draw)
+            }
+            .on_hover_text(hint)
+            .clicked();
+            if clicked {
+                picked_tool = Some(tool);
+            }
+        }
+        if let Some(tool) = picked_tool {
+            self.set_tool(tool);
+        }
         if row(ui, false, "Add view", "V", Some(Glyph::AddView))
             .on_hover_text(
                 "Drag a rectangle round what the view shows, in the model; it goes on this \
@@ -676,6 +731,21 @@ impl DriftApp {
             self.drawing.view.sheet_pick
         };
         let several = self.picked_views(&sheet);
+        // One of the sheet's own annotations: its own Inspector (it writes the sheet itself).
+        if self.drawing.view.sheet_pick == SheetPick::Annotation {
+            if self.picked_sheet_annotation().is_some() {
+                self.sheet_annotation_inspector(ui, &label);
+                return;
+            }
+            // (It went: an undo, or its geometry was deleted.)
+            self.drawing.view.sheet_pick = SheetPick::Paper;
+            self.drawing.view.sheet_annotation = None;
+        }
+        let pick = if pick == SheetPick::Annotation {
+            SheetPick::Paper
+        } else {
+            pick
+        };
         match pick {
             // Several views: what they are, and what can be done with them all.
             SheetPick::View if several.len() > 1 => {
@@ -738,7 +808,7 @@ impl DriftApp {
                     .on_hover_text("Take the picked view off this sheet (it stays in the model)")
                     .clicked();
             }
-            SheetPick::Paper => {
+            SheetPick::Paper | SheetPick::Annotation => {
                 let orientation = if sheet.portrait {
                     "portrait"
                 } else {

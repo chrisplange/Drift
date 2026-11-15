@@ -55,6 +55,13 @@ pub struct DimensionTool {
     pub(super) base: Option<DimBase>,
     /// Chain / baseline dimensioning after a horizontal or vertical dimension.
     pub(super) run: Option<Run>,
+    /// On a sheet (#432): the sheet and viewport the picks so far were made through. A
+    /// click on another sheet, or through a viewport that is no longer that one, starts
+    /// afresh instead of finishing them there.
+    picked_on: Option<(
+        drift_core::SheetId,
+        Option<crate::sheet_annotations::SheetPort>,
+    )>,
     /// The row goes on with plain clicks (Chain or Baseline mode).
     continuous: bool,
     /// The last baseline step (for an overall placed when the row ends by a key).
@@ -201,11 +208,43 @@ impl DimensionTool {
         Some(c.with_value(value))
     }
 
+    /// While a sheet is shown (#432): put `c` on the sheet as a dimension of its own,
+    /// measured through the viewport the pointer is in, its label `offset` from its anchor
+    /// (world mm). It is never a constraint. Returns whether it was added.
+    fn add_to_sheet(
+        ed: &mut Editor,
+        on: crate::sheet_annotations::OnSheet,
+        c: Constraint,
+        offset: Option<DVec2>,
+    ) -> bool {
+        let added = match on.viewport {
+            Some(viewport) => ed.add_sheet_dimension(on.sheet, viewport, c, offset),
+            None => Err(crate::editor::EditError::Invalid(
+                "click inside a view to dimension it".into(),
+            )),
+        };
+        match added {
+            Ok(_) => true,
+            Err(e) => {
+                ed.out.notice = Some(format!("{}: {e}", c.type_name()));
+                false
+            }
+        }
+    }
+
     pub(super) fn place(&mut self, ed: &mut Editor, base: DimBase, at: DVec2) {
         self.reset(ed);
         let Some(c) = Self::dimension(ed, base, at) else {
             return;
         };
+        // On a sheet: the sheet's own dimension, a reference by nature (no value to type,
+        // no row to go on with).
+        if let Some(on) = ed.on_sheet {
+            let offset = crate::labels::dimension_anchor(&ed.doc, &c)
+                .map(|anchor| crate::labels::centred_offset(&ed.doc, &c, at - anchor));
+            Self::add_to_sheet(ed, on, c, offset);
+            return;
+        }
         // Across one wall, face to face: its thickness dimension.
         if ed.thickness_dimension_across(&c, at) {
             return;
@@ -536,6 +575,20 @@ impl Tool for DimensionTool {
                 }
             }
             Input::Click(p, mods) => {
+                // On a sheet, picks belong to the sheet and viewport they were made through.
+                if let Some(on) = ed.on_sheet {
+                    let here = (on.sheet, on.viewport);
+                    if self.is_busy() && self.picked_on.is_some_and(|was| was != here) {
+                        self.reset(ed);
+                        ed.out.notice = Some(
+                            "Dimension: the view changed since the first pick: pick again".into(),
+                        );
+                        return;
+                    }
+                    self.picked_on = Some(here);
+                } else {
+                    self.picked_on = None;
+                }
                 let picked = pick_target_with(ed, &p, crate::editor::PickFilter::ALL);
                 let step = p.tolerance * BASELINE_STEP;
                 self.step = step;

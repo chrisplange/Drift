@@ -57,7 +57,50 @@ fn preview_leader(from: DVec2, to: DVec2) -> SketchItem {
 pub struct NoteTool {
     /// What its leaders point at (geometry clicked before the text; Shift+click adds more).
     targets: Vec<drift_core::Anchor>,
+    /// On a sheet (#432): what its leaders point at, each through the viewport it was
+    /// clicked in (`targets` stays empty there).
+    sheet_targets: Vec<crate::sheet_annotations::SheetTarget>,
     hover: Option<DVec2>,
+}
+
+impl NoteTool {
+    /// A click while a sheet is shown: geometry inside a view starts a leader tied to it
+    /// through that view (Alt+click: to that spot of the model, on geometry or not); any
+    /// other click places the text there on the paper, and the note is the sheet's.
+    fn sheet_click(
+        &mut self,
+        on: crate::sheet_annotations::OnSheet,
+        p: &Pointer,
+        mods: Modifiers,
+        ed: &mut Editor,
+    ) {
+        use crate::sheet_annotations::SheetTarget;
+        // Leaders started on another sheet don't carry to this one.
+        if self.sheet_targets.iter().any(|t| t.sheet != on.sheet) {
+            self.sheet_targets.clear();
+        }
+        if let Some(viewport) = on.viewport
+            && (self.sheet_targets.is_empty() || mods.shift || p.alt)
+        {
+            let to = if p.alt {
+                Some(drift_core::Anchor::Free(p.raw))
+            } else {
+                leader_target(ed, p)
+            };
+            if let Some(to) = to {
+                self.sheet_targets.push(SheetTarget {
+                    sheet: on.sheet,
+                    viewport: Some(viewport),
+                    to,
+                });
+                return;
+            }
+        }
+        let targets = std::mem::take(&mut self.sheet_targets);
+        if let Err(e) = ed.add_sheet_note(on.sheet, &targets, on.paper) {
+            ed.out.notice = Some(format!("Note: {e}"));
+        }
+    }
 }
 
 impl Tool for NoteTool {
@@ -66,7 +109,7 @@ impl Tool for NoteTool {
     }
 
     fn hint(&self) -> String {
-        match self.targets.len() {
+        match self.targets.len() + self.sheet_targets.len() {
             0 => "Click to place a note, or click geometry first for a leader to it".into(),
             1 => "Click where the text goes · Shift+click more geometry for more leaders".into(),
             n => format!("{n} leaders · click where the text goes · Shift+click for another"),
@@ -74,12 +117,21 @@ impl Tool for NoteTool {
     }
 
     fn is_busy(&self) -> bool {
-        !self.targets.is_empty()
+        !self.targets.is_empty() || !self.sheet_targets.is_empty()
+    }
+
+    fn sheet_targets(&self) -> Vec<crate::sheet_annotations::SheetTarget> {
+        self.sheet_targets.clone()
     }
 
     fn handle(&mut self, input: Input, ed: &mut Editor) {
         match input {
             Input::Hover(p) | Input::Drag(p) => self.hover = Some(p.pos()),
+            Input::Click(p, mods) if ed.on_sheet.is_some() => {
+                if let Some(on) = ed.on_sheet {
+                    self.sheet_click(on, &p, mods, ed);
+                }
+            }
             Input::Click(p, mods) => {
                 // Geometry first (or, with leaders started, Shift+geometry): another leader.
                 if (self.targets.is_empty() || mods.shift)
@@ -103,14 +155,18 @@ impl Tool for NoteTool {
                 };
                 ed.out.pending_note_edit = add_annotation(ed, note, "Note");
             }
-            Input::Finish => self.targets.clear(),
+            Input::Finish => {
+                self.targets.clear();
+                self.sheet_targets.clear();
+            }
             _ => {}
         }
     }
 
     fn cancel(&mut self, _ed: &mut Editor) -> bool {
-        let busy = !self.targets.is_empty();
+        let busy = self.is_busy();
         self.targets.clear();
+        self.sheet_targets.clear();
         busy
     }
 

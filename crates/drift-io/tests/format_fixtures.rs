@@ -226,6 +226,20 @@ fn every_fixture_opens_keeps_its_contents_and_saves_as_current() {
         assert_eq!(doc.instances().count(), INSTANCES, "{}", at("instances"));
         assert_eq!(doc.sheets().count(), SHEETS, "{}", at("sheets"));
         assert_eq!(doc.views().count(), VIEWS, "{}", at("views"));
+        // (From 45 the sheet has a dimension and a note of its own, and its viewport an id.)
+        let own: usize = doc.sheets().map(|(_, s)| s.annotations.len()).sum();
+        assert_eq!(
+            own,
+            if version >= 45 { 2 } else { 0 },
+            "{}",
+            at("sheet annotations")
+        );
+        let named = doc
+            .sheets()
+            .flat_map(|(_, s)| s.viewports.iter())
+            .filter(|p| p.id.is_some())
+            .count();
+        assert_eq!(named, usize::from(version >= 45), "{}", at("viewport ids"));
         assert_eq!(doc.underlays().count(), UNDERLAYS, "{}", at("underlays"));
         assert_eq!(
             doc.measurements().count(),
@@ -776,7 +790,60 @@ fn fixture_drawing() -> Document {
     doc.add_variant(before);
     add_walls(&mut doc, walls);
     add_offsets(&mut doc);
+    add_sheet_annotations(&mut doc, corners[0], corners[1], sides[1]);
     doc
+}
+
+/// The sheet's own annotations (45): a dimension of the room's width through the plan's
+/// viewport, with a suffix and its own text height, and a framed, bold note with a leader to
+/// a wall through the viewport and one to a point on the paper.
+fn add_sheet_annotations(doc: &mut Document, a: EntityId, b: EntityId, wall: EntityId) {
+    use drift_core::{
+        Anchor, DimNote, LeaderEnd, NoteFrame, NoteStyle, SheetAnnotation, SheetLeader,
+        StyleOverride,
+    };
+    let sheet = doc.sheets().next().expect("the fixture's sheet").0;
+    let port = doc.tie_viewport(sheet, 0).expect("its viewport");
+    doc.add_sheet_annotation(
+        sheet,
+        SheetAnnotation::Dimension {
+            port,
+            measure: Constraint::HorizontalDistance { a, b, value: 0.0 },
+            label: Some(DVec2::new(0.0, -8.0)),
+            note: DimNote {
+                suffix: "CLEAR".into(),
+                ..DimNote::default()
+            },
+            look: StyleOverride {
+                text_height: Some(2.5),
+                ..StyleOverride::default()
+            },
+        },
+    )
+    .unwrap();
+    let mut to_wall = SheetLeader::through(
+        port,
+        Anchor::Curve {
+            curve: wall,
+            t: 0.25,
+        },
+    );
+    to_wall.leader.end = LeaderEnd::Dot;
+    doc.add_sheet_annotation(
+        sheet,
+        SheetAnnotation::Note {
+            text: "SEE DETAIL 3".into(),
+            at: DVec2::new(300.0, 220.0),
+            leaders: vec![to_wall, SheetLeader::on_paper(DVec2::new(310.0, 200.0))],
+            style: NoteStyle {
+                bold: true,
+                frame: NoteFrame::Box,
+                ..NoteStyle::default()
+            },
+            look: StyleOverride::default(),
+        },
+    )
+    .unwrap();
 }
 
 /// Offsets (44.1): a 400 × 300 rectangle offset 50 outward, its distance dimension shown,

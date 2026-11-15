@@ -2,6 +2,27 @@
 
 The next release's notes, as they land (Beta 1.6's are below).
 
+## Notes and dimensions on sheets
+
+- **Annotate a sheet, not just the model.** With a sheet's tab open, **Note** and
+  **Dimension** work on the paper, as in AutoCAD's paper space or a Vectorworks viewport's
+  annotations. What they make belongs to that sheet and shows only there, so a 1:50 plan
+  and a 1:10 detail of the same room each get notes placed for their own scale.
+- **True sizes at any scale.** A sheet dimension measures the model through the view you
+  click in and reads its real size, whatever the view's scale, with text and arrows at
+  their paper size. It is a reference: it never holds or moves the geometry.
+- **They follow the drawing.** A dimension's ends and a leader's tip stay on the model as
+  the geometry changes, the view is moved on the sheet or its scale changes. A note's text
+  stays where you put it.
+- **Pick, drag, edit, delete.** Each is one undo step. Deleting the geometry or the view
+  one is tied to takes a dimension with it and a note's leader off, in the same step.
+- They print and export with the sheet (PDF and SVG; DWG and DXF are the model, so
+  they have none), and save with the drawing.
+  Older drawings open as they were. The file format is 45: Beta 1.6 and earlier ask
+  you to update Drift before opening a drawing saved by this version.
+
+<!-- PRs: sheet-annot (#432, part 1) -->
+
 ## Annotations at print size
 
 - **The canvas shows dimensions and notes as they print.** Dimensions, notes, leaders and

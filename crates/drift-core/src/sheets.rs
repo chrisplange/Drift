@@ -1,10 +1,11 @@
 //! Sheets: a paper size and a drawing scale, a view of the sketch, a title block and a
 //! revision table.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use glam::DVec2;
 
+use crate::sheet_annotations::{PortId, SheetAnnotation, SheetAnnotationId};
 use crate::{Bounds, LayerId, Rgb};
 
 /// Stable identifier of a sheet.
@@ -410,6 +411,9 @@ pub struct Viewport {
     pub title: bool,
     /// Draw the frame's outline.
     pub border: bool,
+    /// What the sheet's annotations name it by, once one is tied to it (see
+    /// [`Document::tie_viewport`](crate::Document::tie_viewport)); `None` until then.
+    pub id: Option<PortId>,
 }
 
 impl Viewport {
@@ -419,6 +423,7 @@ impl Viewport {
             at,
             title: false,
             border: false,
+            id: None,
         }
     }
 }
@@ -442,6 +447,8 @@ pub struct PlacedView {
     pub hidden_layers: BTreeSet<LayerId>,
     pub title: bool,
     pub border: bool,
+    /// The viewport's id, if the sheet's annotations name it (not changed by [`Self::apply`]).
+    pub port: Option<PortId>,
 }
 
 impl PlacedView {
@@ -461,7 +468,18 @@ impl PlacedView {
             hidden_layers: view.hidden_layers.clone(),
             title: port.title,
             border: port.border,
+            port: port.id,
         }
+    }
+
+    /// Where a model point is on the paper (mm), through this view.
+    pub fn to_paper(&self, world: DVec2) -> DVec2 {
+        self.frame.at + (world - self.center) / self.scale
+    }
+
+    /// The model point at a paper point (mm), through this view (inside its frame or not).
+    pub fn to_world(&self, paper: DVec2) -> DVec2 {
+        self.center + (paper - self.frame.at) * self.scale
     }
 
     /// `view` and `port` changed to match this.
@@ -511,6 +529,10 @@ pub struct Sheet {
     pub revisions: Vec<Revision>,
     /// The colours it prints and exports in (and shows in the sheet preview).
     pub colours: SheetColours,
+    /// The notes, leaders and dimensions placed on this sheet (#432): its own, shown nowhere
+    /// else. Each is tied only to viewports of this sheet that have an id; a sheet kept in a
+    /// document always is so (see [`Self::settle_annotations`]).
+    pub annotations: BTreeMap<SheetAnnotationId, SheetAnnotation>,
 }
 
 impl Sheet {
@@ -524,7 +546,58 @@ impl Sheet {
             fields: TitleFields::default(),
             revisions: Vec::new(),
             colours: SheetColours::Colour,
+            annotations: BTreeMap::new(),
         }
+    }
+
+    /// The viewport with id `port`, and its index.
+    pub fn port(&self, port: PortId) -> Option<(usize, &Viewport)> {
+        self.viewports
+            .iter()
+            .enumerate()
+            .find(|(_, p)| p.id == Some(port))
+    }
+
+    /// Make the sheet consistent, as a document keeps it: no two viewports share an id (a
+    /// later one loses its own), and no annotation is tied to a viewport the sheet doesn't
+    /// have, to geometry that is gone or to geometry it no longer fits (`tie` says which ties
+    /// to the model hold: see [`Document::settle_sheet`](crate::Document::settle_sheet)). A
+    /// dimension tied to what is gone goes; a note loses those leaders and keeps its text.
+    /// Returns whether anything changed.
+    pub fn settle_annotations(
+        &mut self,
+        tie: &dyn Fn(crate::sheet_annotations::Tie) -> bool,
+    ) -> bool {
+        let mut changed = false;
+        let mut seen = BTreeSet::new();
+        for p in &mut self.viewports {
+            if let Some(id) = p.id
+                && !seen.insert(id)
+            {
+                p.id = None;
+                changed = true;
+            }
+        }
+        if self.annotations.is_empty() {
+            return changed;
+        }
+        let port = |p: PortId| seen.contains(&p);
+        let ids: Vec<SheetAnnotationId> = self.annotations.keys().copied().collect();
+        for id in ids {
+            let a = &self.annotations[&id];
+            match a.surviving(&port, tie) {
+                Some(kept) if kept == *a => {}
+                Some(kept) => {
+                    self.annotations.insert(id, kept);
+                    changed = true;
+                }
+                None => {
+                    self.annotations.remove(&id);
+                    changed = true;
+                }
+            }
+        }
+        changed
     }
 
     /// Its title block fields with the project's filled in where its own are empty.

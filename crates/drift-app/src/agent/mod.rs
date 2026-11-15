@@ -15,6 +15,7 @@ mod analyze;
 #[cfg(not(target_arch = "wasm32"))]
 pub use drift_edit::prefs::saved_new_rules;
 mod args;
+mod blocks;
 mod constrain;
 mod edit;
 mod files;
@@ -276,6 +277,10 @@ impl Session {
             "layers" => self.step(&step("layers"), |s| edit::layers(s, a)),
             "add_fill" => self.step(&step("fill"), |s| edit::add_fill(s, a)),
             "add_text" => self.step(&step("text"), |s| edit::add_text(s, a)),
+            "blocks" => {
+                let label = blocks::label(a);
+                self.step(&step(label), |s| blocks::blocks(s, a))
+            }
             "import_file" => self.step(&step("import"), |s| files::import(s, a)),
             "batch" => self.step(&step("batch"), |s| s.batch(a, image)),
             "run_script" => Err("`run_script` can't be used inside a batch".into()),

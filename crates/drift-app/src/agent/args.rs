@@ -1,7 +1,8 @@
 //! Reading tool arguments, and writing ids and numbers into results.
 
 use drift_core::{
-    ConstraintId, DVec2, Document, EntityId, EntityKind, FillId, LayerId, LineKind, TextId,
+    BlockId, ConstraintId, DVec2, Document, EntityId, EntityKind, FillId, GroupId, InstanceId,
+    LayerId, LineKind, TextId,
 };
 use serde_json::{Value, json};
 
@@ -152,9 +153,40 @@ pub(super) fn opt_layer(doc: &Document, a: &Value, key: &str) -> Result<Option<L
     }
 }
 
+/// A block by id (`"b2"`) or by name.
+pub(super) fn block(doc: &Document, v: &Value) -> Result<BlockId, String> {
+    if let Some(id) = v.as_str().and_then(|name| doc.block_named(name)) {
+        return Ok(id);
+    }
+    let id = BlockId(number_of(v, 'b').ok_or(format!("no block {v}"))?);
+    doc.block(id).map(|_| id).ok_or(format!("no block {v}"))
+}
+
+/// A copy of a block by id (`"i7"`).
+pub(super) fn instance(doc: &Document, v: &Value) -> Result<InstanceId, String> {
+    let id = InstanceId(
+        number_of(v, 'i').ok_or(format!("expected a block copy id like \"i7\", got {v}"))?,
+    );
+    doc.instance(id)
+        .map(|_| id)
+        .ok_or(format!("{id} does not exist"))
+}
+
+/// A group by id (`"g3"`) or by name.
+pub(super) fn group(doc: &Document, v: &Value) -> Result<GroupId, String> {
+    if let Some(name) = v.as_str()
+        && let Some((id, _)) = doc.groups().find(|(_, g)| g.name == name)
+    {
+        return Ok(id);
+    }
+    let id = GroupId(number_of(v, 'g').ok_or(format!("no group {v}"))?);
+    doc.group(id).map(|_| id).ok_or(format!("no group {v}"))
+}
+
 /// What an id names, by its prefix.
 pub(super) enum AnyId {
     Entity(EntityId),
+    Instance(InstanceId),
     Constraint(ConstraintId),
     Fill(FillId),
     Text(TextId),
@@ -176,6 +208,7 @@ pub(super) fn any_id(doc: &Document, v: &Value) -> Result<AnyId, String> {
                 .map(|_| AnyId::Text(id))
                 .ok_or(format!("{id} does not exist"))
         }
+        Some('i') => instance(doc, v).map(AnyId::Instance),
         _ => entity(doc, v).map(AnyId::Entity),
     }
 }

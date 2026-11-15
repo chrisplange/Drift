@@ -1080,7 +1080,13 @@ impl DriftApp {
         if kind != ToolKind::View {
             self.drawing.add_view_on = None;
         }
-        if self.drawing.view.sheet_preview && kind != ToolKind::Select {
+        // On a sheet the Note and Dimension tools work on the paper (#432); any other tool
+        // draws in the model.
+        let on_paper = matches!(
+            kind,
+            ToolKind::Select | ToolKind::Note | ToolKind::Dimension
+        );
+        if self.drawing.view.sheet_preview && !on_paper {
             self.show_sheet(None);
             self.status_next = Some("Back in the model to draw".to_owned());
         }

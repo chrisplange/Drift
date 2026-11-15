@@ -36,6 +36,7 @@ pub(crate) mod scale_menu;
 #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
 pub(crate) mod session;
 pub(crate) mod shape_ui;
+pub(crate) mod sheet_annot_ui;
 pub(crate) mod sheet_editor;
 pub(crate) mod sheets_ui;
 pub(crate) mod start_ui;

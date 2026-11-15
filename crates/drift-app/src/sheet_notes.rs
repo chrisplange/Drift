@@ -4,7 +4,7 @@
 //! new here is where the points come from.
 
 use drift_core::{
-    AnnotationId, Constraint, DVec2, Document, DraftStyle, LeaderShape, PlacedView, PortId, Sheet,
+    AnnotationId, Constraint, DVec2, Document, DraftStyle, LeaderShape, PlacedView, Sheet,
     SheetAnnotation, SheetAnnotationId,
 };
 use eframe::egui::{self, Pos2};
@@ -248,16 +248,11 @@ pub fn port_at(doc: &Document, sheet: &Sheet, at: DVec2) -> Option<(usize, Place
         })
 }
 
-/// The view seen through `sheet`'s viewport `port`.
-pub fn view_of(doc: &Document, sheet: &Sheet, port: PortId) -> Option<PlacedView> {
-    doc.port_view(sheet, port)
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
     use drift_core::{
-        Anchor, Bounds, EntityId, NoteStyle, SheetId, SheetLeader, StyleOverride, View, ViewId,
-        Viewport,
+        Anchor, Bounds, EntityId, NoteStyle, PortId, SheetId, SheetLeader, StyleOverride, View,
+        ViewId, Viewport,
     };
     use drift_draft::page::{Drawing, Prim};
     use drift_edit::editor::Editor;

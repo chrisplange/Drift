@@ -43,6 +43,9 @@ mod selection_move;
 /// A filled shape as one object in the Inspector: Stroke and Fill.
 #[cfg(not(feature = "demo"))]
 mod shapes;
+/// A sheet's own notes and dimensions: placed, picked, moved, edited and deleted (#432).
+#[cfg(not(feature = "demo"))]
+mod sheet_annotations;
 /// The regression smoke suite (`cargo test -p drift-app smoke_`): docs/regression-checklist.md.
 #[cfg(not(feature = "demo"))]
 mod smoke;

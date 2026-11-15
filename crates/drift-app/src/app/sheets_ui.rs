@@ -1584,7 +1584,22 @@ impl DriftApp {
                 / f64::from(self.drawing.view.preview.zoom);
         }
         let views = self.drawing.editor.doc.placed_views(&sheet);
-        self.view_input(ui, &response, rect, id, &sheet, &views);
+        // The sheet's own annotations (#432), laid out where they show, for picking. The
+        // Note and Dimension tools work on the paper; else the pointer picks and drags an
+        // annotation under it, or the views.
+        let paper = self.paper_map(rect);
+        let layouts = crate::sheet_notes::layout_sheet_annotations(
+            &painter,
+            &self.drawing.editor.doc,
+            &sheet,
+            &paper,
+        );
+        if self.sheet_tool() {
+            self.drawing.view.sheet_anno_hover = None;
+            self.sheet_tool_input(ui, &response, rect, id, &sheet);
+        } else if !self.sheet_annotation_input(ui, &response, id, &layouts) {
+            self.view_input(ui, &response, rect, id, &sheet, &views);
+        }
         self.view_drop(ui, &response, rect, id);
         // Right-click on a view: what can be done with it.
         if self.drawing.view.sheet_pick == crate::app::sheet_editor::SheetPick::View {
@@ -1619,6 +1634,17 @@ impl DriftApp {
             );
         }
         self.paint_view_frames(&painter, rect, &sheet, &views, ui.visuals().dark_mode);
+        // As they are now (a drag or a tool may have changed them since they were laid out).
+        if let Some(now) = self.drawing.editor.doc.sheet(id).cloned() {
+            let layouts = crate::sheet_notes::layout_sheet_annotations(
+                &painter,
+                &self.drawing.editor.doc,
+                &now,
+                &paper,
+            );
+            self.paint_sheet_annotations(&painter, rect, &now, &layouts, ui.visuals().dark_mode);
+        }
+        self.paint_sheet_tool_hint(&painter, rect);
         self.paint_drop_ghost(ui, &response, rect, &views);
         // What this is, and how to leave.
         // The paper and scale (the tab above names the sheet).

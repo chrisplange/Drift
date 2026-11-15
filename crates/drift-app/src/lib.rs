@@ -423,6 +423,23 @@ struct CanvasView {
     view_set: Option<(drift_core::SheetId, std::collections::BTreeSet<usize>)>,
     /// A box being dragged on the sheet to pick views by (screen corners).
     view_box: Option<(egui::Pos2, egui::Pos2)>,
+    /// The annotation picked on the sheet shown (while `sheet_pick` says an annotation is).
+    sheet_annotation: Option<drift_core::SheetAnnotationId>,
+    /// The sheet annotation under the pointer.
+    sheet_anno_hover: Option<drift_core::SheetAnnotationId>,
+    /// A sheet annotation being dragged.
+    sheet_anno_drag: Option<app::sheet_annot_ui::AnnoDrag>,
+    /// The viewport (its index on the sheet shown) the Note or Dimension tool sees the model
+    /// through.
+    sheet_tool_port: Option<usize>,
+    /// The picked sheet note's text field takes the keyboard next frame (just placed, or
+    /// double-clicked).
+    focus_sheet_note: bool,
+    /// The sheet annotation whose text is being typed: its typing merges into one undo step.
+    sheet_note_typing: Option<drift_core::SheetAnnotationId>,
+    /// The canvas showed a sheet last frame (a tool's unfinished picks don't carry between
+    /// the model and a sheet).
+    was_on_sheet: bool,
     /// A drag on a view's crop on the canvas.
     crop_drag: Option<app::views_ui::CropDrag>,
     /// Shift and Ctrl (Cmd) as they are held this frame, for the pointer.
@@ -524,6 +541,13 @@ impl CanvasView {
             sheet_view: 0,
             view_set: None,
             view_box: None,
+            sheet_annotation: None,
+            sheet_anno_hover: None,
+            sheet_anno_drag: None,
+            sheet_tool_port: None,
+            focus_sheet_note: false,
+            sheet_note_typing: None,
+            was_on_sheet: false,
             sheet_pick: Default::default(),
             crop_drag: None,
             keys_held: (false, false),
@@ -1245,7 +1269,23 @@ impl eframe::App for DriftApp {
             // The model and each sheet, as tabs over the canvas, right on top of it.
             ui.spacing_mut().item_spacing.y = 0.0;
             self.canvas_tabs(ui);
-            if self.drawing.view.sheet_preview {
+            // Between the model and a sheet a tool starts afresh: a pick made in one means
+            // nothing in the other. And nothing made in the model is ever the sheet's.
+            let on_sheet = self.drawing.view.sheet_preview;
+            if on_sheet != self.drawing.view.was_on_sheet {
+                self.drawing.view.was_on_sheet = on_sheet;
+                self.abort_operation();
+                self.drawing.view.sheet_anno_drag = None;
+                self.drawing.view.sheet_tool_port = None;
+                // Back in the model: a sheet note left without text goes.
+                if !on_sheet
+                    && self.drawing.view.sheet_pick == app::sheet_editor::SheetPick::Annotation
+                {
+                    self.pick_sheet_annotation(None);
+                }
+            }
+            self.drawing.editor.on_sheet = None;
+            if on_sheet {
                 self.sheet_canvas(ui);
             } else {
                 self.canvas(ui);

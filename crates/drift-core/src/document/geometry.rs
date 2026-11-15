@@ -631,6 +631,7 @@ impl Document {
             self.remove_fill(id);
         }
         self.drop_dangling_annotations();
+        self.settle_sheets();
         self.prune_groups();
         self.prune_paths();
         self.prune_walls();
@@ -920,6 +921,7 @@ impl Document {
                 a.replace_entity(from, into);
             }
         }
+        self.retie_sheets(from, into);
         self.touch(from);
         self.entities.remove(&from);
         self.normalize_arcs_using(&BTreeSet::from([into]));

@@ -20,6 +20,7 @@ use crate::layers::{Appearance, Layer, LayerId};
 use crate::offsets::{Offset, OffsetId};
 use crate::openings::{Opening, OpeningId};
 use crate::paths::{Path, PathId};
+use crate::sheet_annotations::{PortId, SheetAnnotation, SheetAnnotationId};
 use crate::sheets::{PlacedView, Sheet, SheetId, View, ViewId};
 use crate::texts::{SketchText, TextId};
 use crate::underlays::{Underlay, UnderlayId};

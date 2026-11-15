@@ -136,8 +136,12 @@ pub const EXTENSION: &str = "drift";
 /// geometry something else already partly holds); 44 = adds `corner` (a point held where two
 /// curves cross: the sharp corner a fillet or chamfer cut off), `midpoint_of` (a point midway
 /// between two points) and `equal_distance` (two point-to-point distances kept equal), so a
-/// fillet or chamfer keeps what was measured to its corner and along its sides (#238).
-pub const FORMAT_VERSION: u32 = 44;
+/// fillet or chamfer keeps what was measured to its corner and along its sides (#238);
+/// 45 = adds a sheet's own `annotations` (notes, leaders and dimensions placed on the sheet in
+/// paper mm, tied to model geometry through a viewport) and a viewport's `id` (what those
+/// annotations name it by) (#432). An addition: `reader` stays 44, and a 44 build shows the
+/// sheet without them and keeps them when it saves.
+pub const FORMAT_VERSION: u32 = 45;
 /// The oldest version that reads what this build writes: the last breaking change, written as
 /// a file's `"reader"`. A reader refuses a file only when its `reader` is above the reader's
 /// own [`FORMAT_VERSION`] (a file without one, from before 42, gives its `version`).
@@ -2081,6 +2085,7 @@ fn load_value(value: serde_json::Value) -> Result<(Document, Metadata, Vec<Strin
         doc.set_only_in(of, views);
     }
     let mut old_views = Vec::new();
+    let mut sheet_annotation_ids = std::collections::BTreeSet::new();
     for r in file.sheets {
         let id_text = r.id.clone();
         let (id, sheet, old) = sheets::parse_sheet(r)?;
@@ -2089,6 +2094,37 @@ fn load_value(value: serde_json::Value) -> Result<(Document, Metadata, Vec<Strin
         }
         if let Some(p) = sheet.viewports.iter().find(|p| doc.view(p.view).is_none()) {
             return Err(LoadError::UnknownView(p.view.to_string()));
+        }
+        // Its own annotations (v45), checked against the drawing: an older build that
+        // passes them over may have deleted the geometry or taken off the view one is tied
+        // to. Those go (a note keeps its text and loses that leader), and the file says so.
+        let mut sheet = sheet;
+        let before = sheet.annotations.clone();
+        if sheet.settle_annotations(&|e| doc.get(e).is_some()) {
+            let changed = before
+                .iter()
+                .filter(|(a, was)| sheet.annotations.get(a) != Some(was))
+                .count();
+            if changed > 0 {
+                notes_out.push(format!(
+                    "Sheet {}: {changed} annotation{} tied to a view or geometry that is no \
+                     longer there {} dropped or let go of it",
+                    sheet.name,
+                    if changed == 1 { "" } else { "s" },
+                    if changed == 1 { "was" } else { "were" },
+                ));
+            }
+        }
+        for (aid, a) in &sheet.annotations {
+            if sheet_annotation_ids.contains(aid) {
+                return Err(LoadError::DuplicateId(aid.to_string()));
+            }
+            sheet_annotation_ids.insert(*aid);
+            if let drift_core::SheetAnnotation::Dimension { measure, .. } = a {
+                // (The value is a placeholder: the references are what is checked.)
+                doc.validate(&measure.with_value(1.0))
+                    .map_err(LoadError::Document)?;
+            }
         }
         doc.insert_sheet(id, sheet);
         old_views.push((id, old));

@@ -210,6 +210,7 @@ mod tests {
             hidden_layers: Default::default(),
             title: false,
             border: false,
+            port: None,
         }
     }
 

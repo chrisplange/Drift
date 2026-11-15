@@ -11,22 +11,238 @@ impl Document {
         self.sheets.get(&id)
     }
 
-    pub fn add_sheet(&mut self, sheet: Sheet) -> SheetId {
+    /// Add a sheet. Its annotations (a copy of another sheet's, say) come with it under ids
+    /// of their own, as do its viewports' ids, so every id stays unique in the drawing; what
+    /// is tied to a viewport the sheet doesn't have is left behind (see
+    /// [`Sheet::settle_annotations`]).
+    pub fn add_sheet(&mut self, mut sheet: Sheet) -> SheetId {
         let id = SheetId(self.next_drafting());
+        self.settle(&mut sheet);
+        let mut ports = BTreeMap::new();
+        for p in &mut sheet.viewports {
+            if let Some(old) = p.id {
+                let new = PortId(self.next_drafting());
+                ports.insert(old, new);
+                p.id = Some(new);
+            }
+        }
+        let annotations = std::mem::take(&mut sheet.annotations);
+        for (_, mut a) in annotations {
+            match &mut a {
+                SheetAnnotation::Note { leaders, .. } => {
+                    for l in leaders {
+                        l.port = l.port.map(|p| ports[&p]);
+                    }
+                }
+                SheetAnnotation::Dimension { port, .. } => *port = ports[port],
+            }
+            let aid = SheetAnnotationId(self.next_drafting());
+            sheet.annotations.insert(aid, a);
+        }
         self.touch_key(Key::Sheet(id));
         self.sheets.insert(id, sheet);
         id
     }
 
-    /// Insert a sheet with a known id (loading a file).
-    pub fn insert_sheet(&mut self, id: SheetId, sheet: Sheet) {
-        self.next_drafting_id = self.next_drafting_id.max(id.0 + 1);
+    /// `sheet` as a document keeps it: see [`Sheet::settle_annotations`].
+    fn settle(&self, sheet: &mut Sheet) -> bool {
+        sheet.settle_annotations(&|e| self.entities.contains_key(&e))
+    }
+
+    /// Insert a sheet with a known id (loading a file). An annotation of it tied to a
+    /// viewport it doesn't have, or to geometry that isn't there, is dropped or loses that
+    /// leader (see [`Sheet::settle_annotations`]; a reader that wants to say so settles the
+    /// sheet itself first).
+    pub fn insert_sheet(&mut self, id: SheetId, mut sheet: Sheet) {
+        self.settle(&mut sheet);
+        let top = sheet
+            .annotations
+            .keys()
+            .map(|a| a.0)
+            .chain(sheet.viewports.iter().filter_map(|p| p.id.map(|p| p.0)))
+            .chain([id.0])
+            .max()
+            .unwrap_or(id.0);
+        self.next_drafting_id = self.next_drafting_id.max(top.saturating_add(1));
         self.touch_key(Key::Sheet(id));
         self.sheets.insert(id, sheet);
     }
 
-    pub fn set_sheet(&mut self, id: SheetId, sheet: Sheet) {
+    /// Replace a sheet. Its annotations are kept consistent with its viewports: taking a view
+    /// off the sheet takes the dimensions through it along, and the leaders through it off
+    /// their notes, in the same step (see [`Sheet::settle_annotations`]).
+    pub fn set_sheet(&mut self, id: SheetId, mut sheet: Sheet) {
+        self.settle(&mut sheet);
         if self.sheets.get(&id).is_some_and(|s| *s != sheet) {
+            self.touch_key(Key::Sheet(id));
+            self.sheets.insert(id, sheet);
+        }
+    }
+
+    // ----- Sheet annotations (#432) ----------------------------------------------------------
+
+    /// An annotation of sheet `sheet`.
+    pub fn sheet_annotation(
+        &self,
+        sheet: SheetId,
+        id: SheetAnnotationId,
+    ) -> Option<&SheetAnnotation> {
+        self.sheets.get(&sheet)?.annotations.get(&id)
+    }
+
+    /// The id sheet `sheet`'s viewport `index` is named by, giving it one if it has none yet.
+    pub fn tie_viewport(&mut self, sheet: SheetId, index: usize) -> Option<PortId> {
+        let port = self.sheets.get(&sheet)?.viewports.get(index)?;
+        if let Some(id) = port.id {
+            return Some(id);
+        }
+        let id = PortId(self.next_drafting());
+        let mut s = self.sheets[&sheet].clone();
+        s.viewports[index].id = Some(id);
+        self.set_sheet(sheet, s);
+        Some(id)
+    }
+
+    /// Whether `a` can be kept on `sheet`: it is well formed, its viewports are the sheet's,
+    /// and its geometry exists and is of the right kind for what it measures.
+    fn validate_sheet_annotation(
+        &self,
+        sheet: &Sheet,
+        a: &SheetAnnotation,
+    ) -> Result<(), DocumentError> {
+        if !a.is_valid() {
+            return Err(DocumentError::InvalidValue);
+        }
+        if a.ports().into_iter().any(|p| sheet.port(p).is_none()) {
+            return Err(DocumentError::Degenerate(
+                "sheet annotation: its view is not on the sheet",
+            ));
+        }
+        for e in a.entities() {
+            if !self.entities.contains_key(&e) {
+                return Err(DocumentError::Missing(e));
+            }
+        }
+        if let SheetAnnotation::Dimension { measure, .. } = a {
+            // The value is irrelevant: validate the references only.
+            self.validate(&measure.with_value(1.0))?;
+        }
+        Ok(())
+    }
+
+    /// `a` as it is kept: a dimension's unused value is always 1, so equal dimensions
+    /// compare equal.
+    fn kept(mut a: SheetAnnotation) -> SheetAnnotation {
+        if let SheetAnnotation::Dimension { measure, .. } = &mut a
+            && measure.is_dimension()
+        {
+            *measure = measure.with_value(1.0);
+        }
+        a
+    }
+
+    /// Put an annotation on a sheet.
+    pub fn add_sheet_annotation(
+        &mut self,
+        sheet: SheetId,
+        a: SheetAnnotation,
+    ) -> Result<SheetAnnotationId, DocumentError> {
+        let Some(mut s) = self.sheets.get(&sheet).cloned() else {
+            return Err(DocumentError::Degenerate("sheet annotation: no such sheet"));
+        };
+        self.validate_sheet_annotation(&s, &a)?;
+        let id = SheetAnnotationId(self.next_drafting());
+        s.annotations.insert(id, Self::kept(a));
+        self.set_sheet(sheet, s);
+        Ok(id)
+    }
+
+    /// Replace an annotation of a sheet (nothing happens if it isn't there).
+    pub fn set_sheet_annotation(
+        &mut self,
+        sheet: SheetId,
+        id: SheetAnnotationId,
+        a: SheetAnnotation,
+    ) -> Result<(), DocumentError> {
+        let Some(mut s) = self
+            .sheets
+            .get(&sheet)
+            .filter(|s| s.annotations.contains_key(&id))
+            .cloned()
+        else {
+            return Ok(());
+        };
+        self.validate_sheet_annotation(&s, &a)?;
+        s.annotations.insert(id, Self::kept(a));
+        self.set_sheet(sheet, s);
+        Ok(())
+    }
+
+    pub fn remove_sheet_annotation(&mut self, sheet: SheetId, id: SheetAnnotationId) {
+        if let Some(mut s) = self
+            .sheets
+            .get(&sheet)
+            .filter(|s| s.annotations.contains_key(&id))
+            .cloned()
+        {
+            s.annotations.remove(&id);
+            self.set_sheet(sheet, s);
+        }
+    }
+
+    /// The view seen through `sheet`'s viewport `port`, as placed (`None` if the sheet has no
+    /// such viewport, or its view is missing).
+    pub fn port_view(&self, sheet: &Sheet, port: PortId) -> Option<PlacedView> {
+        let (_, p) = sheet.port(port)?;
+        Some(PlacedView::new(p.view, self.views.get(&p.view)?, p))
+    }
+
+    /// Where a sheet note's leader points on the paper now (mm): its paper point, or its
+    /// model point seen through its viewport.
+    pub fn sheet_leader_tip(&self, sheet: &Sheet, l: &crate::SheetLeader) -> Option<DVec2> {
+        match l.port {
+            None => match l.leader.to {
+                Anchor::Free(p) => Some(p),
+                _ => None,
+            },
+            Some(port) => {
+                let view = self.port_view(sheet, port)?;
+                Some(view.to_paper(self.anchor_pos(&l.leader.to)?))
+            }
+        }
+    }
+
+    /// Sheets' annotations follow the model: after geometry is deleted, what was tied to it
+    /// goes (a dimension) or lets go of it (a note's leader), in the deleting step.
+    pub(super) fn settle_sheets(&mut self) {
+        let ids: Vec<SheetId> = self
+            .sheets
+            .iter()
+            .filter(|(_, s)| !s.annotations.is_empty())
+            .map(|(id, _)| *id)
+            .collect();
+        for id in ids {
+            let sheet = self.sheets[&id].clone();
+            // (`set_sheet` settles it.)
+            self.set_sheet(id, sheet);
+        }
+    }
+
+    /// Sheets' annotations tied to point `from` are tied to `into` instead (two points
+    /// merged); a dimension left measuring a point against itself goes.
+    pub(super) fn retie_sheets(&mut self, from: EntityId, into: EntityId) {
+        let ids: Vec<SheetId> = self
+            .sheets
+            .iter()
+            .filter(|(_, s)| s.annotations.values().any(|a| a.entities().contains(&from)))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in ids {
+            let mut sheet = self.sheets[&id].clone();
+            sheet.annotations.retain(|_, a| {
+                a.replace_entity(from, into);
+                !matches!(a, SheetAnnotation::Dimension { measure, .. } if measure.is_degenerate())
+            });
             self.touch_key(Key::Sheet(id));
             self.sheets.insert(id, sheet);
         }

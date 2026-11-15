@@ -295,6 +295,34 @@ impl DriftApp {
         }
     }
 
+    /// The relation symbols the canvas shows, where they are first laid out (before any are
+    /// pushed off the transform handles): none, those of what is picked, or all.
+    pub(crate) fn relation_glyphs(&self, map: &ScreenMap) -> Vec<annotations::GlyphLayout> {
+        if self.show_relations == ShowRelations::Off {
+            return Vec::new();
+        }
+        let ed = &self.drawing.editor;
+        let mut glyphs = annotations::layout_glyphs(&ed.doc, map);
+        // (Not on walls' centrelines unless the wall is picked.)
+        if ed.doc.has_walls() {
+            let hidden = ed.unpicked_centrelines();
+            glyphs.retain(|g| {
+                ed.doc
+                    .constraint(g.id)
+                    .is_none_or(|c| !c.entities().any(|e| hidden.contains(&e)))
+            });
+        }
+        // Picked only: the relations on the picked curves and their points, each on everything
+        // it holds (so both lines of a parallel pair), and a picked relation itself. They stay
+        // where they are laid out among all of them, so none moves as the picks change.
+        if self.show_relations == ShowRelations::Picked {
+            let mut shown = ed.selection_constraints().0;
+            shown.extend(self.drawing.selected_constraint);
+            glyphs.retain(|g| shown.contains(&g.id));
+        }
+        glyphs
+    }
+
     /// Hover, pick, drag and double-click dimensions and relation glyphs. Returns true if the
     /// pointer input was used here (so the tool shouldn't see it).
     pub(crate) fn annotation_input(
@@ -827,17 +855,8 @@ impl DriftApp {
         // The handles glyphs were kept clear of, and the glyphs before that.
         let mut glyph_handles: Vec<egui::Rect> = Vec::new();
         let mut glyphs_laid_out = None;
-        let glyphs = if self.show_relations {
-            let mut glyphs = annotations::layout_glyphs(&self.drawing.editor.doc, &map);
-            // (Not on walls' centrelines unless the wall is picked.)
-            if self.drawing.editor.doc.has_walls() {
-                let hidden = self.drawing.editor.unpicked_centrelines();
-                let doc = &self.drawing.editor.doc;
-                glyphs.retain(|g| {
-                    doc.constraint(g.id)
-                        .is_none_or(|c| !c.entities().any(|e| hidden.contains(&e)))
-                });
-            }
+        let glyphs = if self.show_relations != ShowRelations::Off {
+            let mut glyphs = self.relation_glyphs(&map);
             // (Never over a transform handle: pushed aside so the handle stays in reach. The
             // handles are where the box was last drawn; finding the box here, before the
             // input is handled, would disturb the picked area.)
@@ -1849,6 +1868,67 @@ impl DriftApp {
                 self.drawing.view.camera.zoom_at(to_view(pos), factor);
                 self.drawing.view.fit_target = None;
             }
+        }
+    }
+}
+
+/// Which relations show their symbols on the canvas (View → Relations, Alt+R steps through).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ShowRelations {
+    Off,
+    /// Only the relations of what is picked, on every curve and point each one holds.
+    Picked,
+    #[default]
+    All,
+}
+
+impl ShowRelations {
+    pub const ALL: [ShowRelations; 3] = [
+        ShowRelations::Off,
+        ShowRelations::Picked,
+        ShowRelations::All,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ShowRelations::Off => "Off",
+            ShowRelations::Picked => "Picked only",
+            ShowRelations::All => "All",
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            ShowRelations::Off => "off",
+            ShowRelations::Picked => "picked",
+            ShowRelations::All => "all",
+        }
+    }
+
+    /// From saved preferences; `0` and `1` are the on/off switch this was.
+    pub fn from_key(key: &str) -> Option<Self> {
+        match key {
+            "0" => Some(ShowRelations::Off),
+            "1" => Some(ShowRelations::All),
+            _ => Self::ALL.into_iter().find(|m| m.key() == key),
+        }
+    }
+
+    /// The next one, as Alt+R steps: off, picked only, all, and round again.
+    pub fn next(self) -> Self {
+        match self {
+            ShowRelations::Off => ShowRelations::Picked,
+            ShowRelations::Picked => ShowRelations::All,
+            ShowRelations::All => ShowRelations::Off,
+        }
+    }
+
+    /// What the status bar says when it becomes this.
+    pub fn status(self) -> &'static str {
+        match self {
+            ShowRelations::Off => "Relations hidden (Alt+R shows them)",
+            ShowRelations::Picked => "Relations shown for what is picked only",
+            ShowRelations::All => "Relations shown",
         }
     }
 }

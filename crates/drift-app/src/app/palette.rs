@@ -2,6 +2,7 @@
 //! command and press Return. Arrow keys move, Esc closes; recent commands come first. The
 //! entries are the command registry's ([`crate::commands`]), plus the drawing's options.
 
+use crate::app::view::ShowRelations;
 use crate::commands::{self, Icon, Spec, registry};
 pub(crate) use crate::commands::{Command, ViewFlag};
 use crate::dock::Panel;
@@ -52,7 +53,6 @@ impl DriftApp {
             ViewFlag::Endpoints => &mut self.drawing.editor.prefs.always_endpoints,
             ViewFlag::Dimensions => &mut self.show_dimensions,
             ViewFlag::PrintSize => &mut self.print_annotations,
-            ViewFlag::Relations => &mut self.show_relations,
             ViewFlag::Hidden => &mut self.show_hidden_annotations,
             ViewFlag::Free => &mut self.drawing.params.show_free,
             ViewFlag::Combs => &mut self.show_combs,
@@ -66,6 +66,7 @@ impl DriftApp {
     pub(crate) fn command_state(&mut self, command: Command) -> Option<bool> {
         Some(match command {
             Command::Toggle(f) => *self.flag(f),
+            Command::Relations => self.show_relations != ShowRelations::Off,
             Command::Panel(p) => self.layout.is_shown(p) && !self.dock_view.hide_all,
             Command::HideAllPanels => self.dock_view.hide_all,
             Command::SheetPreview => self.drawing.view.sheet_preview,
@@ -229,6 +230,7 @@ impl DriftApp {
                     self.set_status(text.into(), false, now);
                 }
             }
+            Command::Relations => self.show_relations = self.show_relations.next(),
             Command::Panel(p) => self.toggle_panel(p),
             Command::HideAllPanels => self.dock_view.hide_all = !self.dock_view.hide_all,
             Command::ResetPanels => {

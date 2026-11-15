@@ -61,7 +61,7 @@ does the last command or tool again, as in AutoCAD.
 | Shift+Alt+V | **Always show end points** | Show every end point, or only those of hovered and picked curves |
 | Alt+D | **Dimensions and notes** | Show or hide dimensions and notes (shown again at each start) |
 | Alt+H | **Hidden annotations (faded)** | Show hidden dimensions and notes, faded, to pick and show them again |
-| Alt+R | **Relations** | Show or hide relation symbols |
+| Alt+R | **Relations** | Relation symbols: off, for what is picked only, or all (each press steps on) |
 | Shift+Alt+B | **View crops** | Show or hide views' crops and names on the canvas |
 | Shift+Alt+R | **Automatic relations** | Add relations automatically while drawing, or not |
 | Ctrl+\ | **Hide all panels** | Hide every panel for a clear view, and bring them back |

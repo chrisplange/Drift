@@ -724,6 +724,7 @@ impl DriftApp {
         let mut delete = false;
         let mut delete_views = false;
         let mut whole = false;
+        let mut bring = None;
         let placed = self.drawing.editor.doc.placed_views(&sheet);
         let pick = if placed.is_empty() {
             SheetPick::Paper
@@ -803,6 +804,46 @@ impl DriftApp {
                     ),
                 );
                 typing |= self.views_section(ui, &sheet, &mut view);
+                // The model's notes and dimensions this view shows, onto the sheet.
+                let count = self.view_annotation_count();
+                if count > 0 {
+                    use drift_edit::sheet_annotations::ToSheet;
+                    ui.add_space(12.0);
+                    theme::caps_header(ui, "Model annotations");
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "This view shows {count} of the model's notes and dimensions. On \
+                             the sheet they become its own: placed for this sheet, and off \
+                             the other views."
+                        ))
+                        .small()
+                        .weak(),
+                    );
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button("Move onto sheet")
+                            .on_hover_text(
+                                "Each becomes this sheet's own, where it is on the paper, and \
+                                 leaves the model. A dimension that drives the geometry stays \
+                                 in the model and stops printing in this view. Right-click one \
+                                 in the view to move it alone",
+                            )
+                            .clicked()
+                        {
+                            bring = Some(ToSheet::Move);
+                        }
+                        if ui
+                            .button("Copy onto sheet")
+                            .on_hover_text(
+                                "Each gets a copy that is this sheet's own; the model keeps \
+                                 its own, which still prints in this view",
+                            )
+                            .clicked()
+                        {
+                            bring = Some(ToSheet::Copy);
+                        }
+                    });
+                }
                 ui.add_space(16.0);
                 remove_view = theme::danger_button(ui, "Remove from sheet")
                     .on_hover_text("Take the picked view off this sheet (it stays in the model)")
@@ -849,6 +890,10 @@ impl DriftApp {
             }
         }
         self.update_sheet(id, sheet, view, typing);
+        // (After the sheet's own fields are written: this changes the sheet too.)
+        if let Some(how) = bring {
+            self.bring_view_annotations(how);
+        }
         if remove_view {
             self.remove_picked_views(id);
             self.drawing.view.sheet_pick = SheetPick::Paper;

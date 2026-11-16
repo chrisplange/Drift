@@ -5,7 +5,7 @@ use drift_core::{
     ArrowStyle, DVec2, LeaderEnd, NoteFrame, PlacedView, Sheet, SheetAnnotation, SheetAnnotationId,
     SheetId, TextAlign,
 };
-use drift_edit::sheet_annotations::{OnSheet, SheetPort, moved};
+use drift_edit::sheet_annotations::{OnSheet, SheetPort, ToSheet, moved};
 use eframe::egui::{self, PointerButton};
 
 use crate::annotations::{AnnotationColors, AnnotationState, DimOwn};
@@ -116,6 +116,130 @@ impl DriftApp {
         self.drawing.view.sheet_annotation = None;
         self.drawing.view.sheet_pick = SheetPick::Paper;
         true
+    }
+
+    // ----- The model's annotations, onto the sheet (#432 part 2) ----------------------------
+
+    /// The picked view of the sheet shown, as a viewport a tool can go through.
+    fn picked_port(&self) -> Option<(SheetId, SheetPort)> {
+        let id = self.current_sheet()?;
+        let sheet = self.drawing.editor.doc.sheet(id)?;
+        if self.drawing.view.sheet_pick != SheetPick::View || sheet.viewports.is_empty() {
+            return None;
+        }
+        Some((id, SheetPort::of(sheet, self.current_view(sheet))?))
+    }
+
+    /// How many of the model's notes and dimensions the picked view shows: what **Move** and
+    /// **Copy onto sheet** would bring.
+    pub(crate) fn view_annotation_count(&self) -> usize {
+        self.picked_port().map_or(0, |(_, port)| {
+            self.drawing.editor.view_shows(port.view).len()
+        })
+    }
+
+    /// Bring onto the sheet everything of the model's that the picked view shows: each note
+    /// and dimension becomes the sheet's own, where it is on the paper. One undo step.
+    pub(crate) fn bring_view_annotations(&mut self, how: ToSheet) {
+        let Some((sheet, port)) = self.picked_port() else {
+            return;
+        };
+        let items = self.drawing.editor.view_shows(port.view);
+        self.bring_onto_sheet(sheet, port, &items, how);
+    }
+
+    /// Bring `items` of the model's onto `sheet` through `port`, and say what happened.
+    pub(crate) fn bring_onto_sheet(
+        &mut self,
+        sheet: SheetId,
+        port: SheetPort,
+        items: &[drift_core::AnnotationRef],
+        how: ToSheet,
+    ) {
+        if items.is_empty() {
+            self.status_next =
+                Some("This view shows no notes or dimensions of the model's".to_owned());
+            return;
+        }
+        match self.drawing.editor.bring_to_sheet(sheet, port, items, how) {
+            Ok(brought) => {
+                // What arrived is picked, if it is one thing.
+                if let [one] = brought.made[..] {
+                    self.pick_sheet_annotation(Some(one));
+                    self.show_panel(crate::dock::Panel::Inspector);
+                }
+                self.status_next = Some(brought.summary(how));
+            }
+            Err(e) => self.status_next = Some(format!("Not brought onto the sheet: {e}")),
+        }
+    }
+
+    /// A right-click on the sheet at `pos`: the model's note or dimension under it in the
+    /// view there, remembered for the menu.
+    pub(crate) fn note_model_annotation_at(
+        &mut self,
+        painter: &egui::Painter,
+        rect: egui::Rect,
+        sheet: &Sheet,
+        pos: egui::Pos2,
+    ) {
+        let map = self.paper_map(rect);
+        let doc = &self.drawing.editor.doc;
+        self.drawing.view.sheet_model_hit = sheet_notes::port_at(doc, sheet, map.to_world(pos))
+            .and_then(|(index, view)| {
+                let shown = self.drawing.editor.view_shows(view.id);
+                let hit = sheet_notes::model_annotation_at(painter, doc, &map, &view, &shown, pos)?;
+                Some((SheetPort::of(sheet, index)?, hit))
+            });
+    }
+
+    /// The sheet's right-click menu entries for the model's annotations: the one under the
+    /// pointer, and the picked view's.
+    pub(crate) fn bring_menu(&mut self, ui: &mut egui::Ui) {
+        let mut act = None;
+        if let Some((port, r)) = self.drawing.view.sheet_model_hit {
+            let what = match r {
+                drift_core::AnnotationRef::Dimension(_) => "dimension",
+                drift_core::AnnotationRef::Annotation(_) => "note",
+            };
+            for (how, verb) in [(ToSheet::Move, "Move"), (ToSheet::Copy, "Copy")] {
+                if ui
+                    .button(format!("{verb} this {what} onto the sheet"))
+                    .clicked()
+                {
+                    act = Some((Some((port, r)), how));
+                }
+            }
+            ui.separator();
+        }
+        let count = self.view_annotation_count();
+        for (how, verb) in [(ToSheet::Move, "Move"), (ToSheet::Copy, "Copy")] {
+            if ui
+                .add_enabled(
+                    count > 0,
+                    egui::Button::new(format!(
+                        "{verb} the view's notes and dimensions onto the sheet ({count})"
+                    )),
+                )
+                .clicked()
+            {
+                act = Some((None, how));
+            }
+        }
+        ui.separator();
+        let Some((one, how)) = act else {
+            return;
+        };
+        ui.close();
+        match one {
+            Some((port, r)) => {
+                if let Some(sheet) = self.current_sheet() {
+                    self.bring_onto_sheet(sheet, port, &[r], how);
+                }
+            }
+            None => self.bring_view_annotations(how),
+        }
+        self.drawing.view.sheet_model_hit = None;
     }
 
     /// Give up a drag of a sheet annotation in progress: it goes back to where it was, and

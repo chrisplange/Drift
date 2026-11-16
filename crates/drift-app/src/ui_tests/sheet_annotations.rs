@@ -793,3 +793,73 @@ fn two_notes_placed_without_typing_leave_no_empty_note_for_undo() {
     assert_eq!(empty(&h), 0, "undo brings no empty note back");
     assert_eq!(annotations(&h, p.sheet).len(), 1);
 }
+
+fn secondary_click(h: &mut Harness<'_, DriftApp>, at: Pos2) {
+    h.hover_at(at);
+    h.run();
+    for pressed in [true, false] {
+        h.event(Event::PointerButton {
+            pos: at,
+            button: PointerButton::Secondary,
+            pressed,
+            modifiers: EguiModifiers::NONE,
+        });
+        h.run();
+    }
+}
+
+#[test]
+fn a_models_dimension_is_moved_onto_the_sheet_from_its_right_click_menu() {
+    let Some((mut h, mut p)) = on_sheet() else {
+        return;
+    };
+    let (dim, note) = crate::sheet_notes::tests::annotate_model(&mut p);
+    h.state_mut().drawing.editor = drift_edit::editor::Editor::new(p.ed.doc.clone());
+    h.run();
+    h.run();
+    let before = depth(&h);
+    // Right-click the model's dimension where the view shows it: on its line, 10 mm of
+    // paper under the geometry.
+    let at = on_paper(&h, V(165.0, 140.0));
+    secondary_click(&mut h, at);
+    assert_eq!(
+        h.state().drawing.view.sheet_model_hit.map(|(_, r)| r),
+        Some(drift_core::AnnotationRef::Dimension(dim))
+    );
+    h.get_by_label("Move this dimension onto the sheet").click();
+    h.run();
+    h.run();
+    let made = annotations(&h, p.sheet);
+    assert!(
+        matches!(&made[..], [(_, SheetAnnotation::Dimension { label: Some(l), .. })] if *l == V(0.0, -10.0)),
+        "{made:?}"
+    );
+    assert_eq!(depth(&h), before + 1, "one undo step");
+    // It is picked on the sheet; the model keeps the relation (it drives the line) but the
+    // view prints it no more; the note is untouched.
+    assert_eq!(
+        h.state().picked_sheet_annotation(),
+        Some((p.sheet, made[0].0))
+    );
+    let doc = &h.state().drawing.editor.doc;
+    assert!(doc.constraint(dim).is_some());
+    assert!(!doc.view_prints_dimension(p.view, dim));
+    assert!(doc.annotation(note).is_some());
+
+    // The view's Inspector moves the rest (the note) with one button.
+    h.state_mut().drawing.view.sheet_pick = SheetPick::View;
+    h.run();
+    h.get_by_label("Move onto sheet").click();
+    h.run();
+    h.run();
+    assert_eq!(annotations(&h, p.sheet).len(), 2);
+    assert!(h.state().drawing.editor.doc.annotation(note).is_none());
+    assert_eq!(depth(&h), before + 2);
+    assert_eq!(h.state().view_annotation_count(), 0);
+    // Undo, twice: the model is as it was and the sheet has none.
+    h.state_mut().undo();
+    h.state_mut().undo();
+    h.run();
+    assert!(annotations(&h, p.sheet).is_empty());
+    assert_eq!(h.state().drawing.editor.doc, p.ed.doc);
+}

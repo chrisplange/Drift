@@ -271,6 +271,32 @@ Undo brings the geometry or view back with everything that was tied to it.
 
 Centre marks, callouts, ordinates and section and elevation marks are drawn in the model.
 
+#### Bringing the model's notes and dimensions onto a sheet
+
+A drawing annotated in the model can hand those notes and dimensions to a sheet, so each
+sheet gets its own, placed for its scale.
+
+- Right-click a note or dimension where a view shows it and choose **Move this note onto
+  the sheet** (or **dimension**), or **Copy**. It becomes the sheet's own, tied to the same
+  geometry through that view, in the same place on the paper, with its text, leaders, style,
+  prefix, suffix and tolerance.
+- For everything a view shows at once, pick the view and use **Move onto sheet** or **Copy
+  onto sheet** under **Model annotations** in the Inspector (or in the view's right-click
+  menu). The number beside them is how many notes and dimensions the view shows.
+
+**Copy** leaves the model as it is, so the view still prints the model's own beside the
+sheet's copy: use it when the model's annotation should stay on other sheets, then hide the
+model's in this view with its **In views** setting. **Move** takes a note or a reference
+dimension out of the model. A dimension that drives the geometry is not taken out, since
+that would let the geometry change: it stays in the model, still holding its size and still
+on the canvas, and stops printing in that view. The status bar says how many stayed.
+
+The page looks the same after a move. Each move or copy, of one or of a whole view's, is one
+undo step. Marks, callouts, ordinates and a wall's thickness dimension stay in the model.
+A dimension's extension-line starts set by hand don't come along, a dimension linked to an
+expression loses its Σ, and a reference dimension loses its brackets (on a sheet every
+dimension is a reference).
+
 ### Drawings from before views
 
 In drawings made before views came in, each view a sheet held becomes a view of its own.

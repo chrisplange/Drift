@@ -38,18 +38,7 @@ impl SheetLayout {
     pub fn hit(&self, p: Pos2) -> bool {
         match &self.shape {
             SheetShape::Note(n) => n.hit(p),
-            SheetShape::Dimension(d) => {
-                d.text_rect.expand(3.0).contains(p)
-                    || dimension_segments(d).iter().any(|[a, b]| {
-                        let ab = *b - *a;
-                        let t = if ab.length_sq() > 0.0 {
-                            ((p - *a).dot(ab) / ab.length_sq()).clamp(0.0, 1.0)
-                        } else {
-                            0.0
-                        };
-                        (*a + ab * t - p).length() <= 4.0
-                    })
-            }
+            SheetShape::Dimension(d) => dimension_hit(d, p),
         }
     }
 
@@ -63,6 +52,54 @@ impl SheetLayout {
             SheetShape::Dimension(d) => self.space.paint_dimension(pen, d, state, colors),
         }
     }
+}
+
+/// Whether `p` picks a dimension laid out on screen: its text, or one of its lines.
+pub fn dimension_hit(d: &DimLayout, p: Pos2) -> bool {
+    d.text_rect.expand(3.0).contains(p)
+        || dimension_segments(d).iter().any(|[a, b]| {
+            let ab = *b - *a;
+            let t = if ab.length_sq() > 0.0 {
+                ((p - *a).dot(ab) / ab.length_sq()).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            (*a + ab * t - p).length() <= 4.0
+        })
+}
+
+/// The model's own note or dimension under `p`, among `shown` (what the view shows: see
+/// `Editor::view_shows`), as the view placed on `paper` draws it: laid out through the view
+/// by the model's layout code, so it is found where it is seen on the sheet. The topmost
+/// (a note over a dimension).
+pub fn model_annotation_at(
+    painter: &egui::Painter,
+    doc: &Document,
+    paper: &ScreenMap,
+    view: &PlacedView,
+    shown: &[drift_core::AnnotationRef],
+    p: Pos2,
+) -> Option<drift_core::AnnotationRef> {
+    use drift_core::AnnotationRef;
+    let space = port_space(paper, view);
+    let note = space
+        .layout_annotations(painter, doc)
+        .into_iter()
+        .rev()
+        .find(|l| shown.contains(&AnnotationRef::Annotation(l.id)) && l.hit(p))
+        .map(|l| AnnotationRef::Annotation(l.id));
+    note.or_else(|| {
+        shown.iter().rev().copied().find(|r| {
+            let AnnotationRef::Dimension(id) = *r else {
+                return false;
+            };
+            doc.constraint(id)
+                .and_then(|c| {
+                    space.layout_dimension(painter, doc, Some(id), c, space.placement(doc, id))
+                })
+                .is_some_and(|d| dimension_hit(&d, p))
+        })
+    })
 }
 
 /// A dimension's lines, for picking: its dimension line and extension lines.
@@ -667,6 +704,169 @@ pub(crate) mod tests {
         assert_eq!(
             layout_sheet_annotations(&painter(), &p.ed.doc, &sheet, &paper).len(),
             2
+        );
+    }
+
+    /// The plan with the model's own annotations: a driving dimension of the line (its label
+    /// 10 mm of paper below it) and a bold note with a leader to the line.
+    pub(crate) fn annotate_model(
+        p: &mut Plan,
+    ) -> (drift_core::ConstraintId, drift_core::AnnotationId) {
+        let dim =
+            p.ed.add_dimension(
+                Constraint::Distance {
+                    a: p.a,
+                    b: p.b,
+                    value: 1000.0,
+                },
+                None,
+            )
+            .unwrap();
+        p.ed.doc.set_placement(dim, V(0.0, -10.0)).unwrap();
+        let note =
+            p.ed.doc
+                .add_annotation(drift_core::Annotation::Note {
+                    text: "SILL".into(),
+                    at: V(300.0, 250.0),
+                    leaders: vec![drift_core::Leader::to(Anchor::Curve {
+                        curve: p.line,
+                        t: 0.25,
+                    })],
+                    style: NoteStyle {
+                        bold: true,
+                        ..NoteStyle::default()
+                    },
+                })
+                .unwrap();
+        p.ed.commit("Annotate");
+        (dim, note)
+    }
+
+    #[test]
+    fn a_page_looks_the_same_after_its_views_annotations_move_onto_the_sheet() {
+        use drift_edit::sheet_annotations::{SheetPort, ToSheet};
+        let mut p = plan();
+        let (dim, note) = annotate_model(&mut p);
+        // What the page shows of the model's annotations, by what and where.
+        let seen = |d: &Drawing| {
+            let mut t = texts(d);
+            t.sort_by(|a, b| a.0.cmp(&b.0));
+            let mut l: Vec<(DVec2, DVec2)> = lines(d);
+            l.sort_by(|a, b| {
+                (a.0.x, a.0.y, a.1.x, a.1.y)
+                    .partial_cmp(&(b.0.x, b.0.y, b.1.x, b.1.y))
+                    .unwrap()
+            });
+            (t, l)
+        };
+        let before = seen(&p.page(p.sheet));
+        assert_eq!(
+            before.0.iter().map(|t| t.0.as_str()).collect::<Vec<_>>(),
+            ["1000", "SILL"]
+        );
+        let shows = p.ed.view_shows(p.view);
+        assert_eq!(shows.len(), 2);
+        let port = SheetPort::of(p.ed.doc.sheet(p.sheet).unwrap(), 0).unwrap();
+        let brought =
+            p.ed.bring_to_sheet(p.sheet, port, &shows, ToSheet::Move)
+                .unwrap();
+        assert_eq!((brought.made.len(), brought.kept), (2, 1));
+        // The note left the model; the dimension holds the line still but prints no more in
+        // the view: the page has each once, from the sheet, exactly where it was.
+        assert!(p.ed.doc.annotation(note).is_none());
+        assert!(p.ed.doc.constraint(dim).is_some());
+        let after = seen(&p.page(p.sheet));
+        assert_eq!(after.0.len(), before.0.len(), "{:?}", after.0);
+        for (a, b) in after.0.iter().zip(&before.0) {
+            assert_eq!(a.0, b.0);
+            assert!(
+                a.1.distance(b.1) < 0.01,
+                "{} at {} was at {}",
+                a.0,
+                a.1,
+                b.1
+            );
+            assert!(
+                (a.2 - b.2).abs() < 1e-6,
+                "{} is {} high, was {}",
+                a.0,
+                a.2,
+                b.2
+            );
+        }
+        assert_eq!(
+            after.1.len(),
+            before.1.len(),
+            "{:?} / {:?}",
+            after.1,
+            before.1
+        );
+        for (a, b) in after.1.iter().zip(&before.1) {
+            assert!(
+                a.0.distance(b.0) < 0.01 && a.1.distance(b.1) < 0.01,
+                "{a:?} was {b:?}"
+            );
+        }
+        // The other sheet has none of it; the model's own export keeps its dimension.
+        assert!(texts(&p.page(p.other)).is_empty());
+        // A copy instead leaves the model's on the page beside the sheet's: each twice.
+        assert!(p.ed.undo());
+        p.ed.bring_to_sheet(p.sheet, port, &shows, ToSheet::Copy)
+            .unwrap();
+        let both = seen(&p.page(p.sheet));
+        assert_eq!(
+            both.0.iter().map(|t| t.0.as_str()).collect::<Vec<_>>(),
+            ["1000", "1000", "SILL", "SILL"]
+        );
+    }
+
+    #[test]
+    fn a_models_annotation_is_found_where_it_shows_on_the_sheet() {
+        let mut p = plan();
+        let (dim, note) = annotate_model(&mut p);
+        let sheet = p.ed.doc.sheet(p.sheet).unwrap().clone();
+        let view = p.ed.doc.placed_views(&sheet).remove(0);
+        let shown = p.ed.view_shows(p.view);
+        let paper = ScreenMap {
+            rect: egui::Rect::from_min_size(Pos2::new(40.0, 20.0), egui::vec2(800.0, 600.0)),
+            camera: drift_render::Camera {
+                center: V(210.0, 148.0),
+                scale: 3.0,
+            },
+        };
+        let at = |paper_mm: DVec2| {
+            model_annotation_at(
+                &painter(),
+                &p.ed.doc,
+                &paper,
+                &view,
+                &shown,
+                paper.to_screen(paper_mm),
+            )
+        };
+        // The dimension line is 10 mm of paper under the line (y = 150): on it, the
+        // dimension; on the note's text (model (550, 250): paper (205, 175)), the note; on
+        // bare paper, nothing.
+        assert_eq!(
+            at(V(165.0, 140.0)),
+            Some(drift_core::AnnotationRef::Dimension(dim))
+        );
+        assert_eq!(
+            at(V(205.0, 175.0)),
+            Some(drift_core::AnnotationRef::Annotation(note))
+        );
+        assert_eq!(at(V(165.0, 190.0)), None);
+        // One the view doesn't show isn't found.
+        assert_eq!(
+            model_annotation_at(
+                &painter(),
+                &p.ed.doc,
+                &paper,
+                &view,
+                &[],
+                paper.to_screen(V(165.0, 140.0))
+            ),
+            None
         );
     }
 

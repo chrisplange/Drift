@@ -441,6 +441,12 @@ struct CanvasView {
     /// The sheet note the Note tool placed last. While the last undo step is still the one
     /// that placed it, taking it back (it was left empty) is folded into that step.
     sheet_note_placed: Option<drift_core::SheetAnnotationId>,
+    /// The model's note or dimension a right-click on the sheet landed on, and the viewport
+    /// it is seen through: what the menu's Move and Copy onto sheet act on.
+    sheet_model_hit: Option<(
+        drift_edit::sheet_annotations::SheetPort,
+        drift_core::AnnotationRef,
+    )>,
     /// What the canvas showed last frame: a sheet, or the model (`None`). A tool's
     /// unfinished picks don't carry between the model and a sheet, or from one sheet to
     /// another.
@@ -553,6 +559,7 @@ impl CanvasView {
             focus_sheet_note: false,
             sheet_note_typing: None,
             sheet_note_placed: None,
+            sheet_model_hit: None,
             shown_last: None,
             sheet_pick: Default::default(),
             crop_drag: None,

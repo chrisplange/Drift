@@ -1602,10 +1602,18 @@ impl DriftApp {
             self.view_input(ui, &response, rect, id, &sheet, &views);
         }
         self.view_drop(ui, &response, rect, id);
-        // Right-click on a view: what can be done with it.
+        // Right-click on a view: what can be done with it, and with the model's note or
+        // dimension under the pointer there (found once, when the menu opens).
+        if response.secondary_clicked()
+            && !self.sheet_tool()
+            && let Some(pos) = response.interact_pointer_pos()
+        {
+            self.note_model_annotation_at(&painter, rect, &sheet, pos);
+        }
         if self.drawing.view.sheet_pick == crate::app::sheet_editor::SheetPick::View {
             response.context_menu(|ui| {
                 ui.set_min_width(210.0);
+                self.bring_menu(ui);
                 self.command_items(
                     ui,
                     &[

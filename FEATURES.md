@@ -96,6 +96,7 @@ Seeded 2026-11-09 from the command registry, importers/exporters, agent schema a
 - Sheet editor and preview. `crates/drift-app/src/app/sheet_editor.rs`
 - Leave items off sheets. `crates/drift-app/src/app/visibility_ui.rs`
 - Notes, leaders and reference dimensions on a sheet (paper space), tied to the model through a view. `crates/drift-core/src/sheet_annotations.rs`
+- Move or copy the model's notes and dimensions onto a sheet. `crates/drift-edit/src/sheet_annotations.rs`
 - Page frame. `crates/drift-draft/src/page.rs`
 
 ## Blocks, groups, layers

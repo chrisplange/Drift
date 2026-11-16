@@ -199,6 +199,19 @@ impl DriftApp {
             return;
         }
 
+        // An array being previewed: Esc leaves the drawing as it was, Enter applies it
+        // (#455). (In one of its fields, the field took the key.)
+        let idle = self.tool.kind() == ToolKind::Select && !self.tool.is_busy();
+        if idle && self.array_previewing(ctx) {
+            if pressed(Key::Escape) {
+                self.arrays.cancel();
+                return;
+            }
+            if pressed(Key::Enter) {
+                self.apply_array(ctx.input(|i| i.time));
+                return;
+            }
+        }
         if pressed(Key::Escape) {
             // Esc starts click again to pick the next afresh.
             self.drawing.editor.pick_cycle.reset();

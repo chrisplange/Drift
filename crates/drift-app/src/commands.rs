@@ -102,8 +102,8 @@ pub(crate) enum Command {
     Rotate,
     /// Scale with the selection's handles.
     Scale,
-    /// The Inspector's pattern of the selection: linear, or (true) circular.
-    Pattern(bool),
+    /// The Inspector's array of the selection: linear, or (true) circular.
+    Array(bool),
     /// Save the drawing as a new option: the whole sketch, or the values only.
     SaveOption(bool),
     ApplyOption(drift_core::VariantId),
@@ -497,7 +497,7 @@ impl Spec {
             Command::Delete => Some(Icon::Glyph(Glyph::Delete)),
             Command::Move => Some(Icon::Glyph(Glyph::Move)),
             Command::Rotate => Some(Icon::Glyph(Glyph::Rotate)),
-            Command::Pattern(_) => Some(Icon::Glyph(Glyph::Pattern)),
+            Command::Array(_) => Some(Icon::Glyph(Glyph::Array)),
             Command::WallsFromCurves | Command::WallsFromLines => Some(Icon::Tool(ToolKind::Wall)),
             _ => None,
         };
@@ -632,6 +632,23 @@ pub(crate) fn spec(command: Command) -> Option<&'static Spec> {
     registry().iter().find(|s| s.command == command)
 }
 
+/// Ids a command had before, and the id it has now: links, saved key bindings and history
+/// that name the old one still find it.
+const OLD_IDS: &[(&str, &str)] = &[
+    ("modify.linear_pattern", "modify.linear_array"),
+    ("modify.circular_pattern", "modify.circular_array"),
+];
+
+/// The registry's entry with the stable id `id`, or the one an old id now names.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn spec_by_id(id: &str) -> Option<&'static Spec> {
+    let id = OLD_IDS
+        .iter()
+        .find(|(old, _)| *old == id)
+        .map_or(id, |(_, new)| new);
+    registry().iter().find(|s| s.id == id)
+}
+
 /// A place on the tool rail: a command, and the commands in its flyout (a family: the circle's
 /// ellipses, Trim's Extend and Split). The slot shows whichever of them was used last.
 pub(crate) struct Slot {
@@ -724,8 +741,8 @@ pub(crate) const RAIL: &[(Option<Category>, &[Slot])] = {
                     more: &[tool(T::Chamfer)],
                 },
                 Slot {
-                    head: K::Pattern(false),
-                    more: &[K::Pattern(true)],
+                    head: K::Array(false),
+                    more: &[K::Array(true)],
                 },
             ],
         ),
@@ -1707,25 +1724,25 @@ fn table() -> Vec<Spec> {
             .aliases(&["FILLET", "F"]),
         tool("modify.chamfer", C::Modify, ToolKind::Chamfer).aliases(&["CHAMFER", "CHA"]),
         Spec::new(
-            "modify.linear_pattern",
+            "modify.linear_array",
             C::Modify,
-            K::Pattern(false),
-            "Linear pattern…",
-            "Copies of the selection in a row, a set distance apart (in the Inspector)",
+            K::Array(false),
+            "Linear array…",
+            "Copies of the selection in a row, a set distance apart, previewed until applied (in the Inspector)",
         )
         .when(When::Selection)
         .aliases(&["ARRAY", "AR", "ARRAYRECT"])
-        .words("array copies repeat"),
+        .words("pattern copies repeat rectangular"),
         Spec::new(
-            "modify.circular_pattern",
+            "modify.circular_array",
             C::Modify,
-            K::Pattern(true),
-            "Circular pattern…",
-            "Copies of the selection round a centre (in the Inspector)",
+            K::Array(true),
+            "Circular array…",
+            "Copies of the selection round a centre, previewed until applied (in the Inspector)",
         )
         .when(When::Selection)
         .aliases(&["ARRAYPOLAR", "AR"])
-        .words("array polar copies repeat"),
+        .words("pattern polar radial copies repeat"),
         // Annotate.
         tool("annotate.dimension", C::Annotate, ToolKind::Dimension)
             .keys(const { &[plain(Key::D)] })
@@ -2353,7 +2370,7 @@ mod tests {
         assert_eq!(best("CHA"), Some("modify.chamfer"));
         assert_eq!(best("REC"), Some("draw.rectangle"));
         assert_eq!(best("DIM"), Some("annotate.dimension"));
-        assert_eq!(best("AR"), Some("modify.linear_pattern"));
+        assert_eq!(best("AR"), Some("modify.linear_array"));
         // M is Drift's Mirror, though AutoCAD's M moves; MOVE finds Move.
         assert_eq!(best("m"), Some("modify.mirror"));
         assert_eq!(best("move"), Some("modify.move"));
@@ -2377,8 +2394,8 @@ mod tests {
             "modify.rotate",
             "modify.scale",
             "modify.mirror",
-            "modify.linear_pattern",
-            "modify.circular_pattern",
+            "modify.linear_array",
+            "modify.circular_array",
             "modify.offset",
             "modify.trim",
             "modify.extend",
@@ -2387,6 +2404,27 @@ mod tests {
         ] {
             let s = registry().iter().find(|s| s.id == id).expect(id);
             assert_eq!(s.category, Category::Modify, "{id}");
+        }
+    }
+
+    /// #455: the pattern commands became arrays; their old ids still find them.
+    #[test]
+    fn old_pattern_ids_find_the_array_commands() {
+        assert_eq!(
+            spec_by_id("modify.linear_pattern").map(|s| s.command),
+            Some(Command::Array(false))
+        );
+        assert_eq!(
+            spec_by_id("modify.circular_pattern").map(|s| s.command),
+            Some(Command::Array(true))
+        );
+        assert_eq!(
+            spec_by_id("modify.linear_array").map(|s| s.id),
+            Some("modify.linear_array")
+        );
+        for (old, new) in OLD_IDS {
+            assert!(registry().iter().all(|s| s.id != *old), "{old} is reused");
+            assert!(spec_by_id(new).is_some(), "{new}");
         }
     }
 

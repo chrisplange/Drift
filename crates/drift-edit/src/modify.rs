@@ -16,7 +16,7 @@ use crate::editor::{EditError, Editor};
 
 /// What a pattern made: the new curves, the new block copies, and the copies of the picked
 /// texts and notes.
-pub type Patterned = (
+pub type Arrayed = (
     Vec<EntityId>,
     Vec<drift_core::InstanceId>,
     (Vec<drift_core::TextId>, Vec<drift_core::AnnotationId>),
@@ -24,7 +24,7 @@ pub type Patterned = (
 
 /// What a mirror made: the copies of the curves, of the block copies, and of the picked
 /// texts and notes.
-pub type Mirrored = Patterned;
+pub type Mirrored = Arrayed;
 
 /// The line a mirror reflects about.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -2847,7 +2847,7 @@ impl Editor {
     /// insertion point moved by `transform` and turned `turn(k)` degrees more (#311); and of
     /// the picked texts and notes `riders`, moved or turned as far at each step (#327).
     #[allow(clippy::type_complexity, clippy::too_many_arguments)]
-    fn pattern(
+    fn array(
         &mut self,
         ids: &[EntityId],
         instances: &[drift_core::InstanceId],
@@ -2857,9 +2857,9 @@ impl Editor {
         turn: impl Fn(usize) -> f64,
         keep_orientation: bool,
         label: &str,
-    ) -> Result<Patterned, EditError> {
+    ) -> Result<Arrayed, EditError> {
         if ids.is_empty() && instances.is_empty() && riders.is_empty() {
-            return Err(invalid("select geometry to pattern first"));
+            return Err(invalid("select geometry to array first"));
         }
         if copies == 0 {
             return Err(invalid("the count must be at least 2"));
@@ -2987,60 +2987,53 @@ impl Editor {
     }
 
     /// `count` instances (the original plus copies) spaced by `step`.
-    pub fn linear_pattern(
+    pub fn linear_array(
         &mut self,
         ids: &[EntityId],
         count: usize,
         step: DVec2,
     ) -> Result<Vec<EntityId>, EditError> {
-        self.linear_pattern_with(ids, &[], &Default::default(), count, step)
+        self.linear_array_with(ids, &[], &Default::default(), count, step)
             .map(|(created, _, _)| created)
     }
 
-    /// [`Self::linear_pattern`] of entities and block copies: the new curves and the new
+    /// [`Self::linear_array`] of entities and block copies: the new curves and the new
     /// copies, each a copy of the same block moved by `step` more than the last; and copies
     /// of the picked texts and notes `riders`, moved as far.
-    pub fn linear_pattern_with(
+    pub fn linear_array_with(
         &mut self,
         ids: &[EntityId],
         instances: &[drift_core::InstanceId],
         riders: &crate::picks::Riders,
         count: usize,
         step: DVec2,
-    ) -> Result<Patterned, EditError> {
-        if step == DVec2::ZERO {
-            return Err(invalid("the spacing can't be zero"));
-        }
-        self.pattern(
+    ) -> Result<Arrayed, EditError> {
+        self.array_by(
             ids,
             instances,
             riders,
-            count.saturating_sub(1),
-            |k, p| p + step * k as f64,
-            |_| 0.0,
-            true,
-            "Linear pattern",
+            &ArrayRequest::Linear { count, step },
         )
     }
 
     /// `count` instances (the original plus copies) rotated about `center`, spread over
     /// `total_degrees` (360 = evenly round the full circle).
-    pub fn circular_pattern(
+    pub fn circular_array(
         &mut self,
         ids: &[EntityId],
         count: usize,
         center: DVec2,
         total_degrees: f64,
     ) -> Result<Vec<EntityId>, EditError> {
-        self.circular_pattern_with(ids, &[], &Default::default(), count, center, total_degrees)
+        self.circular_array_with(ids, &[], &Default::default(), count, center, total_degrees)
             .map(|(created, _, _)| created)
     }
 
-    /// [`Self::circular_pattern`] of entities and block copies: the new curves and the new
+    /// [`Self::circular_array`] of entities and block copies: the new curves and the new
     /// copies, each a copy of the same block turned about `center` one step more than the
     /// last, its own angle turned as far; and copies of the picked texts and notes `riders`,
     /// turned as far.
-    pub fn circular_pattern_with(
+    pub fn circular_array_with(
         &mut self,
         ids: &[EntityId],
         instances: &[drift_core::InstanceId],
@@ -3048,26 +3041,176 @@ impl Editor {
         count: usize,
         center: DVec2,
         total_degrees: f64,
-    ) -> Result<Patterned, EditError> {
-        if count < 2 {
-            return Err(invalid("the count must be at least 2"));
-        }
-        let full = (total_degrees.abs() / 90.0 - 4.0).abs() <= tolerance::QUARTER_TURN;
-        let step = if full {
-            total_degrees / count as f64
-        } else {
-            total_degrees / (count - 1) as f64
+    ) -> Result<Arrayed, EditError> {
+        let request = ArrayRequest::Circular {
+            count,
+            center,
+            degrees: total_degrees,
         };
-        self.pattern(
+        self.array_by(ids, instances, riders, &request)
+    }
+
+    /// The array `request` of the picked curves `ids`, block copies `instances` and texts and
+    /// notes `riders`, in one undo step.
+    pub fn array_by(
+        &mut self,
+        ids: &[EntityId],
+        instances: &[drift_core::InstanceId],
+        riders: &crate::picks::Riders,
+        request: &ArrayRequest,
+    ) -> Result<Arrayed, EditError> {
+        request.check()?;
+        let r = *request;
+        self.array(
             ids,
             instances,
             riders,
-            count - 1,
-            |k, p| center + drift_core::blocks::exact_rotor(step * k as f64).rotate(p - center),
-            |k| step * k as f64,
-            false,
-            "Circular pattern",
+            r.copies(),
+            |k, p| r.point(k, p),
+            |k| r.turn(k),
+            matches!(r, ArrayRequest::Linear { .. }),
+            r.label(),
         )
+    }
+
+    /// The copies [`Self::array_by`] would make, drawn as previews and changing nothing: the
+    /// curves, the block copies' curves, the texts' outlines and a mark where each note's
+    /// label lands. Empty when the request can't be made. (Capped at
+    /// [`ARRAY_PREVIEW_MAX`] items, so a huge array can't stall the canvas.)
+    pub fn array_preview(
+        &self,
+        ids: &[EntityId],
+        instances: &[drift_core::InstanceId],
+        riders: &crate::picks::Riders,
+        request: &ArrayRequest,
+    ) -> Vec<drift_core::SketchItem> {
+        if request.check().is_err() {
+            return Vec::new();
+        }
+        let mut shapes: Vec<Shape> = ids
+            .iter()
+            .filter(|id| self.doc.get(**id).is_some_and(|e| !e.kind.is_point()))
+            .filter_map(|id| self.doc.shape(*id))
+            .collect();
+        for &i in instances {
+            shapes.extend(self.doc.instance_items(i).into_iter().map(|b| b.shape));
+        }
+        for (id, _, _) in &riders.texts {
+            if let Some(o) = self.text_outline(*id) {
+                shapes.extend(o.contours.iter().flatten().copied());
+            }
+        }
+        let labels: Vec<DVec2> = riders.notes.iter().filter_map(|(_, _, at)| *at).collect();
+        let preview =
+            |s: Shape| drift_core::SketchItem::new(s).with_emphasis(drift_core::Emphasis::Preview);
+        let mut out = Vec::new();
+        for k in 1..=request.copies() {
+            let place = request.placement(k);
+            out.extend(shapes.iter().map(|s| preview(place.shape(s))));
+            out.extend(
+                labels
+                    .iter()
+                    .map(|p| preview(Shape::Point(place.apply(*p))).as_vertex()),
+            );
+            if out.len() >= ARRAY_PREVIEW_MAX {
+                out.truncate(ARRAY_PREVIEW_MAX);
+                break;
+            }
+        }
+        out
+    }
+}
+
+/// The most items an array preview draws.
+pub const ARRAY_PREVIEW_MAX: usize = 100_000;
+
+/// A linear or circular array: how many (the original counts as one) and where.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ArrayRequest {
+    /// `count` in a row, each `step` on from the last.
+    Linear { count: usize, step: DVec2 },
+    /// `count` turned about `center`, spread over `degrees` (360 = evenly round the full
+    /// circle, the last copy one step short of the original).
+    Circular {
+        count: usize,
+        center: DVec2,
+        degrees: f64,
+    },
+}
+
+impl ArrayRequest {
+    /// Whether it can be made: at least 2, and a spacing that isn't zero.
+    pub fn check(&self) -> Result<(), EditError> {
+        let count = match *self {
+            ArrayRequest::Linear { count, step } => {
+                if step == DVec2::ZERO {
+                    return Err(invalid("the spacing can't be zero"));
+                }
+                count
+            }
+            ArrayRequest::Circular { count, .. } => count,
+        };
+        if count < 2 {
+            return Err(invalid("the count must be at least 2"));
+        }
+        Ok(())
+    }
+
+    /// The copies made, besides the original.
+    pub fn copies(&self) -> usize {
+        match *self {
+            ArrayRequest::Linear { count, .. } | ArrayRequest::Circular { count, .. } => {
+                count.saturating_sub(1)
+            }
+        }
+    }
+
+    /// The undo step's name.
+    pub fn label(&self) -> &'static str {
+        match self {
+            ArrayRequest::Linear { .. } => "Linear array",
+            ArrayRequest::Circular { .. } => "Circular array",
+        }
+    }
+
+    /// The turn between neighbours, in degrees (0 for a linear array). A full turn spreads
+    /// the copies evenly round it; any other angle runs from the original to the last copy.
+    pub fn step_degrees(&self) -> f64 {
+        match *self {
+            ArrayRequest::Linear { .. } => 0.0,
+            ArrayRequest::Circular { count, degrees, .. } => {
+                let full = (degrees.abs() / 90.0 - 4.0).abs() <= tolerance::QUARTER_TURN;
+                if full || count < 2 {
+                    degrees / count.max(1) as f64
+                } else {
+                    degrees / (count - 1) as f64
+                }
+            }
+        }
+    }
+
+    /// How far copy `k` (1 for the first copy) is turned, in degrees.
+    pub fn turn(&self, k: usize) -> f64 {
+        self.step_degrees() * k as f64
+    }
+
+    /// Where copy `k` takes the point `p`: along the row, or turned about the centre
+    /// (quarter turns exact).
+    pub fn point(&self, k: usize, p: DVec2) -> DVec2 {
+        match *self {
+            ArrayRequest::Linear { step, .. } => p + step * k as f64,
+            ArrayRequest::Circular { center, .. } => {
+                center + drift_core::blocks::exact_rotor(self.turn(k)).rotate(p - center)
+            }
+        }
+    }
+
+    /// [`Self::point`] as a placement, to move whole shapes for the preview.
+    pub fn placement(&self, k: usize) -> drift_core::blocks::Placement {
+        let mut place = drift_core::blocks::Placement::IDENTITY;
+        place.angle = self.turn(k);
+        place.at = self.point(k, DVec2::ZERO);
+        place
     }
 }
 
@@ -3991,7 +4134,7 @@ mod tests {
     }
 
     #[test]
-    fn patterns_copy_geometry_and_relations() {
+    fn arrays_copy_geometry_and_relations() {
         let (mut ed, ids) = polyline(
             &[v(0.0, 0.0), v(10.0, 0.0), v(10.0, 5.0), v(0.0, 5.0)],
             true,
@@ -4008,7 +4151,7 @@ mod tests {
             }],
         )
         .unwrap();
-        let created = ed.linear_pattern(&ids, 3, v(15.0, 0.0)).unwrap();
+        let created = ed.linear_array(&ids, 3, v(15.0, 0.0)).unwrap();
         assert_eq!(created.len(), 8);
         assert_eq!(lines(&ed).len(), 12);
         assert_eq!(
@@ -4022,7 +4165,7 @@ mod tests {
         let (mut ed, ids) = with_lines(&[(v(5.0, 0.0), v(8.0, 0.0))]);
         ed.add_constraints("Horizontal", &[Constraint::Horizontal { line: ids[0] }])
             .unwrap();
-        ed.circular_pattern(&ids, 4, v(0.0, 0.0), 360.0).unwrap();
+        ed.circular_array(&ids, 4, v(0.0, 0.0), 360.0).unwrap();
         let ls = lines(&ed);
         assert_eq!(ls.len(), 4);
         assert!(
@@ -4033,6 +4176,78 @@ mod tests {
         assert_eq!(
             count(&ed, |c| matches!(c, Constraint::Horizontal { .. })),
             1
+        );
+    }
+
+    /// #455: the preview draws exactly the curves the array then makes, and changes nothing
+    /// (no entity, no undo step) until the array is made.
+    #[test]
+    fn the_array_preview_matches_the_array_and_changes_nothing() {
+        let arc = |ed: &mut Editor| {
+            ed.doc.begin();
+            let c = ed.doc.add_point(v(20.0, 5.0));
+            let s = ed.doc.add_point(v(23.0, 5.0));
+            let e = ed.doc.add_point(v(20.0, 8.0));
+            let id = ed.doc.add_arc(c, s, e).unwrap();
+            ed.commit("Arc");
+            id
+        };
+        let requests = [
+            ArrayRequest::Linear {
+                count: 4,
+                step: v(12.0, -3.0),
+            },
+            ArrayRequest::Circular {
+                count: 5,
+                center: v(-4.0, 2.0),
+                degrees: 360.0,
+            },
+            ArrayRequest::Circular {
+                count: 3,
+                center: v(1.0, 1.0),
+                degrees: 75.0,
+            },
+        ];
+        for request in requests {
+            let (mut ed, mut ids) = with_lines(&[(v(0.0, 0.0), v(10.0, 4.0))]);
+            ids.push(arc(&mut ed));
+            let before = ed.doc.iter().count();
+            let undo = ed.history.undo_depth();
+            let preview = ed.array_preview(&ids, &[], &Default::default(), &request);
+            assert_eq!(preview.len(), ids.len() * request.copies(), "{request:?}");
+            assert!(
+                preview
+                    .iter()
+                    .all(|i| i.emphasis == drift_core::Emphasis::Preview)
+            );
+            assert_eq!(ed.doc.iter().count(), before, "{request:?}");
+            assert_eq!(ed.history.undo_depth(), undo);
+            let (created, _, _) = ed
+                .array_by(&ids, &[], &Default::default(), &request)
+                .unwrap();
+            let made: Vec<Shape> = created.iter().filter_map(|id| ed.doc.shape(*id)).collect();
+            assert_eq!(made.len(), preview.len(), "{request:?}");
+            for item in &preview {
+                let b = item.shape.bounds();
+                assert!(
+                    made.iter().any(|m| {
+                        let mb = m.bounds();
+                        close(mb.min, b.min) && close(mb.max, b.max)
+                    }),
+                    "{request:?}: a preview curve {:?} the array didn't make",
+                    item.shape
+                );
+            }
+        }
+        // A request that can't be made draws nothing.
+        let (ed, ids) = with_lines(&[(v(0.0, 0.0), v(10.0, 0.0))]);
+        let zero = ArrayRequest::Linear {
+            count: 3,
+            step: DVec2::ZERO,
+        };
+        assert!(
+            ed.array_preview(&ids, &[], &Default::default(), &zero)
+                .is_empty()
         );
     }
 
@@ -4058,11 +4273,11 @@ mod tests {
     /// block at each step, its insertion point moved by the step, turned and scaled as the
     /// original and on its layer; one undo takes them all back.
     #[test]
-    fn linear_pattern_places_copies_of_a_block_copy() {
+    fn linear_array_places_copies_of_a_block_copy() {
         let (mut ed, copy, layer) = block_copy();
         let original = *ed.doc.instance(copy).unwrap();
         let (curves, copies, _) = ed
-            .linear_pattern_with(&[], &[copy], &Default::default(), 3, v(50.0, 0.0))
+            .linear_array_with(&[], &[copy], &Default::default(), 3, v(50.0, 0.0))
             .unwrap();
         assert!(curves.is_empty());
         assert_eq!(copies.len(), 2);
@@ -4090,7 +4305,7 @@ mod tests {
         let line = ed.doc.add_line(a, b).unwrap();
         ed.commit("Line");
         let (curves, copies, _) = ed
-            .linear_pattern_with(&[line], &[copy], &Default::default(), 3, v(0.0, 40.0))
+            .linear_array_with(&[line], &[copy], &Default::default(), 3, v(0.0, 40.0))
             .unwrap();
         assert_eq!((curves.len(), copies.len()), (2, 2));
         assert_eq!((lines(&ed).len(), ed.doc.instances().count()), (3, 3));
@@ -4118,11 +4333,11 @@ mod tests {
     /// #327: a text picked with the curves is patterned with them: a copy at each step,
     /// moved as far, in the same undo step.
     #[test]
-    fn linear_pattern_copies_picked_texts() {
+    fn linear_array_copies_picked_texts() {
         let (mut ed, line, _) = line_and_text();
         let riders = ed.riders();
         let (curves, _, (texts, notes)) = ed
-            .linear_pattern_with(&[line], &[], &riders, 3, v(50.0, 0.0))
+            .linear_array_with(&[line], &[], &riders, 3, v(50.0, 0.0))
             .unwrap();
         assert_eq!((curves.len(), texts.len(), notes.len()), (2, 2, 0));
         let at: Vec<DVec2> = texts_at(&ed).into_iter().map(|t| t.0).collect();
@@ -4137,11 +4352,11 @@ mod tests {
 
     /// #327, circular: each copy of the text is turned with its step.
     #[test]
-    fn circular_pattern_turns_picked_texts() {
+    fn circular_array_turns_picked_texts() {
         let (mut ed, line, _) = line_and_text();
         let riders = ed.riders();
         let (_, _, (texts, _)) = ed
-            .circular_pattern_with(&[line], &[], &riders, 4, v(0.0, 0.0), 360.0)
+            .circular_array_with(&[line], &[], &riders, 4, v(0.0, 0.0), 360.0)
             .unwrap();
         assert_eq!(texts.len(), 3);
         for (k, id) in texts.iter().enumerate() {
@@ -4159,7 +4374,7 @@ mod tests {
         let (mut ed, _, _) = line_and_text();
         ed.selection.clear();
         let riders = ed.riders();
-        ed.linear_pattern_with(&[], &[], &riders, 2, v(0.0, 20.0))
+        ed.linear_array_with(&[], &[], &riders, 2, v(0.0, 20.0))
             .unwrap();
         assert_eq!(ed.doc.texts().count(), 2);
     }
@@ -4168,7 +4383,7 @@ mod tests {
     /// line points at each step's copy of it; one pointing at a free spot points 50 further at
     /// each step. One undo leaves the two notes.
     #[test]
-    fn linear_pattern_copies_picked_notes() {
+    fn linear_array_copies_picked_notes() {
         use drift_core::{Anchor, Annotation, Leader};
         let (mut ed, ids) = with_lines(&[(v(0.0, 0.0), v(10.0, 0.0))]);
         let line = ids[0];
@@ -4200,7 +4415,7 @@ mod tests {
         let riders = ed.riders();
         assert_eq!(riders.notes.len(), 2);
         let (curves, _, (_, notes)) = ed
-            .linear_pattern_with(&[line], &[], &riders, 3, v(50.0, 0.0))
+            .linear_array_with(&[line], &[], &riders, 3, v(50.0, 0.0))
             .unwrap();
         assert_eq!(notes.len(), 4, "two notes at each of two steps");
         let lines: Vec<EntityId> = curves
@@ -4241,12 +4456,12 @@ mod tests {
     /// #311, circular: four copies round a centre, each one turned 90° more than the last,
     /// its insertion point turned about the centre as far.
     #[test]
-    fn circular_pattern_turns_copies_of_a_block_copy() {
+    fn circular_array_turns_copies_of_a_block_copy() {
         let (mut ed, copy, _) = block_copy();
         let original = *ed.doc.instance(copy).unwrap();
         let centre = v(0.0, 0.0);
         let (_, copies, _) = ed
-            .circular_pattern_with(&[], &[copy], &Default::default(), 4, centre, 360.0)
+            .circular_array_with(&[], &[copy], &Default::default(), 4, centre, 360.0)
             .unwrap();
         assert_eq!(copies.len(), 3);
         for (k, id) in copies.iter().enumerate() {

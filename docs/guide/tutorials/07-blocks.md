@@ -79,7 +79,7 @@ room.
 
 Pick a copy with the **Select** tool: click its lines or anywhere inside its outline. It
 moves, turns, mirrors and copies like anything else (drag, G, R, M, Shift+D, Delete), and
-**Pattern** makes copies of it in a row or round a centre. Esc while moving a copy just made
+**Array** makes copies of it in a row or round a centre. Esc while moving a copy just made
 with Shift+D or Paste removes it. Copies stacked exactly on another copy of the same block
 count as overlapping: the status bar's **N overlapping** chip picks the extras, to delete.
 
@@ -94,10 +94,11 @@ The **Inspector** shows the copy, laid out as it shows a group:
 - **Blender profile** (see [Profiles in Blender](13-profiles-in-blender.md)).
 - **Placement:** **X**, **Y**, **Angle** (with 0, 90, 180 and 270 buttons), **Scale** and
   **Mirror**.
-- **Pattern:** linear or circular copies of the copy (see [Patterns](04-editing.md#patterns)).
+- **Array:** linear or circular copies of the copy, previewed until applied (see
+  [Arrays](04-editing.md#arrays)).
 - **Set base point**, **Select all copies** and **Delete**.
 
-![A block copy picked: its Layer, Name, Definition, Placement and Pattern in the Inspector](../images/block-copy.png)
+![A block copy picked: its Layer, Name, Definition, Placement and Array in the Inspector](../images/block-copy.png)
 
 A click picks a copy while the top bar's **Blocks** pick filter is on (see
 [Pick filters](04-editing.md#pick-filters)). Turn it off and clicks pass over copies, to the

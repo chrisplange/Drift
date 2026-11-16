@@ -62,7 +62,7 @@ Drift's sketcher is modelled on the SolidWorks sketch.
 | Configurations | **Options** (values or the whole sketch), with ghosts. |
 | Construction geometry (For construction) | Alt+C. |
 | Sketch fillet / chamfer | F (F again for chamfer). Click a corner, or Shift+click several (or pick a shape first), then size on the canvas by moving the pointer, or type it: one size for all, one undo step. |
-| Convert entities, offset, mirror, patterns | Offset (O), Mirror (M), linear and circular patterns in the **Inspector**. |
+| Convert entities, offset, mirror, patterns | Offset (O), Mirror (M), linear and circular arrays in the **Inspector**. |
 | Repair sketch | **Edit → Check sketch…** |
 | Drawings | Sheets with views, title blocks (modern, ISO 7200, ASME Y14.1, border only, or blank paper) and ISO or ASME dimension styles. |
 | Splines | The pen tool (P) draws Bézier curves the Illustrator way. |

@@ -52,7 +52,7 @@ pub enum Glyph {
     // Commands on the tool rail.
     Move,
     Rotate,
-    Pattern,
+    Array,
 }
 
 /// Maps a 20 × 20 design grid into `rect`.
@@ -711,7 +711,7 @@ pub fn glyph(painter: &egui::Painter, rect: Rect, glyph: Glyph, color: Color32) 
             );
             p.dot(10.0, 10.0, 1.1);
         }
-        Glyph::Pattern => {
+        Glyph::Array => {
             // The first copy, then fainter ones in a row.
             p.poly(&[(2.5, 7.5), (6.5, 7.5), (6.5, 12.5), (2.5, 12.5)], true);
             let faint = Pen {

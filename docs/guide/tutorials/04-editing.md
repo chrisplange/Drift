@@ -81,7 +81,7 @@ and shows where the annotations appear. What you do then acts on all of it:
 - **Mirror**, **Shift+D** and **Ctrl+C / Ctrl+V** copy them with the geometry. Mirrored text
   still reads forwards, and a mirrored section mark looks the other way. A copied section or
   elevation mark is a new mark, not linked to the original's view.
-- **Pattern** copies texts and notes at every step with the geometry, moved or turned the
+- **Array** copies texts and notes at every step with the geometry, moved or turned the
   same way.
 
 ### Chains with Tab
@@ -277,7 +277,7 @@ sharp corner back, right-click it and choose **Remove fillet** or **Remove chamf
 - Clicking a piece picks the whole offset. Its curves can't be trimmed, filleted, moved or
   related on their own (the offset would only make them again): edit the source instead,
   or **Detach** the offset (Inspector, or the palette) to turn it into plain curves that
-  keep their look and no longer follow. Copying, duplicating, mirroring or patterning an
+  keep their look and no longer follow. Copying, duplicating, mirroring or arraying an
   offset together with its source gives an offset that follows the copy; an offset copied
   without its source gives plain curves.
 
@@ -295,20 +295,32 @@ sharp corner back, right-click it and choose **Remove fillet** or **Remove chamf
   defined shape stays fully defined. About a slanted axis its shape is kept (level and plumb
   sides become parallel and square to each other) but it may be free to turn.
 
-A group copied whole, by Mirror, Copy and Paste, Shift+D or a pattern, gives a new group of
+A group copied whole, by Mirror, Copy and Paste, Shift+D or an array, gives a new group of
 the copies, named after it ("Panel" → "Panel 2"). Part of a group copies as loose objects.
 
-## Patterns
+## Arrays
 
-Pick geometry, then open **Pattern** in the **Inspector** (or click **Linear pattern** in the
-tool palette, or choose **Modify → Linear pattern…** or **Circular pattern…**):
+Pick geometry, then choose **Modify → Linear array…** or **Circular array…** (or click
+**Linear array** in the tool palette, or open **Array** in the **Inspector**). Pick
+**Linear** or **Circular** at the top of the section:
 
-- **Linear:** a **Count** and a spacing (**Spacing X**, **Y**), then **Make linear pattern**.
-- **Circular:** a **Count**, an **Angle** and a centre (**Centre X**, **Y**), then
-  **Make circular pattern**. 360° spreads the copies evenly round the circle.
+- **Linear:** a **Count** and a spacing (**Spacing X**, **Y**).
+- **Circular:** a **Count**, an **Angle** and a centre (**Centre X**, **Y**). 360° spreads
+  the copies evenly round the circle.
+
+The copies show on the canvas as a preview, and follow every change to the fields as you
+type or drag. Nothing is added to the drawing until you click **Apply** (or press Enter),
+and then the whole array is one step to undo. **Cancel** or Esc leaves the drawing as it
+was.
+
+The fields take expressions and units (`W/3`, `3 m`, `45°`). A field that doesn't work out
+turns red (point at it to see why), and the preview stays as it last was.
 
 Copies keep the relations within the selection. Block copies, texts and notes picked with
-the geometry are copied at every step too. The fields take expressions.
+the geometry are copied at every step too. The copies aren't linked to the original: once
+applied, they're ordinary geometry.
+
+![A linear array previewed: the copies drawn as a preview, the Inspector's Array section with Apply and Cancel](../images/array-preview.png)
 
 ## Groups
 
@@ -337,8 +349,8 @@ the geometry are copied at every step too. The fields take expressions.
   R again rotates by reference.
 - The transform box scales and stretches; Alt scales the dimensions with it.
 - T, E, F, O and M trim, extend, fillet, offset and mirror; Split is in the Trim flyout and the
-  **Modify** menu; patterns are on the tool palette, in the **Modify** menu and the
-  **Inspector**.
+  **Modify** menu; arrays are on the tool palette, in the **Modify** menu and the
+  **Inspector**, and preview until you apply them.
 
 ## Next
 

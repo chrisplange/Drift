@@ -210,7 +210,7 @@ command names and aliases work too (MOVE, RO, TR, OFFSET…); what can't run yet
 **Rotate** with nothing picked, is dimmed and says why.
 
 Every command is also in the menus: **Draw**, **Build**, **Modify** and **Annotate** have the tools,
-**Move**, **Rotate**, **Scale** and the patterns, each with its key.
+**Move**, **Rotate**, **Scale** and the arrays, each with its key.
 
 ![The Draw menu: every drawing tool, with its key](images/menu-draw.png)
 

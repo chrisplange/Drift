@@ -161,7 +161,7 @@ pub(super) fn transform(s: &mut Session, a: &Value) -> Res {
             let step = args::vec2_at(a, "by")?;
             let made = s
                 .editor
-                .linear_pattern(&ids, count, step)
+                .linear_array(&ids, count, step)
                 .map_err(|e| e.to_string())?;
             result["created"] = ids_json(&made);
         }
@@ -171,7 +171,7 @@ pub(super) fn transform(s: &mut Session, a: &Value) -> Res {
             let total = args::opt_f64(a, "angle")?.unwrap_or(360.0);
             let made = s
                 .editor
-                .circular_pattern(&ids, count, about, total)
+                .circular_array(&ids, count, about, total)
                 .map_err(|e| e.to_string())?;
             result["created"] = ids_json(&made);
         }

@@ -694,7 +694,7 @@ impl DriftApp {
             self.drawing.editor.commit("Edit block copy");
         }
         let now = ui.input(|i| i.time);
-        self.pattern_panel(ui, now);
+        self.array_panel(ui, now);
         ui.add_space(6.0);
         ui.horizontal_wrapped(|ui| {
             if picked.len() == 1

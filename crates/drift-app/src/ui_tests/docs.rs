@@ -106,6 +106,7 @@ fn docs_screenshots() {
     walls_and_openings();
     offsets();
     block_copy();
+    array_preview();
     arrange_menu();
 }
 
@@ -1232,6 +1233,39 @@ fn block_copy() {
     h.state_mut().show_panel(Panel::Inspector);
     h.run();
     shot("block-copy.png", &mut h);
+}
+
+fn array_preview() {
+    // A strip with one hole picked, and Modify -> Linear array previewing four more holes,
+    // 25 mm apart (#455).
+    let mut h = harness().unwrap();
+    h.state_mut().grid_snap = false;
+    rectangle(&mut h, DVec2::ZERO, DVec2::new(130.0, 20.0), true);
+    let hole = {
+        let ed = &mut h.state_mut().drawing.editor;
+        ed.doc.begin();
+        let c = ed.doc.add_point(DVec2::new(15.0, 10.0));
+        let hole = ed.doc.add_circle(c, 4.0).unwrap();
+        ed.commit("Circle");
+        hole
+    };
+    h.state_mut().drawing.view.fit_target = Some(drift_core::Bounds {
+        min: DVec2::new(-20.0, -40.0),
+        max: DVec2::new(150.0, 60.0),
+    });
+    h.run();
+    h.run();
+    h.state_mut().drawing.editor.selection = [hole].into();
+    h.state_mut().show_panel(Panel::Inspector);
+    h.run();
+    let ctx = h.ctx.clone();
+    h.state_mut()
+        .run_command(&ctx, crate::commands::Command::Array(false));
+    h.state_mut().arrays.linear_count = 5;
+    h.state_mut().arrays.dx = "25".into();
+    h.run();
+    h.run();
+    shot("array-preview.png", &mut h);
 }
 
 fn arrange_menu() {

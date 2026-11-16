@@ -1263,6 +1263,12 @@ impl DriftApp {
                 }),
         );
         items.extend(self.tool.editor_preview(&self.drawing.editor));
+        // The array being set up in the Inspector, until it's applied (#455).
+        let frame = ui.ctx().cumulative_frame_nr();
+        self.arrays.drop_unseen(frame);
+        if let Some(copies) = self.arrays.preview_items(frame) {
+            items.extend(copies.iter().copied());
+        }
         self.drawing.editor.preview_hidden.clear();
         let ppp = f64::from(ui.ctx().pixels_per_point());
         let lists = self.drawing.sketch_items.lists();

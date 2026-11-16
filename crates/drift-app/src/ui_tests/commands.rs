@@ -128,8 +128,8 @@ fn modify_and_view_menus_have_the_new_commands() {
         "Extend",
         "Fillet",
         "Chamfer",
-        "Linear pattern…",
-        "Circular pattern…",
+        "Linear array…",
+        "Circular array…",
     ] {
         assert!(has_item(&h, label), "Modify → {label}");
     }
@@ -173,7 +173,7 @@ fn the_palette_takes_autocad_names_and_runs_modify_commands() {
     assert_eq!(best(&mut h, "RO"), Command::Rotate);
     assert_eq!(best(&mut h, "move"), Command::Move);
     assert_eq!(best(&mut h, "m"), Command::Tool(ToolKind::Mirror));
-    assert_eq!(best(&mut h, "AR"), Command::Pattern(false));
+    assert_eq!(best(&mut h, "AR"), Command::Array(false));
     // MOVE grabs the picked line (with the pointer last on the canvas, as it would be).
     let over = screen(&h, DVec2::new(20.0, 5.0));
     h.event(Event::PointerMoved(over));
@@ -185,12 +185,12 @@ fn the_palette_takes_autocad_names_and_runs_modify_commands() {
     press(&mut h, Key::Enter);
     assert!(h.state().tool.is_modal(), "Move grabs the selection");
     press(&mut h, Key::Escape);
-    // Linear pattern opens the Inspector's Pattern section.
+    // Linear array opens the Inspector's Array section.
     let ctx = h.ctx.clone();
-    h.state_mut().run_command(&ctx, Command::Pattern(false));
+    h.state_mut().run_command(&ctx, Command::Array(false));
     h.run();
     h.run();
-    assert!(h.query_by_label("Make linear pattern").is_some());
+    assert!(h.query_by_label("Apply").is_some());
 }
 
 #[test]
@@ -220,9 +220,9 @@ fn enter_or_space_repeats_the_last_command() {
     picked_line(&mut h);
     h.get_by_label("Modify").click();
     h.run();
-    h.get_by_label("Linear pattern…").click();
+    h.get_by_label("Linear array…").click();
     h.run();
-    assert_eq!(h.state().last_command, Some(Command::Pattern(false)));
+    assert_eq!(h.state().last_command, Some(Command::Array(false)));
     h.state_mut().drawing.editor.selection.clear();
     h.state_mut().last_command = Some(Command::Tool(ToolKind::Offset));
     press(&mut h, Key::Enter);

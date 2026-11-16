@@ -42,7 +42,7 @@ Seeded 2026-11-09 from the command registry, importers/exporters, agent schema a
 - Trim, extend, break at point. `crates/drift-edit/src/tools/curve_ops.rs`
 - Fillet and chamfer, editable by drag. `crates/drift-edit/src/tools/corners.rs`
 - Join corners. `crates/drift-app/src/commands.rs`
-- Linear and circular patterns. `crates/drift-app/src/app/patterns.rs`
+- Linear and circular arrays, previewed on the canvas until applied (one undo step). `crates/drift-app/src/app/arrays.rs`
 - Find overlapping curves. `crates/drift-app/src/commands.rs`
 - Check sketch: gaps and short ends. `crates/drift-app/src/app/checker_ui.rs`
 - Undo / redo. `crates/drift-core/src/document/journal.rs`

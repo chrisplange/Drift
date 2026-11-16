@@ -647,8 +647,8 @@ pub struct DriftApp {
     /// Dimensions and notes on the canvas at their printed size for the drawing scale (View →
     /// Annotations at Print Size), or (off) at a fixed size on screen.
     print_annotations: bool,
-    /// The pattern fields in the properties panel.
-    patterns: app::patterns::PatternUi,
+    /// The array fields in the properties panel, and their preview.
+    arrays: app::arrays::ArrayUi,
     /// Draw every curve one pixel wide (Revit's thin lines).
     thin_lines: bool,
     /// Colour geometry by constraint status (under / fully defined) rather than by layer.
@@ -856,7 +856,7 @@ impl DriftApp {
             benchmark: None,
             show_dimensions: true,
             show_relations: app::view::ShowRelations::All,
-            patterns: Default::default(),
+            arrays: Default::default(),
             print_annotations: true,
             thin_lines: false,
             status_colors: true,

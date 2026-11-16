@@ -66,11 +66,11 @@ fn smoke_fillet_several_corners_in_one_undo() {
     assert_eq!(radii(&h), [2.0; 3], "{}", status(&h));
 }
 
-/// #327: lines picked with a text show the mixed Inspector, and it has the Pattern section
-/// (it had none); Make linear pattern copies the text at each step with the lines, and one
+/// #327: lines picked with a text show the mixed Inspector, and it has the Array section
+/// (it had none); Apply copies the text at each step with the lines, and one
 /// undo takes it all back.
 #[test]
-fn smoke_pattern_takes_a_picked_text_along() {
+fn smoke_array_takes_a_picked_text_along() {
     let Some(mut h) = harness() else { return };
     view(&mut h, DVec2::new(-10.0, -10.0), DVec2::new(80.0, 40.0));
     let (sides, _) = rectangle(&mut h, DVec2::ZERO, DVec2::new(10.0, 10.0), Fill::No);
@@ -89,16 +89,16 @@ fn smoke_pattern_takes_a_picked_text_along() {
     h.run();
     h.run();
     assert!(
-        h.query_by_label("Pattern").is_some(),
-        "the mixed Inspector has the Pattern section"
+        h.query_by_label("Array").is_some(),
+        "the mixed Inspector has the Array section"
     );
-    // Modify → Linear pattern opens it.
+    // Modify → Linear array opens it.
     let ctx = h.ctx.clone();
     h.state_mut()
-        .run_command(&ctx, crate::commands::Command::Pattern(false));
+        .run_command(&ctx, crate::commands::Command::Array(false));
     h.run();
     h.run();
-    h.get_by_label("Make linear pattern").click();
+    h.get_by_label("Apply").click();
     h.run();
     let at = |h: &Harness<'_, DriftApp>| {
         let mut xs: Vec<f64> = h
@@ -189,4 +189,172 @@ fn smoke_shift_d_with_the_pointer_off_the_canvas_leaves_no_stacked_copy() {
     assert!(!h.state().tool.is_busy());
     assert!(status(&h).contains("point at the canvas"), "{}", status(&h));
     assert!(!status_is_error(&h), "a plain hint, as for Move");
+}
+
+/// The array preview's copies on the canvas now, if any.
+fn array_preview(h: &Harness<'_, DriftApp>) -> Option<Vec<drift_core::SketchItem>> {
+    h.state()
+        .arrays
+        .preview_items(h.ctx.cumulative_frame_nr())
+        .map(|items| items.to_vec())
+}
+
+/// The left edge of the preview's copies (mm), to see where they went.
+fn preview_left(items: &[drift_core::SketchItem]) -> f64 {
+    let b: drift_core::Bounds = items.iter().map(|i| i.shape.bounds()).collect();
+    (b.min.x * 1e6).round() / 1e6
+}
+
+/// #455: Modify → Linear array previews the copies on the canvas with nothing committed;
+/// count and spacing (an expression, or a length with units) redraw it; Esc leaves the
+/// drawing exactly as it was; Apply makes it as one undo step, and undo takes it back.
+#[test]
+fn smoke_array_previews_until_applied() {
+    let Some(mut h) = harness() else { return };
+    view(&mut h, DVec2::new(-10.0, -10.0), DVec2::new(120.0, 40.0));
+    let (sides, _) = rectangle(&mut h, DVec2::ZERO, DVec2::new(10.0, 10.0), Fill::No);
+    {
+        let ed = &mut h.state_mut().drawing.editor;
+        ed.add_variable("W", "60", drift_core::Kind::Length)
+            .unwrap();
+        ed.selection = sides.iter().copied().collect();
+    }
+    h.state_mut().show_panel(Panel::Inspector);
+    h.run();
+    let before = positions(&h);
+    let entities = ids(&h).len();
+    let steps = h.state().drawing.editor.history.undo_depth();
+    let unchanged = |h: &Harness<'_, DriftApp>| {
+        assert_eq!(positions(h), before, "every point where it was");
+        assert_eq!(ids(h).len(), entities, "nothing added");
+        assert_eq!(h.state().drawing.editor.history.undo_depth(), steps);
+    };
+    assert!(
+        array_preview(&h).is_none(),
+        "no preview before the array is opened"
+    );
+
+    // Modify → Linear array: 3 (two copies of 4 sides) at the default 20 mm.
+    let ctx = h.ctx.clone();
+    h.state_mut()
+        .run_command(&ctx, crate::commands::Command::Array(false));
+    h.run();
+    h.run();
+    let items = array_preview(&h).expect("the preview shows");
+    assert_eq!(items.len(), 8);
+    assert!(
+        items
+            .iter()
+            .all(|i| i.emphasis == drift_core::Emphasis::Preview)
+    );
+    assert_eq!(preview_left(&items), 20.0);
+    unchanged(&h);
+
+    // A count of 5: four copies.
+    h.state_mut().arrays.linear_count = 5;
+    h.run();
+    assert_eq!(array_preview(&h).unwrap().len(), 16);
+    unchanged(&h);
+
+    // Typed into Spacing X: W/3 is 20 mm, 3 m is 3000 mm (the preview follows each).
+    for (text, left) in [("W/3", 20.0), ("3 m", 3000.0), ("W/2", 30.0)] {
+        h.get_by_label("Spacing X").click();
+        h.run();
+        h.key_press_modifiers(EguiModifiers::COMMAND, Key::A);
+        type_text(&mut h, text);
+        assert_eq!(h.state().arrays.dx, text);
+        assert_eq!(preview_left(&array_preview(&h).unwrap()), left, "{text}");
+        unchanged(&h);
+    }
+    // A spacing that doesn't work out keeps the last good preview.
+    h.key_press_modifiers(EguiModifiers::COMMAND, Key::A);
+    type_text(&mut h, "W/");
+    assert_eq!(preview_left(&array_preview(&h).unwrap()), 30.0);
+    h.key_press_modifiers(EguiModifiers::COMMAND, Key::A);
+    type_text(&mut h, "W/2");
+
+    // Esc (in the field) ends the preview; the drawing is exactly as it was.
+    h.key_press(Key::Escape);
+    h.run();
+    assert!(array_preview(&h).is_none(), "Esc ends the preview");
+    unchanged(&h);
+
+    // Open it again; Esc on the canvas ends it too.
+    h.state_mut()
+        .run_command(&ctx, crate::commands::Command::Array(false));
+    h.run();
+    h.run();
+    assert!(array_preview(&h).is_some());
+    h.key_press(Key::Escape);
+    h.run();
+    assert!(
+        array_preview(&h).is_none(),
+        "Esc on the canvas ends the preview"
+    );
+    unchanged(&h);
+    assert!(
+        !h.state().drawing.editor.selection.is_empty(),
+        "that Esc kept the picks"
+    );
+
+    // Apply: five rectangles 30 mm apart, as one undo step.
+    h.state_mut()
+        .run_command(&ctx, crate::commands::Command::Array(false));
+    h.run();
+    h.run();
+    h.get_by_label("Apply").click();
+    h.run();
+    assert_eq!(lines(&h), 20, "{}", status(&h));
+    assert!(array_preview(&h).is_none(), "applying ends the preview");
+    assert_eq!(h.state().drawing.editor.history.undo_depth(), steps + 1);
+    let xs: std::collections::BTreeSet<i64> = positions(&h)
+        .iter()
+        .map(|(_, p)| p.x.round() as i64)
+        .collect();
+    assert_eq!(
+        xs.into_iter().collect::<Vec<_>>(),
+        [0, 10, 30, 40, 60, 70, 90, 100, 120, 130]
+    );
+    undo(&mut h);
+    unchanged(&h);
+}
+
+/// #455: the circular array previews round its centre, and the Linear / Circular switch
+/// changes what's previewed.
+#[test]
+fn smoke_circular_array_previews_round_its_centre() {
+    let Some(mut h) = harness() else { return };
+    view(&mut h, DVec2::new(-40.0, -40.0), DVec2::new(40.0, 40.0));
+    let (sides, _) = rectangle(
+        &mut h,
+        DVec2::new(10.0, -2.0),
+        DVec2::new(20.0, 2.0),
+        Fill::No,
+    );
+    h.state_mut().drawing.editor.selection = sides.iter().copied().collect();
+    h.state_mut().show_panel(Panel::Inspector);
+    h.run();
+    let ctx = h.ctx.clone();
+    h.state_mut()
+        .run_command(&ctx, crate::commands::Command::Array(true));
+    h.run();
+    h.run();
+    // Six round the origin: five copies; the one half way round sits at x -20..-10.
+    let items = array_preview(&h).expect("the preview shows");
+    assert_eq!(items.len(), 20);
+    assert_eq!(preview_left(&items), -20.0);
+    // Four over 90°: the copies turn 30° each, none past the y axis.
+    h.state_mut().arrays.circular_count = 4;
+    h.get_by_label("Angle").click();
+    h.run();
+    h.key_press_modifiers(EguiModifiers::COMMAND, Key::A);
+    type_text(&mut h, "90°");
+    let items = array_preview(&h).unwrap();
+    assert_eq!(items.len(), 12);
+    assert!(preview_left(&items) > -2.5, "{}", preview_left(&items));
+    // The switch to Linear previews the row instead.
+    h.get_by_label("Linear").click();
+    h.run();
+    assert_eq!(preview_left(&array_preview(&h).unwrap()), 30.0);
+    assert_eq!(lines(&h), 4, "nothing made yet");
 }

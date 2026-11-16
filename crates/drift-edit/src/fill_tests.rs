@@ -320,7 +320,7 @@ fn mirrored_and_patterned_copies_bring_their_fills() {
     ed.undo();
     assert_eq!(ed.doc.fills().count(), 1);
 
-    ed.linear_pattern(&sides, 3, v(0.0, 50.0)).unwrap();
+    ed.linear_array(&sides, 3, v(0.0, 50.0)).unwrap();
     assert_eq!(ed.doc.fills().count(), 3);
     let mut centres: Vec<f64> = ed
         .fill_shapes()
@@ -334,7 +334,7 @@ fn mirrored_and_patterned_copies_bring_their_fills() {
     assert!(close(centres[2], 110.0), "{centres:?}");
     ed.undo();
 
-    ed.circular_pattern(&sides, 4, v(-10.0, -10.0), 360.0)
+    ed.circular_array(&sides, 4, v(-10.0, -10.0), 360.0)
         .unwrap();
     assert_eq!(ed.doc.fills().count(), 4);
     assert!(

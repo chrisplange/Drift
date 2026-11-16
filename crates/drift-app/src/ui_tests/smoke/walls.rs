@@ -519,7 +519,7 @@ fn smoke_walls_copies_take_the_floor() {
             _ => {
                 let ed = &mut h.state_mut().drawing.editor;
                 let ids: Vec<_> = ed.selection.iter().copied().collect();
-                ed.linear_pattern(&ids, 2, DVec2::new(200.0, 0.0)).unwrap();
+                ed.linear_array(&ids, 2, DVec2::new(200.0, 0.0)).unwrap();
                 h.run_steps(2);
             }
         }

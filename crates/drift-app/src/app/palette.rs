@@ -371,8 +371,8 @@ impl DriftApp {
                             shape, Ctrl scales about the middle";
                 self.set_status(text.into(), false, now);
             }
-            Command::Pattern(_) => {
-                self.patterns.reveal = true;
+            Command::Array(circular) => {
+                self.arrays.open(circular);
                 self.show_panel(Panel::Inspector);
             }
             Command::SaveOption(whole) => {

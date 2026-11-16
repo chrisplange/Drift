@@ -16,7 +16,7 @@ button down, for the others. The place shows the one used last.
 | **Wall** | Walls from curves, Walls from lines |
 | **Trim** | Extend, Split |
 | **Fillet** | Chamfer |
-| **Linear pattern** | Circular pattern |
+| **Linear array** | Circular array |
 | **Section mark** | Elevation mark, Centre mark |
 
 Esc cancels the step in progress; pressed again, it returns to **Select**. While a block or
@@ -102,8 +102,8 @@ and **Explode walls** are in the **Build** menu; **Walls from curves** and
 
 Some actions work on the selection instead of being tools: scale (the transform box's
 handles), duplicate (Shift+D), group (Ctrl+G), make block, explode, linear
-and circular patterns (the **Inspector**'s **Pattern** section; they repeat picked block copies,
-texts and notes too), arrange (Ctrl+] and Ctrl+[), clear relations and dimensions, check
+and circular arrays (the **Inspector**'s **Array** section, previewed on the canvas until
+applied; they repeat picked block copies, texts and notes too), arrange (Ctrl+] and Ctrl+[), clear relations and dimensions, check
 sketch (**Edit → Check sketch…**), **Select overlapping curves**, **Join corners** (an area
 fill's corners that touch but aren't one point), **Edit fill** (a shape's fill on its own),
 **Detach offset** (an offset as plain curves that no longer follow), and **Join walls**,
@@ -113,4 +113,4 @@ Every tool and command is in the **Draw**, **Build**, **Modify** and **Annotate*
 and in the command palette (Ctrl+K). With the **Select** tool and nothing in progress, Enter
 or Space repeats the last one.
 
-![The Modify menu: the editing tools, Move, Rotate, Scale, the patterns, and Arrange](../images/menu-modify.png)
+![The Modify menu: the editing tools, Move, Rotate, Scale, the arrays, and Arrange](../images/menu-modify.png)

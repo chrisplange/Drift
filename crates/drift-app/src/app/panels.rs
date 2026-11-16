@@ -913,14 +913,14 @@ impl DriftApp {
         ui.add_space(4.0);
         ui.label(
             egui::RichText::new(
-                "Delete, Move (G), Rotate (R), Mirror, Pattern and Copy act on all of it. \
+                "Delete, Move (G), Rotate (R), Mirror, Array and Copy act on all of it. \
                  Dimensions follow their geometry.",
             )
             .small()
             .weak(),
         );
         self.visibility_section(ui);
-        self.pattern_panel(ui, ui.input(|i| i.time));
+        self.array_panel(ui, ui.input(|i| i.time));
         true
     }
 
@@ -1152,7 +1152,7 @@ impl DriftApp {
         }
         self.centre_mark_button(ui);
         self.constraint_buttons(ui);
-        self.pattern_panel(ui, now);
+        self.array_panel(ui, now);
         self.constraint_list(ui);
 
         if !self.drawing.editor.selection.is_empty() {

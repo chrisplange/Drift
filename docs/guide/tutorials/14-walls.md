@@ -150,7 +150,7 @@ Drag a free end into another wall and it joins as you go; drag it out and it let
 Fillet a centreline corner to round the wall. Trim, Extend, Split, Fillet and Chamfer refuse a
 wall's faces: work on its centreline, or Explode it.
 
-Copy and Paste, Shift+D, Mirror and the patterns copy a wall with its room's floor fill. A
+Copy and Paste, Shift+D, Mirror and the arrays copy a wall with its room's floor fill. A
 mirrored wall is justified to its other face, so its faces mirror truly.
 
 ## 7. Dimension to the faces

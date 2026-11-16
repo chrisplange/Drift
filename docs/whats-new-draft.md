@@ -28,6 +28,20 @@ The next release's notes, as they land (Beta 1.6's are below).
 
 <!-- PRs: sheet-annot (#432, part 1 and part 2) -->
 
+## Arrays preview before you apply them
+
+- **Linear and circular patterns are now arrays**, and they show before they're made.
+  **Modify → Linear array…** or **Circular array…** draws the copies on the canvas as a
+  preview, and every change to the count, spacing, angle or centre redraws them as you type
+  or drag. Nothing is added until you click **Apply** (or press Enter), and the whole array
+  is one step to undo. **Cancel** or Esc leaves the drawing as it was.
+- The Inspector's **Array** section switches between **Linear** and **Circular** at the top.
+  Its fields still take expressions and units (`W/3`, `3 m`); one that doesn't work out
+  turns red, and the preview keeps its last good value.
+- The palette still finds them by "pattern", AutoCAD's ARRAY and AR.
+
+<!-- PRs: array preview (#455) -->
+
 ## Annotations at print size
 
 - **The canvas shows dimensions and notes as they print.** Dimensions, notes, leaders and

@@ -14,6 +14,11 @@ The next release's notes, as they land (Beta 1.6's are below).
 - **They follow the drawing.** A dimension's ends and a leader's tip stay on the model as
   the geometry changes, the view is moved on the sheet or its scale changes. A note's text
   stays where you put it.
+- **Bring the model's annotations onto a sheet.** Right-click a note or dimension in a
+  view for **Move** or **Copy onto the sheet**, or do a whole view's from its Inspector.
+  It lands where it was on the paper, so a drawing annotated in the model can be turned
+  into per-sheet annotations without redoing them. A dimension that drives the geometry
+  stays in the model and stops printing in that view.
 - **Pick, drag, edit, delete.** Each is one undo step. Deleting the geometry or the view
   one is tied to takes a dimension with it and a note's leader off, in the same step.
 - They print and export with the sheet (PDF and SVG; DWG and DXF are the model, so
@@ -21,7 +26,7 @@ The next release's notes, as they land (Beta 1.6's are below).
   Older drawings open as they were. The file format is 45: Beta 1.6 and earlier ask
   you to update Drift before opening a drawing saved by this version.
 
-<!-- PRs: sheet-annot (#432, part 1) -->
+<!-- PRs: sheet-annot (#432, part 1 and part 2) -->
 
 ## Annotations at print size
 

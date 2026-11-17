@@ -42,6 +42,19 @@ The next release's notes, as they land (Beta 1.6's are below).
 
 <!-- PRs: array preview (#455) -->
 
+## Trim and Extend cut against what you meant
+
+- **Trim and Extend no longer pick up curves you didn't pick.** With curves picked, Trim and
+  Extend cut only against those, and keep them picked as they go. Starting Trim or Extend
+  again later used to cut only against those leftovers, without saying so, and could remove
+  a whole side past a crossing and leave a filled shape open. Now the next Trim or Extend
+  cuts against every curve unless you pick curves again.
+- **The picked curves count from your first click.** Before, whatever was picked when the
+  pointer first crossed the canvas was used, even if you changed the selection before
+  clicking. The hint shows which curves will cut until you click.
+
+<!-- PRs: trim cutting set (#461) -->
+
 ## Annotations at print size
 
 - **The canvas shows dimensions and notes as they print.** Dimensions, notes, leaders and

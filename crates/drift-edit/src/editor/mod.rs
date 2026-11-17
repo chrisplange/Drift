@@ -191,6 +191,9 @@ pub struct Editor {
     pub(crate) wall_fills_found: std::cell::Cell<usize>,
     pub history: History,
     pub selection: BTreeSet<EntityId>,
+    /// The selection a Trim or Extend left by picking its own cutting curves, so that the
+    /// next Trim or Extend doesn't take it for curves picked on purpose (#461). Not saved.
+    pub(crate) tool_picks: Option<BTreeSet<EntityId>>,
     /// The active element: the one picked last, by a click, which a relation added between
     /// picked elements keeps (#333). Editor state, not saved; see [`active`](Self::active).
     active: Option<EntityId>,

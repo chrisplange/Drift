@@ -780,6 +780,28 @@ point p at 1 m,3 m
 dim p to grid.A = 1200
 ",
     );
+
+    let mut s = Session::new();
+    let v = run(
+        &mut s,
+        "\
+line seat from 0,0 to 500,0
+line back from 0,0 to 0,800
+block chair of seat, back base seat.start   # Make block
+place c1 chair at 2 m,0 angle 90            # a copy, turned 90°
+place c2 chair at 4 m,0 mirror scale 0.5    # mirrored left to right, half size
+explode c1                                  # c1 is curves again: c1[1], c1[2]
+dim c1[1] ref                               # later lines can use them
+",
+    );
+    let block = id(&v, "chair");
+    for script in [
+        "place c3 chair at 0,0".to_owned(),
+        format!("place c3 {block} at 0,0"),
+        format!("explode {} to group", id(&v, "chair.copy")),
+    ] {
+        run(&mut s, &script);
+    }
 }
 
 /// The rest of docs/guide/ai/script.md's statements, each on geometry it fits (the page's
@@ -984,4 +1006,286 @@ fn trim_needs_a_closed_shape_and_warns_when_nothing_goes() {
     );
     let w = v["warnings"][0]["warning"].as_str().unwrap_or_default();
     assert!(w.contains("nothing outside round"), "{v}");
+}
+
+// Blocks (#456).
+
+/// A seat and a back, as two named lines.
+const CHAIR: &str = "line seat from 0,0 to 500,0\nline back from 0,0 to 0,800\n";
+
+fn instance(s: &Session, id: &str) -> drift_core::Instance {
+    let id = drift_core::InstanceId(id[1..].parse().unwrap());
+    *s.editor.doc.instance(id).unwrap()
+}
+
+fn curve_count(s: &Session) -> usize {
+    s.editor
+        .doc
+        .iter()
+        .filter(|(_, e)| !e.kind.is_point())
+        .count()
+}
+
+#[test]
+fn block_place_and_explode_parse() {
+    match stmt("block chair of seat, back base seat.start") {
+        Stmt::Block { name, of, base } => {
+            assert_eq!(name, "chair");
+            assert_eq!(
+                of.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                ["seat", "back"]
+            );
+            assert!(matches!(base, Some(Pos::Ref(p)) if p.to_string() == "seat.start"));
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(matches!(
+        stmt("block chair of seat back"),
+        Stmt::Block { of, base: None, .. } if of.len() == 2
+    ));
+    match stmt("place c1 chair at 2 m,0 angle 90 mirror scale 0.5") {
+        Stmt::Place {
+            name,
+            block,
+            at,
+            angle,
+            mirror,
+            scale,
+        } => {
+            assert_eq!((name.as_str(), block.root.as_str()), ("c1", "chair"));
+            assert!(matches!(at, Pos::At(x, y) if x.text == "2 m" && y.text == "0"));
+            assert_eq!(angle.unwrap().text, "90");
+            assert!(mirror);
+            assert_eq!(scale.unwrap().text, "0.5");
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(matches!(
+        stmt("place c2 chair at p"),
+        Stmt::Place {
+            mirror: false,
+            angle: None,
+            scale: None,
+            at: Pos::Ref(_),
+            ..
+        }
+    ));
+    assert!(matches!(
+        stmt("explode c1"),
+        Stmt::Explode {
+            to_group: false,
+            ..
+        }
+    ));
+    assert!(matches!(
+        stmt("explode c1 to group"),
+        Stmt::Explode { to_group: true, .. }
+    ));
+    let e = parse_err("explode c1 to grup");
+    assert!(e.text().contains("`group`"), "{}", e.text());
+    let e = parse_err("place c1 chair 2 m,0");
+    assert!(e.text().contains("`at`"), "{}", e.text());
+}
+
+#[test]
+fn a_script_makes_a_block_from_named_geometry() {
+    let mut s = Session::new();
+    let v = run(
+        &mut s,
+        &format!("{CHAIR}block chair of seat, back base seat.start"),
+    );
+    assert!(id(&v, "chair").starts_with('b'), "{}", v["names"]);
+    let (_, block) = s.editor.doc.blocks().next().expect("a block");
+    assert_eq!(block.name, "chair");
+    assert_eq!(block.items.len(), 2, "the seat and the back");
+    // A copy takes the shapes' place, by the base point.
+    let i = instance(&s, &id(&v, "chair.copy"));
+    assert!(i.at.length() < 1e-9, "{:?}", i.at);
+    assert!(
+        v["names"].get("seat").is_none(),
+        "seat is gone: {}",
+        v["names"]
+    );
+    assert_eq!(curve_count(&s), 0, "the curves became the block");
+}
+
+#[test]
+fn a_script_places_copies_turned_mirrored_and_scaled() {
+    let mut s = Session::new();
+    let v = run(
+        &mut s,
+        &format!(
+            "{CHAIR}block chair of seat, back base seat.start\n\
+             let A = 30°\n\
+             place c1 chair at 2 m,1 m angle A mirror scale 0.5\n\
+             point p at 4 m,0\n\
+             place c2 chair at p"
+        ),
+    );
+    let c1 = instance(&s, &id(&v, "c1"));
+    assert!((c1.at - drift_core::DVec2::new(2000.0, 1000.0)).length() < 1e-9);
+    assert!(close(c1.angle, 30.0), "{}", c1.angle);
+    assert!(c1.mirror);
+    assert!(close(c1.scale, 0.5), "{}", c1.scale);
+    let c2 = instance(&s, &id(&v, "c2"));
+    assert!((c2.at - drift_core::DVec2::new(4000.0, 0.0)).length() < 1e-9);
+    assert!(close(c2.angle, 0.0) && !c2.mirror && close(c2.scale, 1.0));
+    assert_eq!(s.editor.doc.instances().count(), 3, "chair.copy, c1 and c2");
+}
+
+#[test]
+fn a_script_explodes_a_copy_into_named_curves() {
+    let mut s = Session::new();
+    let v = run(
+        &mut s,
+        &format!(
+            "{CHAIR}block chair of seat, back base seat.start\n\
+             place c1 chair at 2 m,0\n\
+             explode c1\n\
+             dim c1[1] ref\n\
+             explode chair.copy"
+        ),
+    );
+    assert!(id(&v, "c1[1]").starts_with('e'), "{}", v["names"]);
+    assert!(id(&v, "c1[2]").starts_with('e'), "{}", v["names"]);
+    assert!(v["names"].get("chair.copy").is_none(), "{}", v["names"]);
+    assert_eq!(s.editor.doc.instances().count(), 0, "both copies exploded");
+    assert_eq!(s.editor.doc.blocks().count(), 1, "the block stays");
+    assert_eq!(curve_count(&s), 4);
+
+    let mut s = Session::new();
+    run(
+        &mut s,
+        &format!("{CHAIR}block chair of seat, back\nplace c1 chair at 2 m,0\nexplode c1 to group"),
+    );
+    let groups: Vec<_> = s.editor.doc.groups().collect();
+    assert_eq!(groups.len(), 1, "one group");
+    assert_eq!(groups[0].1.members.len(), 2);
+}
+
+#[test]
+fn blocks_are_one_undo_step_and_all_or_nothing() {
+    let mut s = Session::new();
+    run(
+        &mut s,
+        &format!("{CHAIR}block chair of seat, back\nplace c1 chair at 2 m,0 angle 45\nexplode c1"),
+    );
+    let u = ok(&mut s, "undo", json!({}));
+    assert_eq!(u["undone"], json!(["Assistant: script"]));
+    assert!(s.editor.doc.is_empty(), "one undo removes it all");
+    assert_eq!(s.editor.doc.blocks().count(), 0, "the block too");
+
+    // A failure after the block is made keeps nothing, the block included.
+    let before = s.editor.doc.clone();
+    let e = run_err(
+        &mut s,
+        &format!("{CHAIR}block chair of seat, back\nplace c1 chair at 2 m,0\ndim c1 ref"),
+    );
+    let text = e["error"].as_str().unwrap();
+    assert_eq!(e["line"], 5, "{text}");
+    assert!(text.contains("explode it"), "{text}");
+    assert_eq!(s.editor.doc, before);
+    assert_eq!(s.editor.doc.blocks().count(), 0);
+}
+
+#[test]
+fn block_names_are_checked_before_anything_runs() {
+    let mut s = Session::new();
+    for (script, says) in [
+        (
+            format!("{CHAIR}block chair of seat, back\ndim seat ref"),
+            "became part of block chair on line 3",
+        ),
+        (
+            format!("{CHAIR}place c1 seat at 0,0"),
+            "is the line on line 1, not a block",
+        ),
+        ("place c1 sofa at 0,0".to_owned(), "isn't a block"),
+        (
+            format!("{CHAIR}block chair of seat, back\nexplode chair"),
+            "explode a copy of it",
+        ),
+        (
+            format!(
+                "{CHAIR}block chair of seat, back\nplace c1 chair at 0,0\nexplode c1\nexplode c1"
+            ),
+            "already exploded on line 5",
+        ),
+        (
+            format!("{CHAIR}block chair of seat, back\nplace c1 chair at 0,0\nblock two of c1"),
+            "not of blocks",
+        ),
+        ("explode i9".to_owned(), "isn't a block copy"),
+    ] {
+        let e = run_err(&mut s, &script);
+        let text = e["error"].as_str().unwrap();
+        assert!(text.contains(says), "{script}\n{text}");
+    }
+    assert!(s.editor.doc.is_empty());
+}
+
+#[test]
+fn a_later_script_places_and_explodes_by_the_drawings_names_and_ids() {
+    let mut s = Session::new();
+    let v = run(&mut s, &format!("{CHAIR}block chair of seat, back"));
+    let copy = id(&v, "chair.copy");
+    let v = run(&mut s, "place c1 chair at 3 m,0 scale 2");
+    assert!(close(instance(&s, &id(&v, "c1")).scale, 2.0));
+    run(&mut s, &format!("explode {copy}"));
+    assert_eq!(s.editor.doc.instances().count(), 1, "c1 is left");
+}
+
+#[test]
+fn block_review_cases() {
+    // A shape named `base` at the end of the list is a shape.
+    assert!(matches!(
+        stmt("block lamp of shade, base"),
+        Stmt::Block { of, base: None, .. } if of.len() == 2
+    ));
+
+    let mut s = Session::new();
+    for (script, says) in [
+        (
+            "rect r 1 m x 1 m at 0,0\nblock b of r.south\nhorizontal r.south".to_owned(),
+            "`r.south` became part of block b on line 2",
+        ),
+        (
+            format!("{CHAIR}block chair of seat, back\nplace c1 seat at 0,0"),
+            "`seat` became part of block chair on line 3",
+        ),
+        (format!("{CHAIR}block b2 of seat"), "looks like an id"),
+        (
+            format!("{CHAIR}block chair of seat\nplace i5 chair at 0,0"),
+            "looks like an id",
+        ),
+        (
+            format!("{CHAIR}block chair of seat, back\nhorizontal chair.copy"),
+            "`chair.copy` is a block copy",
+        ),
+    ] {
+        let e = run_err(&mut s, &script);
+        let text = e["error"].as_str().unwrap();
+        assert!(text.contains(says), "{script}\n{text}");
+    }
+
+    // A part taken into a block leaves no stale ids in the names.
+    let v = run(&mut s, "rect r 1 m x 1 m at 0,0\nblock b of r.south");
+    assert!(v["names"].get("r.south").is_none(), "{}", v["names"]);
+    assert!(v["names"]["r.north"].is_string(), "{}", v["names"]);
+
+    // A name that went into a block can be used again for something new.
+    let mut s = Session::new();
+    run(
+        &mut s,
+        &format!("{CHAIR}block chair of seat, back\npoint seat at 3 m,0"),
+    );
+
+    // One curve exploded by name is still listed as c1[1].
+    let mut s = Session::new();
+    let v = run(
+        &mut s,
+        "line seat from 0,0 to 500,0\nblock chair of seat\nplace c1 chair at 1 m,0\nexplode c1",
+    );
+    assert!(v["names"]["c1[1]"].is_string(), "{}", v["names"]);
+    assert!(v["names"].get("c1").is_none(), "{}", v["names"]);
 }

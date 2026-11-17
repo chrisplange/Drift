@@ -28,7 +28,34 @@ pub(crate) enum TipOf {
 pub(crate) struct Tip {
     of: TipOf,
     curve: EntityId,
+    /// The curve's shape then: a curve the edit didn't reshape keeps its tips as they are.
+    shape: Shape,
     at: DVec2,
+}
+
+/// Whether `piece` lies on the same line (for a line) or circle (for an arc or circle) as
+/// `whole`: a piece a split or trim could have made of it. Other kinds never match.
+fn same_path(whole: &Shape, piece: &Shape, tol: f64) -> bool {
+    let off_line = |a: DVec2, b: DVec2, p: DVec2| {
+        let d = b - a;
+        let len = d.length();
+        len > 0.0 && (d.perp_dot(p - a) / len).abs() <= tol
+    };
+    let circle = |s: &Shape| match *s {
+        Shape::Circle { center, radius } | Shape::Arc { center, radius, .. } => {
+            Some((center, radius))
+        }
+        _ => None,
+    };
+    match (*whole, *piece) {
+        (Shape::Line { a, b }, Shape::Line { a: p, b: q }) => {
+            off_line(a, b, p) && off_line(a, b, q)
+        }
+        _ => match (circle(whole), circle(piece)) {
+            (Some((c1, r1)), Some((c2, r2))) => c1.distance(c2) <= tol && (r1 - r2).abs() <= tol,
+            _ => false,
+        },
+    }
 }
 
 /// The anchor for a spot on curve `curve` (shape `shape`) nearest `at`, and that spot.
@@ -69,8 +96,14 @@ impl Editor {
         let mut take = |of: TipOf, to: &Anchor| {
             if let Anchor::Curve { curve, .. } = *to
                 && let Some(at) = self.doc.anchor_pos(to)
+                && let Some(shape) = self.doc.shape(curve)
             {
-                tips.push(Tip { of, curve, at });
+                tips.push(Tip {
+                    of,
+                    curve,
+                    shape,
+                    at,
+                });
             }
         };
         for (id, a) in self.doc.annotations() {
@@ -95,9 +128,10 @@ impl Editor {
     }
 
     /// Put each tip of `tips` (from [`Editor::curve_tips`] before the edit) back where it
-    /// was: on its curve, or on a curve the edit made from it, whichever runs through the
-    /// spot. A spot no piece holds any more (trimmed away, cut off by a fillet) takes the
-    /// nearest spot of its own curve. A tip whose curve is gone is left to the deletion.
+    /// was: on its curve, or on a piece of the same line or circle the edit made, whichever
+    /// runs through the spot. A spot no piece holds any more (trimmed away, cut off by a
+    /// fillet) takes the nearest spot of any of them. A tip on a curve the edit didn't reshape
+    /// is left exactly as it is, and so is one whose curve is gone (that's the deletion's).
     pub(crate) fn keep_curve_tips(&mut self, tips: &[Tip]) {
         if tips.is_empty() {
             return;
@@ -118,30 +152,41 @@ impl Editor {
             if !matches!(now, Anchor::Curve { curve, .. } if curve == tip.curve) {
                 continue;
             }
+            if drift_geom::same_shape(&own, &tip.shape) {
+                // Its curve wasn't reshaped: the tip stays exactly as it was.
+                continue;
+            }
             let tol = self.tol_for(&own).max(tolerance::TINY_MM);
-            let mut best = anchor_on(tip.curve, &own, tip.at);
             let off = |b: &Option<(Anchor, DVec2)>| {
                 b.map_or(f64::INFINITY, |(_, p): (Anchor, DVec2)| p.distance(tip.at))
             };
+            let mut best = anchor_on(tip.curve, &own, tip.at);
             if off(&best) > tol {
+                // Another piece of the same line or circle, made by this edit.
                 for c in &made {
                     let Some(shape) = self.doc.shape(*c) else {
                         continue;
                     };
+                    if !same_path(&tip.shape, &shape, tol) {
+                        continue;
+                    }
                     let here = anchor_on(*c, &shape, tip.at);
                     if off(&here) < off(&best) {
                         best = here;
                     }
                 }
-                if off(&best) > tol {
-                    // Held by no piece: the nearest spot of its own curve.
-                    best = anchor_on(tip.curve, &own, tip.at);
-                }
+                // (Held by no piece, it takes the nearest spot of any of them.)
             }
-            let Some((to, _)) = best else {
+            let Some((to, spot)) = best else {
                 continue;
             };
-            if to != now {
+            let unmoved = self
+                .doc
+                .anchor_pos(&now)
+                .is_some_and(|p| p.distance(spot) <= tol);
+            if to != now
+                && !(unmoved && matches!(to, Anchor::Curve { curve, .. } if curve == tip.curve))
+            {
                 self.set_tip_anchor(tip.of, to);
             }
         }
@@ -358,6 +403,18 @@ mod tests {
             assert!(ed.undo());
             tips_at(&ed, tips, V(200.0 * t, 0.0), Some(l));
         }
+        // The middle trimmed out between walls at 100 and 200: a tip at 190 goes to 200, on
+        // the far piece, the nearest spot left.
+        let walls = |doc: &mut Document| {
+            for x in [100.0, 200.0] {
+                line(V(x, -50.0), V(x, 50.0))(doc);
+            }
+            line(V(0.0, 0.0), V(300.0, 0.0))(doc)
+        };
+        let (mut ed, l, tips) = noted(walls, 190.0 / 300.0);
+        ed.trim_at(l, V(150.0, 0.0)).unwrap();
+        tips_at(&ed, tips, V(200.0, 0.0), None);
+        assert_ne!(tip(&ed, tips[0]).1, l, "on the far piece");
         // Extended to the wall: 0.6 of 100 stays at 60.
         let (mut ed, l, tips) = noted(with_wall(100.0), 0.6);
         ed.extend_at(l, V(95.0, 0.0)).unwrap();
@@ -365,6 +422,26 @@ mod tests {
         tips_at(&ed, tips, V(60.0, 0.0), Some(l));
         assert!(ed.undo());
         tips_at(&ed, tips, V(60.0, 0.0), Some(l));
+    }
+
+    /// #460: a tip on a curve the edit doesn't reshape is left exactly as it is, even one
+    /// past its arc's end (where an arc shortened after the note was placed leaves it).
+    #[test]
+    fn tips_on_other_curves_are_left_alone() {
+        let other = std::cell::Cell::new(None);
+        let arc_and_line = |doc: &mut Document| {
+            other.set(Some(line(V(0.0, -300.0), V(1000.0, -300.0))(doc)));
+            let c = doc.add_point(V(0.0, 0.0));
+            let s = doc.add_point(V(100.0, 0.0));
+            let e = doc.add_point(DVec2::from_angle(150f64.to_radians()) * 100.0);
+            doc.add_arc(c, s, e).unwrap()
+        };
+        let past_end = 170f64.to_radians();
+        let (mut ed, _, tips) = noted(arc_and_line, past_end);
+        let before = tips.map(|of| ed.tip_anchor(of));
+        let other = other.get().unwrap();
+        ed.split_at(other, V(500.0, -300.0)).unwrap();
+        assert_eq!(tips.map(|of| ed.tip_anchor(of)), before);
     }
 
     /// #460: a fillet or chamfer shortens both lines at the corner; a tip on one stays put,

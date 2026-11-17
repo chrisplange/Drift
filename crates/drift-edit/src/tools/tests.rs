@@ -1467,6 +1467,73 @@ fn a_trims_own_picks_dont_carry_into_the_next_tool() {
     );
 }
 
+/// #461: an undo that takes the far piece out of what a Trim left picked doesn't make the
+/// rest of it picked on purpose.
+#[test]
+#[ignore = "#461: fails until a Trim's own picks stay its own through an undo"]
+fn a_trims_own_picks_stay_its_own_after_an_undo() {
+    let (mut ed, ids) = bar_and_uprights();
+    ed.selection = ids[..3].iter().copied().collect();
+    let mut tool = TrimTool::default();
+    click(&mut ed, &mut tool, v(15.0, 0.2));
+    assert!(ed.undo());
+    // The bar is whole again; a new Trim cuts it against every curve, up to the third
+    // upright, not against the two the first Trim was given.
+    let mut tool = TrimTool::default();
+    click(&mut ed, &mut tool, v(35.0, 0.2));
+    assert!(!tool.hint().contains("picked"), "{}", tool.hint());
+    assert_eq!(line_ends(&ed, ids[0]), (v(0.0, 0.0), v(30.0, 0.0)));
+}
+
+/// #461: nor does hiding one of them (hidden curves can't stay picked).
+#[test]
+#[ignore = "#461: fails until a Trim's own picks stay its own when one is hidden"]
+fn a_trims_own_picks_stay_its_own_when_one_is_hidden() {
+    let (mut ed, ids) = bar_and_uprights();
+    let layer = ed.add_layer("Hidden later");
+    ed.doc.begin();
+    ed.doc.set_entity_layer(ids[1], layer).unwrap();
+    ed.commit("Layer");
+    ed.selection = ids[..3].iter().copied().collect();
+    let mut tool = TrimTool::default();
+    click(&mut ed, &mut tool, v(15.0, 0.2));
+    ed.set_layers_visible(&[(layer, false)], "Hide");
+    // The far piece (20 to 40) loses only 30 to 40: the third upright cuts it.
+    let mut tool = TrimTool::default();
+    click(&mut ed, &mut tool, v(35.0, 0.2));
+    assert!(!tool.hint().contains("picked"), "{}", tool.hint());
+    assert!(
+        ed.doc.iter().filter_map(|(id, _)| ed.doc.shape(id)).any(
+            |s| matches!(s, Shape::Line { a, b } if near(a, v(20.0, 0.0)) && near(b, v(30.0, 0.0)))
+        ),
+        "the far piece stops at the third upright"
+    );
+}
+
+/// #461: an Extend after a Trim reaches the next curve, not the next one the Trim was given.
+#[test]
+fn an_extend_after_a_trim_reaches_every_curve() {
+    let (mut ed, ids) = modify_fixture(&[
+        (v(0.0, 0.0), v(5.0, 0.0)),
+        (v(10.0, -5.0), v(10.0, 5.0)),
+        (v(20.0, -5.0), v(20.0, 5.0)),
+        (v(30.0, 3.0), v(40.0, 3.0)),
+        (v(35.0, -5.0), v(35.0, 5.0)),
+    ]);
+    ed.selection = [ids[0], ids[2], ids[3], ids[4]].into();
+    // Trim the short line's piece past the upright it crosses: Trim now owns the picks.
+    let mut tool = TrimTool::default();
+    click(&mut ed, &mut tool, v(38.0, 3.1));
+    assert_eq!(line_ends(&ed, ids[3]), (v(30.0, 3.0), v(35.0, 3.0)));
+    let mut tool = ExtendTool::default();
+    click(&mut ed, &mut tool, v(4.0, 0.1));
+    assert_eq!(
+        line_ends(&ed, ids[0]).1,
+        v(10.0, 0.0),
+        "to the unpicked line"
+    );
+}
+
 /// #461: what a Trim left picked, picked again on purpose, cuts.
 #[test]
 fn picking_a_trims_leftovers_again_makes_them_cut() {

@@ -730,11 +730,23 @@ impl DriftApp {
         ed.selection = geometry;
         ed.selected_instances.clear();
         ed.selected_midpoints.clear();
+        ed.selected_texts.clear();
+        ed.selected_fills.clear();
         ed.annotation_picks.clear();
         ed.selected_annotation = None;
         self.drawing.selected_constraint = None;
         // (Inside a block or group being edited, only its own.)
         self.drawing.editor.retain_in_scope();
+        if self.drawing.editor.selection.is_empty() {
+            // All of them outside the block or group being edited.
+            self.drawing.picked_relations = None;
+            self.set_status(
+                "The conflicting relations are outside what you're editing".into(),
+                false,
+                now,
+            );
+            return;
+        }
         let n = conflicts.len();
         self.drawing.picked_relations = Some((conflicts, self.drawing.editor.selection.clone()));
         self.show_panel(crate::dock::Panel::Inspector);
@@ -752,7 +764,7 @@ impl DriftApp {
     /// pick ends it).
     pub(crate) fn picked_relations(&self) -> &[ConstraintId] {
         match &self.drawing.picked_relations {
-            Some((ids, made)) if *made == self.drawing.editor.selection => ids,
+            Some((ids, made)) if !made.is_empty() && *made == self.drawing.editor.selection => ids,
             _ => &[],
         }
     }
@@ -1413,8 +1425,8 @@ impl DriftApp {
                         |ui| {
                             ui.set_min_width(100.0);
                             ui.spacing_mut().item_spacing.x = 4.0;
-                            // A redundant one's marker takes the end of the name's column,
-                            // so the values stay in line.
+                            // A redundant one's marker follows its name, inside the name's
+                            // column, so the values stay in line.
                             let width = if is_redundant { 82.0 } else { 100.0 };
                             let label = ui
                                 .allocate_ui(egui::vec2(width, 22.0), |ui| {

@@ -942,10 +942,12 @@ impl History {
 
     /// How much memory the steps that can be undone may hold, by their
     /// [`bytes`](Transaction::bytes); past it the oldest are forgotten, as past
-    /// [`MAX_STEPS`](Self::MAX_STEPS). A step of its own is in the order of kilobytes, so
-    /// this binds only where steps change tens of thousands of records: the import of a big
-    /// file, or an edit of all of it. The newest step is never forgotten for its size, so
-    /// such a step stays undoable until another step comes after it.
+    /// [`MAX_STEPS`](Self::MAX_STEPS), when a step is [pushed](Self::push). An ordinary
+    /// step is a few hundred bytes to some kilobytes (each change a few hundred), so this
+    /// binds only where steps change on the order of 100k records: the import of a big file,
+    /// or an edit of all of it. The newest step is never forgotten for its size, so such a
+    /// step stays undoable until another step comes after it; the cost is that pushing it
+    /// forgets every older step, and they stay forgotten if it is then undone.
     pub const MAX_BYTES: usize = 64 << 20;
 
     /// A history with a smaller byte budget, to test it with small steps.
@@ -1021,7 +1023,6 @@ impl History {
                 self.recorded += 1;
             }
         }
-        self.trim();
     }
 
     /// Take the most recent undo step off the stack without undoing it, to amend it (see
@@ -1037,7 +1038,6 @@ impl History {
     pub fn put_back(&mut self, tx: Transaction) {
         self.undo_bytes += tx.bytes;
         self.undo.push(tx);
-        self.trim();
     }
 
     pub fn can_undo(&self) -> bool {

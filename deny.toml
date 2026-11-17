@@ -20,6 +20,9 @@ ignore = [
     { id = "RUSTSEC-2026-0370", reason = "zvariant: via eframe/accesskit; no upgrade yet" },
     { id = "RUSTSEC-2026-0371", reason = "zbus_names: via eframe/accesskit; no upgrade yet" },
     { id = "RUSTSEC-2026-0372", reason = "zvariant_derive: via eframe/accesskit; no upgrade yet" },
+    # chrono is unmaintained (no fixed version; a maintenance notice, not a vulnerability).
+    # Only drift-mcp pulls it in, through rmcp and schemars; it goes when they move off it.
+    { id = "RUSTSEC-2026-0543", reason = "chrono: via rmcp/schemars in drift-mcp; no upgrade yet" },
 ]
 
 [licenses]

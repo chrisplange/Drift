@@ -595,6 +595,12 @@ fn split(curves: &[Shape], tol: &RegionTolerance) -> (Vec<DVec2>, Vec<Piece>) {
             {
                 continue;
             }
+            // Lines lying along each other share their stretch through `vertices_on`; a
+            // crossing between them is rounding (they read as a hair off parallel once
+            // moved far out) and could land anywhere along it.
+            if lines_along(&curves[i], &curves[j], tol.snap) {
+                continue;
+            }
             for h in intersect(&curves[i], &curves[j]) {
                 cuts[i].push((h.t[0], h.at));
                 cuts[j].push((h.t[1], h.at));
@@ -752,6 +758,26 @@ fn split(curves: &[Shape], tol: &RegionTolerance) -> (Vec<DVec2>, Vec<Piece>) {
         }
     }
     (verts, pieces)
+}
+
+/// Whether two lines lie along each other: the shorter's ends within `snap` of the longer's
+/// line (#296).
+fn lines_along(a: &Shape, b: &Shape, snap: f64) -> bool {
+    let (&Shape::Line { a: p, b: q }, &Shape::Line { a: r, b: s }) = (a, b) else {
+        return false;
+    };
+    let ((p, q), (r, s)) = if p.distance_squared(q) >= r.distance_squared(s) {
+        ((p, q), (r, s))
+    } else {
+        ((r, s), (p, q))
+    };
+    let d = q - p;
+    let len = d.length();
+    if len == 0.0 {
+        return false;
+    }
+    let off = |x: DVec2| (x - p).perp_dot(d).abs() / len;
+    off(r) <= snap && off(s) <= snap
 }
 
 /// The vertices within `snap` of the interior of `curve` (a line, arc or circle), with

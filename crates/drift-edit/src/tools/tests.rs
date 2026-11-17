@@ -1532,6 +1532,25 @@ fn an_extend_after_a_trim_reaches_every_curve() {
     );
 }
 
+/// #461 (owner's decision): copies just made and still picked are picked curves, and Trim
+/// cuts against them alone.
+#[test]
+fn copies_just_made_and_still_picked_cut() {
+    let (mut ed, ids) = bar_and_uprights();
+    ed.selection = [ids[3]].into();
+    assert_eq!(ed.duplicate_selection(), 1);
+    assert_eq!(ed.nudge(v(-5.0, 0.0)), Some(true));
+    let mut tool = TrimTool::default();
+    click(&mut ed, &mut tool, v(27.0, 0.2));
+    assert!(
+        tool.hint().contains("against 1 picked curve"),
+        "{}",
+        tool.hint()
+    );
+    // Cut at the copy (x = 25) only: the third upright didn't cut, so all of 25 to 40 went.
+    assert_eq!(line_ends(&ed, ids[0]), (v(0.0, 0.0), v(25.0, 0.0)));
+}
+
 /// #461: what a Trim left picked, picked again on purpose, cuts.
 #[test]
 fn picking_a_trims_leftovers_again_makes_them_cut() {

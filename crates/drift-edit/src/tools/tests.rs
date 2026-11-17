@@ -1470,7 +1470,6 @@ fn a_trims_own_picks_dont_carry_into_the_next_tool() {
 /// #461: an undo that takes the far piece out of what a Trim left picked doesn't make the
 /// rest of it picked on purpose.
 #[test]
-#[ignore = "#461: fails until a Trim's own picks stay its own through an undo"]
 fn a_trims_own_picks_stay_its_own_after_an_undo() {
     let (mut ed, ids) = bar_and_uprights();
     ed.selection = ids[..3].iter().copied().collect();
@@ -1487,7 +1486,6 @@ fn a_trims_own_picks_stay_its_own_after_an_undo() {
 
 /// #461: nor does hiding one of them (hidden curves can't stay picked).
 #[test]
-#[ignore = "#461: fails until a Trim's own picks stay its own when one is hidden"]
 fn a_trims_own_picks_stay_its_own_when_one_is_hidden() {
     let (mut ed, ids) = bar_and_uprights();
     let layer = ed.add_layer("Hidden later");

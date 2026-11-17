@@ -472,12 +472,18 @@ impl Editor {
         let index = &self.index;
         // Hidden or locked geometry can't stay selected, nor a point the index leaves out
         // because only curves on hidden layers use it (#359: Delete would take them along).
-        self.selection.retain(|id| {
+        let keep = |id: &EntityId| {
             doc.get(*id)
                 .is_some_and(|e| !e.kind.is_point() || index.shape(*id).is_some())
                 && doc.is_visible(*id)
                 && !doc.layer_of(*id).locked
-        });
+        };
+        self.selection.retain(keep);
+        // What a Trim or Extend left picked loses the same curves, and stays its own (#461:
+        // an undo or a hidden layer mustn't make the rest picked on purpose).
+        if let Some(own) = &mut self.tool_picks {
+            own.retain(keep);
+        }
         if self.active.is_some_and(|id| !self.selection.contains(&id)) {
             self.active = None;
         }

@@ -39,6 +39,7 @@ pub mod temp_dims;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_sketches;
 pub mod texts;
+mod tips;
 pub mod tools;
 pub mod transform;
 pub mod underlays;

@@ -3386,6 +3386,255 @@ fn tab_selects_a_chain_of_connected_curves() {
     assert_eq!(ed.select_chain(), 1);
 }
 
+/// Draw a polyline through `at` with the line tool, as one operation (snapping as the canvas
+/// does), and return the curves it made.
+fn polyline(ed: &mut Editor, at: &[DVec2]) -> BTreeSet<EntityId> {
+    let before: BTreeSet<EntityId> = ed.doc.iter().map(|(id, _)| id).collect();
+    let mut line = LineTool::default();
+    for p in at {
+        click(ed, &mut line, *p);
+    }
+    line.handle(Input::Finish, ed);
+    ed.doc
+        .iter()
+        .filter(|(id, e)| !before.contains(id) && !e.kind.is_point())
+        .map(|(id, _)| id)
+        .collect()
+}
+
+/// The line from `a` to `b` among `lines`.
+fn line_between(ed: &Editor, lines: &BTreeSet<EntityId>, a: DVec2, b: DVec2) -> EntityId {
+    let at = |p: EntityId| ed.doc.point(p).unwrap();
+    *lines
+        .iter()
+        .find(|id| match ed.doc.get(**id).unwrap().kind {
+            EntityKind::Line { a: p, b: q } => {
+                (at(p).distance(a) < 1e-9 && at(q).distance(b) < 1e-9)
+                    || (at(p).distance(b) < 1e-9 && at(q).distance(a) < 1e-9)
+            }
+            _ => false,
+        })
+        .expect("a line there")
+}
+
+/// A 4-sided shape, then as a separate operation a triangle with two corners snapped onto
+/// two of its corners, so one side of each lies on the other.
+fn square_and_triangle() -> (Editor, BTreeSet<EntityId>, BTreeSet<EntityId>) {
+    let mut ed = Editor::default();
+    let square = polyline(
+        &mut ed,
+        &[
+            v(0.0, 0.0),
+            v(20.0, 0.0),
+            v(20.0, 20.0),
+            v(0.0, 20.0),
+            v(0.0, 0.0),
+        ],
+    );
+    let triangle = polyline(
+        &mut ed,
+        &[v(20.0, 0.0), v(35.0, 10.0), v(20.0, 20.0), v(20.0, 0.0)],
+    );
+    assert_eq!((square.len(), triangle.len()), (4, 3));
+    (ed, square, triangle)
+}
+
+/// #439: shapes drawn separately keep their own curves, though snapping made them share
+/// corners: Tab on a side they both have chains only the shape the clicked line is in.
+#[test]
+fn tab_chains_only_the_shape_drawn_separately() {
+    let (ed, square, triangle) = square_and_triangle();
+    // The snapped corners are shared points.
+    assert_eq!(points(&ed.doc), 5, "two corners shared");
+    let side = line_between(&ed, &triangle, v(20.0, 0.0), v(20.0, 20.0));
+    assert_eq!(
+        ed.chain_of(side),
+        triangle,
+        "the triangle's overlapping side"
+    );
+    let square_side = line_between(&ed, &square, v(20.0, 0.0), v(20.0, 20.0));
+    assert_ne!(side, square_side);
+    assert_eq!(
+        ed.chain_of(square_side),
+        square,
+        "the square's side under it"
+    );
+    for id in &square {
+        assert_eq!(ed.chain_of(*id), square);
+    }
+}
+
+/// #439: copied and pasted, the two shapes are still two.
+#[test]
+fn pasted_shapes_keep_their_own_curves() {
+    let (mut ed, square, triangle) = square_and_triangle();
+    ed.selection = square.union(&triangle).copied().collect();
+    let text = ed.copy_selection().expect("copied");
+    assert_eq!(ed.paste(&text, Some(v(100.0, 0.0))), Ok(7));
+    let pasted: BTreeSet<EntityId> = ed
+        .selection
+        .iter()
+        .copied()
+        .filter(|id| ed.doc.get(*id).is_some_and(|e| !e.kind.is_point()))
+        .collect();
+    assert_eq!(pasted.len(), 7);
+    let mut chains: Vec<usize> = pasted.iter().map(|id| ed.chain_of(*id).len()).collect();
+    chains.sort_unstable();
+    assert_eq!(chains, [3, 3, 3, 4, 4, 4, 4], "a triangle and a square");
+    // Not the originals' figures.
+    assert!(pasted.iter().all(|c| ed.doc.figure_of(*c)
+        != ed.doc.figure_of(*square.first().unwrap())
+        && ed.doc.figure_of(*c) != ed.doc.figure_of(*triangle.first().unwrap())));
+}
+
+/// #439: starting a new path on an open end of an existing one joins it to that shape, as in
+/// Illustrator.
+#[test]
+fn a_path_started_from_an_open_end_joins_that_shape() {
+    let mut ed = Editor::default();
+    let first = polyline(&mut ed, &[v(0.0, 0.0), v(10.0, 0.0), v(10.0, 10.0)]);
+    let second = polyline(&mut ed, &[v(10.0, 10.0), v(0.0, 10.0), v(0.0, 20.0)]);
+    let both: BTreeSet<EntityId> = first.union(&second).copied().collect();
+    assert_eq!(both.len(), 4);
+    for id in &both {
+        assert_eq!(ed.chain_of(*id), both, "Tab on {id} chains both");
+    }
+    // Starting on a point in the middle of that path keeps the new one separate.
+    let third = polyline(&mut ed, &[v(10.0, 0.0), v(20.0, 0.0)]);
+    assert_eq!(ed.chain_of(*third.first().unwrap()), third);
+    assert_eq!(ed.chain_of(*first.first().unwrap()), both);
+}
+
+/// #439: a shape that only touches the triangle at a corner, with nothing overlapping, isn't
+/// chained to it.
+#[test]
+fn a_shape_touching_at_a_corner_is_not_chained() {
+    let (mut ed, square, triangle) = square_and_triangle();
+    let touching = polyline(
+        &mut ed,
+        &[
+            v(35.0, 10.0),
+            v(45.0, 10.0),
+            v(45.0, 20.0),
+            v(35.0, 20.0),
+            v(35.0, 10.0),
+        ],
+    );
+    assert_eq!(touching.len(), 4);
+    assert_eq!(points(&ed.doc), 8, "the triangle's tip is shared");
+    for id in &touching {
+        assert_eq!(ed.chain_of(*id), touching);
+    }
+    for id in &triangle {
+        assert_eq!(ed.chain_of(*id), triangle);
+    }
+    for id in &square {
+        assert_eq!(ed.chain_of(*id), square);
+    }
+}
+
+/// #439: trimming one shape against another joins what is left of both into one shape.
+#[test]
+fn trimming_shapes_against_each_other_joins_them() {
+    let mut ed = Editor::default();
+    let a = polyline(
+        &mut ed,
+        &[
+            v(0.0, 0.0),
+            v(20.0, 0.0),
+            v(20.0, 20.0),
+            v(0.0, 20.0),
+            v(0.0, 0.0),
+        ],
+    );
+    let b = polyline(
+        &mut ed,
+        &[
+            v(10.0, 10.0),
+            v(30.0, 10.0),
+            v(30.0, 30.0),
+            v(10.0, 30.0),
+            v(10.0, 10.0),
+        ],
+    );
+    assert_eq!(
+        ed.chain_of(*a.first().unwrap()),
+        a,
+        "separate before the trim"
+    );
+    // Trim each square's pieces inside the other: their outline is left.
+    let trims = [
+        (
+            line_between(&ed, &a, v(20.0, 0.0), v(20.0, 20.0)),
+            v(20.0, 15.0),
+        ),
+        (
+            line_between(&ed, &a, v(20.0, 20.0), v(0.0, 20.0)),
+            v(15.0, 20.0),
+        ),
+        (
+            line_between(&ed, &b, v(10.0, 10.0), v(30.0, 10.0)),
+            v(15.0, 10.0),
+        ),
+        (
+            line_between(&ed, &b, v(10.0, 30.0), v(10.0, 10.0)),
+            v(10.0, 15.0),
+        ),
+    ];
+    for (i, (id, at)) in trims.into_iter().enumerate() {
+        ed.trim_at_against(id, at, None)
+            .unwrap_or_else(|e| panic!("trim {i}: {e:?}"));
+        if i == 0 {
+            // One trim joins the two already.
+            let left: BTreeSet<EntityId> = a.union(&b).copied().collect();
+            assert_eq!(ed.doc.figure_of(id), ed.doc.figure_of(*b.first().unwrap()));
+            assert!(
+                left.iter()
+                    .all(|c| ed.doc.figure_of(*c) == ed.doc.figure_of(id))
+            );
+        }
+    }
+    let remains: BTreeSet<EntityId> = ed
+        .doc
+        .iter()
+        .filter(|(_, e)| !e.kind.is_point())
+        .map(|(id, _)| id)
+        .collect();
+    assert_eq!(remains.len(), 8, "the outline of the two");
+    for id in &remains {
+        assert_eq!(
+            ed.chain_of(*id),
+            remains,
+            "Tab on {id} chains the remains of both"
+        );
+    }
+}
+
+/// #439: which shape each curve is in survives save and reopen.
+#[test]
+fn shapes_drawn_separately_survive_save_and_reopen() {
+    let (ed, square, triangle) = square_and_triangle();
+    let text = drift_io::save(&ed.doc, &Default::default());
+    assert!(text.contains(r#""figures""#), "{text}");
+    let (doc, _) = drift_io::load(&text).expect("reads back");
+    assert_eq!(doc, ed.doc);
+    let ed = Editor::new(doc);
+    let side = line_between(&ed, &triangle, v(20.0, 0.0), v(20.0, 20.0));
+    assert_eq!(ed.chain_of(side), triangle);
+    let square_side = line_between(&ed, &square, v(20.0, 0.0), v(20.0, 20.0));
+    assert_eq!(ed.chain_of(square_side), square);
+    // A file from before figures chains whatever meets end to end, as Tab always did.
+    let mut old = ed.doc.clone();
+    for id in square.iter().chain(&triangle) {
+        old.set_figure(*id, None);
+    }
+    let all: BTreeSet<EntityId> = square.union(&triangle).copied().collect();
+    let text = drift_io::save(&old, &Default::default());
+    assert!(!text.contains(r#""figures""#));
+    let ed = Editor::new(drift_io::load(&text).unwrap().0);
+    assert_eq!(ed.chain_of(side), all);
+}
+
 /// #267: a Tab chain stays on the layer of the curve it starts from, even where curves on
 /// other layers share its end points, and there is none on a hidden layer.
 #[test]

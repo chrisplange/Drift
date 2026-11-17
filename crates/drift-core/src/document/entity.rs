@@ -185,6 +185,22 @@ pub struct Entity {
     /// fill's `order`); `None`, at the top of the layer, as curves always were. The curves
     /// outlining a fill draw with it instead.
     pub order: Option<i32>,
+    /// The figure (one shape as it was drawn) a curve joined end to end with others belongs
+    /// to; Tab chains only within one (#439). `None` for points, circles and ellipses, and
+    /// for curves from files saved before figures, which chain with whatever they meet.
+    pub figure: Option<FigureId>,
+}
+
+/// One shape as it was drawn: the curves a drawing operation made, and those later joined to
+/// them (a path continued from its open end, the remains of shapes trimmed against each
+/// other). See [`Document::figure_new_curves`](crate::Document::figure_new_curves).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct FigureId(pub u32);
+
+impl std::fmt::Display for FigureId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "d{}", self.0)
+    }
 }
 
 impl Entity {
@@ -195,6 +211,7 @@ impl Entity {
             layer: LayerId::DEFAULT,
             appearance: Appearance::default(),
             order: None,
+            figure: None,
         }
     }
 }

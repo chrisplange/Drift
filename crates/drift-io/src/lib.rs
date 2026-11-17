@@ -1074,6 +1074,10 @@ struct FileRecord {
     /// Offsets of chains of curves and what they made (an addition at 44: fixture v44.1).
     #[serde(default)]
     offsets: Vec<offsets::OffsetRecord>,
+    /// Which shape, as it was drawn, each curve joined end to end is in (an addition at 45:
+    /// fixture v45.1, #439).
+    #[serde(default)]
+    figures: Vec<FigureRecord>,
 }
 
 /// A named group of entities.
@@ -1091,6 +1095,13 @@ struct StackRecord {
     order: i32,
 }
 
+/// The curves of one figure: one shape as it was drawn (#439).
+#[derive(Debug, Serialize, Deserialize)]
+struct FigureRecord {
+    id: String,
+    curves: Vec<String>,
+}
+
 /// Curves drawn as one shape, in order round it.
 #[derive(Debug, Serialize, Deserialize)]
 struct PathRecord {
@@ -1098,6 +1109,51 @@ struct PathRecord {
     curves: Vec<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     closed: bool,
+}
+
+/// The figures, each with its curves, in order.
+fn figure_records(doc: &Document) -> Vec<FigureRecord> {
+    let mut figures: BTreeMap<drift_core::FigureId, Vec<String>> = BTreeMap::new();
+    for (id, e) in doc.iter() {
+        if let Some(f) = e.figure
+            && e.kind.ends().is_some()
+        {
+            figures.entry(f).or_default().push(id_string(id));
+        }
+    }
+    figures
+        .into_iter()
+        .map(|(id, curves)| FigureRecord {
+            id: id.to_string(),
+            curves,
+        })
+        .collect()
+}
+
+/// Put the curves of the file's figures in them. A curve an older build deleted, or made
+/// something without ends, is passed over (rule 3 of docs/file-format.md); a curve can be in
+/// only one figure.
+fn insert_figures(doc: &mut Document, figures: Vec<FigureRecord>) -> Result<(), LoadError> {
+    let mut seen = std::collections::HashSet::new();
+    for r in figures {
+        let id = drift_core::FigureId(parse_prefixed(&r.id, 'd')?);
+        if !seen.insert(id) {
+            return Err(LoadError::DuplicateId(r.id));
+        }
+        for c in &r.curves {
+            let curve = parse_id(c)?;
+            match doc.get(curve) {
+                Some(e) if e.kind.ends().is_some() => {
+                    if e.figure.is_some() {
+                        return Err(LoadError::DuplicateId(c.clone()));
+                    }
+                    doc.set_figure(curve, Some(id));
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(not(feature = "demo"))]
@@ -1333,6 +1389,8 @@ struct FileOut<'a> {
     openings: Vec<openings::OpeningRecord>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     offsets: Vec<offsets::OffsetRecord>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    figures: Vec<FigureRecord>,
 }
 
 /// The drawing as this build writes it, without anything carried through.
@@ -1557,6 +1615,7 @@ fn file_out_as_read<'a>(
             .offsets()
             .map(|(id, o)| offsets::offset_record(doc, id, o))
             .collect(),
+        figures: figure_records(doc),
     }
 }
 
@@ -2099,6 +2158,7 @@ fn load_value_as_read(value: serde_json::Value) -> Result<Loaded, LoadError> {
         )
         .map_err(LoadError::Document)?;
     }
+    insert_figures(&mut doc, file.figures)?;
     let wall_notes = walls::insert_walls(&mut doc, file.walls)?;
     notes_out.extend(wall_notes);
     notes_out.extend(offsets::insert_all(&mut doc, file.offsets)?);

@@ -315,7 +315,10 @@ impl Editor {
     /// The curves joined end to end with `start` (lines, arcs, elliptical arcs and pen curves
     /// meeting at shared end points; circles and ellipses stand alone), as Revit's Tab
     /// selects a chain of walls. The chain stays on the start's layer (#267), and there is
-    /// none on a hidden layer.
+    /// none on a hidden layer. It stays in the start's figure (#439): a shape drawn
+    /// separately isn't chained in where snapping made it share corners. Curves in no figure
+    /// (from files saved before figures) chain with whatever they meet; a chain that starts
+    /// on one takes the figure of the first curve in one it reaches.
     pub fn chain_of(&self, start: EntityId) -> BTreeSet<EntityId> {
         let mut chain = BTreeSet::new();
         let Some(layer) = self
@@ -337,15 +340,22 @@ impl Editor {
                 .and_then(|e| e.kind.ends())
                 .map_or_else(Vec::new, Vec::from)
         };
+        let mut figure = self.doc.figure_of(start);
         let mut queue = vec![start];
         chain.insert(start);
         while let Some(c) = queue.pop() {
             for p in ends(c) {
                 for u in self.doc.users_of(p) {
-                    if !chain.contains(&u) && !self.is_locked(u) && ends(u).contains(&p) {
-                        chain.insert(u);
-                        queue.push(u);
+                    if chain.contains(&u) || self.is_locked(u) || !ends(u).contains(&p) {
+                        continue;
                     }
+                    match (figure, self.doc.figure_of(u)) {
+                        (Some(f), Some(g)) if f != g => continue,
+                        (None, Some(g)) => figure = Some(g),
+                        _ => {}
+                    }
+                    chain.insert(u);
+                    queue.push(u);
                 }
             }
         }

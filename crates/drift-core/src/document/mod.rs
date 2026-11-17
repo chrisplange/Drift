@@ -32,6 +32,7 @@ mod blocks;
 mod constraints;
 mod drafting;
 mod entity;
+mod figures;
 mod geometry;
 mod grouping;
 mod journal;
@@ -45,7 +46,7 @@ mod texts;
 mod variables;
 mod walls;
 
-pub use entity::{DocumentError, Entity, EntityId, EntityKind};
+pub use entity::{DocumentError, Entity, EntityId, EntityKind, FigureId};
 pub use journal::{Dropped, History, Transaction};
 use journal::{Key, Record};
 pub use variables::{MeasurementId, Variable, VariableId, Variant, VariantId};

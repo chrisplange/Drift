@@ -1122,6 +1122,14 @@ impl Editor {
             }
             Ok(())
         })();
+        // Trimming one shape against another joins what is left of both into one figure,
+        // the far piece too (#439).
+        if result.is_ok() {
+            let mut joined: Vec<EntityId> = vec![id];
+            joined.extend(lo.iter().chain(hi.iter()).map(|c| c.other));
+            joined.extend(self.doc.created_in_transaction());
+            self.doc.join_figures(&joined);
+        }
         // (The far piece is a new curve: it cuts as the one it came from did.)
         if cutting
             && result.is_ok()

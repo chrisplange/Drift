@@ -505,6 +505,10 @@ impl Document {
 
     /// Finish recording and return the changes made since [`begin`](Self::begin).
     pub fn commit(&mut self, label: impl Into<String>) -> Transaction {
+        // New curves join their figures in their own step.
+        if self.journal.is_some() {
+            self.figure_new_curves();
+        }
         let journal = self.journal.take().unwrap_or_default();
         let changes = journal.changes(|key| self.record(key));
         let bytes = changes.iter().map(|(_, b, a)| change_bytes(b, a)).sum();

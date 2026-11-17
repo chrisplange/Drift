@@ -236,10 +236,12 @@ const UNMET: f64 = 1e-7;
 /// least the crossing tolerance) is at that end: as close as a solved end comes.
 const AT_OWN_END: f64 = 1e-7;
 
-/// The constraints in a document before an edit, and those it didn't meet already.
+/// The constraints in a document before an edit, and those it didn't meet already; and the
+/// leader tips on curves, and where they were (#460).
 struct ConstraintState {
     all: BTreeSet<ConstraintId>,
     unmet: std::collections::HashSet<ConstraintId>,
+    tips: Vec<crate::tips::Tip>,
 }
 
 /// Where a curve is cut by another one.
@@ -708,7 +710,7 @@ impl Editor {
             .and_then(|_| self.doc.shape(id))
     }
 
-    fn tol_for(&self, shape: &Shape) -> f64 {
+    pub(crate) fn tol_for(&self, shape: &Shape) -> f64 {
         let b = shape.bounds();
         intersect::tolerance(b.min.abs().max(b.max.abs()).max_element())
     }
@@ -1338,6 +1340,7 @@ impl Editor {
         ConstraintState {
             all: self.doc.constraints().map(|(id, _)| id).collect(),
             unmet: drift_solver::unmet_with(&self.doc, UNMET, self.lowering().as_deref()),
+            tips: self.curve_tips(),
         }
     }
 
@@ -1374,6 +1377,8 @@ impl Editor {
                 self.doc.remove_constraint(id);
                 freed.push(c.type_name());
             }
+            // A leader tip on a reshaped curve stays where it was in the drawing.
+            self.keep_curve_tips(&before.tips);
             Ok(())
         });
         self.finish(result, label)?;

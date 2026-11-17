@@ -20,8 +20,10 @@ fn report(ed: &mut Editor, what: &str, result: Result<(), crate::editor::EditErr
 }
 
 /// The curves picked when a Trim or Extend tool starts are the only ones it cuts against or
-/// reaches (AutoCAD's cutting edges); with no curves picked, every curve counts. Read at the
-/// tool's first input, and let go of with Esc.
+/// reaches (AutoCAD's cutting edges); with no curves picked, every curve counts. Kept at the
+/// tool's first click; before it, the hint and preview show what is picked now. Let go of
+/// with Esc. What an earlier Trim or Extend left picked, its own cutting curves, isn't
+/// picked on purpose and doesn't count (#461).
 #[derive(Default)]
 struct Edges {
     read: bool,
@@ -31,19 +33,41 @@ struct Edges {
 }
 
 impl Edges {
-    fn read(&mut self, ed: &Editor) {
+    /// The curves picked on purpose, as a cutting set.
+    fn picked(ed: &Editor) -> Option<CuttingSet> {
+        if ed.tool_picks.as_ref() == Some(&ed.selection) {
+            return None;
+        }
+        CuttingSet::of(&ed.doc, ed.selection.iter().copied())
+    }
+
+    /// Before the first click: what is picked now, for the hint and preview, not kept.
+    fn peek(&mut self, ed: &Editor) {
+        if !self.read {
+            self.against = Self::picked(ed);
+            self.count(ed);
+        }
+    }
+
+    /// At the first click: what is picked now is the set for the rest of the tool.
+    fn read(&mut self, ed: &mut Editor) {
         if !self.read {
             self.read = true;
-            self.against = CuttingSet::of(&ed.doc, ed.selection.iter().copied());
+            self.against = Self::picked(ed);
+            // An earlier tool's picks are let go of, as they don't cut.
+            if ed.tool_picks.take().as_ref() == Some(&ed.selection) {
+                ed.selection.clear();
+            }
             self.count(ed);
         }
     }
 
     /// After an edit: the picked curves are the cutting curves as they are now (a trimmed
-    /// one's far piece among them).
+    /// one's far piece among them), marked as the tool's own picks.
     fn follow(&mut self, ed: &mut Editor) {
         if let Some(set) = &self.against {
             ed.selection = set.members(&ed.doc).into_iter().collect();
+            ed.tool_picks = Some(ed.selection.clone());
         }
         self.count(ed);
     }
@@ -62,6 +86,7 @@ impl Edges {
         }
         self.count = 0;
         ed.selection.clear();
+        ed.tool_picks = None;
         true
     }
 
@@ -248,7 +273,10 @@ impl Tool for TrimTool {
     }
 
     fn handle(&mut self, input: Input, ed: &mut Editor) {
-        self.edges.read(ed);
+        match input {
+            Input::Click(..) | Input::DragStart(..) => self.edges.read(ed),
+            _ => self.edges.peek(ed),
+        }
         match input {
             Input::Hover(p) => {
                 // The removal preview is the highlight; the whole curve isn't hovered.
@@ -383,7 +411,10 @@ impl Tool for ExtendTool {
     }
 
     fn handle(&mut self, input: Input, ed: &mut Editor) {
-        self.edges.read(ed);
+        match input {
+            Input::Click(..) => self.edges.read(ed),
+            _ => self.edges.peek(ed),
+        }
         match input {
             Input::Hover(p) => {
                 self.preview = Self::target(ed, &p, self.edges.against.as_ref());

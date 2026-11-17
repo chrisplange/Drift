@@ -738,6 +738,13 @@ impl Tool for SelectTool {
     }
 
     fn handle(&mut self, input: Input, ed: &mut Editor) {
+        // A pick here is on purpose, even of what a Trim or Extend left picked (#461).
+        if matches!(
+            input,
+            Input::Click(..) | Input::DoubleClick(..) | Input::DragStart(..)
+        ) {
+            ed.tool_picks = None;
+        }
         if self.spin_input(input, ed) {
             return;
         }

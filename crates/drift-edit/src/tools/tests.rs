@@ -1440,7 +1440,6 @@ fn a_trimmed_cutting_line_still_cuts_with_its_far_piece() {
 /// #461: the curves a Trim left picked (its cutting curves, a trimmed one's far piece among
 /// them) aren't the next Trim's or Extend's cutting set when the tool was left without Esc.
 #[test]
-#[ignore = "#461: fails until Trim stops carrying its own picks over"]
 fn a_trims_own_picks_dont_carry_into_the_next_tool() {
     let (mut ed, ids) = bar_and_uprights();
     ed.selection = ids[..3].iter().copied().collect();
@@ -1468,9 +1467,32 @@ fn a_trims_own_picks_dont_carry_into_the_next_tool() {
     );
 }
 
+/// #461: what a Trim left picked, picked again on purpose, cuts.
+#[test]
+fn picking_a_trims_leftovers_again_makes_them_cut() {
+    let (mut ed, ids) = bar_and_uprights();
+    ed.selection = ids[..3].iter().copied().collect();
+    let mut tool = TrimTool::default();
+    click(&mut ed, &mut tool, v(15.0, 0.2));
+    let left = ed.selection.clone();
+    // A click with Select (on nothing), then the same curves picked again.
+    let mut select = SelectTool::default();
+    click(&mut ed, &mut select, v(50.0, 50.0));
+    ed.selection = left;
+    let mut tool = ExtendTool::default();
+    tool.handle(Input::Hover(ptr(&ed, &tool, v(0.5, 0.1))), &mut ed);
+    assert!(tool.hint().contains("against 4 picked"), "{}", tool.hint());
+    // Select all is on purpose too.
+    let mut tool = TrimTool::default();
+    click(&mut ed, &mut tool, v(35.0, 0.2));
+    ed.select_all();
+    let mut tool = TrimTool::default();
+    tool.handle(Input::Hover(ptr(&ed, &tool, v(0.5, 0.1))), &mut ed);
+    assert!(tool.hint().contains("picked"), "{}", tool.hint());
+}
+
 /// #461: the cutting set is what's picked at the first click, not at the first hover.
 #[test]
-#[ignore = "#461: fails until the cutting set is read at the first click"]
 fn the_cutting_set_is_read_at_the_first_click() {
     // Picked when the pointer came over the canvas, let go of before the click.
     let (mut ed, [ca, cb, _]) = circles_and_line();

@@ -86,6 +86,58 @@ pub(super) enum Record {
     Offset(Offset),
 }
 
+impl Record {
+    /// An estimate of what the record owns on the heap, for [`History`]'s byte budget: the
+    /// lists that can grow with a drawing (a path's or fill's curves, a group's members, a
+    /// block's items and fills, a text, an offset's sources, a note) by their length. Short
+    /// names and expressions are left out (a few bytes beside the change itself), and what
+    /// is shared with the document (`Shared`, an underlay's `Arc`s) isn't the step's.
+    fn heap_bytes(&self) -> usize {
+        use std::mem::size_of;
+        fn set<T>(s: &BTreeSet<T>) -> usize {
+            // A B-tree node holds up to 11 keys; about two words of overhead per key.
+            s.len() * (size_of::<T>() + 2 * size_of::<usize>())
+        }
+        fn fill(f: &Fill) -> usize {
+            std::mem::size_of_val(f.boundary.as_slice())
+                + match &f.kind {
+                    crate::FillKind::Hatch(h) => h.pattern.len(),
+                    crate::FillKind::Solid => 0,
+                }
+        }
+        match self {
+            Record::Path(p) => std::mem::size_of_val(p.curves.as_slice()),
+            Record::Fill(f) => fill(f),
+            Record::Group(g) => g.name.len() + set(&g.members),
+            Record::Block(b) => {
+                b.name.len()
+                    + std::mem::size_of_val(b.items.as_slice())
+                    + b.fills
+                        .iter()
+                        .map(|f| size_of::<Fill>() + fill(f))
+                        .sum::<usize>()
+            }
+            Record::Text(t) => t.text.len(),
+            Record::Offset(o) => std::mem::size_of_val(o.source.as_slice()),
+            Record::OnlyIn(views) => set(views),
+            Record::View(v) => v.name.len() + set(&v.hidden_layers),
+            Record::Variable(v) => v.name.len() + v.expr.len(),
+            Record::Expression(e) => e.len(),
+            Record::Annotation(Annotation::Note { text, leaders, .. }) => {
+                text.len() + std::mem::size_of_val(leaders.as_slice())
+            }
+            _ => 0,
+        }
+    }
+}
+
+/// An estimate of the memory one change of a step holds: the entry and what its records own.
+fn change_bytes(before: &Option<Record>, after: &Option<Record>) -> usize {
+    std::mem::size_of::<(Key, Option<Record>, Option<Record>)>()
+        + before.as_ref().map_or(0, Record::heap_bytes)
+        + after.as_ref().map_or(0, Record::heap_bytes)
+}
+
 /// What an open transaction has touched: the pre-image of each key it touched, as it was
 /// when the transaction began ([`Document::begin`]). After [`Document::reopen`] the step
 /// reopened is its lower layer: each of that step's keys counts as touched, with that step's
@@ -215,11 +267,19 @@ pub type Dropped = (ConstraintId, &'static str);
 pub struct Transaction {
     pub label: String,
     changes: Vec<(Key, Option<Record>, Option<Record>)>,
+    /// [`bytes`](Self::bytes), counted once when it is committed and kept up to date when
+    /// changes are merged into it, so the history never has to walk its steps to know it.
+    bytes: usize,
 }
 
 impl Transaction {
     pub fn is_empty(&self) -> bool {
         self.changes.is_empty()
+    }
+
+    /// An estimate of the memory the step holds, from its records' sizes.
+    pub fn bytes(&self) -> usize {
+        self.bytes
     }
 
     /// The entities it added or changed (not those it removed).
@@ -447,9 +507,11 @@ impl Document {
     pub fn commit(&mut self, label: impl Into<String>) -> Transaction {
         let journal = self.journal.take().unwrap_or_default();
         let changes = journal.changes(|key| self.record(key));
+        let bytes = changes.iter().map(|(_, b, a)| change_bytes(b, a)).sum();
         Transaction {
             label: label.into(),
             changes,
+            bytes,
         }
     }
 
@@ -848,13 +910,29 @@ impl Document {
 }
 
 /// Undo/redo stacks of [`Transaction`]s.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct History {
     undo: Vec<Transaction>,
     redo: Vec<Transaction>,
     /// Steps recorded so far and still steps of their own: unlike the undo stack, which
     /// forgets old ones, this only goes down when steps are squashed together or discarded.
     recorded: u64,
+    /// The sum of the undo stack's [`Transaction::bytes`], kept as steps come and go.
+    undo_bytes: usize,
+    /// The undo stack's byte budget: [`MAX_BYTES`](Self::MAX_BYTES), smaller in tests.
+    max_bytes: usize,
+}
+
+impl Default for History {
+    fn default() -> Self {
+        Self {
+            undo: Vec::new(),
+            redo: Vec::new(),
+            recorded: 0,
+            undo_bytes: 0,
+            max_bytes: Self::MAX_BYTES,
+        }
+    }
 }
 
 impl History {
@@ -862,17 +940,53 @@ impl History {
     /// can't grow without bound.
     pub const MAX_STEPS: usize = 500;
 
+    /// How much memory the steps that can be undone may hold, by their
+    /// [`bytes`](Transaction::bytes); past it the oldest are forgotten, as past
+    /// [`MAX_STEPS`](Self::MAX_STEPS). A step of its own is in the order of kilobytes, so
+    /// this binds only where steps change tens of thousands of records: the import of a big
+    /// file, or an edit of all of it. The newest step is never forgotten for its size, so
+    /// such a step stays undoable until another step comes after it.
+    pub const MAX_BYTES: usize = 64 << 20;
+
+    /// A history with a smaller byte budget, to test it with small steps.
+    #[cfg(test)]
+    fn with_max_bytes(max_bytes: usize) -> Self {
+        Self {
+            max_bytes,
+            ..Self::default()
+        }
+    }
+
     /// Record a committed transaction. Empty transactions are dropped.
     pub fn push(&mut self, tx: Transaction) {
         if !tx.is_empty() {
+            self.undo_bytes += tx.bytes;
             self.undo.push(tx);
             self.recorded += 1;
             self.redo.clear();
-            if self.undo.len() > Self::MAX_STEPS {
-                let extra = self.undo.len() - Self::MAX_STEPS;
-                self.undo.drain(..extra);
-            }
+            self.trim();
         }
+    }
+
+    /// Forget the oldest steps past [`MAX_STEPS`](Self::MAX_STEPS), then the oldest while
+    /// the stack holds more than its byte budget, keeping the newest.
+    fn trim(&mut self) {
+        let mut extra = self.undo.len().saturating_sub(Self::MAX_STEPS);
+        let mut bytes: usize = self.undo[..extra].iter().map(|tx| tx.bytes).sum();
+        while self.undo_bytes - bytes > self.max_bytes && self.undo.len() - extra > 1 {
+            bytes += self.undo[extra].bytes;
+            extra += 1;
+        }
+        if extra > 0 {
+            self.undo.drain(..extra);
+            self.undo_bytes -= bytes;
+        }
+    }
+
+    /// The memory the steps that can be undone hold, by their
+    /// [`bytes`](Transaction::bytes).
+    pub fn bytes(&self) -> usize {
+        self.undo_bytes
     }
 
     /// Append a transaction's changes to the most recent undo step (so they undo together).
@@ -885,30 +999,45 @@ impl History {
         self.redo.clear();
         match self.undo.last_mut() {
             Some(last) => {
+                let was = last.bytes;
                 for (key, before, after) in tx.changes {
                     match last.changes.iter_mut().find(|(k, ..)| *k == key) {
-                        Some(existing) => existing.2 = after,
-                        None => last.changes.push((key, before, after)),
+                        Some(existing) => {
+                            last.bytes = last.bytes - change_bytes(&None, &existing.2)
+                                + change_bytes(&None, &after);
+                            existing.2 = after;
+                        }
+                        None => {
+                            last.bytes += change_bytes(&before, &after);
+                            last.changes.push((key, before, after));
+                        }
                     }
                 }
+                self.undo_bytes = self.undo_bytes - was + last.bytes;
             }
             None => {
+                self.undo_bytes += tx.bytes;
                 self.undo.push(tx);
                 self.recorded += 1;
             }
         }
+        self.trim();
     }
 
     /// Take the most recent undo step off the stack without undoing it, to amend it (see
     /// [`Document::reopen`]) and [`put_back`](Self::put_back).
     pub fn take_last(&mut self) -> Option<Transaction> {
-        self.undo.pop()
+        let tx = self.undo.pop()?;
+        self.undo_bytes -= tx.bytes;
+        Some(tx)
     }
 
     /// Put back the step [`take_last`](Self::take_last) took: still the same one step, with
     /// the redo stack as it was.
     pub fn put_back(&mut self, tx: Transaction) {
+        self.undo_bytes += tx.bytes;
         self.undo.push(tx);
+        self.trim();
     }
 
     pub fn can_undo(&self) -> bool {
@@ -931,6 +1060,7 @@ impl History {
         let Some(tx) = self.undo.pop() else {
             return false;
         };
+        self.undo_bytes -= tx.bytes;
         doc.apply(&tx, false);
         self.redo.push(tx);
         true
@@ -941,6 +1071,7 @@ impl History {
             return false;
         };
         doc.apply(&tx, true);
+        self.undo_bytes += tx.bytes;
         self.undo.push(tx);
         true
     }
@@ -948,6 +1079,7 @@ impl History {
     pub fn clear(&mut self) {
         self.undo.clear();
         self.redo.clear();
+        self.undo_bytes = 0;
     }
 
     /// Forget the most recent redo step: a step just undone that must not come back on
@@ -981,8 +1113,10 @@ impl History {
             return;
         }
         let mut steps = self.undo.split_off(self.undo.len() - n);
+        self.undo_bytes -= steps.iter().map(|tx| tx.bytes).sum::<usize>();
         let mut first = steps.remove(0);
         first.label = label.to_owned();
+        self.undo_bytes += first.bytes;
         self.undo.push(first);
         for tx in steps {
             self.merge_into_last(tx);
@@ -994,9 +1128,152 @@ impl History {
     pub fn discard_last(&mut self, n: usize, doc: &mut Document) {
         for _ in 0..n {
             if let Some(tx) = self.undo.pop() {
+                self.undo_bytes -= tx.bytes;
                 doc.apply(&tx, false);
                 self.recorded = self.recorded.saturating_sub(1);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod history_tests {
+    use super::*;
+
+    /// A step that adds `points` points, labelled `label`.
+    fn step(doc: &mut Document, points: usize, label: &str) -> Transaction {
+        doc.begin();
+        for k in 0..points {
+            doc.add_point(DVec2::new(k as f64, 0.0));
+        }
+        doc.commit(label)
+    }
+
+    /// The undo stack's labels, oldest first, read by undoing everything and redoing it.
+    fn labels(history: &mut History, doc: &mut Document) -> Vec<String> {
+        let mut out = Vec::new();
+        while let Some(label) = history.undo_label() {
+            out.push(label.to_owned());
+            history.undo(doc);
+        }
+        while history.redo(doc) {}
+        out.reverse();
+        out
+    }
+
+    #[test]
+    fn a_steps_bytes_grow_with_what_it_changed() {
+        let mut doc = Document::new();
+        let small = step(&mut doc, 10, "Small");
+        let big = step(&mut doc, 1000, "Big");
+        assert!(small.bytes() > 0);
+        assert!(
+            big.bytes() > 50 * small.bytes(),
+            "{} {}",
+            big.bytes(),
+            small.bytes()
+        );
+    }
+
+    /// Past the byte budget the oldest steps go first; the newest stays even when it alone
+    /// is over the budget (the import of a big file, while it is the only step).
+    #[test]
+    fn the_byte_budget_forgets_the_oldest_steps_first() {
+        let mut doc = Document::new();
+        let unit = step(&mut Document::new(), 10, "").bytes();
+        let mut history = History::with_max_bytes(unit * 5 / 2);
+        for label in ["A", "B", "C", "D"] {
+            let tx = step(&mut doc, 10, label);
+            history.push(tx);
+        }
+        assert_eq!(labels(&mut history, &mut doc), ["C", "D"]);
+        assert_eq!(history.bytes(), 2 * unit);
+
+        // One step over the budget on its own: it is all that is left, and it undoes.
+        let big = step(&mut doc, 100, "Import");
+        assert!(big.bytes() > history.max_bytes);
+        let len = doc.len();
+        history.push(big);
+        assert_eq!(labels(&mut history, &mut doc), ["Import"]);
+        assert!(history.undo(&mut doc));
+        assert_eq!(doc.len(), len - 100);
+        assert!(history.redo(&mut doc));
+        assert_eq!(doc.len(), len);
+
+        // The next step makes it the oldest, and over the budget it goes.
+        let tx = step(&mut doc, 10, "E");
+        history.push(tx);
+        assert_eq!(labels(&mut history, &mut doc), ["E"]);
+        assert_eq!(history.bytes(), unit);
+        assert_eq!(
+            history.recorded(),
+            6,
+            "forgotten steps still count as recorded"
+        );
+    }
+
+    /// Small steps never reach the budget: the 500-step rule still forgets the oldest.
+    #[test]
+    fn the_step_count_rule_still_holds_under_the_budget() {
+        let mut doc = Document::new();
+        let mut history = History::default();
+        for k in 0..History::MAX_STEPS + 5 {
+            let tx = step(&mut doc, 1, &format!("{k}"));
+            history.push(tx);
+        }
+        assert!(history.bytes() < History::MAX_BYTES);
+        assert_eq!(history.undo_depth(), History::MAX_STEPS);
+        assert_eq!(
+            history.undo_label(),
+            Some(&*format!("{}", History::MAX_STEPS + 4))
+        );
+        let mut undone = 0;
+        while history.undo(&mut doc) {
+            undone += 1;
+        }
+        assert_eq!(undone, History::MAX_STEPS);
+        assert_eq!(history.bytes(), 0);
+    }
+
+    /// The count is kept, not walked: it follows steps squashed, merged, taken off and put
+    /// back, undone, redone and discarded.
+    #[test]
+    fn the_byte_count_follows_every_change_to_the_stack() {
+        let mut doc = Document::new();
+        let mut history = History::default();
+        let sum = |h: &History| h.undo.iter().map(Transaction::bytes).sum::<usize>();
+        for label in ["A", "B", "C"] {
+            let tx = step(&mut doc, 10, label);
+            history.push(tx);
+        }
+        let three = history.bytes();
+        assert_eq!(three, sum(&history));
+        history.squash_last(2, "B+C");
+        assert_eq!(history.bytes(), sum(&history));
+        assert_eq!(
+            history.bytes(),
+            three,
+            "distinct records: nothing merged away"
+        );
+        // A change merged into the last step: a key it had (its after replaced) and a new one.
+        let id = doc.iter().map(|(id, _)| id).max().unwrap();
+        doc.begin();
+        doc.set_point(id, DVec2::new(5.0, 5.0)).unwrap();
+        doc.add_point(DVec2::new(9.0, 9.0));
+        let tx = doc.commit("More");
+        history.merge_into_last(tx);
+        assert_eq!(history.bytes(), sum(&history));
+        let last = history.take_last().unwrap();
+        assert_eq!(history.bytes(), sum(&history));
+        history.put_back(last);
+        assert_eq!(history.bytes(), sum(&history));
+        history.undo(&mut doc);
+        assert_eq!(history.bytes(), sum(&history));
+        history.redo(&mut doc);
+        assert_eq!(history.bytes(), sum(&history));
+        history.discard_last(1, &mut doc);
+        assert_eq!(history.bytes(), sum(&history));
+        history.clear();
+        assert_eq!(history.bytes(), 0);
     }
 }

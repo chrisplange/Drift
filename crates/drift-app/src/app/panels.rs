@@ -698,6 +698,65 @@ impl DriftApp {
         );
     }
 
+    /// Pick the relations that conflict (#305): their geometry is selected and their rows in
+    /// the Relations list show picked, so the one to delete or change is in front of you.
+    pub(crate) fn select_conflicts(&mut self, now: f64) {
+        self.abort_operation();
+        let ed = &self.drawing.editor;
+        let conflicts: Vec<ConstraintId> = ed
+            .analysis()
+            .conflicts
+            .iter()
+            .copied()
+            .filter(|id| ed.doc.constraint(*id).is_some())
+            .collect();
+        if conflicts.is_empty() {
+            self.set_status(
+                "The sketch doesn't solve, but no relation is to blame on its own".into(),
+                false,
+                now,
+            );
+            return;
+        }
+        let geometry = conflicts
+            .iter()
+            .filter_map(|id| ed.doc.constraint(*id))
+            .flat_map(|c| c.entities())
+            .collect();
+        if self.tool.kind() != ToolKind::Select {
+            self.set_tool(ToolKind::Select);
+        }
+        let ed = &mut self.drawing.editor;
+        ed.selection = geometry;
+        ed.selected_instances.clear();
+        ed.selected_midpoints.clear();
+        ed.annotation_picks.clear();
+        ed.selected_annotation = None;
+        self.drawing.selected_constraint = None;
+        // (Inside a block or group being edited, only its own.)
+        self.drawing.editor.retain_in_scope();
+        let n = conflicts.len();
+        self.drawing.picked_relations = Some((conflicts, self.drawing.editor.selection.clone()));
+        self.show_panel(crate::dock::Panel::Inspector);
+        self.set_status(
+            format!(
+                "Picked {n} conflicting relation{}: delete or change one in the Relations list",
+                if n == 1 { "" } else { "s" }
+            ),
+            false,
+            now,
+        );
+    }
+
+    /// The relations the conflicts pill picked, while the selection it made stands (any other
+    /// pick ends it).
+    pub(crate) fn picked_relations(&self) -> &[ConstraintId] {
+        match &self.drawing.picked_relations {
+            Some((ids, made)) if *made == self.drawing.editor.selection => ids,
+            _ => &[],
+        }
+    }
+
     /// Zoom so that 100% is life size on a 96 dpi screen, about the middle of the canvas.
     pub(crate) fn zoom_to_percent(&mut self, percent: f64) {
         let target = percent / 100.0 * 96.0 / drift_core::units::MM_PER_INCH;
@@ -1306,6 +1365,8 @@ impl DriftApp {
             return;
         }
         let conflicts = ed.analysis().conflicts.clone();
+        let redundant = ed.analysis().redundant.clone();
+        let picked = self.picked_relations().to_vec();
         let everything = ed.selection.is_empty() && ed.selected_midpoints.is_empty();
         theme::section(
             ui,
@@ -1337,22 +1398,37 @@ impl DriftApp {
         const MAX_ROWS: usize = 100;
         let hidden_rows = constraints.len().saturating_sub(MAX_ROWS);
         for (id, c) in constraints.iter().take(MAX_ROWS) {
+            // (Filled in under a picked row once its size is known.)
+            let backdrop = ui.painter().add(egui::Shape::Noop);
             let row = ui.horizontal(|ui| {
                 let mut name = egui::RichText::new(constraint_label(&ed.doc, c));
                 if conflicts.contains(id) {
                     name = name.color(ui.visuals().error_fg_color);
                 }
+                let is_redundant = redundant.contains(id);
                 let label = ui
                     .allocate_ui_with_layout(
                         egui::vec2(100.0, 22.0),
                         egui::Layout::left_to_right(egui::Align::Center),
                         |ui| {
                             ui.set_min_width(100.0);
-                            ui.add(
-                                egui::Label::new(name)
-                                    .sense(egui::Sense::click())
-                                    .truncate(),
-                            )
+                            ui.spacing_mut().item_spacing.x = 4.0;
+                            // A redundant one's marker takes the end of the name's column,
+                            // so the values stay in line.
+                            let width = if is_redundant { 82.0 } else { 100.0 };
+                            let label = ui
+                                .allocate_ui(egui::vec2(width, 22.0), |ui| {
+                                    ui.add(
+                                        egui::Label::new(name)
+                                            .sense(egui::Sense::click())
+                                            .truncate(),
+                                    )
+                                })
+                                .inner;
+                            if is_redundant {
+                                redundant_marker(ui);
+                            }
+                            label
                         },
                     )
                     .inner
@@ -1439,6 +1515,16 @@ impl DriftApp {
             });
             // A hairline between rows.
             let r = row.response.rect;
+            if picked.contains(id) {
+                ui.painter().set(
+                    backdrop,
+                    egui::epaint::RectShape::filled(
+                        r.expand2(egui::vec2(3.0, 1.0)),
+                        3.0,
+                        ui.visuals().selection.bg_fill.gamma_multiply(0.35),
+                    ),
+                );
+            }
             ui.painter().line_segment(
                 [
                     r.left_bottom() + egui::vec2(0.0, 3.0),
@@ -1565,7 +1651,8 @@ impl DriftApp {
                     if !self.drawing.editor.doc.is_empty() {
                         let analysis = self.drawing.editor.analysis();
                         let dark = ui.visuals().dark_mode;
-                        let (text, color) = if !analysis.converged {
+                        let conflicting = !analysis.converged;
+                        let (text, color) = if conflicting {
                             (
                                 format!("{} conflicting", analysis.conflicts.len()),
                                 ui.visuals().error_fg_color,
@@ -1578,9 +1665,31 @@ impl DriftApp {
                                 theme::under_color(dark),
                             )
                         };
-                        theme::pill(ui, &text, color).on_hover_text(
-                            "Degrees of freedom: how much the sketch can still move",
-                        );
+                        let pill = theme::pill(ui, &text, color);
+                        if conflicting {
+                            // Like the overlaps pill: a click picks them (#305).
+                            let click = ui
+                                .interact(
+                                    pill.rect,
+                                    ui.id().with("conflicts"),
+                                    egui::Sense::click(),
+                                )
+                                .on_hover_text(
+                                    "Relations and dimensions that can't all hold at once. \
+                                     Click to pick them; delete or change one in the Relations \
+                                     list to free the sketch.",
+                                );
+                            click.widget_info(|| {
+                                egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &text)
+                            });
+                            if click.clicked() {
+                                self.select_conflicts(_now);
+                            }
+                        } else {
+                            pill.on_hover_text(
+                                "Degrees of freedom: how much the sketch can still move",
+                            );
+                        }
                     }
                     // Curves drawn on top of others, and block copies stacked on another copy
                     // (#264): a warning that selects them when clicked. (Curves aren't
@@ -1883,6 +1992,23 @@ impl DriftApp {
             });
         }
     }
+}
+
+/// The marker on a redundant relation's row (#305): an equals sign, already implied.
+fn redundant_marker(ui: &mut egui::Ui) {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
+    let color = egui::Color32::from_rgb(0xff, 0x9f, 0x0a);
+    let c = rect.center();
+    for dy in [-2.0, 2.0] {
+        ui.painter().line_segment(
+            [c + egui::vec2(-4.0, dy), c + egui::vec2(4.0, dy)],
+            egui::Stroke::new(1.5, color),
+        );
+    }
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "Redundant"));
+    response.on_hover_text(
+        "Redundant: already implied by the others. Deleting it leaves the sketch as it is.",
+    );
 }
 
 #[cfg(test)]

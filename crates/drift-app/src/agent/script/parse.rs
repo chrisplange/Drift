@@ -1463,7 +1463,10 @@ fn statement(line: &Line) -> R<Statement> {
             loop {
                 p.eat_sym(',');
                 match p.word_at(0) {
-                    Some(w) if w != "base" && !is_keyword(w) => of.push(p.path("a shape")?),
+                    // (`base` with nothing after it is a shape's name.)
+                    Some(w) if (w != "base" || p.peek_at(1).is_none()) && !is_keyword(w) => {
+                        of.push(p.path("a shape")?)
+                    }
                     _ => break,
                 }
             }

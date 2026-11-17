@@ -1234,3 +1234,58 @@ fn a_later_script_places_and_explodes_by_the_drawings_names_and_ids() {
     run(&mut s, &format!("explode {copy}"));
     assert_eq!(s.editor.doc.instances().count(), 1, "c1 is left");
 }
+
+#[test]
+fn block_review_cases() {
+    // A shape named `base` at the end of the list is a shape.
+    assert!(matches!(
+        stmt("block lamp of shade, base"),
+        Stmt::Block { of, base: None, .. } if of.len() == 2
+    ));
+
+    let mut s = Session::new();
+    for (script, says) in [
+        (
+            "rect r 1 m x 1 m at 0,0\nblock b of r.south\nhorizontal r.south".to_owned(),
+            "`r.south` became part of block b on line 2",
+        ),
+        (
+            format!("{CHAIR}block chair of seat, back\nplace c1 seat at 0,0"),
+            "`seat` became part of block chair on line 3",
+        ),
+        (format!("{CHAIR}block b2 of seat"), "looks like an id"),
+        (
+            format!("{CHAIR}block chair of seat\nplace i5 chair at 0,0"),
+            "looks like an id",
+        ),
+        (
+            format!("{CHAIR}block chair of seat, back\nhorizontal chair.copy"),
+            "`chair.copy` is a block copy",
+        ),
+    ] {
+        let e = run_err(&mut s, &script);
+        let text = e["error"].as_str().unwrap();
+        assert!(text.contains(says), "{script}\n{text}");
+    }
+
+    // A part taken into a block leaves no stale ids in the names.
+    let v = run(&mut s, "rect r 1 m x 1 m at 0,0\nblock b of r.south");
+    assert!(v["names"].get("r.south").is_none(), "{}", v["names"]);
+    assert!(v["names"]["r.north"].is_string(), "{}", v["names"]);
+
+    // A name that went into a block can be used again for something new.
+    let mut s = Session::new();
+    run(
+        &mut s,
+        &format!("{CHAIR}block chair of seat, back\npoint seat at 3 m,0"),
+    );
+
+    // One curve exploded by name is still listed as c1[1].
+    let mut s = Session::new();
+    let v = run(
+        &mut s,
+        "line seat from 0,0 to 500,0\nblock chair of seat\nplace c1 chair at 1 m,0\nexplode c1",
+    );
+    assert!(v["names"]["c1[1]"].is_string(), "{}", v["names"]);
+    assert!(v["names"].get("c1").is_none(), "{}", v["names"]);
+}

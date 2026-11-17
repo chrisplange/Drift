@@ -284,15 +284,24 @@ impl Checker<'_> {
         ScriptError::new(st.line, &st.source, msg).span(span.0, span.1)
     }
 
+    /// The shape (or part) that went into a block that `p` is, or is a part of.
+    fn gone_as(&self, p: &Path) -> Option<(&str, &str, usize)> {
+        let text = p.to_string();
+        self.gone.iter().find_map(|(g, (block, line))| {
+            let hit = text == *g
+                || text
+                    .strip_prefix(g.as_str())
+                    .is_some_and(|rest| rest.starts_with('.') || rest.starts_with('['));
+            hit.then_some((g.as_str(), block.as_str(), *line))
+        })
+    }
+
     fn path(&self, st: &Statement, p: &Path) -> Result<(), ScriptError> {
-        if let Some((block, line)) = self.gone.get(&p.root) {
+        if let Some((what, block, line)) = self.gone_as(p) {
             return Err(Self::err(
                 st,
                 p.span,
-                format!(
-                    "`{}` became part of block {block} on line {line}, so it is gone",
-                    p.root
-                ),
+                format!("`{what}` became part of block {block} on line {line}, so it is gone"),
             )
             .hint(format!(
                 "place a copy of {block} and explode it to get curves back"
@@ -369,7 +378,12 @@ impl Checker<'_> {
                 format!("`{name}` is already the {} on line {line}", k.noun()),
             ));
         }
-        if is_entity_id(name) {
+        let block_like = |c: char| {
+            name.len() > 1 && name.starts_with(c) && name[1..].chars().all(|d| d.is_ascii_digit())
+        };
+        if is_entity_id(name)
+            || (matches!(kind, Kind::Block | Kind::Copy) && (block_like('b') || block_like('i')))
+        {
             return Err(Self::err(
                 st,
                 span,
@@ -383,6 +397,7 @@ impl Checker<'_> {
                 format!("`{name}` is already a variable"),
             ));
         }
+        self.gone.remove(name);
         self.kinds.insert(name.to_owned(), (kind, st.line));
         Ok(())
     }
@@ -396,6 +411,9 @@ impl Checker<'_> {
         exists: impl Fn(&str) -> bool,
         what: &str,
     ) -> Result<(), ScriptError> {
+        if self.gone_as(p).is_some() {
+            return self.path(st, p);
+        }
         match self.kinds.get(&p.root) {
             Some((k, line)) if k != kind => Err(Self::err(
                 st,
@@ -407,7 +425,6 @@ impl Checker<'_> {
                 ),
             )),
             Some(_) => self.path(st, p),
-            None if self.gone.contains_key(&p.root) => self.path(st, p),
             None if exists(&p.root) => {
                 if p.parts.is_empty() {
                     Ok(())
@@ -735,9 +752,13 @@ impl Checker<'_> {
                 }
                 self.define(st, name, Kind::Block)?;
                 for p in of {
-                    if p.parts.is_empty() && self.kinds.contains_key(&p.root) {
-                        self.gone.insert(p.root.clone(), (name.clone(), st.line));
+                    if !self.kinds.contains_key(&p.root) {
+                        continue;
                     }
+                    if p.parts.is_empty() {
+                        self.kinds.remove(&p.root);
+                    }
+                    self.gone.insert(p.to_string(), (name.clone(), st.line));
                 }
             }
             Stmt::Place {

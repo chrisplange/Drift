@@ -104,6 +104,8 @@ pub(super) struct Runner<'s> {
     trim_areas: HashMap<String, Value>,
     /// The curves trims cut off a name's curves: they are that name's too.
     trimmed_into: HashMap<String, Vec<EntityId>>,
+    /// Copies exploded by name: their curves are listed `name[1]` … even when there is one.
+    exploded: BTreeSet<String>,
 }
 
 fn eid(v: &Value) -> R<EntityId> {
@@ -510,6 +512,7 @@ impl<'s> Runner<'s> {
             sources: HashMap::new(),
             trim_areas: HashMap::new(),
             trimmed_into: HashMap::new(),
+            exploded: BTreeSet::new(),
         }
     }
 
@@ -738,7 +741,7 @@ impl<'s> Runner<'s> {
             }
             return Err(format!("`{}` isn't defined", path.root));
         };
-        if let Some(m) = Self::not_geometry(&path.root, obj) {
+        if let Some(m) = Self::not_geometry(path, obj) {
             return Err(m);
         }
         let parts = path.parts.as_slice();
@@ -863,8 +866,12 @@ impl<'s> Runner<'s> {
     }
 
     /// Why a block or a copy can't stand where geometry is wanted.
-    fn not_geometry(name: &str, obj: &Obj) -> Option<String> {
+    fn not_geometry(path: &Path, obj: &Obj) -> Option<String> {
+        let name = &path.root;
         match obj {
+            Obj::Block { .. } if !path.parts.is_empty() => Some(format!(
+                "`{path}` is a block copy: copies take no relations or dimensions, so explode it                  first (`explode {path}`) to work with its curves"
+            )),
             Obj::Block { .. } => Some(format!(
                 "`{name}` is a block, not geometry: place a copy of it, or explode one"
             )),
@@ -932,7 +939,7 @@ impl<'s> Runner<'s> {
         if path.parts.is_empty()
             && let Some(obj) = self.objs.get(&path.root)
         {
-            if let Some(m) = Self::not_geometry(&path.root, obj) {
+            if let Some(m) = Self::not_geometry(path, obj) {
                 return Err(m);
             }
             return Ok(self.obj_curves(obj));
@@ -1375,6 +1382,7 @@ impl<'s> Runner<'s> {
                 }
                 if let Some(name) = name {
                     self.define(&name, ln, Obj::Used(created));
+                    self.exploded.insert(name);
                 }
             }
         }
@@ -2535,8 +2543,12 @@ impl<'s> Runner<'s> {
     /// Every name with its parts, as ids.
     pub fn names(&self) -> Map<String, Value> {
         let mut out = Map::new();
+        // (Ids a `block` took into a block, through a part or a shared curve, are gone.)
+        let doc = self.doc();
         let mut put = |k: String, id: EntityId| {
-            out.insert(k, s(id));
+            if doc.contains(id) {
+                out.insert(k, s(id));
+            }
         };
         let mut names: Vec<(&String, &Obj)> = self.objs.iter().collect();
         names.sort_by_key(|(n, _)| self.lines_of.get(*n).copied().unwrap_or(0));
@@ -2625,7 +2637,9 @@ impl<'s> Runner<'s> {
                     }
                 }
                 Obj::Used(ids) => {
-                    if let [one] = ids.as_slice() {
+                    if let [one] = ids.as_slice()
+                        && !self.exploded.contains(name)
+                    {
                         put(name.clone(), *one);
                     } else {
                         for (k, id) in ids.iter().enumerate() {

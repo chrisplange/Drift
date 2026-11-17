@@ -826,8 +826,17 @@ pub fn regenerate_moved_with(
     }
     report.aliased = g.out.aliased.clone();
     let around: Vec<&super::Node> = nodes.iter().filter(|n| touches(n, &s1)).collect();
+    // The corners of nodes no moved segment meets: worked out again only for the faces
+    // between them and the moved ones, they must come out where they are (#297).
+    let mut still: HashSet<CornerKey> = HashSet::new();
     for n in &around {
-        g.solve(n);
+        if touches(n, &s0) {
+            g.solve(n);
+        } else {
+            let before: HashSet<CornerKey> = g.out.points.keys().copied().collect();
+            g.solve(n);
+            still.extend(g.out.points.keys().filter(|k| !before.contains(k)));
+        }
     }
     g.check_openings();
     if !g.out.notices.is_empty() {
@@ -889,6 +898,15 @@ pub fn regenerate_moved_with(
     for (key, (owner, _)) in &g.out.points {
         let id = corner(*key)?;
         if doc.wall(*owner)?.made.points.get(key) != Some(&id) {
+            return None;
+        }
+    }
+    // A corner of a node nothing moved at that comes out elsewhere was placed by more than
+    // its node: a segment shorter than its thickness beyond it (whose faces join at their
+    // own crossing, in `pieces`) that this partial run doesn't see. Make it all again.
+    for key in &still {
+        let (_, at) = *g.out.points.get(key)?;
+        if doc.point(*old_points.get(key)?).ok()?.distance(at) > g.eps {
             return None;
         }
     }

@@ -646,3 +646,103 @@ fn mem_torture() {
     println!("end {} MB", used_mb());
     assert!(failures.is_empty(), "{failures:#?}");
 }
+
+/// A big imported drawing left parked after one more edit (#307): what the process holds
+/// for it, and how much of that the undo history is. Imports the file `DRIFT_BIG` names as
+/// geometry, makes one small edit, then reads the memory committed, before and after
+/// clearing the history; undo and redo of the edit must still work.
+///
+/// `DRIFT_BIG=<file> cargo test --release -p drift-app mem_parked_big -- --ignored --nocapture`
+#[test]
+#[ignore = "big-drawing memory probe: needs DRIFT_BIG and a GPU"]
+fn mem_parked_big() {
+    let Ok(path) = std::env::var("DRIFT_BIG") else {
+        return;
+    };
+    let Some(mut h) = harness() else { return };
+    let h = &mut h;
+    for _ in 0..3 {
+        frame(h);
+    }
+    let baseline = used_mb();
+    println!("\nbaseline {baseline} MB");
+    let name = std::path::Path::new(&path)
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let bytes = std::fs::read(&path).unwrap();
+    h.state_mut().begin_import(
+        &name,
+        bytes,
+        Some(crate::app::import_ui::ImportAs::Geometry),
+        0.0,
+    );
+    let mut pending = h.state_mut().pending_import.take().expect("pending");
+    h.state_mut().finish_import(&mut pending, 0.0);
+    drop(pending);
+    for _ in 0..10 {
+        frame(h);
+    }
+    let curves = {
+        let ed = &h.state().drawing.editor;
+        ed.doc.iter().filter(|(_, e)| !e.kind.is_point()).count()
+    };
+    let imported = used_mb();
+    println!(
+        "imported {curves} curves: +{} MB, {} undo steps holding {} MB",
+        imported - baseline,
+        h.state().drawing.editor.history.undo_depth(),
+        h.state().drawing.editor.history.bytes() >> 20
+    );
+
+    // One small edit after the import: a line.
+    let len = h.state().drawing.editor.doc.len();
+    {
+        let ed = &mut h.state_mut().drawing.editor;
+        ed.doc.begin();
+        let a = ed.doc.add_point(DVec2::new(0.0, 0.0));
+        let b = ed.doc.add_point(DVec2::new(100.0, 0.0));
+        let _ = ed.doc.add_line(a, b);
+        ed.commit("Line");
+    }
+    for _ in 0..10 {
+        frame(h);
+    }
+    let parked = used_mb();
+    let depth = h.state().drawing.editor.history.undo_depth();
+    println!(
+        "parked after one edit: +{} MB, {depth} undo steps holding {} MB",
+        parked - baseline,
+        h.state().drawing.editor.history.bytes() >> 20
+    );
+
+    // Undo and redo of the edit still work.
+    h.state_mut().undo();
+    frame(h);
+    assert_eq!(
+        h.state().drawing.editor.doc.len(),
+        len,
+        "undo removes the line"
+    );
+    h.state_mut().redo();
+    frame(h);
+    assert_eq!(
+        h.state().drawing.editor.doc.len(),
+        len + 3,
+        "redo puts it back"
+    );
+    println!("undo and redo of the edit: ok");
+
+    // What the history held: the memory freed by clearing it.
+    h.state_mut().drawing.editor.history.clear();
+    for _ in 0..3 {
+        frame(h);
+    }
+    let cleared = used_mb();
+    println!(
+        "history cleared: +{} MB (the history held {} MB)",
+        cleared - baseline,
+        parked.saturating_sub(cleared)
+    );
+}

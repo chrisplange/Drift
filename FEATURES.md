@@ -60,6 +60,7 @@ Seeded 2026-11-09 from the command registry, importers/exporters, agent schema a
 - Sparse incremental solver. `crates/drift-solver/src/lib.rs`
 - Automatic relations while drawing. `crates/drift-core/src/rules.rs`
 - Status colours: free, fully defined, conflicting. `crates/drift-app/src/commands.rs`
+- The red "N conflicting" pill picks the conflicting relations; redundant ones are marked in the Relations list. `crates/drift-app/src/app/panels.rs`
 - Clear relations / clear dimensions on the selection. `crates/drift-app/src/commands.rs`
 - Variables and unit-aware expressions; Parameters panel. `crates/drift-core/src/expr.rs`
 - Metric and imperial units. `crates/drift-core/src/units.rs`

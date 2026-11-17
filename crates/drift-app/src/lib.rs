@@ -286,6 +286,12 @@ struct Drawing {
     focus_dimension: Option<ConstraintId>,
     /// A relation or dimension picked on the canvas (Delete removes it).
     selected_constraint: Option<ConstraintId>,
+    /// The conflicting relations the status bar's pill picked, and the selection it made for
+    /// them (#305): their rows in the Relations list show picked while that selection stands.
+    picked_relations: Option<(
+        Vec<ConstraintId>,
+        std::collections::BTreeSet<drift_core::EntityId>,
+    )>,
     hovered_constraint: Option<ConstraintId>,
     /// A dimension label being dragged, and the grab offset from the label (world units).
     label_drag: Option<(ConstraintId, DVec2)>,
@@ -478,6 +484,7 @@ impl Drawing {
             dimension_text: Default::default(),
             focus_dimension: None,
             selected_constraint: None,
+            picked_relations: None,
             hovered_constraint: None,
             label_drag: None,
             ext_drag: None,

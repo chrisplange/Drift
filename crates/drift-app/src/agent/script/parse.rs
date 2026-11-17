@@ -298,6 +298,27 @@ pub(super) enum Stmt {
         inside: bool,
         by: Path,
     },
+    /// `block chair of seat, back base seat.sw`: the shapes become a block named `chair`,
+    /// and a copy of it takes their place.
+    Block {
+        name: String,
+        of: Vec<Path>,
+        base: Option<Pos>,
+    },
+    /// `place c1 chair at 2 m,0 angle 90 mirror scale 0.5`: a copy of a block.
+    Place {
+        name: String,
+        block: Path,
+        at: Pos,
+        angle: Option<Expr>,
+        mirror: bool,
+        scale: Option<Expr>,
+    },
+    /// `explode c1 [to group]`: a copy becomes ordinary curves (or a group of them).
+    Explode {
+        copy: Path,
+        to_group: bool,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -412,6 +433,9 @@ pub(super) const STATEMENTS: &[&str] = &[
     "fill",
     "use",
     "trim",
+    "block",
+    "place",
+    "explode",
 ];
 
 type R<T> = Result<T, ScriptError>;
@@ -1431,6 +1455,61 @@ fn statement(line: &Line) -> R<Statement> {
             let by = p.path("the closed shape to trim by, like `bay`")?;
             p.done("write it as: trim slab inside bay (or outside)")?;
             Stmt::Trim { what, inside, by }
+        }
+        "block" => {
+            let name = p.name("a name for the block")?;
+            p.expect("of", "`of` and the shapes to make it of")?;
+            let mut of = vec![p.path("a shape")?];
+            loop {
+                p.eat_sym(',');
+                match p.word_at(0) {
+                    // (`base` with nothing after it is a shape's name.)
+                    Some(w) if (w != "base" || p.peek_at(1).is_none()) && !is_keyword(w) => {
+                        of.push(p.path("a shape")?)
+                    }
+                    _ => break,
+                }
+            }
+            let base = if p.eat("base") { Some(p.pos()?) } else { None };
+            p.done("write it as: block chair of seat, back [base seat.sw]")?;
+            Stmt::Block { name, of, base }
+        }
+        "place" => {
+            let name = p.name("a name for the copy")?;
+            let block = p.path("the block to place, like `chair`")?;
+            p.expect("at", "`at` and where the block's base point goes")?;
+            let at = p.pos()?;
+            let (mut angle, mut mirror, mut scale) = (None, false, None);
+            while p.k < p.toks.len() {
+                if p.eat("angle") {
+                    angle = Some(p.expr("an angle")?);
+                } else if p.eat("mirror") {
+                    mirror = true;
+                } else if p.eat("scale") {
+                    scale = Some(p.expr("a scale, like `0.5`")?);
+                } else {
+                    p.done("a copy takes: angle 90, mirror, scale 0.5")?;
+                }
+            }
+            Stmt::Place {
+                name,
+                block,
+                at,
+                angle,
+                mirror,
+                scale,
+            }
+        }
+        "explode" => {
+            let copy = p.path("a block copy, like `c1`")?;
+            let to_group = if p.eat("to") {
+                p.expect("group", "`group`, as in: explode c1 to group")?;
+                true
+            } else {
+                false
+            };
+            p.done("write it as: explode c1 [to group]")?;
+            Stmt::Explode { copy, to_group }
         }
         "use" => {
             let ids = p.paths("an id like `e12`")?;

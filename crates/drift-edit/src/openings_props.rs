@@ -13,7 +13,7 @@ use drift_geom::walls::regenerate;
 use proptest::prelude::*;
 
 use crate::editor::Editor;
-use crate::walls_props::{Network, config, drawing, network};
+use crate::walls_props::{Network, drawing, network};
 
 const LIGHT: u32 = 16;
 
@@ -36,6 +36,15 @@ fn openings_props_place_some() {
     assert!(PLACED.load(std::sync::atomic::Ordering::Relaxed) >= 2);
 }
 const HEAVY: u32 = 300;
+
+/// Case counts, failures saved (`proptest-regressions/openings_props.txt`): #297 had only
+/// the CI log's minimal input to go on.
+fn config(cases: u32) -> ProptestConfig {
+    ProptestConfig {
+        cases,
+        ..ProptestConfig::default()
+    }
+}
 
 /// Openings to try: (wall, segment, place along it as a fraction, width).
 type Tries = Vec<(usize, usize, f64, f64)>;
@@ -281,8 +290,6 @@ proptest! {
     #![proptest_config(config(LIGHT))]
 
     #[test]
-    // Flaky: a drag frame can differ from a full rebuild (quarantine.yml runs it).
-    #[ignore = "flaky: #297"]
     fn openings_props_follow_edits_and_match_a_full_rebuild(
         net in network(),
         tries in tries(),
@@ -327,5 +334,74 @@ fn openings_props_stay_within_their_segment() {
         net,
         vec![(2, 5, 0.825_049_468_269_934_7, 789.436_478_530_000_3)],
         Vec::new(),
+    );
+}
+
+/// #297's case from CI (macOS, 10-28, no seed saved): a small network with tees, openings
+/// on it, then two drags; a drag frame had the walls differ from a full rebuild.
+#[test]
+fn openings_props_drag_frames_on_tees_match_a_full_rebuild() {
+    let net = Network {
+        n: 4,
+        runs: vec![
+            (vec![(2, 0), (1, 0), (1, 1)], 2, 2),
+            (vec![(2, 2), (1, 2)], 2, 2),
+            (vec![(1, 1), (1, 2)], 0, 0),
+        ],
+        jitter: vec![
+            (0.0, 0.0),
+            (0.0, 0.0),
+            (0.0, 0.0),
+            (0.0, 0.0),
+            (-5.027_836_472_113_933_5, 0.0),
+            (3.493_565_711_369_83, 0.0),
+            (-49.450_520_340_536_35, -27.860_348_273_283_574),
+            (59.916_527_306_837_26, -15.807_462_248_867_43),
+            (-53.902_508_197_716_934, 57.336_391_937_677_66),
+            (52.903_258_350_381, -44.311_950_651_020_034),
+            (42.824_945_632_698_48, -35.747_237_728_835_94),
+            (-59.250_875_443_477_796, 51.876_776_426_411_425),
+            (40.100_268_157_542_25, -32.751_060_279_883_8),
+            (-20.848_553_636_702_33, 11.005_152_505_867_734),
+            (-24.568_933_406_822_293, 58.418_708_307_813_13),
+            (-6.273_959_637_609_511, -46.305_837_106_219_08),
+        ],
+    };
+    openings_follow_edits(
+        net,
+        vec![
+            (3, 4, 0.561_092_961_638_964_9, 397.750_980_919_768_3),
+            (1, 3, 0.589_583_028_634_484_2, 465.033_834_404_050_7),
+            (5, 3, 0.763_494_639_680_153_2, 343.402_003_050_430_5),
+            (6, 0, 0.563_971_659_471_209_3, 538.581_280_998_729_9),
+            (7, 4, 0.360_715_746_399_458_64, 650.227_380_349_620_4),
+        ],
+        vec![
+            (0, 0, (75.753_102_938_878_13, -215.419_079_058_450_08)),
+            (1, 0, (-69.027_075_420_461_81, 120.647_155_671_746_87)),
+        ],
+    );
+}
+
+/// #297's other case from CI (macOS, 11-12, no seed saved): two openings as wide as each
+/// other tried at the same place on one straight wall, then one slid by nothing. The room
+/// left beside the first was exactly the second's width, and the clamp of its first jamb
+/// panicked on bounds crossed by round-off (min 1.0000000000000004, max 1.0).
+#[test]
+fn openings_props_a_slide_into_room_just_its_width() {
+    let net = Network {
+        n: 2,
+        runs: vec![(vec![(0, 0), (0, 1)], 0, 0)],
+        jitter: vec![
+            (-35.749_427_270_876_59, -9.454_712_910_197_165),
+            (32.109_942_761_316_79, -18.213_426_252_098_348),
+            (0.0, 0.0),
+            (0.0, 0.0),
+        ],
+    };
+    openings_follow_edits(
+        net,
+        vec![(0, 0, 0.1, 300.0), (0, 0, 0.1, 300.0)],
+        vec![(1, 8, (0.0, 0.0))],
     );
 }

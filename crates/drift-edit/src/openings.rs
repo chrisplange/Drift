@@ -69,6 +69,13 @@ pub struct Host {
     pub thickness: f64,
 }
 
+/// An opening's first jamb `u0`, kept in the room `(a, b)` an opening `width` wide has. The
+/// room is at least `width` long, but `b - width` can still land a hair below `a` by
+/// round-off (room exactly its width, #297): then the jamb goes at `a`, never a panic.
+fn first_jamb_in(u0: f64, (a, b): (f64, f64), width: f64) -> f64 {
+    u0.clamp(a, (b - width).max(a))
+}
+
 impl Editor {
     // ----- The tool bar's settings ------------------------------------------------------------
 
@@ -208,7 +215,7 @@ impl Editor {
         but: Option<OpeningId>,
     ) -> Option<f64> {
         let (a, b) = self.opening_room(w, seg, u, width, but)?;
-        Some((u - width / 2.0).clamp(a, b - width))
+        Some(first_jamb_in(u - width / 2.0, (a, b), width))
     }
 
     // ----- Picking ------------------------------------------------------------------------
@@ -496,7 +503,7 @@ impl Editor {
             ));
             return None;
         };
-        let u0 = u0.clamp(a, b - width);
+        let u0 = first_jamb_in(u0, (a, b), width);
         let len = self.opening_host(w, seg)?.seg.length();
         let mut op = Opening::new(w, seg, width);
         // Measured from the nearer end of the segment.
@@ -586,7 +593,7 @@ impl Editor {
         else {
             return false;
         };
-        let u0 = u0.clamp(a, b - op.width);
+        let u0 = first_jamb_in(u0, (a, b), op.width);
         let mut moved = op.clone();
         moved.at = match op.at {
             OpeningAt::From {
@@ -880,5 +887,25 @@ impl Editor {
             push(c, j);
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod jamb_tests {
+    use super::first_jamb_in;
+
+    #[test]
+    fn a_first_jamb_stays_in_room_whose_bounds_cross_by_round_off() {
+        // #297's bounds: the room is the width long, but `b - width` rounds below `a`.
+        let (a, width) = (1.000_000_000_000_000_4, 300.0);
+        let b = 301.0;
+        assert!(b - width < a);
+        for u0 in [0.0, a, 1.0, 2.0, 1e9] {
+            assert_eq!(first_jamb_in(u0, (a, b), width), a);
+        }
+        // Room to spare: clamped into it as before.
+        assert_eq!(first_jamb_in(-5.0, (10.0, 400.0), 300.0), 10.0);
+        assert_eq!(first_jamb_in(50.0, (10.0, 400.0), 300.0), 50.0);
+        assert_eq!(first_jamb_in(500.0, (10.0, 400.0), 300.0), 100.0);
     }
 }

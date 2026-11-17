@@ -8,7 +8,6 @@ name: Quarantine
 #   #409  mutated_dxf_never_panics                                  Windows
 #   #368  large_import_commits_quickly,
 #         many_filled_rectangles_made_shapes_commit_quickly         Windows (busy machine)
-#   #296  faces_move_with_the_drawing                               Windows, macOS
 
 on:
   schedule:
@@ -43,7 +42,3 @@ jobs:
           cargo test -p drift-edit --lib -- --ignored --exact
           fill_tests::large_import_commits_quickly
           fill_tests::many_filled_rectangles_made_shapes_commit_quickly
-
-      - name: "#296 faces_move_with_the_drawing"
-        if: ${{ !cancelled() && runner.os != 'Linux' }}
-        run: cargo test -p drift-geom --test regions_props -- --ignored --exact faces_move_with_the_drawing

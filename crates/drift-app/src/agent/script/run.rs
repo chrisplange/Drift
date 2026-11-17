@@ -58,6 +58,14 @@ enum Obj {
     /// Each copy's curves; the first is the original.
     Array(Vec<Vec<EntityId>>),
     Used(Vec<EntityId>),
+    /// A block (`b1`) and the copy that took its shapes' place (`i3`), until that copy is
+    /// exploded.
+    Block {
+        id: String,
+        copy: Option<String>,
+    },
+    /// A copy of a block (`i5`).
+    Copy(String),
 }
 
 /// What a name with its parts refers to.
@@ -167,6 +175,15 @@ fn paths_of(st: &Stmt) -> Vec<&Path> {
             out.push(what);
             out.push(by);
         }
+        Stmt::Block { of, base, .. } => {
+            out.extend(of);
+            out.extend(base.as_ref().and_then(pos));
+        }
+        Stmt::Place { block, at, .. } => {
+            out.push(block);
+            out.extend(pos(at));
+        }
+        Stmt::Explode { copy, .. } => out.push(copy),
         Stmt::Let { .. } | Stmt::Layer { .. } | Stmt::On(_) => {}
     }
     out
@@ -432,6 +449,38 @@ pub(super) fn meant(st: &Stmt) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+        Stmt::Block { name, of, base } => format!(
+            "make a block {name} of {}{}, and put a copy of it in their place",
+            of.iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", "),
+            base.as_ref()
+                .map(|b| format!(" with its base point at {}", pos_text(b)))
+                .unwrap_or_default()
+        ),
+        Stmt::Place {
+            name,
+            block,
+            at,
+            angle,
+            mirror,
+            scale,
+        } => format!(
+            "a copy {name} of block {block} with its base point at {}{}{}{}",
+            pos_text(at),
+            opt(angle, "turned"),
+            if *mirror { ", mirrored" } else { "" },
+            opt(scale, "scale"),
+        ),
+        Stmt::Explode { copy, to_group } => format!(
+            "explode {copy} into {}",
+            if *to_group {
+                "a group of curves"
+            } else {
+                "curves"
+            }
+        ),
     }
 }
 
@@ -673,6 +722,7 @@ impl<'s> Runner<'s> {
             Obj::Grid(axes) => axes.iter().map(|(_, l)| *l).collect(),
             Obj::Array(copies) => copies.concat(),
             Obj::Used(ids) => ids.clone(),
+            Obj::Block { .. } | Obj::Copy(_) => Vec::new(),
         }
     }
 
@@ -688,6 +738,9 @@ impl<'s> Runner<'s> {
             }
             return Err(format!("`{}` isn't defined", path.root));
         };
+        if let Some(m) = Self::not_geometry(&path.root, obj) {
+            return Err(m);
+        }
         let parts = path.parts.as_slice();
         fn field(p: Option<&Part>) -> Option<&str> {
             match p {
@@ -809,6 +862,20 @@ impl<'s> Runner<'s> {
         })
     }
 
+    /// Why a block or a copy can't stand where geometry is wanted.
+    fn not_geometry(name: &str, obj: &Obj) -> Option<String> {
+        match obj {
+            Obj::Block { .. } => Some(format!(
+                "`{name}` is a block, not geometry: place a copy of it, or explode one"
+            )),
+            Obj::Copy(_) => Some(format!(
+                "`{name}` is a block copy: copies take no relations or dimensions, so explode it \
+                 first (`explode {name}`) to work with its curves"
+            )),
+            _ => None,
+        }
+    }
+
     fn kind_words(t: &Target) -> &'static str {
         match t {
             Target::Point(_) => "a point",
@@ -865,6 +932,9 @@ impl<'s> Runner<'s> {
         if path.parts.is_empty()
             && let Some(obj) = self.objs.get(&path.root)
         {
+            if let Some(m) = Self::not_geometry(&path.root, obj) {
+                return Err(m);
+            }
             return Ok(self.obj_curves(obj));
         }
         Ok(match self.resolve(path)? {
@@ -1252,7 +1322,104 @@ impl<'s> Runner<'s> {
                     .collect::<R<_>>()?;
                 self.define(name, ln, Obj::Used(found));
             }
+            Stmt::Block { name, of, base } => self.block(ln, name, of, base.as_ref())?,
+            Stmt::Place {
+                name,
+                block,
+                at,
+                angle,
+                mirror,
+                scale,
+            } => {
+                let block_id = match self.objs.get(&block.root) {
+                    Some(Obj::Block { id, .. }) => id.clone(),
+                    _ => block.root.clone(),
+                };
+                let mut args = json!({
+                    "op": "place",
+                    "block": block_id,
+                    "at": xy(self.xy(at)?),
+                    "mirror": mirror,
+                });
+                if let Some(a) = angle {
+                    args["angle"] = json!(self.eval(a, VKind::Angle)?);
+                }
+                if let Some(sc) = scale {
+                    args["scale"] = json!(self.eval(sc, VKind::Number)?);
+                }
+                let v = self.exec("blocks", args)?;
+                let copy = v["copy"]["id"]
+                    .as_str()
+                    .ok_or("the copy could not be placed")?
+                    .to_owned();
+                self.define(name, ln, Obj::Copy(copy));
+            }
+            Stmt::Explode { copy, to_group } => {
+                let (id, name) = match (self.objs.get(&copy.root), copy.parts.as_slice()) {
+                    (Some(Obj::Copy(id)), []) => (id.clone(), Some(copy.root.clone())),
+                    (Some(Obj::Block { copy: c, .. }), [Part::Field(f)]) if f == "copy" => (
+                        c.clone()
+                            .ok_or_else(|| format!("{copy} was already exploded"))?,
+                        None,
+                    ),
+                    (Some(_), _) => return Err(format!("`{copy}` isn't a block copy")),
+                    (None, _) => (copy.root.clone(), None),
+                };
+                let v = self.exec(
+                    "blocks",
+                    json!({ "op": "explode", "copies": [id], "to_group": to_group }),
+                )?;
+                let created = ids(&v["created"])?;
+                if let Some(Obj::Block { copy: c, .. }) = self.objs.get_mut(&copy.root) {
+                    *c = None;
+                }
+                if let Some(name) = name {
+                    self.define(&name, ln, Obj::Used(created));
+                }
+            }
         }
+        Ok(())
+    }
+
+    /// `block name of shapes [base p]`: Make block, by the `blocks` tool.
+    fn block(&mut self, ln: usize, name: &str, of: &[Path], base: Option<&Pos>) -> R<()> {
+        let mut curves = Vec::new();
+        for p in of {
+            curves.extend(self.curves_now(p)?);
+        }
+        curves.sort_unstable();
+        curves.dedup();
+        if curves.is_empty() {
+            return Err(format!(
+                "{} has no curves to make a block of",
+                of.iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        let mut args = json!({
+            "op": "make",
+            "ids": curves.iter().map(|c| s(*c)).collect::<Vec<_>>(),
+            "name": name,
+        });
+        if let Some(b) = base {
+            args["base"] = xy(self.xy(b)?);
+        }
+        let v = self.exec("blocks", args)?;
+        let id = v["block"]
+            .as_str()
+            .ok_or("the block could not be made")?
+            .to_owned();
+        let copy = v["copy"]["id"].as_str().map(str::to_owned);
+        // (Its shapes are gone: a block's curves aren't the drawing's.)
+        for p in of {
+            if p.parts.is_empty() {
+                self.objs.remove(&p.root);
+                self.trimmed_into.remove(&p.root);
+            }
+        }
+        self.define(name, ln, Obj::Block { id, copy });
         Ok(())
     }
 
@@ -2466,6 +2633,21 @@ impl<'s> Runner<'s> {
                         }
                     }
                 }
+                Obj::Block { .. } | Obj::Copy(_) => {}
+            }
+        }
+        for (name, obj) in &self.objs {
+            match obj {
+                Obj::Block { id, copy } => {
+                    out.insert(name.clone(), json!(id));
+                    if let Some(c) = copy {
+                        out.insert(format!("{name}.copy"), json!(c));
+                    }
+                }
+                Obj::Copy(id) => {
+                    out.insert(name.clone(), json!(id));
+                }
+                _ => {}
             }
         }
         out

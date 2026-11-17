@@ -51,9 +51,13 @@ Positions are rough (`0,0` or `(W, 0)`) or a named point (`bed.ne`); the solver 
   hatch bed.walls ANSI31 [scale 2] [angle 45]   |   fill bed #f0f0f0 [opacity 0.5]
   trim slab inside bay   |   trim bay outside slab    (removes what lies inside/outside the closed shape, cut by it alone; union: trim A inside B, trim B inside A; notch A minus B: trim A inside B, trim B outside A; overlap: outside, outside)
   use e12 as north_wall    (existing geometry; raw ids like e12 also work wherever a name does)
+  block chair of seat, back [base seat.start]    (Make block: the shapes become block `chair` and a copy, `chair.copy`, takes their place; the shapes' names are gone)
+  place c1 chair at 2 m,0 [angle 90] [mirror] [scale 0.5]    (a copy of a block made here or in the drawing, by name or id b1; copies take no relations or dimensions)
+  explode c1 [to group]    (c1 becomes curves c1[1] … that later lines can use; also explode chair.copy or an id like i5)
 Parts: line .start .end; rect/room .south .east .north .west (.bottom .right .top .left), .sw .se .ne .nw, .width .depth, .inside; \
 room with walls also .outer.<side or corner>, .walls; wall .left .right .start .end (.axis when centred); door .start .end (jambs); \
-grid .A .3; circle .center; arc .center .start .end; array [1] … [n] (then .center); polyline [k] .start .end. \
+grid .A .3; circle .center; arc .center .start .end; array [1] … [n] (then .center); polyline [k] .start .end; \
+block .copy; an exploded copy [1] … [n]. \
 After an opening, a face is in pieces: bed.south[2]. y is up: north is +y.
 The result lists every name's id, each line's reading, the unit plain numbers were read in (`plain_numbers_in`), skipped relations, warnings (such as a door only millimetres wide), room areas and the sketch's degrees of freedom. \
 Errors give the line, what it was read as, and change nothing.";

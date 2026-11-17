@@ -231,6 +231,35 @@ use e40, e41 as stair       # stair[1], stair[2]
 
 Raw ids such as `e12` also work wherever a name does.
 
+### Blocks
+
+```
+line seat from 0,0 to 500,0
+line back from 0,0 to 0,800
+block chair of seat, back base seat.start   # Make block
+place c1 chair at 2 m,0 angle 90            # a copy, turned 90°
+place c2 chair at 4 m,0 mirror scale 0.5    # mirrored left to right, half size
+explode c1                                  # c1 is curves again: c1[1], c1[2]
+dim c1[1] ref                               # later lines can use them
+```
+
+`block` makes a block of the shapes, as **Make block** does: they become the block, and a
+copy of it takes their place (`chair.copy`). Their names are gone after that line, and their
+relations and dimensions go with them: a block's curves are rigid. `base` is the point a copy
+is placed by; without it, it's the middle of the shapes. The block is named after the
+statement, so `chair` must not already be a block in the drawing.
+
+`place` puts a copy with the block's base point `at` a position or a named point, turned
+`angle` counter-clockwise, mirrored left to right (before turning) and `scale` times its
+size. The block can be one made earlier in the script, or one in the drawing, by its name
+or id (`place c3 Door at 0,0`, `place c3 b2 at 0,0`).
+
+A copy isn't solved and takes no relations or dimensions. Its name is for `explode`:
+`explode c1` turns it back into ordinary curves, and from then on `c1[1]`, `c1[2]`, … name
+those curves, so later lines can tie them in. `explode c1 to group` makes them a group
+named after the block. `explode chair.copy` explodes the copy `block` left in place, and an
+id from an earlier script (`explode i5`) works too. The block stays, for other copies.
+
 ## Names and parts
 
 | Made by | Parts |
@@ -245,6 +274,8 @@ Raw ids such as `e12` also work wherever a name does.
 | `circle` | `.center` |
 | `arc` | `.center`, `.start`, `.end` |
 | `array` | `[1]` (the original) … `[n]`; a circle's copies have `.center`: `cols[3].center` |
+| `block` | `.copy` (the copy that took the shapes' place), for `explode` only |
+| `place` | none: the copy's name is for `explode`; once exploded, `[1]` … `[n]` are its curves |
 
 North is up (+y). A side runs from corner to corner counter-clockwise: south from `sw` to
 `se`, north from `ne` to `nw`. Once an opening cuts a side, the pieces are `bed.south[1]`,

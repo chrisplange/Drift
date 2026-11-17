@@ -30,6 +30,12 @@ pub(super) enum Kind {
     Array(Box<Kind>, Option<usize>),
     /// Existing entities, by id (`use`); their kind is known only when the script runs.
     Used(usize),
+    /// A block (`block`); `.copy` is the copy that took its shapes' place.
+    Block,
+    /// A copy of a block (`place`).
+    Copy,
+    /// The curves an exploded copy became; how many is known only when the script runs.
+    Exploded,
 }
 
 impl Kind {
@@ -47,6 +53,9 @@ impl Kind {
             Kind::Arc => "arc",
             Kind::Array(..) => "array",
             Kind::Used(_) => "set of existing entities",
+            Kind::Block => "block",
+            Kind::Copy => "block copy",
+            Kind::Exploded => "exploded copy",
         }
     }
 }
@@ -60,7 +69,9 @@ const CORNERS: &[&str] = &["sw", "se", "ne", "nw"];
 pub(super) fn parts(kind: &Kind) -> Vec<String> {
     let s = |l: &[&str]| l.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
     match kind {
-        Kind::Point | Kind::Used(_) => Vec::new(),
+        Kind::Point | Kind::Used(_) | Kind::Copy => Vec::new(),
+        Kind::Block => s(&["copy"]),
+        Kind::Exploded => vec!["[1] … (its curves)".into()],
         Kind::Line => s(&["start", "end"]),
         Kind::Polyline(n) => {
             let mut v = s(&["start", "end", "inside"]);
@@ -235,6 +246,8 @@ fn check_parts(name: &str, kind: &Kind, parts: &[Part]) -> Result<(), (usize, St
             }
             check_parts(name, of, rest).map_err(|(k, m)| (k + 1, m))
         }
+        (Kind::Block, Part::Field(f)) if f == "copy" => no_more(rest),
+        (Kind::Exploded, Part::Index(_)) => no_more(rest),
         (Kind::Used(n), Part::Index(i)) if *n > 1 => {
             if *i > *n {
                 Err((
@@ -260,6 +273,10 @@ struct Checker<'a> {
     doc: &'a Document,
     kinds: HashMap<String, (Kind, usize)>,
     vars: Vec<String>,
+    /// Shapes that went into a block: the block's name and its line.
+    gone: HashMap<String, (String, usize)>,
+    /// Blocks whose `.copy` was exploded, and where.
+    exploded: HashMap<String, usize>,
 }
 
 impl Checker<'_> {
@@ -268,6 +285,19 @@ impl Checker<'_> {
     }
 
     fn path(&self, st: &Statement, p: &Path) -> Result<(), ScriptError> {
+        if let Some((block, line)) = self.gone.get(&p.root) {
+            return Err(Self::err(
+                st,
+                p.span,
+                format!(
+                    "`{}` became part of block {block} on line {line}, so it is gone",
+                    p.root
+                ),
+            )
+            .hint(format!(
+                "place a copy of {block} and explode it to get curves back"
+            )));
+        }
         let Some((kind, _)) = self.kinds.get(&p.root) else {
             if is_entity_id(&p.root) {
                 let id = drift_core::EntityId(p.root[1..].parse().unwrap_or(u32::MAX));
@@ -355,6 +385,53 @@ impl Checker<'_> {
         }
         self.kinds.insert(name.to_owned(), (kind, st.line));
         Ok(())
+    }
+
+    /// A name that must be of `kind`, or else an id or a name in the drawing that `exists`.
+    fn named_or_existing(
+        &self,
+        st: &Statement,
+        p: &Path,
+        kind: &Kind,
+        exists: impl Fn(&str) -> bool,
+        what: &str,
+    ) -> Result<(), ScriptError> {
+        match self.kinds.get(&p.root) {
+            Some((k, line)) if k != kind => Err(Self::err(
+                st,
+                p.span,
+                format!(
+                    "`{}` is the {} on line {line}, not {what}",
+                    p.root,
+                    k.noun()
+                ),
+            )),
+            Some(_) => self.path(st, p),
+            None if self.gone.contains_key(&p.root) => self.path(st, p),
+            None if exists(&p.root) => {
+                if p.parts.is_empty() {
+                    Ok(())
+                } else {
+                    Err(Self::err(st, p.span, format!("{} has no parts", p.root)))
+                }
+            }
+            None => {
+                let mut m = format!(
+                    "`{}` isn't {what} made in this script or in the drawing",
+                    p.root
+                );
+                if let Some(g) = closest(
+                    &p.root,
+                    self.kinds
+                        .iter()
+                        .filter(|(_, (k, _))| k == kind)
+                        .map(|(n, _)| n.as_str()),
+                ) {
+                    m.push_str(&format!(" (did you mean `{g}`?)"));
+                }
+                Err(Self::err(st, p.span, m))
+            }
+        }
     }
 
     fn statement(&mut self, st: &Statement) -> Result<(), ScriptError> {
@@ -639,6 +716,101 @@ impl Checker<'_> {
                 }
                 self.define(st, name, Kind::Used(ids.len()))?;
             }
+            Stmt::Block { name, of, base } => {
+                for p in of {
+                    self.path(st, p)?;
+                    if let Some((k @ (Kind::Block | Kind::Copy), _)) = self.kinds.get(&p.root) {
+                        return Err(Self::err(
+                            st,
+                            p.span,
+                            format!(
+                                "`{p}` is a {}: a block is made of curves, not of blocks",
+                                k.noun()
+                            ),
+                        ));
+                    }
+                }
+                if let Some(b) = base {
+                    self.pos(st, b)?;
+                }
+                self.define(st, name, Kind::Block)?;
+                for p in of {
+                    if p.parts.is_empty() && self.kinds.contains_key(&p.root) {
+                        self.gone.insert(p.root.clone(), (name.clone(), st.line));
+                    }
+                }
+            }
+            Stmt::Place {
+                name,
+                block,
+                at,
+                angle,
+                scale,
+                ..
+            } => {
+                let doc = self.doc;
+                self.named_or_existing(
+                    st,
+                    block,
+                    &Kind::Block,
+                    |b| crate::agent::args::block(doc, &serde_json::json!(b)).is_ok(),
+                    "a block",
+                )?;
+                if !block.parts.is_empty() {
+                    return Err(Self::err(
+                        st,
+                        block.span,
+                        format!("place a block by its name alone: `{}`", block.root),
+                    ));
+                }
+                self.pos(st, at)?;
+                for e in [angle, scale].into_iter().flatten() {
+                    self.expr(st, e)?;
+                }
+                self.define(st, name, Kind::Copy)?;
+            }
+            Stmt::Explode { copy, .. } => {
+                if let Some((Kind::Block, _)) = self.kinds.get(&copy.root) {
+                    self.path(st, copy)?;
+                    if copy.parts.is_empty() {
+                        return Err(Self::err(
+                            st,
+                            copy.span,
+                            format!(
+                                "`{}` is a block; explode a copy of it, or `{}.copy` (the copy that took its shapes' place)",
+                                copy.root, copy.root
+                            ),
+                        ));
+                    }
+                    if let Some(line) = self.exploded.insert(copy.root.clone(), st.line) {
+                        return Err(Self::err(
+                            st,
+                            copy.span,
+                            format!("`{copy}` was already exploded on line {line}"),
+                        ));
+                    }
+                    return Ok(());
+                }
+                if let Some((Kind::Exploded, line)) = self.kinds.get(&copy.root) {
+                    return Err(Self::err(
+                        st,
+                        copy.span,
+                        format!("`{}` was already exploded on line {line}", copy.root),
+                    ));
+                }
+                let doc = self.doc;
+                self.named_or_existing(
+                    st,
+                    copy,
+                    &Kind::Copy,
+                    |i| crate::agent::args::instance(doc, &serde_json::json!(i)).is_ok(),
+                    "a block copy",
+                )?;
+                if self.kinds.contains_key(&copy.root) {
+                    self.kinds
+                        .insert(copy.root.clone(), (Kind::Exploded, st.line));
+                }
+            }
         }
         Ok(())
     }
@@ -650,6 +822,8 @@ pub(super) fn check(statements: &[Statement], doc: &Document) -> Result<(), Scri
         doc,
         kinds: HashMap::new(),
         vars: Vec::new(),
+        gone: HashMap::new(),
+        exploded: HashMap::new(),
     };
     for st in statements {
         c.statement(st)?;

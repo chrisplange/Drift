@@ -128,8 +128,6 @@ proptest! {
 
     /// Translating, rotating and scaling the drawing gives the same faces, moved.
     #[test]
-    // Flaky: a far move scaled to a tenth can change the faces (quarantine.yml runs it).
-    #[ignore = "flaky: #296"]
     fn faces_move_with_the_drawing(
         shapes in drawing(),
         dx in -1e4f64..1e4,
@@ -285,4 +283,89 @@ fn faces_move_with_the_drawing_scaled_far_out() {
     let (before, after) = (regions(&shapes), regions(&moved));
     assert_eq!(before.len(), 4);
     assert_eq!(after.len(), 4, "{:?}", areas(&after));
+}
+
+fn line(a: (f64, f64), b: (f64, f64)) -> Shape {
+    Shape::Line {
+        a: v(a.0, a.1),
+        b: v(b.0, b.1),
+    }
+}
+
+/// Rectangles (x0, y0, x1, y1) as their four lines.
+fn rect_lines(rects: &[(f64, f64, f64, f64)]) -> Vec<Shape> {
+    let mut out = Vec::new();
+    for &(x0, y0, x1, y1) in rects {
+        out.extend([
+            line((x0, y0), (x1, y0)),
+            line((x1, y0), (x1, y1)),
+            line((x1, y1), (x0, y1)),
+            line((x0, y1), (x0, y0)),
+        ]);
+    }
+    out
+}
+
+/// `faces_move_with_the_drawing`'s check for one case.
+fn faces_move(shapes: &[Shape], (dx, dy): (f64, f64), turn: f64, scale: f64) {
+    let rot = DVec2::from_angle(turn);
+    let f = |p: DVec2| rot.rotate(p * scale) + v(dx, dy);
+    let moved: Vec<Shape> = shapes
+        .iter()
+        .map(|s| map_shape(s, &f, scale, turn))
+        .collect();
+    let (before, after) = (regions(shapes), regions(&moved));
+    if let Err(e) = same_topology(&before, &after, scale * scale, 1e-6) {
+        panic!("{e}: {:?} vs {:?}", areas(&before), areas(&after));
+    }
+}
+
+/// #296, macOS 10-27 (fixed by 6ee0c70): a unit square crossed by a circle, scaled to a
+/// tenth and moved 9.2 m. The lens the circle cuts off the square's corner, 7 µm² once
+/// scaled, was under the noise area (a share of the extent squared) and dropped.
+#[test]
+fn faces_move_with_the_drawing_a_lens_scaled_far_out() {
+    let mut shapes = rect_lines(&[(10.0, 7.0, 11.0, 8.0)]);
+    shapes.push(Shape::Circle {
+        center: v(8.0, 6.0),
+        radius: 2.31,
+    });
+    faces_move(&shapes, (9231.328700152235, 0.0), 0.0, 0.1);
+}
+
+/// #296, windows 10-28 (fixed by #251): an 11 x 6 rectangle with two strips on its top
+/// edge, turned, scaled to a tenth and moved 13 m. A vertex took a crossing's rounded
+/// position over a line's exact end, and an area moved by 2e-6 of itself.
+#[test]
+fn faces_move_with_the_drawing_strips_on_an_edge_scaled_far_out() {
+    let shapes = rect_lines(&[
+        (1.0, 0.0, 12.0, 6.0),
+        (8.0, 6.0, 12.0, 7.0),
+        (10.0, 6.0, 12.0, 7.0),
+    ]);
+    faces_move(
+        &shapes,
+        (9681.691036982069, -8878.581438568512),
+        1.042397586869725,
+        0.1,
+    );
+}
+
+/// #296, found replaying it on 11-17 (`lines_along`): two rectangles' sides along x = 10
+/// read 1.7e-12 off parallel once turned and moved 9.6 m, just past `line_line`'s parallel
+/// rule, so they "crossed" 4 µm along their overlap; the crossing became the vertex where a
+/// third rectangle's edge meets them and four faces' areas moved by 1e-5 of themselves.
+#[test]
+fn faces_move_with_the_drawing_sides_along_each_other_turned_far_out() {
+    let shapes = rect_lines(&[
+        (0.0, 4.0, 11.0, 9.0),
+        (5.0, 8.0, 10.0, 10.0),
+        (10.0, 7.0, 11.0, 11.0),
+    ]);
+    faces_move(
+        &shapes,
+        (8966.334124691253, 3431.518468741685),
+        0.14276619127482942,
+        0.2645802296426471,
+    );
 }

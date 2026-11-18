@@ -209,7 +209,7 @@ error says which line, how Drift read it, and how to fix it, and nothing changes
 write scripts yourself too: ask the assistant to run one, or to show you the script it used.
 
 Script walls are drawn as face lines with dimensions, and doors as gaps with jambs, not the
-walls and doors of the Wall and Door / window tools. To make them Drift walls, pick them and
+walls and doors of the Wall and Opening tools. To make them Drift walls, pick them and
 choose **Build → Walls from lines** ([Walls](../tutorials/14-walls.md)).
 
 ## Example prompts

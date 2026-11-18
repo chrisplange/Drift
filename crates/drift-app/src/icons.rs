@@ -21,7 +21,7 @@ pub enum Glyph {
     Eye,
     Lock,
     Unlock,
-    /// Constraint status colours: a curve with a fixed and a free end.
+    /// Sketch status colors: a curve with a fixed and a free end.
     Status,
     /// End points always shown: a line with dots at its ends.
     Endpoints,
@@ -766,9 +766,10 @@ pub fn tool_row_sized(
     let dark = ui.visuals().dark_mode;
     let accent = crate::theme::accent(dark);
     let n = crate::theme::neutrals(dark);
-    // The current tool: a faint accent tint, its icon in the accent.
+    // The current tool: a neutral raised fill, its icon in the accent and the accent bar
+    // (the accent marks one thing, not a whole block).
     let (bg, fg, weak) = if selected {
-        (Some(crate::theme::accent_soft(dark)), n.text, n.secondary)
+        (Some(n.control), n.text, n.secondary)
     } else if response.is_pointer_button_down_on() {
         (
             Some(ui.visuals().widgets.active.bg_fill),

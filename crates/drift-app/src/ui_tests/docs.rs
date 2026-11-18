@@ -993,7 +993,7 @@ fn checker() {
         ed.commit("Outline");
     }
     h.run();
-    h.get_by_label("Edit").click();
+    h.get_by_label("Modify").click();
     h.run();
     h.get_by_label("Check sketch…").click();
     h.run();

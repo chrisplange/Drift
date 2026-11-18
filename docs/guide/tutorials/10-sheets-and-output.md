@@ -269,7 +269,7 @@ When what one is tied to goes, it goes the way the model's own do, in the same u
 
 Undo brings the geometry or view back with everything that was tied to it.
 
-Centre marks, callouts, ordinates and section and elevation marks are drawn in the model.
+Center marks, callouts, ordinates and section and elevation marks are drawn in the model.
 
 #### Bringing the model's notes and dimensions onto a sheet
 

@@ -465,6 +465,25 @@ PR 0 puts the bar in `scripts/solver-bar/` (its README runs all seven). **Known 
   where it is about behaviour).
 - **Risk:** medium. A relation added the other way round to its current geometry must still
   flip it once, which needs a test of its own.
+- **Tried for #344 on 2026-11-18, parked** (branch `claude/pair-way-round-344`; the tests are
+  `drag_props::ways_round`, its pins ignored as `known failure: #344`, its guards live). Two
+  builds, each cross-examined by an Opus and a Fable reviewer:
+  - Directed rows (the angle error from `atan2` of the directed cross/dot pair, one root) in
+    every solve, with the way round frozen at a drag's start: commits main accepts were refused
+    (a line could not pass through zero length), and a drag whose pointer needed the other way
+    round let the dragged point give way to wherever the solve's path went.
+  - Directed rows in drags only, with a stop rule (a step that asks a frozen pair to turn goes
+    only if the dragged points land and the pair's lines come out moved along whole): commits
+    were as on main and the issue's drags kept their pairs, but drags were still flung, by
+    halved steps the rule never judged, by moves about a fixed corner, and by pairs the solve
+    turned through what the drag pulled along. Drags where no pair turned also ended
+    elsewhere (a hanging line stretched from 20 to 45 mm; a linkage jumping 31.5° for 2.5° of
+    pointer): where an unlandable or under-determined solve ends depends on its path, and the
+    angle error's path differs from the sine's.
+  - Lesson: each frame solves from the pointer's translated start, often 180° from the frozen
+    root, so no test of one step can tell a pair kept by a move along from one kept by a fling.
+    #344 needs PR 5's path from the drag's start; the directed row, `freeze` and the measured
+    bar (heavy seeds, censuses) on that branch are inputs to it.
 
 ### PR 5: a drag is a continuation
 - A drag frame follows the path t ∈ [0, 1] from the drag's start offset to the pointer:

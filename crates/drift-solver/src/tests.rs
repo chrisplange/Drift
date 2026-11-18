@@ -2503,3 +2503,39 @@ fn a_solve_meets_its_rows_to_the_bar_of_the_part_it_leaves() {
     assert!(solved(&mut doc).converged);
     assert!(analyze(&doc).converged);
 }
+
+/// Guard (#344): a commit meets a Parallel, Perpendicular or Angle pair either way round.
+/// Relation census case 221: adding Horizontal to a line kept square to another takes the line
+/// through zero length and out the other way. A first attempt at #344 kept commits' pairs the
+/// way round the start lay, and this solve ran to its cap.
+#[test]
+fn a_commit_may_turn_a_pair_round() {
+    let mut doc = Document::new();
+    let p1 = doc.add_point(v(-3.552713678800501e-15, 0.0));
+    let p2 = doc.add_point(v(17.320508075688775, 9.999999999999998));
+    let p3 = doc.add_point(v(17.32050807568877, 30.0));
+    let p4 = doc.add_point(v(-1.9980084500925877, 15.176380902050418));
+    let p5 = doc.add_point(v(0.5901820009326197, 24.8356391649411));
+    let p6 = doc.add_point(v(12.320508075688767, 21.339745962155614));
+    let arc = doc.add_arc(p2, p3, p1).unwrap();
+    let l8 = doc.add_line(p2, p4).unwrap();
+    let l9 = doc.add_line(p4, p5).unwrap();
+    doc.add_line(p3, p6).unwrap();
+    for c in [
+        Constraint::Perpendicular { a: l8, b: l9 },
+        Constraint::PointOnCurve {
+            point: p4,
+            curve: arc,
+        },
+        Constraint::Distance {
+            a: p3,
+            b: p6,
+            value: 10.000000000000002,
+        },
+        Constraint::Horizontal { line: l9 },
+    ] {
+        doc.add_constraint(c).unwrap();
+    }
+    let report = solved(&mut doc);
+    assert!(report.converged, "{report:?}");
+}

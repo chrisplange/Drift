@@ -1908,6 +1908,13 @@ fn a_carried_step_that_does_not_finish_whole_goes_in_halves() {
         rels: vec![Rel::Midpoint(4, 0)],
     };
     let offset = p(-17.99131491084439, 0.0);
+    // (Without the line holding the dragged midpoint carried along, the move doesn't go: the
+    // test of `carry_holding` carrying a part and landing.)
+    let mut without = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    without.ed.drag_no_carry = true;
+    let ids = [without.curves[2]];
+    let run = drag(&mut without, &ids, offset, 1).unwrap();
+    assert!(run.refused > 0, "the move went without the carry");
     let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
     let ids = [built.curves[2]];
     let run = drag(&mut built, &ids, offset, 1).unwrap();
@@ -3202,3 +3209,4 @@ mod census;
 mod held_shapes;
 mod relation_census;
 mod seeds;
+mod ways_round;

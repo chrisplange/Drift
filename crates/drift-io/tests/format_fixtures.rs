@@ -374,6 +374,22 @@ fn every_fixture_opens_keeps_its_contents_and_saves_as_current() {
             assert_eq!(doc.rules(), DrawingRules::default(), "{}", at("rules"));
             assert!(meta.older_rules, "{}", at("older rules"));
         }
+        // Figures (45.1): the room's four sides in one, the bench in another.
+        let has_figures = (version, addition) >= (45, 1);
+        let mut figures: std::collections::BTreeMap<drift_core::FigureId, usize> =
+            Default::default();
+        for (_, e) in doc.iter() {
+            if let Some(f) = e.figure {
+                *figures.entry(f).or_default() += 1;
+            }
+        }
+        let expected: Vec<usize> = if has_figures { vec![4, 1] } else { vec![] };
+        assert_eq!(
+            figures.into_values().collect::<Vec<_>>(),
+            expected,
+            "{}",
+            at("figures")
+        );
         let stacked = doc.iter().filter(|(_, e)| e.order.is_some()).count();
         assert_eq!(stacked, usize::from(version >= 40), "{}", at("stack"));
         let underlay = doc.underlays().next().unwrap().1;
@@ -662,6 +678,11 @@ fn fixture_drawing() -> Document {
         .add_bezier(bench[0], bench[1], bench[2], bench[3])
         .unwrap();
     doc.set_entity_layer(bench, furniture).unwrap();
+    // Figures (45.1, #439): the room's sides were drawn as one shape, the bench as another.
+    for &s in &sides {
+        doc.set_figure(s, Some(drift_core::FigureId(1)));
+    }
+    doc.set_figure(bench, Some(drift_core::FigureId(2)));
     doc.add_measurement(Constraint::Distance {
         a: corners[0],
         b: corners[2],

@@ -505,6 +505,12 @@ impl Document {
 
     /// Finish recording and return the changes made since [`begin`](Self::begin).
     pub fn commit(&mut self, label: impl Into<String>) -> Transaction {
+        // New curves join their figures in their own step (not curves a restore put back).
+        if self.journal.is_some() && !std::mem::take(&mut self.restored) {
+            self.figure_new_curves();
+        }
+        self.restored = false;
+        self.unfigured_pieces.clear();
         let journal = self.journal.take().unwrap_or_default();
         let changes = journal.changes(|key| self.record(key));
         let bytes = changes.iter().map(|(_, b, a)| change_bytes(b, a)).sum();
@@ -528,13 +534,28 @@ impl Document {
                 "reopened over a document not as the step left it: {key:?}"
             );
         }
+        self.keep_figures_of(&tx);
         self.begin();
         self.journal = Some(Journal::reopened(tx));
+    }
+
+    /// The curves `tx` made in no figure stay in none when it is committed again (reopened
+    /// or replayed): its first commit already gave its curves their figures, or left them
+    /// out on purpose (a restore, the pieces of a curve in no figure).
+    fn keep_figures_of(&mut self, tx: &Transaction) {
+        for (key, before, after) in &tx.changes {
+            if let (Key::Entity(id), None, Some(Record::Entity(e))) = (key, before, after)
+                && e.figure.is_none()
+            {
+                self.unfigured_pieces.push(*id);
+            }
+        }
     }
 
     /// Make `tx`'s changes again inside the open transaction, over the document as it is now:
     /// each is recorded as a change from what it finds.
     pub fn replay(&mut self, tx: &Transaction) {
+        self.keep_figures_of(tx);
         for (key, _, after) in &tx.changes {
             self.record_touch(*key);
             self.restore(*key, after.clone());
@@ -545,6 +566,8 @@ impl Document {
 
     /// Abandon the open transaction, restoring every touched entity.
     pub fn rollback(&mut self) {
+        self.restored = false;
+        self.unfigured_pieces.clear();
         if let Some(journal) = self.journal.take() {
             for (key, before) in journal.into_befores() {
                 self.restore(key, before);

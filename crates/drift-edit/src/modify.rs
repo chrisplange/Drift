@@ -921,6 +921,7 @@ impl Editor {
                             .map_err(doc_err)?;
                         let rest = self.doc.add_line(ph, b).map_err(doc_err)?;
                         self.doc.copy_look(id, rest);
+                        self.doc.copy_figure(id, rest);
                         self.relate(Constraint::Collinear { a: id, b: rest });
                     }
                     (None, None) => unreachable!(),
@@ -969,6 +970,7 @@ impl Editor {
                             .map_err(doc_err)?;
                         let rest = self.doc.add_arc(center, ph, end).map_err(doc_err)?;
                         self.doc.copy_look(id, rest);
+                        self.doc.copy_figure(id, rest);
                         self.relate(Constraint::Equal { a: id, b: rest });
                     }
                     (None, None) => unreachable!(),
@@ -1058,6 +1060,7 @@ impl Editor {
                                 .add_ellipse_arc(center, major, minor, ph, end)
                                 .map_err(doc_err)?;
                             self.doc.copy_look(id, rest);
+                            self.doc.copy_figure(id, rest);
                         }
                         (None, None) => unreachable!(),
                     }
@@ -1116,6 +1119,7 @@ impl Editor {
                             let rest =
                                 self.doc.add_bezier(ph, c1_second, c2, b).map_err(doc_err)?;
                             self.doc.copy_look(id, rest);
+                            self.doc.copy_figure(id, rest);
                         }
                         (None, None) => unreachable!(),
                     }
@@ -1124,6 +1128,24 @@ impl Editor {
             }
             Ok(())
         })();
+        // Trimming one shape against another joins what is left of both into one figure
+        // where the trim joins them: the trimmed end taking a cutting curve's end point
+        // (#439). A cut held on the middle of a curve joins nothing yet, and nor does a
+        // cut by a curve of another kind (a construction line).
+        if result.is_ok() {
+            let style = self.doc.get(id).map(|e| e.style);
+            let mut joined: Vec<EntityId> = vec![id];
+            joined.extend(
+                lo.iter()
+                    .chain(hi.iter())
+                    .filter(|c| c.point.is_some())
+                    .filter(|c| self.doc.get(c.other).map(|e| e.style) == style)
+                    .map(|c| c.other),
+            );
+            if joined.len() > 1 {
+                self.doc.join_figures(&joined);
+            }
+        }
         // (The far piece is a new curve: it cuts as the one it came from did.)
         if cutting
             && result.is_ok()
@@ -1583,6 +1605,7 @@ impl Editor {
                         .map_err(doc_err)?;
                     let rest = self.doc.add_line(m, b).map_err(doc_err)?;
                     self.doc.copy_look(id, rest);
+                    self.doc.copy_figure(id, rest);
                     self.relate(Constraint::Collinear { a: id, b: rest });
                 }
                 EntityKind::Arc { center, start, end } => {
@@ -1598,6 +1621,7 @@ impl Editor {
                         .map_err(doc_err)?;
                     let rest = self.doc.add_arc(center, m, end).map_err(doc_err)?;
                     self.doc.copy_look(id, rest);
+                    self.doc.copy_figure(id, rest);
                     self.relate(Constraint::Equal { a: id, b: rest });
                 }
                 EntityKind::Circle { center, .. } => {
@@ -1615,6 +1639,7 @@ impl Editor {
                         .map_err(doc_err)?;
                     let rest = self.doc.add_arc(center, far, m).map_err(doc_err)?;
                     self.doc.copy_look(id, rest);
+                    self.doc.copy_figure(id, rest);
                     self.relate(Constraint::Equal { a: id, b: rest });
                 }
                 EntityKind::Ellipse {
@@ -1641,6 +1666,7 @@ impl Editor {
                         .add_ellipse_arc(center, major, minor, far, m)
                         .map_err(doc_err)?;
                     self.doc.copy_look(id, rest);
+                    self.doc.copy_figure(id, rest);
                 }
                 EntityKind::EllipseArc {
                     center,
@@ -1666,6 +1692,7 @@ impl Editor {
                         .add_ellipse_arc(center, major, minor, m, end)
                         .map_err(doc_err)?;
                     self.doc.copy_look(id, rest);
+                    self.doc.copy_figure(id, rest);
                 }
                 EntityKind::Bezier { a, c1, c2, b } => {
                     let Some(Shape::Bezier { p: whole }) = self.doc.shape(id) else {
@@ -1694,6 +1721,7 @@ impl Editor {
                     self.doc.set_point(c2, second[2]).map_err(doc_err)?;
                     let rest = self.doc.add_bezier(m, after, c2, b).map_err(doc_err)?;
                     self.doc.copy_look(id, rest);
+                    self.doc.copy_figure(id, rest);
                     self.relate(Constraint::Smooth {
                         point: m,
                         a: before,
@@ -1850,6 +1878,8 @@ impl Editor {
         let a = self.doc.add_arc(pc, s, e).map_err(doc_err)?;
         // The round takes the corner's look (construction stays construction).
         self.doc.copy_look(l1, a);
+        // and joins the two lines' shapes (#439).
+        self.doc.join_figures(&[l1, l2, a]);
         for line in [l1, l2] {
             self.relate(Constraint::Tangent { a: line, b: a });
         }
@@ -2361,6 +2391,7 @@ impl Editor {
             .map_err(|e| invalid(e.to_string()))?;
         // The cut takes the corner's look (construction stays construction).
         self.doc.copy_look(l1, cut);
+        self.doc.join_figures(&[l1, l2, cut]);
         Ok(cut)
     }
 

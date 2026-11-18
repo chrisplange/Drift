@@ -505,10 +505,12 @@ impl Document {
 
     /// Finish recording and return the changes made since [`begin`](Self::begin).
     pub fn commit(&mut self, label: impl Into<String>) -> Transaction {
-        // New curves join their figures in their own step.
-        if self.journal.is_some() {
+        // New curves join their figures in their own step (not curves a restore put back).
+        if self.journal.is_some() && !std::mem::take(&mut self.restored) {
             self.figure_new_curves();
         }
+        self.restored = false;
+        self.unfigured_pieces.clear();
         let journal = self.journal.take().unwrap_or_default();
         let changes = journal.changes(|key| self.record(key));
         let bytes = changes.iter().map(|(_, b, a)| change_bytes(b, a)).sum();
@@ -549,6 +551,8 @@ impl Document {
 
     /// Abandon the open transaction, restoring every touched entity.
     pub fn rollback(&mut self) {
+        self.restored = false;
+        self.unfigured_pieces.clear();
         if let Some(journal) = self.journal.take() {
             for (key, before) in journal.into_befores() {
                 self.restore(key, before);

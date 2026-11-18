@@ -1112,6 +1112,7 @@ struct PathRecord {
 }
 
 /// The figures, each with its curves, in order.
+#[cfg(not(feature = "demo"))]
 fn figure_records(doc: &Document) -> Vec<FigureRecord> {
     let mut figures: BTreeMap<drift_core::FigureId, Vec<String>> = BTreeMap::new();
     for (id, e) in doc.iter() {
@@ -1136,7 +1137,12 @@ fn figure_records(doc: &Document) -> Vec<FigureRecord> {
 fn insert_figures(doc: &mut Document, figures: Vec<FigureRecord>) -> Result<(), LoadError> {
     let mut seen = std::collections::HashSet::new();
     for r in figures {
-        let id = drift_core::FigureId(parse_prefixed(&r.id, 'd')?);
+        // (Ids stay well short of the largest, so new figures always have room.)
+        let id = drift_core::FigureId(
+            Some(parse_prefixed(&r.id, 'd')?)
+                .filter(|n| *n < 1 << 31)
+                .ok_or_else(|| LoadError::BadId(r.id.clone()))?,
+        );
         if !seen.insert(id) {
             return Err(LoadError::DuplicateId(r.id));
         }

@@ -317,8 +317,7 @@ impl Editor {
     /// selects a chain of walls. The chain stays on the start's layer (#267), and there is
     /// none on a hidden layer. It stays in the start's figure (#439): a shape drawn
     /// separately isn't chained in where snapping made it share corners. Curves in no figure
-    /// (from files saved before figures) chain with whatever they meet; a chain that starts
-    /// on one takes the figure of the first curve in one it reaches.
+    /// (from files saved before figures) chain with each other, as Tab always did.
     pub fn chain_of(&self, start: EntityId) -> BTreeSet<EntityId> {
         let mut chain = BTreeSet::new();
         let Some(layer) = self
@@ -340,19 +339,18 @@ impl Editor {
                 .and_then(|e| e.kind.ends())
                 .map_or_else(Vec::new, Vec::from)
         };
-        let mut figure = self.doc.figure_of(start);
+        let figure = self.doc.figure_of(start);
         let mut queue = vec![start];
         chain.insert(start);
         while let Some(c) = queue.pop() {
             for p in ends(c) {
                 for u in self.doc.users_of(p) {
-                    if chain.contains(&u) || self.is_locked(u) || !ends(u).contains(&p) {
+                    if chain.contains(&u)
+                        || self.is_locked(u)
+                        || !ends(u).contains(&p)
+                        || self.doc.figure_of(u) != figure
+                    {
                         continue;
-                    }
-                    match (figure, self.doc.figure_of(u)) {
-                        (Some(f), Some(g)) if f != g => continue,
-                        (None, Some(g)) => figure = Some(g),
-                        _ => {}
                     }
                     chain.insert(u);
                     queue.push(u);

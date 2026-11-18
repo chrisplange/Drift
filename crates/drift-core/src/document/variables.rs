@@ -86,6 +86,7 @@ impl Document {
 
     /// [`restore_from`](Self::restore_from), keeping the options if not `options`.
     pub(super) fn restore_parts(&mut self, other: &Document, options: bool) {
+        self.restored = true;
         let mut keys = self.keys();
         keys.extend(other.keys());
         if !options {

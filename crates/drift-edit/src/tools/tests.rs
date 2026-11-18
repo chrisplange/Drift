@@ -3585,13 +3585,8 @@ fn trimming_shapes_against_each_other_joins_them() {
         ed.trim_at_against(id, at, None)
             .unwrap_or_else(|e| panic!("trim {i}: {e:?}"));
         if i == 0 {
-            // One trim joins the two already.
-            let left: BTreeSet<EntityId> = a.union(&b).copied().collect();
-            assert_eq!(ed.doc.figure_of(id), ed.doc.figure_of(*b.first().unwrap()));
-            assert!(
-                left.iter()
-                    .all(|c| ed.doc.figure_of(*c) == ed.doc.figure_of(id))
-            );
+            // A cut held on the middle of the other square's side joins nothing yet.
+            assert_ne!(ed.doc.figure_of(id), ed.doc.figure_of(*b.first().unwrap()));
         }
     }
     let remains: BTreeSet<EntityId> = ed
@@ -3633,6 +3628,157 @@ fn shapes_drawn_separately_survive_save_and_reopen() {
     assert!(!text.contains(r#""figures""#));
     let ed = Editor::new(drift_io::load(&text).unwrap().0);
     assert_eq!(ed.chain_of(side), all);
+}
+
+/// A square drawn as in a file saved before figures: its sides in no figure.
+fn old_square(at: DVec2) -> (Editor, BTreeSet<EntityId>) {
+    let mut doc = Document::new();
+    let p = [v(0.0, 0.0), v(20.0, 0.0), v(20.0, 20.0), v(0.0, 20.0)].map(|c| doc.add_point(c + at));
+    let sides: BTreeSet<EntityId> = (0..4)
+        .map(|i| doc.add_line(p[i], p[(i + 1) % 4]).unwrap())
+        .collect();
+    assert!(sides.iter().all(|s| doc.figure_of(*s).is_none()));
+    (Editor::new(doc), sides)
+}
+
+/// #439 review: in a drawing from before figures, a shape drawn onto the old geometry stays
+/// separate from it, and the old curves still chain together as they did.
+#[test]
+fn a_shape_drawn_onto_an_old_drawing_stays_separate() {
+    let (mut ed, square) = old_square(v(0.0, 0.0));
+    let triangle = polyline(
+        &mut ed,
+        &[v(20.0, 0.0), v(35.0, 10.0), v(20.0, 20.0), v(20.0, 0.0)],
+    );
+    for id in &triangle {
+        assert_eq!(ed.chain_of(*id), triangle);
+    }
+    for id in &square {
+        assert_eq!(ed.chain_of(*id), square, "the old square, whichever side");
+    }
+    assert!(
+        square.iter().all(|s| ed.doc.figure_of(*s).is_none()),
+        "left as it was"
+    );
+}
+
+/// #439 review: continuing an old open path from its end takes it into the new shape.
+#[test]
+fn continuing_an_old_path_joins_it() {
+    let mut doc = Document::new();
+    let p = [v(0.0, 0.0), v(10.0, 0.0), v(10.0, 10.0)].map(|c| doc.add_point(c));
+    let old: BTreeSet<EntityId> = [
+        doc.add_line(p[0], p[1]).unwrap(),
+        doc.add_line(p[1], p[2]).unwrap(),
+    ]
+    .into();
+    let mut ed = Editor::new(doc);
+    let more = polyline(&mut ed, &[v(10.0, 10.0), v(0.0, 10.0)]);
+    let all: BTreeSet<EntityId> = old.union(&more).copied().collect();
+    for id in &all {
+        assert_eq!(ed.chain_of(*id), all);
+    }
+}
+
+/// #439 review: splitting a side keeps both pieces in their shape, and doesn't take in a
+/// line drawn separately from the side's corner.
+#[test]
+fn splitting_a_side_keeps_a_separate_line_out() {
+    let mut ed = Editor::default();
+    let square = polyline(
+        &mut ed,
+        &[
+            v(0.0, 0.0),
+            v(20.0, 0.0),
+            v(20.0, 20.0),
+            v(0.0, 20.0),
+            v(0.0, 0.0),
+        ],
+    );
+    let line = polyline(&mut ed, &[v(20.0, 0.0), v(30.0, -10.0)]);
+    let bottom = line_between(&ed, &square, v(0.0, 0.0), v(20.0, 0.0));
+    ed.split_at(bottom, v(10.0, 0.0)).expect("split");
+    let now: BTreeSet<EntityId> = ed
+        .doc
+        .iter()
+        .filter(|(id, e)| !e.kind.is_point() && !line.contains(id))
+        .map(|(id, _)| id)
+        .collect();
+    assert_eq!(now.len(), 5);
+    for id in &now {
+        assert_eq!(ed.chain_of(*id), now, "the square's 5 sides");
+    }
+    assert_eq!(ed.chain_of(*line.first().unwrap()), line);
+}
+
+/// The end point of curve `id` at `at`.
+fn end_at(ed: &Editor, id: EntityId, at: DVec2) -> EntityId {
+    ed.doc
+        .get(id)
+        .unwrap()
+        .kind
+        .ends()
+        .unwrap()
+        .into_iter()
+        .find(|p| ed.doc.point(*p).unwrap().distance(at) < 1e-9)
+        .unwrap()
+}
+
+/// #439 review: joining two open ends into one point (dragging an end onto another) joins
+/// the shapes, as Tab chained them before; a closed corner keeps its shape separate.
+#[test]
+fn merging_open_ends_joins_the_shapes() {
+    let mut ed = Editor::default();
+    let a = polyline(&mut ed, &[v(0.0, 0.0), v(10.0, 0.0)]);
+    let b = polyline(&mut ed, &[v(10.0, 1.0), v(10.0, 10.0)]);
+    let pa = end_at(&ed, *a.first().unwrap(), v(10.0, 0.0));
+    let pb = end_at(&ed, *b.first().unwrap(), v(10.0, 1.0));
+    ed.doc.begin();
+    ed.doc.merge_points(pb, pa).unwrap();
+    assert!(ed.commit("Join"));
+    let both: BTreeSet<EntityId> = a.union(&b).copied().collect();
+    assert_eq!(ed.chain_of(*a.first().unwrap()), both);
+    // An open end merged onto a closed square's corner stays its own.
+    let square = polyline(
+        &mut ed,
+        &[
+            v(50.0, 0.0),
+            v(70.0, 0.0),
+            v(70.0, 20.0),
+            v(50.0, 20.0),
+            v(50.0, 0.0),
+        ],
+    );
+    let c = polyline(&mut ed, &[v(80.0, 0.0), v(90.0, 0.0)]);
+    let corner = end_at(
+        &ed,
+        line_between(&ed, &square, v(50.0, 0.0), v(70.0, 0.0)),
+        v(70.0, 0.0),
+    );
+    let pc = end_at(&ed, *c.first().unwrap(), v(80.0, 0.0));
+    ed.doc.begin();
+    ed.doc.merge_points(pc, corner).unwrap();
+    assert!(ed.commit("Join"));
+    assert_eq!(ed.chain_of(*c.first().unwrap()), c);
+    assert_eq!(ed.chain_of(*square.first().unwrap()), square);
+}
+
+/// #439 review: applying a whole-sketch option puts its curves back as they were (in no
+/// figure, from an older drawing), and the option then shows as the one in use.
+#[test]
+fn applying_a_whole_sketch_option_keeps_its_curves_as_they_were() {
+    let (mut ed, square) = old_square(v(0.0, 0.0));
+    ed.doc.begin();
+    let option = drift_core::Variant::sketch("As found", &ed.doc);
+    let id = ed.doc.add_variant(option);
+    assert!(ed.commit("Add option"));
+    assert_eq!(ed.active_variant(), Some(id));
+    ed.selection = square.clone();
+    ed.delete_selection();
+    assert_eq!(ed.active_variant(), None);
+    ed.apply_variant(id).expect("applied");
+    assert_eq!(ed.active_variant(), Some(id), "the option is in use");
+    assert!(ed.doc.iter().all(|(_, e)| e.figure.is_none()));
 }
 
 /// #267: a Tab chain stays on the layer of the curve it starts from, even where curves on

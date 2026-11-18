@@ -151,6 +151,7 @@ pub fn copy_into(
     // Each figure copied is a figure of its own among the copies (#439): shapes drawn
     // separately stay separate where they share corners.
     let mut figures: BTreeMap<drift_core::FigureId, drift_core::FigureId> = BTreeMap::new();
+    let mut fresh = dst.fresh_figure();
     // Points first, then the curves that use them.
     let (points, others): (Vec<EntityId>, Vec<EntityId>) = sources
         .iter()
@@ -196,7 +197,11 @@ pub fn copy_into(
             dst.set_style(copy, e.style);
             let _ = dst.set_appearance(copy, e.appearance);
             if let Some(f) = e.figure {
-                let to = *figures.entry(f).or_insert_with(|| dst.fresh_figure());
+                let to = *figures.entry(f).or_insert_with(|| {
+                    let new = fresh;
+                    fresh.0 = fresh.0.saturating_add(1);
+                    new
+                });
                 dst.set_figure(copy, Some(to));
             }
             out.entities.insert(id, copy);

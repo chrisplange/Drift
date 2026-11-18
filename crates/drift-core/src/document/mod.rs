@@ -114,6 +114,12 @@ pub struct Document {
     offsets: Shared<BTreeMap<OffsetId, Offset>>,
     next_id: u32,
     next_constraint_id: u32,
+    /// The open transaction restored a saved state (a whole-sketch option): its curves come
+    /// back in the figures they had, or in none, and the commit gives them no others.
+    restored: bool,
+    /// Curves made in the open transaction as pieces of curves in no figure (see
+    /// [`Document::copy_figure`]): the commit leaves them in none.
+    unfigured_pieces: Vec<EntityId>,
     /// Next id for variables, variants and measurements (one counter, ids never reused).
     next_param_id: u32,
     /// Next id for fills and annotations (one counter, ids never reused).
@@ -290,6 +296,8 @@ impl Default for Document {
             // Ids start at 1; `e0` and `c0` are not valid ids in `.drift` files.
             next_id: 1,
             next_constraint_id: 1,
+            restored: false,
+            unfigured_pieces: Vec::new(),
             next_param_id: 1,
             next_drafting_id: 1,
             next_wall_id: 1,

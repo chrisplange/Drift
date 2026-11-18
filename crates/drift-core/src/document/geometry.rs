@@ -862,6 +862,7 @@ impl Document {
                 return Err(DocumentError::Degenerate("merge"));
             }
         }
+        self.join_figures_at_merge(from, into);
         for user in users {
             self.touch(user);
             if let Some(e) = self.entities.get_mut(&user) {

@@ -1297,7 +1297,7 @@ fn a_tangency_keeps_the_touching_end_it_began_with() {
     doc.add_constraint(Constraint::Tangent { a: line, b: arc })
         .unwrap();
     assert!(unmet(&doc, 1e-9).is_empty());
-    let touching = crate::touching_ends(&doc, &crate::relations(&doc, None));
+    let frozen = crate::freeze(&doc, &crate::relations(&doc, None));
     // The step: the line moved up off the arc's end, then solved with the line held.
     for p in [o, end] {
         let at = doc.point(p).unwrap();
@@ -1307,7 +1307,7 @@ fn a_tangency_keeps_the_touching_end_it_began_with() {
         &mut doc,
         &SolveOptions {
             dragged: [o, end].iter().flat_map(|&p| Param::point(p)).collect(),
-            touching: Some(std::rc::Rc::new(touching)),
+            frozen: Some(std::rc::Rc::new(frozen)),
             ..Default::default()
         },
     );
@@ -2502,4 +2502,105 @@ fn a_solve_meets_its_rows_to_the_bar_of_the_part_it_leaves() {
     }
     assert!(solved(&mut doc).converged);
     assert!(analyze(&doc).converged);
+}
+
+/// A fixed horizontal line and a free line of kept length from `(0, 5)` towards `to`.
+fn pair_to(doc: &mut Document, to: DVec2) -> (EntityId, EntityId, [EntityId; 2]) {
+    let p = [v(0.0, 0.0), v(20.0, 0.0), v(0.0, 5.0), to].map(|c| doc.add_point(c));
+    let fixed = doc.add_line(p[0], p[1]).unwrap();
+    let free = doc.add_line(p[2], p[3]).unwrap();
+    for q in [p[0], p[1], p[2]] {
+        let at = doc.point(q).unwrap();
+        doc.add_constraint(Constraint::Fix { point: q, at })
+            .unwrap();
+    }
+    let value = doc.point(p[2]).unwrap().distance(to);
+    doc.add_constraint(Constraint::Distance {
+        a: p[2],
+        b: p[3],
+        value,
+    })
+    .unwrap();
+    (fixed, free, [p[2], p[3]])
+}
+
+/// #344: lines lying exactly square to the root a new relation asks for. The undirected row's
+/// slope (the sine's) is zero there, so the solve had no way to turn the line; the directed
+/// row's is the line's turn, so it meets the relation, turning the line a quarter turn.
+#[test]
+fn a_relation_square_to_its_lines_still_solves() {
+    for (to, relation) in [
+        (v(0.0, 15.0), 0),  // Parallel, the free line square to the fixed one.
+        (v(10.0, 5.0), 1),  // Perpendicular, the free line parallel.
+        (v(-10.0, 5.0), 2), // A 90° Angle, the free line the other way along.
+    ] {
+        let mut doc = Document::new();
+        let (a, b, [s, e]) = pair_to(&mut doc, to);
+        doc.add_constraint(match relation {
+            0 => Constraint::Parallel { a, b },
+            1 => Constraint::Perpendicular { a, b },
+            _ => Constraint::Angle {
+                a,
+                b,
+                degrees: 90.0,
+            },
+        })
+        .unwrap();
+        let report = solved(&mut doc);
+        assert!(report.converged, "relation {relation}: {report:?}");
+        let d = doc.point(e).unwrap() - doc.point(s).unwrap();
+        let want = if relation == 0 { d.y } else { d.x };
+        assert!(
+            want.abs() < 1e-6,
+            "relation {relation}: the free line is {d}"
+        );
+        assert!((d.length() - 10.0).abs() < 1e-6, "relation {relation}: {d}");
+    }
+}
+
+/// #344: a relation added to lines that are nearer its far root (lines 170° apart, made
+/// Parallel) meets it there, turning a line 10°, not 170°: lines meet a Parallel either way
+/// round, and the way round is the geometry's.
+#[test]
+fn a_new_relation_meets_its_nearer_way_round() {
+    let mut doc = Document::new();
+    let to = v(0.0, 5.0) + DVec2::from_angle(170f64.to_radians()) * 10.0;
+    let (a, b, [s, e]) = pair_to(&mut doc, to);
+    doc.add_constraint(Constraint::Parallel { a, b }).unwrap();
+    assert!(solved(&mut doc).converged);
+    let d = doc.point(e).unwrap() - doc.point(s).unwrap();
+    assert!(
+        (d - v(-10.0, 0.0)).length() < 1e-6,
+        "the free line is {d}, not turned the near way to (-10, 0)"
+    );
+}
+
+/// #344: a solve given the way round a pair was met (a drag's [`freeze`]) heads back to it
+/// from a start turned past square, where the way round the geometry now lies is the other.
+#[test]
+fn a_frozen_way_round_holds_from_a_start_turned_past_square() {
+    let mut doc = Document::new();
+    let (a, b, [s, e]) = pair_to(&mut doc, v(10.0, 5.0));
+    doc.add_constraint(Constraint::Parallel { a, b }).unwrap();
+    let frozen = freeze(&doc, &relations(&doc, None));
+    // The free line's end taken past its start: the line now lies the other way along.
+    doc.set_point(e, v(-12.0, 6.0)).unwrap();
+    let report = solve(
+        &mut doc,
+        &SolveOptions {
+            frozen: Some(std::rc::Rc::new(frozen)),
+            ..Default::default()
+        },
+    );
+    assert!(report.converged);
+    let d = doc.point(e).unwrap() - doc.point(s).unwrap();
+    assert!(
+        (d - v(10.0, 0.0)).length() < 1e-6,
+        "the free line is {d}, not back the way round it was frozen, (10, 0)"
+    );
+    // Not frozen, the same start meets the pair the way round it now lies.
+    doc.set_point(e, v(-12.0, 6.0)).unwrap();
+    assert!(solved(&mut doc).converged);
+    let d = doc.point(e).unwrap() - doc.point(s).unwrap();
+    assert!((d - v(-10.0, 0.0)).length() < 1e-6, "the free line is {d}");
 }

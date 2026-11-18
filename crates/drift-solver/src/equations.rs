@@ -2,8 +2,10 @@
 //!
 //! Each equation reads parameter values through a lookup and pushes `(param, ∂r/∂param)` pairs.
 //! Formulations are chosen to be well conditioned: lengths are differences of lengths (not of
-//! squares), and angles use `sin(θ − φ)` from normalised cross/dot products, so they have no
-//! `atan2` discontinuity and treat lines as undirected.
+//! squares). An angle row is either undirected, `sin(θ − φ)` from normalised cross/dot
+//! products (zero at φ and at φ + 180°, its slope zero at φ ± 90°), or directed: the angle
+//! error itself, `atan2` of the same pair, one root and slope 1 everywhere, its jump of 360°
+//! at φ + 180°, as far from the root as an angle gets (#344).
 
 /// A length-like quantity: the distance between two points, or a radius parameter.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -147,23 +149,38 @@ pub enum Equation {
         dir: [usize; 4],
         normal: bool,
     },
-    /// `sin(θ − φ) = 0`, where θ is the angle from line 1 to line 2. Params are
-    /// `[ax, ay, bx, by]` for each line.
+    /// θ = φ, where θ is the angle from line 1 to line 2. Params are `[ax, ay, bx, by]` for
+    /// each line. Undirected, the residual is `sin(θ − φ)`: met at φ and at φ + 180°.
+    /// `directed`, it is `θ − φ` itself, wrapped to (−180°, 180°]: met at φ only.
     Angle {
         l1: [usize; 4],
         l2: [usize; 4],
         sin_phi: f64,
         cos_phi: f64,
+        directed: bool,
     },
 }
 
 impl Equation {
+    /// An undirected angle row: met at `phi_radians` and at `phi_radians` + 180°.
     pub fn angle(l1: [usize; 4], l2: [usize; 4], phi_radians: f64) -> Self {
         Equation::Angle {
             l1,
             l2,
             sin_phi: phi_radians.sin(),
             cos_phi: phi_radians.cos(),
+            directed: false,
+        }
+    }
+
+    /// A directed angle row: met at `phi_radians` only (#344).
+    pub fn directed_angle(l1: [usize; 4], l2: [usize; 4], phi_radians: f64) -> Self {
+        Equation::Angle {
+            l1,
+            l2,
+            sin_phi: phi_radians.sin(),
+            cos_phi: phi_radians.cos(),
+            directed: true,
         }
     }
 
@@ -499,6 +516,7 @@ impl Equation {
                 l2,
                 sin_phi: s,
                 cos_phi: c,
+                directed,
             } => {
                 let d1 = (val(l1[2]) - val(l1[0]), val(l1[3]) - val(l1[1]));
                 let d2 = (val(l2[2]) - val(l2[0]), val(l2[3]) - val(l2[1]));
@@ -507,16 +525,31 @@ impl Equation {
                 let norm = (len1sq * len2sq).sqrt();
                 let cross = d1.0 * d2.1 - d1.1 * d2.0;
                 let dot = d1.0 * d2.0 + d1.1 * d2.1;
-                // r = (cross·cosφ − dot·sinφ) / (|d1||d2|) = sin(θ − φ)
-                let r = (cross * c - dot * s) / norm;
-                let g1 = (
-                    (c * d2.1 - s * d2.0) / norm - r * d1.0 / len1sq,
-                    (-c * d2.0 - s * d2.1) / norm - r * d1.1 / len1sq,
-                );
-                let g2 = (
-                    (-c * d1.1 - s * d1.0) / norm - r * d2.0 / len2sq,
-                    (c * d1.0 - s * d1.1) / norm - r * d2.1 / len2sq,
-                );
+                let (r, g1, g2) = if directed {
+                    // r = atan2(sin(θ − φ), cos(θ − φ)) = θ − φ, wrapped. θ is line 2's
+                    // direction less line 1's, and a direction d turns by (−d.y, d.x)/|d|²
+                    // per unit move of d's end.
+                    let r = (cross * c - dot * s).atan2(dot * c + cross * s);
+                    (
+                        r,
+                        (d1.1 / len1sq, -d1.0 / len1sq),
+                        (-d2.1 / len2sq, d2.0 / len2sq),
+                    )
+                } else {
+                    // r = (cross·cosφ − dot·sinφ) / (|d1||d2|) = sin(θ − φ)
+                    let r = (cross * c - dot * s) / norm;
+                    (
+                        r,
+                        (
+                            (c * d2.1 - s * d2.0) / norm - r * d1.0 / len1sq,
+                            (-c * d2.0 - s * d2.1) / norm - r * d1.1 / len1sq,
+                        ),
+                        (
+                            (-c * d1.1 - s * d1.0) / norm - r * d2.0 / len2sq,
+                            (c * d1.0 - s * d1.1) / norm - r * d2.1 / len2sq,
+                        ),
+                    )
+                };
                 grad.extend([
                     (l1[0], -g1.0),
                     (l1[1], -g1.1),
@@ -624,6 +657,10 @@ mod tests {
             Equation::angle(line1, line2, -2.3),
             // Lines sharing a point.
             Equation::angle([0, 1, 2, 3], [2, 3, 4, 5], 1.1),
+            Equation::directed_angle(line1, line2, 0.0),
+            Equation::directed_angle(line1, line2, FRAC_PI_2),
+            Equation::directed_angle(line1, line2, -2.3),
+            Equation::directed_angle([0, 1, 2, 3], [2, 3, 4, 5], 1.1),
             Equation::Difference {
                 a: 0,
                 b: 2,
@@ -800,6 +837,28 @@ mod tests {
         assert!((at(0.0) - 0.5).abs() < 1e-15);
     }
 
+    /// #344: a directed angle row is the angle error itself, met one way round only, with
+    /// slope 1 even square to its root (where the sine's slope is zero).
+    #[test]
+    fn directed_angle_residual_is_the_error() {
+        // Line 1 along +x, line 2 at 30°.
+        let x = [0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 3f64.sqrt(), 1.0];
+        let at = |phi: f64| {
+            Equation::directed_angle([0, 1, 2, 3], [4, 5, 6, 7], phi)
+                .eval(&|i| x[i], &mut Vec::new())
+        };
+        assert!(at(30f64.to_radians()).abs() < 1e-15);
+        // The other way round is as far off as an angle gets.
+        assert!((at(210f64.to_radians()).abs() - std::f64::consts::PI).abs() < 1e-14);
+        assert!((at(0.0) - 30f64.to_radians()).abs() < 1e-15);
+        assert!((at(-60f64.to_radians()) - FRAC_PI_2).abs() < 1e-15);
+        // Square to the root, the slope is still the line's turn per unit move.
+        check_gradient(
+            Equation::directed_angle([0, 1, 2, 3], [4, 5, 6, 7], -60f64.to_radians()),
+            &x,
+        );
+    }
+
     /// A zero-length line: the guards keep every residual and gradient a number (#215).
     #[test]
     fn zero_length_line_stays_finite() {
@@ -809,6 +868,8 @@ mod tests {
         let equations = [
             Equation::angle([0, 1, 2, 3], [4, 5, 6, 7], 0.5),
             Equation::angle([4, 5, 6, 7], [0, 1, 2, 3], 0.5),
+            Equation::directed_angle([0, 1, 2, 3], [4, 5, 6, 7], 0.5),
+            Equation::directed_angle([4, 5, 6, 7], [0, 1, 2, 3], 0.5),
             Equation::PointLine {
                 point: [8, 9],
                 line: [0, 1, 2, 3],

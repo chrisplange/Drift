@@ -31,7 +31,7 @@ use drift_core::{Constraint, ConstraintId, DVec2, Document, EntityId, EntityKind
 
 pub use crate::incremental::{AnalysisCache, analyze_cached};
 pub use crate::lowering::{Lowered, Lowering, Relations, relations};
-pub use crate::system::{TouchingEnds, touching_ends};
+pub use crate::system::{Frozen, freeze};
 
 use crate::equations::Equation;
 use crate::linalg::{Matrix, rref};
@@ -147,9 +147,9 @@ pub struct SolveOptions {
     /// [`scope`](Self::scope). A drag of many parts then doesn't look through every relation
     /// of the drawing for each part's every solve (#253). `None`: found from the document.
     pub relations: Option<std::rc::Rc<Relations>>,
-    /// How each tangency touched where the relations held (see [`touching_ends`]): a drag
+    /// The forms the relations were met in where they held (see [`freeze`]): a drag
     /// finds them once as it begins, and every step keeps them. `None`: from the geometry.
-    pub touching: Option<std::rc::Rc<TouchingEnds>>,
+    pub frozen: Option<std::rc::Rc<Frozen>>,
     /// Finish a solve at a fold: a kept shape the relations leave almost no way to meet (a
     /// radius kept where two dragged points pin its arc at its least, a line kept as long as
     /// the least distance to it), or rows with a double root (a tangent line through a point
@@ -675,7 +675,7 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
         &options.radii,
         options.lowering.as_deref(),
         options.relations.as_deref().map(Vec::as_slice),
-        options.touching.as_deref(),
+        options.frozen.as_deref(),
     );
     // A point merged with a dragged one (coincident with it) is dragged too: a preference
     // on a line or arc it ends would only pull against the drag, and slowly, the dragged
@@ -956,7 +956,7 @@ pub fn meets_within(
     scope: &HashSet<EntityId>,
     relations: &Relations,
     lowering: Option<&Lowering>,
-    touching: Option<&TouchingEnds>,
+    frozen: Option<&Frozen>,
 ) -> bool {
     let tol = Tolerances::default();
     let sys = System::build_in(
@@ -967,7 +967,7 @@ pub fn meets_within(
         &HashMap::new(),
         lowering,
         Some(relations.as_slice()),
-        touching,
+        frozen,
     );
     let (comps, constant_rows) = components(&sys, &tol);
     rows_holding(&sys, &comps, &constant_rows, &tol)

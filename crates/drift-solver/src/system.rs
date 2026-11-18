@@ -279,36 +279,71 @@ fn touching_end(
     lying(b, a).or_else(|| lying(a, b))
 }
 
-/// Where each tangency of a set of relations touched at a curve's end (see
-/// `touching_end`), found once on the geometry where they held: what a drag's every step
-/// lowers its tangencies by ([`crate::SolveOptions::touching`]), so a step whose translated
-/// geometry happens to touch elsewhere (or nowhere) keeps the form the drag began with, and
-/// the solve and a later look at the result read the tangency alike.
+/// The forms a set of relations is lowered in, found once on the geometry where they held:
+/// what a drag's every step lowers them by ([`crate::SolveOptions::frozen`]), so a step whose
+/// translated geometry happens to lie otherwise keeps the forms the drag began with, and the
+/// solve and a later look at the result read the relations alike.
+/// - Where each tangency touched at a curve's end (see `touching_end`).
+/// - Which way round each Parallel, Perpendicular and Angle pair was met (see `way_round`):
+///   a step that turns a line past square to its partner still heads back to the way round
+///   the drag began with, not on to the other (#344).
 #[derive(Clone, Debug, Default)]
-pub struct TouchingEnds(HashMap<(EntityId, EntityId), Option<(EntityId, Touching)>>);
+pub struct Frozen {
+    touching: HashMap<(EntityId, EntityId), Option<(EntityId, Touching)>>,
+    /// Keyed by the pair's lines and the angle φ asked of it (its bits).
+    ways: HashMap<(EntityId, EntityId, u64), bool>,
+}
 
-/// The [`TouchingEnds`] of the tangencies among `relations`, on `doc` as it is now.
-pub fn touching_ends(
-    doc: &Document,
-    relations: &[(Option<ConstraintId>, Lowered)],
-) -> TouchingEnds {
+/// The [`Frozen`] forms of `relations`, on `doc` as it is now.
+pub fn freeze(doc: &Document, relations: &[(Option<ConstraintId>, Lowered)]) -> Frozen {
     let constraints = || {
         relations.iter().filter_map(|(_, l)| match l {
-            Lowered::Relation(c) => Some(*c),
+            Lowered::Relation(c) if doc.validate(c).is_ok() => Some(*c),
             _ => None,
         })
     };
     let on_curve = on_curve_of(constraints());
-    TouchingEnds(
-        constraints()
-            .filter_map(|c| match c {
-                Constraint::Tangent { a, b } if doc.validate(&c).is_ok() => {
-                    Some(((a, b), touching_end(doc, a, b, &on_curve)))
-                }
-                _ => None,
-            })
-            .collect(),
-    )
+    let mut frozen = Frozen::default();
+    for c in constraints() {
+        if let Constraint::Tangent { a, b } = c {
+            frozen
+                .touching
+                .insert((a, b), touching_end(doc, a, b, &on_curve));
+        } else if let Some((a, b, phi)) = angle_asked(&c)
+            && let Some(far) = way_round(doc, a, b, phi)
+        {
+            frozen.ways.insert((a, b, phi.to_bits()), far);
+        }
+    }
+    frozen
+}
+
+/// The lines and the angle φ (radians, from `a` to `b`) of a Parallel, Perpendicular or
+/// Angle relation.
+fn angle_asked(c: &Constraint) -> Option<(EntityId, EntityId, f64)> {
+    match *c {
+        Constraint::Parallel { a, b } => Some((a, b, 0.0)),
+        Constraint::Perpendicular { a, b } => Some((a, b, std::f64::consts::FRAC_PI_2)),
+        Constraint::Angle { a, b, degrees } => Some((a, b, degrees.to_radians())),
+        _ => None,
+    }
+}
+
+/// Which way round lines `a` and `b` of `doc` are to an angle φ between them: `true` where
+/// they are nearer φ + 180° (cos(θ − φ) < 0), the root a directed row for them is then met
+/// at. Lines meet either way round at Parallel, Perpendicular or Angle alike, so the way
+/// round is always the geometry's, not the relation's. `None` where a line has no length.
+fn way_round(doc: &Document, a: EntityId, b: EntityId, phi: f64) -> Option<bool> {
+    let dir = |l: EntityId| match doc.get(l)?.kind {
+        EntityKind::Line { a, b } => Some(doc.point(b).ok()? - doc.point(a).ok()?),
+        _ => None,
+    };
+    let (u, v) = (dir(a)?, dir(b)?);
+    if u == DVec2::ZERO || v == DVec2::ZERO {
+        return None;
+    }
+    let (s, c) = phi.sin_cos();
+    Some(u.dot(v) * c + u.perp_dot(v) * s < 0.0)
 }
 
 /// Points held on curves by `relations`, for tangencies touching at an end held that way.
@@ -351,8 +386,8 @@ impl System {
     /// Build the system for the entities in `scope` only (everything if `None`). The scope
     /// must be closed under shared points and constraints (see [`crate::connected`]).
     /// `dragged` and `carried` are the parameters held where they are, in that order of rank.
-    /// Relations are read through `lowering` where one is given. Tangencies `touching`
-    /// names are lowered as it says, not as the geometry now touches.
+    /// Relations are read through `lowering` where one is given. Relations `frozen` names
+    /// are lowered in the forms it says, not as the geometry now lies.
     #[allow(clippy::too_many_arguments)]
     pub fn build_in(
         doc: &Document,
@@ -362,7 +397,7 @@ impl System {
         radii: &HashMap<EntityId, f64>,
         lowering: Option<&Lowering>,
         relations: Option<&[(Option<ConstraintId>, Lowered)]>,
-        touching: Option<&TouchingEnds>,
+        frozen: Option<&Frozen>,
     ) -> Self {
         // The driving relations as lowered (or as given), with the extras under a stand-in
         // id.
@@ -543,6 +578,16 @@ impl System {
             Some(EntityKind::Line { a, b }) => Length::Points([x(a), y(a), x(b), y(b)]),
             _ => radius(id),
         };
+        // A Parallel, Perpendicular or Angle pair is met the way round it was frozen, or as
+        // it lies now: a directed row, one root and no fold short of 180° (#344).
+        let directed = |a: EntityId, b: EntityId, phi: f64| {
+            let far = frozen
+                .and_then(|f| f.ways.get(&(a, b, phi.to_bits())).copied())
+                .or_else(|| way_round(doc, a, b, phi))
+                .unwrap_or(false);
+            let phi = if far { phi + std::f64::consts::PI } else { phi };
+            Equation::directed_angle(line(a), line(b), phi)
+        };
 
         // ---- Substitution: merge equal parameters, pin fixed ones ----
         let mut uf = UnionFind::new(params.len());
@@ -630,21 +675,16 @@ impl System {
                         owner: None,
                     }),
                 },
-                Constraint::Parallel { a, b } => rows.push(Row {
-                    equation: Equation::angle(line(a), line(b), 0.0),
-                    source: Some(cid),
-                    owner: None,
-                }),
-                Constraint::Perpendicular { a, b } => rows.push(Row {
-                    equation: Equation::angle(line(a), line(b), std::f64::consts::FRAC_PI_2),
-                    source: Some(cid),
-                    owner: None,
-                }),
-                Constraint::Angle { a, b, degrees } => rows.push(Row {
-                    equation: Equation::angle(line(a), line(b), degrees.to_radians()),
-                    source: Some(cid),
-                    owner: None,
-                }),
+                Constraint::Parallel { .. }
+                | Constraint::Perpendicular { .. }
+                | Constraint::Angle { .. } => {
+                    let (a, b, phi) = angle_asked(constraint).expect("an angle relation");
+                    rows.push(Row {
+                        equation: directed(a, b, phi),
+                        source: Some(cid),
+                        owner: None,
+                    })
+                }
                 Constraint::Equal { a, b } => rows.push(Row {
                     equation: Equation::EqualLength {
                         a: length(a),
@@ -889,7 +929,8 @@ impl System {
                     let mut equations = Vec::new();
                     if let Some(t) = shared {
                         equations.push(at_end(t));
-                    } else if let Some((t, on)) = match touching.and_then(|t| t.0.get(&(a, b))) {
+                    } else if let Some((t, on)) = match frozen.and_then(|f| f.touching.get(&(a, b)))
+                    {
                         Some(&found) => found,
                         None => touching_end(doc, a, b, &on_curve),
                     } {

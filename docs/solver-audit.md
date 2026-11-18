@@ -305,7 +305,7 @@ job; "kept" means it stays as a plain design parameter.
 | Length try: `LENGTH_TRY_SOLVES` = 32 (shared), `LENGTH_TRY_STRETCH` = 1e-6, `LENGTH_TRY_TOLERANCE`, `length_slack` | `keep_lengths` | #284, #365, #377 | A hanging line keeps its length | **Deleted** (PR 5): the continuation tracks the branch where the length is kept |
 | `SHAPE_HOLD` = 10, `LINE_HOLD` = 100, `COLLAPSED_LINE` = 1e-6 | `breaks_held_shape` | #278 | The binding drag rule | **Replaced** (PR 5): held radii are held, and the continuation stops at the last valid shape (decision 4) |
 | `Orientation` (arcs inside out, tangency sides, `SWEEP_JUMP`, `COLLAPSED_RADIUS`), flipped lines, `NO_WAY_ROUND` | `lib.rs`, `drag.rs` | c99881c, #280 | A step mustn't land on another branch | **Kept** as the continuation's branch test, run per predictor step instead of per halving |
-| `touching` (tangencies frozen at drag start), `TOUCHING_END` | `system.rs` | #97 | Tangent side kept | **Kept**, and extended to Parallel/Perpendicular/Angle (PR 4) |
+| `touching` (tangencies frozen at drag start), `TOUCHING_END` | `system.rs` | #97 | Tangent side kept | **Kept**, and extended to Parallel/Perpendicular/Angle (PR 4): now `Frozen`/`freeze`, with each pair's way round (#344) |
 | Carry turned curves, `carry_holding` | `drag.rs` | #283, #282 | Push what can't give way | **Kept** as behaviour, re-expressed as which parameters the continuation moves |
 | `stalled` second solve in `solve_settled` | `solve.rs` | #342 | A commit that ran out of iterations | **Deleted** (PR 3), with `solve_settled` and `plain`: a solve stops at its stop test, not short of it |
 | `NEGLIGIBLE_ROW` = 1e-9, `row_scales` | `newton` | #94, #277 | Round-off rows don't steer the step | **Kept** |
@@ -465,6 +465,22 @@ PR 0 puts the bar in `scripts/solver-bar/` (its README runs all seven). **Known 
   where it is about behaviour).
 - **Risk:** medium. A relation added the other way round to its current geometry must still
   flip it once, which needs a test of its own.
+- **As built for #344 (directed rows only):**
+  - Parallel, Perpendicular and Angle lower to `Equation::directed_angle`: the angle error,
+    `atan2` of the directed cross/dot pair, one root, slope 1 everywhere. Smooth, the spline
+    handles and the ellipse's axes keep the undirected sine row.
+  - The way round is always the geometry's, for a typed Angle too: lines meet a Parallel, a
+    Perpendicular or an Angle either way round, as the undirected row let them, so no drawing
+    changes meaning and no format change is needed. A drag freezes it at its start
+    (`drift_solver::freeze`, which also holds the tangencies' touching ends, `touching` before);
+    any other solve takes it from the geometry it starts from, the nearer root. So a relation
+    added to lines lying nearer its far root meets it there, turning a line the short way.
+  - The jump: the row's residual jumps from +180° to −180° at the far root, where it is as
+    large as it gets, so a step across it gains that row nothing; and since the row has one
+    root, a solve that finishes meets the pair the way round it was frozen. No turn bound and no
+    after-the-fact test were added.
+  - Not done here: σmin at the solve's exit (what PR 5 reads), and the drag-side
+    work-arounds stay (`carry_holding` also serves tangency folds, #282).
 
 ### PR 5: a drag is a continuation
 - A drag frame follows the path t ∈ [0, 1] from the drag's start offset to the pointer:

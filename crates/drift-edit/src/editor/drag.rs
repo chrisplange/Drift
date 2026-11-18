@@ -247,8 +247,9 @@ struct DragPart {
     relations: Rc<drift_solver::Relations>,
     constraints: Vec<(ConstraintId, Constraint)>,
     lowered_lines: Vec<EntityId>,
-    /// Where its tangencies touched as the drag began: every step lowers them so.
-    touching: Rc<drift_solver::TouchingEnds>,
+    /// The forms its relations were met in as the drag began (where its tangencies touched,
+    /// which way round its angle pairs were): every step lowers them so.
+    frozen: Rc<drift_solver::Frozen>,
     /// For a move of curves in a part nothing pins, the curves not moved that relations hold
     /// its dragged points on (see [`DragFrame::holding`]).
     holding: Vec<EntityId>,
@@ -307,8 +308,8 @@ struct DragFrame<'a> {
     relations: &'a Rc<drift_solver::Relations>,
     constraints: &'a [(ConstraintId, Constraint)],
     lowered_lines: &'a [EntityId],
-    /// Where the scope's tangencies touched as the drag began ([`DragPart::touching`]).
-    touching: &'a Rc<drift_solver::TouchingEnds>,
+    /// The forms the scope's relations were met in as the drag began ([`DragPart::frozen`]).
+    frozen: &'a Rc<drift_solver::Frozen>,
     /// Curves not moved that relations hold dragged points on, where nothing pins the part:
     /// carried along whole when a step can't be made or doesn't land otherwise (see
     /// `Editor::carry_holding`). Empty for a point dragged, or a part something pins.
@@ -514,7 +515,7 @@ impl Editor {
                 relations: &part.relations,
                 constraints: &part.constraints,
                 lowered_lines: &part.lowered_lines,
-                touching: &part.touching,
+                frozen: &part.frozen,
                 holding: &part.holding,
                 unpinned: part.unpinned,
                 fold: false,
@@ -777,7 +778,7 @@ impl Editor {
                 relations: Rc::new(Vec::new()),
                 constraints: Vec::new(),
                 lowered_lines: Vec::new(),
-                touching: Rc::default(),
+                frozen: Rc::default(),
                 holding: Vec::new(),
                 unpinned: false,
                 free_dragged: Vec::new(),
@@ -842,7 +843,7 @@ impl Editor {
         }
         for (part, r) in out.iter_mut().zip(relations) {
             // (The drawing is as the drag found it: where the relations hold.)
-            part.touching = Rc::new(drift_solver::touching_ends(&self.doc, &r));
+            part.frozen = Rc::new(drift_solver::freeze(&self.doc, &r));
             part.relations = Rc::new(r);
         }
         for (id, c) in self.doc.constraints() {
@@ -1544,7 +1545,7 @@ impl Editor {
                 frame.scope,
                 frame.relations,
                 frame.lowering.as_deref(),
-                Some(frame.touching),
+                Some(frame.frozen),
             )
         {
             self.drag_length_tries.1 += 1;
@@ -1789,7 +1790,7 @@ impl Editor {
                 lengths: before.lengths.clone(),
                 lowering: frame.lowering.clone(),
                 relations: Some(frame.relations.clone()),
-                touching: Some(frame.touching.clone()),
+                frozen: Some(frame.frozen.clone()),
                 fold: frame.fold,
                 bar_cap: (frame.first_bar > 0.0).then_some(frame.first_bar),
                 ..Default::default()

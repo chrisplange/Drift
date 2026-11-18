@@ -47,6 +47,13 @@ const SETTLED_SPEED: f64 = 1.25;
 /// [`Editor::drag`]'s steps): a flattened curve's error, below anything drawn.
 const NO_WAY_ROUND: f64 = drift_core::tolerance::FLATTEN_MM;
 
+/// How many times what a solve meets a kept radius to (`FOLD_MET` of it, or the solve's bar)
+/// a held radius must be past the radius the drag found it at to have grown (see
+/// `Editor::grows_held_radius`): a radius the solve keeps lands anywhere within that once,
+/// either side, so a test at it exactly decided, by a hair, a step at one size and not at
+/// another. A radius the drag grows grows with the pointer, far past it.
+const GROWN: f64 = 4.0;
+
 /// How much faster than the pointer a drag that can't land may shorten a line it doesn't move
 /// (see [`Editor::breaks_held_shape`]): a hundredfold (a held radius is held outright). A
 /// line's length changes with the drag far more often than a round's radius, through levers that are the geometry's own (a crank of arm `d` swinging a line `D` long
@@ -1465,6 +1472,14 @@ impl Editor {
                 .iter()
                 .any(|q| frame.dragged_set.contains(q))
         };
+        // Where the drag began: each step's last rank brings back towards it what nothing
+        // above decides, so the frame ends where its target says, whatever steps its path took
+        // (`SolveOptions::anchor`).
+        let anchor: HashMap<Param, f64> = before
+            .points
+            .iter()
+            .flat_map(|&(id, p)| [(Param::X(id), p.x), (Param::Y(id), p.y)])
+            .collect();
         let mut t = 0.0f64;
         let mut h = 1.0f64;
         // How fast the last step moved the geometry (see [`SPEED_UP`]), and how fast the step
@@ -1525,6 +1540,7 @@ impl Editor {
                     dragged: frame.dragged.to_vec(),
                     carried: carried.to_vec(),
                     to: targets(at),
+                    anchor: anchor.clone(),
                     scope: Some(frame.scope.clone()),
                     // Rounds keep their size where the move leaves it open, at their size as
                     // the drag began (a drag's kept radii are held; the solve lets go of a
@@ -1626,16 +1642,17 @@ impl Editor {
     }
 
     /// Whether the last step grew an arc or circle `frame`'s part doesn't move past the radius
-    /// the drag found it at: by more than a solve meets a kept shape to (the bar, or
-    /// `FOLD_MET` of it). A drag never grows a radius it doesn't move (the binding rule, row 4
+    /// the drag found it at: by more than [`GROWN`] times what a solve meets a kept shape to
+    /// (the bar, or `FOLD_MET` of it). A drag never grows a radius it doesn't move (the binding rule, row 4
     /// of the 3.1 table, the user's decisions of 2026-11-11 and 2026-11-12); shrinking one the
     /// dragged points dictate goes (row 3).
     fn grows_held_radius(&self, frame: &DragFrame<'_>) -> bool {
         frame.held_radii.iter().any(|&(id, was)| {
             drift_solver::radius_of(&self.doc, id).is_some_and(|r| {
                 r - was
-                    > (drift_solver::FOLD_MET * was)
-                        .max(drift_solver::landed_within(frame.bar, DVec2::splat(was)))
+                    > GROWN
+                        * (drift_solver::FOLD_MET * was)
+                            .max(drift_solver::landed_within(frame.bar, DVec2::splat(was)))
             })
         })
     }

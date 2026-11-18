@@ -157,6 +157,10 @@ pub struct SolveOptions {
     /// them there as its second rank, after the relations (see `newton`). A parameter not
     /// named is asked to stay where it is.
     pub to: HashMap<Param, f64>,
+    /// Where the solve's last rank, below the kept shapes, brings what the ranks above leave
+    /// open, as near as it can: a drag's step passes where the drag began, so where the drag
+    /// ends doesn't depend on the steps its path took (see `newton`). Empty: nothing.
+    pub anchor: HashMap<Param, f64>,
     /// The coarsest length bar any component of this solve may be held to: a drag frame's
     /// later solves pass the bar its first solve was held to ([`SolveReport::bar`]), so a
     /// solve that begins from geometry a try has flung (a frame's arc thrown metres out mid-try
@@ -794,6 +798,16 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
         .collect();
     let all_placed = !placed.is_empty() && placed.len() == targets.iter().flatten().count();
     sys.targets = targets;
+    let mut anchors: Vec<Option<f64>> = vec![None; sys.groups.len()];
+    for (p, &a) in &options.anchor {
+        if let Some(&i) = sys.param_index.get(p) {
+            let g = sys.group_of[i];
+            if !sys.groups[g].fixed && sys.targets[g].is_none() && anchors[g].is_none() {
+                anchors[g] = Some(a);
+            }
+        }
+    }
+    sys.anchors = anchors;
     let mut report = run(&mut sys, options, true);
     // Such a solve's placed values came as near as the relations let them, but where its rows
     // were off they first gave way a little (heavy, not pinned: the relations' stage moves
@@ -1844,6 +1858,7 @@ fn newton(
     dragging: bool,
     across: f64,
     goals: &[Option<(f64, usize)>],
+    anchors: &[Option<f64>],
 ) -> ComponentOutcome {
     // (The bar only ever tightens within a solve: see where the rows first hold.)
     let bar = std::cell::Cell::new(bar);
@@ -2180,7 +2195,14 @@ fn newton(
     // that reshaped what it should carry.)
     let pointer_across = across * (n as f64).sqrt();
     let mut pointer_radius = pointer_across;
-    for iteration in 0..MAX_ITERATIONS {
+    // Where the shapes' stage settled: the iteration, and whether the rows held.
+    let mut settled: Option<(usize, bool)> = None;
+    // (Where the loop takes up again after a step of the last rank.)
+    let mut first_iteration = 0;
+    // The last rank's trust region (see below).
+    let mut anchor_radius = pointer_across;
+    'solve: loop {
+    for iteration in first_iteration..MAX_ITERATIONS {
         if !res.iter().all(|f| f.is_finite()) || !jac.iter().flatten().all(|(_, g)| g.is_finite()) {
             return finish(Stop::NoStep, iteration, false, most_ratio, false);
         }
@@ -2546,13 +2568,10 @@ fn newton(
                 .all(|(_, off)| off.abs() <= bar.get().length)
             {
                 stage2(0, 0.0);
-                return finish(
-                    Stop::Settled,
-                    iteration,
-                    true,
-                    most_ratio,
-                    unkept(&free_radius, values),
-                );
+                {
+                    settled = Some((iteration, true));
+                    break;
+                }
             }
             if preferences_entry.is_none() {
                 preferences_entry = Some(comp.unknowns.iter().map(|g| values[*g]).collect());
@@ -2593,13 +2612,10 @@ fn newton(
                 // (Positive definite by construction; a factor that fails is round-off
                 // swamping the rows, with nothing a preference's step could rely on.)
                 stage2(5, f64::NAN);
-                return finish(
-                    Stop::Settled,
-                    iteration,
-                    true,
-                    most_ratio,
-                    unkept(&free_radius, values),
-                );
+                {
+                    settled = Some((iteration, true));
+                    break;
+                }
             };
             // The weighted projection into the rows' null space of a gradient (`μ·A⁻¹`).
             // (Refined against the matrix's exact values: `A⁻¹` amplifies round-off by 1/μ in
@@ -2695,13 +2711,10 @@ fn newton(
                 || (radii_met && stationary <= bar.get().length * bar.get().length)
             {
                 stage2(1, stationary);
-                return finish(
-                    Stop::Settled,
-                    iteration,
-                    true,
-                    most_ratio,
-                    unkept(&free_radius, values),
-                );
+                {
+                    settled = Some((iteration, true));
+                    break;
+                }
             }
             let mut x = vec![0.0; n];
             let mut p: Vec<f64> = v.iter().map(|v| -v).collect();
@@ -2769,13 +2782,10 @@ fn newton(
                     },
                     stationary,
                 );
-                return finish(
-                    Stop::Settled,
-                    iteration,
-                    true,
-                    most_ratio,
-                    unkept(&free_radius, values),
-                );
+                {
+                    settled = Some((iteration, true));
+                    break;
+                }
             }
             let stepped = distance(&x, &x).sqrt();
             // The trial, back onto the rows: minimum-change Newton steps (the weighted
@@ -2867,13 +2877,10 @@ fn newton(
             }
             if radius <= bar.get().length {
                 stage2(4, stationary);
-                return finish(
-                    Stop::Settled,
-                    iteration + 1,
-                    converged(&res, values),
-                    most_ratio,
-                    unkept(&free_radius, values),
-                );
+                {
+                    settled = Some((iteration + 1, converged(&res, values)));
+                    break;
+                }
             }
             continue;
         }
@@ -3066,6 +3073,311 @@ fn newton(
                 false,
             );
         }
+    }
+    // The last rank, below the kept shapes: what the relations, the dragged and the shapes all
+    // leave open goes back as near where the solve's `anchors` are as it can (a drag's step:
+    // where the drag began, `SolveOptions::anchor`). So where a drag ends doesn't depend on the
+    // steps its path took to get there: each step's least change, measured from where the last
+    // one ended, drifts with the steps along what nothing above decides, and where the steps
+    // fell (round a turn of the shape, at one size and not another) moved the end with them
+    // (the similarity property, every seed). Each step is a projected Gauss–Newton step in
+    // the rows' null space with the dragged and carried held and every kept shape's gradient
+    // held as a row too (so a shape moves only at second order), brought back onto the rows;
+    // then the shapes' stage meets the shapes again, and the next step goes from there.
+    if let Some((iteration, conv)) = settled
+        && conv
+        && !unkept(&free_radius, values)
+        && anchors.iter().zip(&pinned).any(|(a, p)| a.is_some() && !*p)
+    {
+        let progressed = 'step: {
+            let b = bar.get().length;
+            let terms: Vec<(usize, f64)> = comp
+                .unknowns
+                .iter()
+                .zip(anchors)
+                .enumerate()
+                .filter(|(c, _)| !pinned[*c])
+                .filter_map(|(c, (g, a))| a.map(|a| (c, values[*g] - a)))
+                .collect();
+            if terms.iter().all(|(_, off)| off.abs() <= b) {
+                break 'step false;
+            }
+            let ((res_now, jac_now), own_now) = evaluate_with_own(sys, &comp.rows, values, &col_of);
+            let row_scale = row_scales(&jac_now, &own_now, |k| {
+                res_now[k].abs() <= row_tolerance(sys, comp.rows[k], bar.get(), values)
+            });
+            let (scaled_jac, _) = scaled_rows(&jac_now, &res_now, &row_scale);
+            let value = |p: usize| values[sys.group_of[p]];
+            let shape_rows: Vec<Vec<(usize, f64)>> = shapes
+                .iter()
+                .filter_map(|shape| {
+                    let (gradient, _) = shape.offset(value)?;
+                    let mut grad: Vec<(usize, f64)> = Vec::with_capacity(4);
+                    for (p, g) in shape.params().iter().zip(gradient) {
+                        if let Some(&c) = col_of.get(&sys.group_of[*p]) {
+                            match grad.iter_mut().find(|(cc, _)| *cc == c) {
+                                Some(entry) => entry.1 += g,
+                                None => grad.push((c, g)),
+                            }
+                        }
+                    }
+                    let norm = grad.iter().map(|(_, g)| g * g).sum::<f64>().sqrt();
+                    (norm > 0.0).then(|| grad.into_iter().map(|(c, g)| (c, g / norm)).collect())
+                })
+                .collect();
+            normal.clear();
+            for row in scaled_jac.iter().chain(&shape_rows) {
+                for (k, &(c1, g1)) in row.iter().enumerate() {
+                    if pinned[c1] {
+                        continue;
+                    }
+                    for &(c2, g2) in &row[..=k] {
+                        if !pinned[c2] {
+                            normal.add_product(c1, c2, g1, g2);
+                        }
+                    }
+                }
+            }
+            let mu = MIN_CHANGE * max_diag_of(&normal);
+            let shift: Vec<f64> = mobility
+                .iter()
+                .zip(&pinned)
+                .map(|(m, p)| if *p { 1.0 } else { mu / m })
+                .collect();
+            let Some(factor) = normal.factor(&shift) else {
+                break 'step false;
+            };
+            let once = |r: &[f64]| {
+                let rhs: Vec<Dd> = r
+                    .iter()
+                    .zip(&pinned)
+                    .map(|(r, p)| Dd::default().add(if *p { 0.0 } else { *r }))
+                    .collect();
+                let mut v = factor.solve_refined(&rhs);
+                for (v, p) in v.iter_mut().zip(&pinned) {
+                    *v = if *p { 0.0 } else { *v * mu };
+                }
+                v
+            };
+            let project = |r: &[f64]| {
+                let v = once(r);
+                let weighted: Vec<f64> = v.iter().zip(&mobility).map(|(v, m)| v / m).collect();
+                once(&weighted)
+            };
+            let distance = |a: &[f64], c: &[f64]| {
+                a.iter()
+                    .zip(c)
+                    .zip(&pinned)
+                    .filter(|(_, p)| !**p)
+                    .map(|((a, c), _)| a * c)
+                    .sum::<f64>()
+            };
+            let half_square =
+                |offs: &mut dyn Iterator<Item = f64>| 0.5 * offs.map(|o| o * o).sum::<f64>();
+            let phi_now = half_square(&mut terms.iter().map(|(_, off)| *off));
+            let mut r = vec![0.0; n];
+            let mut is_goal = vec![false; n];
+            for &(c, off) in &terms {
+                r[c] += off;
+                is_goal[c] = true;
+            }
+            let mut v = project(&r);
+            let mut rv = dot(&r, &v);
+            if rv <= b * b {
+                break 'step false;
+            }
+            let mut x = vec![0.0; n];
+            let mut p: Vec<f64> = v.iter().map(|v| -v).collect();
+            let to_edge = |x: &[f64], d: &[f64]| {
+                let (qa, qb, qc) = (
+                    distance(d, d),
+                    2.0 * distance(x, d),
+                    distance(x, x) - anchor_radius * anchor_radius,
+                );
+                if qa > 0.0 {
+                    (-qb + (qb * qb - 4.0 * qa * qc).max(0.0).sqrt()) / (2.0 * qa)
+                } else {
+                    0.0
+                }
+            };
+            for _ in 0..=terms.len() {
+                let hp: Vec<f64> = p
+                    .iter()
+                    .zip(&is_goal)
+                    .map(|(p, goal)| if *goal { *p } else { 0.0 })
+                    .collect();
+                let kappa = dot(&p, &hp);
+                if kappa <= 0.0 {
+                    let t = to_edge(&x, &p);
+                    x.iter_mut().zip(&p).for_each(|(x, p)| *x += t * p);
+                    break;
+                }
+                let alpha = rv / kappa;
+                let next: Vec<f64> = x.iter().zip(&p).map(|(x, p)| x + alpha * p).collect();
+                if distance(&next, &next) >= anchor_radius * anchor_radius {
+                    let t = to_edge(&x, &p);
+                    x.iter_mut().zip(&p).for_each(|(x, p)| *x += t * p);
+                    break;
+                }
+                x = next;
+                r.iter_mut().zip(&hp).for_each(|(r, h)| *r += alpha * h);
+                v = project(&r);
+                let rv_next = dot(&r, &v);
+                if rv_next.max(0.0).sqrt() <= b {
+                    break;
+                }
+                let beta = rv_next / rv;
+                p.iter_mut().zip(&v).for_each(|(p, v)| *p = -v + beta * *p);
+                rv = rv_next;
+            }
+            let promised = phi_now - half_square(&mut terms.iter().map(|&(c, off)| off + x[c]));
+            let nearer = (2.0 * phi_now).sqrt() - (2.0 * (phi_now - promised).max(0.0)).sqrt();
+            if promised <= b * b || nearer <= b {
+                break 'step false;
+            }
+            let stepped = distance(&x, &x).sqrt();
+            let mut trial = values.to_vec();
+            for (c, g) in comp.unknowns.iter().enumerate() {
+                trial[*g] += x[c];
+            }
+            // Back onto the rows, and onto each kept shape as it stood before the step (the step
+            // keeps them to first order; this takes out the second), by minimum-change Newton
+            // steps, each at least halving what is left.
+            let shape_terms = |vals: &[f64]| -> Vec<(Vec<(usize, f64)>, f64)> {
+                shapes
+                    .iter()
+                    .filter_map(|shape| {
+                        let (gradient, off) = shape.offset(|p| vals[sys.group_of[p]])?;
+                        let mut grad: Vec<(usize, f64)> = Vec::with_capacity(4);
+                        for (p, g) in shape.params().iter().zip(gradient) {
+                            if let Some(&c) = col_of.get(&sys.group_of[*p]) {
+                                match grad.iter_mut().find(|(cc, _)| *cc == c) {
+                                    Some(entry) => entry.1 += g,
+                                    None => grad.push((c, g)),
+                                }
+                            }
+                        }
+                        Some((grad, off))
+                    })
+                    .collect()
+            };
+            let held_offs: Vec<f64> = shape_terms(values).iter().map(|(_, o)| *o).collect();
+            let landed = {
+                let mut last = f64::INFINITY;
+                loop {
+                    let ((tres, tjac), town) = evaluate_with_own(sys, &comp.rows, &trial, &col_of);
+                    let held_rows = |k: usize| {
+                        tres[k].abs() <= row_tolerance(sys, comp.rows[k], bar.get(), &trial)
+                    };
+                    let now = shape_terms(&trial);
+                    if (0..tres.len()).all(held_rows)
+                        && now.iter().zip(&held_offs).all(|((_, o), h)| (o - h).abs() <= b)
+                    {
+                        break Some(((tres, tjac), town));
+                    }
+                    let scale = row_scales(&tjac, &town, held_rows);
+                    let (bj, br) = scaled_rows(&tjac, &tres, &scale);
+                    let mut all: Vec<(Vec<(usize, f64)>, f64)> = bj.into_iter().zip(br).collect();
+                    for ((g, o), h) in now.into_iter().zip(&held_offs) {
+                        let norm = g.iter().map(|(_, v)| v * v).sum::<f64>().sqrt();
+                        if norm > 0.0 {
+                            all.push((
+                                g.into_iter().map(|(c, v)| (c, v / norm)).collect(),
+                                (o - h) / norm,
+                            ));
+                        }
+                    }
+                    let off: f64 = all.iter().map(|(_, f)| f * f).sum();
+                    if !(off.is_finite() && off <= 0.25 * last) {
+                        break None;
+                    }
+                    last = off;
+                    let back = back_normal.get_or_insert_with(|| Skyline::new(n, &neighbors));
+                    back.clear();
+                    let mut rhs = vec![Dd::default(); n];
+                    for (row, f) in &all {
+                        for (k, &(c1, g1)) in row.iter().enumerate() {
+                            if pinned[c1] {
+                                continue;
+                            }
+                            rhs[c1] = rhs[c1].add_product(-g1, *f);
+                            for &(c2, g2) in &row[..=k] {
+                                if !pinned[c2] {
+                                    back.add_product(c1, c2, g1, g2);
+                                }
+                            }
+                        }
+                    }
+                    let mu = MIN_CHANGE * max_diag_of(back);
+                    let shift: Vec<f64> = mobility
+                        .iter()
+                        .zip(&pinned)
+                        .map(|(m, p)| if *p { 1.0 } else { mu / m })
+                        .collect();
+                    let Some(f) = back.factor(&shift) else {
+                        break None;
+                    };
+                    let d = f.solve_refined(&rhs);
+                    for (c, g) in comp.unknowns.iter().enumerate() {
+                        if !pinned[c] {
+                            trial[*g] += d[c];
+                        }
+                    }
+                }
+            };
+            let back: Vec<f64> = comp
+                .unknowns
+                .iter()
+                .enumerate()
+                .map(|(c, g)| trial[*g] - values[*g] - x[c])
+                .collect();
+            let gain = {
+                let after = half_square(&mut terms.iter().map(|&(c, _)| {
+                    trial[comp.unknowns[c]] - anchors[c].unwrap_or(0.0)
+                }));
+                (phi_now - after) / promised
+            };
+            if let Some(((trial_res, trial_jac), trial_own)) = landed
+                && moved(&back) <= CORRECTION_SHARE * moved(&x)
+                && gain >= 0.25
+            {
+                if gain > 0.75 && stepped >= 0.99 * anchor_radius {
+                    anchor_radius = (2.0 * anchor_radius).min(pointer_across);
+                }
+                values.copy_from_slice(&trial);
+                leave_storage();
+                res = trial_res;
+                jac = trial_jac;
+                own = trial_own;
+                break 'step true;
+            }
+            anchor_radius = stepped / 4.0;
+            anchor_radius > b
+        };
+        // (Back to the shapes, which the step moved at second order, then again.)
+        if progressed && iteration + 1 < MAX_ITERATIONS {
+            first_iteration = iteration + 1;
+            settled = None;
+            continue 'solve;
+        }
+        return finish(
+            Stop::Settled,
+            iteration,
+            converged(&res, values),
+            most_ratio,
+            unkept(&free_radius, values),
+        );
+    }
+    if let Some((iteration, conv)) = settled {
+        return finish(
+            Stop::Settled,
+            iteration,
+            conv,
+            most_ratio,
+            unkept(&free_radius, values),
+        );
+    }
+    break 'solve;
     }
     if in_stage2 && converged(&res, values) {
         stage2(6, last_stationary);
@@ -3267,6 +3579,17 @@ fn run(sys: &mut System, options: &SolveOptions, iterate: bool) -> SolveReport {
                     })
                 })
                 .collect();
+            let anchors: Vec<Option<f64>> = comp
+                .unknowns
+                .iter()
+                .map(|&g| {
+                    sys.anchors
+                        .get(g)
+                        .copied()
+                        .flatten()
+                        .map(|a| a - shifts_of.get(&g).copied().unwrap_or(0.0))
+                })
+                .collect();
             let outcome = newton(
                 sys,
                 comp,
@@ -3277,6 +3600,7 @@ fn run(sys: &mut System, options: &SolveOptions, iterate: bool) -> SolveReport {
                 !options.dragged.is_empty(),
                 across,
                 &goals,
+                &anchors,
             );
             for &g in &comp.unknowns {
                 bars[g] = outcome.bar;

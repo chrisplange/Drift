@@ -314,8 +314,14 @@ pub(super) fn add(s: &mut Session, a: &Value) -> Res {
     let mut created = Vec::new();
     let mut failed = None;
     for (i, item) in items.iter().enumerate() {
+        let first = build.curves.len();
         match build.item(item) {
-            Ok(v) => created.push(v),
+            Ok(v) => {
+                // Each item is a shape of its own, drawn on from an open end of one
+                // already there (#476): items sharing corners don't become one figure.
+                build.doc.figure_curves(&build.curves[first..]);
+                created.push(v);
+            }
             Err(e) => {
                 failed = Some(format!("items[{i}]: {e}"));
                 break;

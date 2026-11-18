@@ -3184,19 +3184,15 @@ fn run(sys: &mut System, options: &SolveOptions, iterate: bool) -> SolveReport {
     // geometry could change (see `newton`).
     let mut unkept = 0;
     let across = drawing_across(sys, &values, !options.dragged.is_empty());
-    // (And with what is asked to move where it is asked to go: a drag's step from where its
-    // path reached may take the dragged farther than the drawing is across now.)
-    let across = if sys.targets.iter().any(Option::is_some) {
-        let mut moved = values.clone();
-        for (g, target) in sys.targets.iter().enumerate() {
-            if let Some((to, _)) = target {
-                moved[g] = *to;
-            }
-        }
-        across.max(drawing_across(sys, &moved, true))
-    } else {
-        across
-    };
+    // (And as far again as anything is asked to go: a drag's step from where its path reached
+    // takes the dragged that far, and what they carry with them.)
+    let asked = sys
+        .targets
+        .iter()
+        .zip(&sys.groups)
+        .filter_map(|(target, group)| target.map(|(to, _)| (to - group.value).abs()))
+        .fold(0.0, f64::max);
+    let across = across + std::f64::consts::SQRT_2 * asked;
     let mut grad = Vec::new();
 
     for &r in &constant_rows {

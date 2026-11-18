@@ -5,10 +5,13 @@
 //!   undirected (its residual the sine of the angle error, zero both ways round), so a big step
 //!   that turns a line past square to its partner heads for the other root.
 //! - **Guards** (run normally, pass on main): drags and typed moves main gets right that a fix
-//!   must not break. A first attempt (directed angle rows in drags with a stop rule, parked on
-//!   branch `claude/pair-way-round-344`) broke each of them: lines flung or stretched, a
-//!   linkage jumping, a sliver refused. Keeping a way round needs the drag to follow its path
-//!   from the start (the solver audit's PR 5), not one step at a time.
+//!   must not break. Two attempts are parked on branch `claude/pair-way-round-344`. The first
+//!   (directed angle rows in every solve, `d30c126`) broke all seven, and refused the commit
+//!   in `drift-solver`'s `a_commit_may_turn_a_pair_round`. The second (directed rows in drags
+//!   only, with a stop rule, `0802570`) kept typed moves and nudges as main has them but broke
+//!   the five drag guards: lines flung or stretched, a linkage jumping, a sliver refused.
+//!   Keeping a way round needs the drag to follow its path from the start (the solver audit's
+//!   PR 5), not one step at a time.
 //!
 //! ```text
 //! cargo test --release -p drift-edit --lib drag_props::ways_round -- --include-ignored
@@ -126,13 +129,25 @@ fn angle_344_pair_keeps_its_way_round_on_a_big_drag() {
     keeps_its_way_round(angle_pair(), 3, DVec2::new(-20.0, -20.0), 1);
 }
 
-/// The same three drags in many small steps: each frame solves from the drag's start, so the
-/// way round is the one the drag began with however the pointer got there.
+/// The Parallel drag in 40 small steps: each frame solves from the drag's start, so the way
+/// round is the one the drag began with however the pointer got there.
 #[test]
 #[ignore = "known failure: #344"]
-fn pairs_keep_their_way_round_in_many_steps() {
+fn parallel_344_pair_keeps_its_way_round_in_many_steps() {
     keeps_its_way_round(parallel_pair(), 3, DVec2::new(-30.0, 5.0), 40);
+}
+
+/// The Perpendicular drag in 40 small steps.
+#[test]
+#[ignore = "known failure: #344"]
+fn perpendicular_344_pair_keeps_its_way_round_in_many_steps() {
     keeps_its_way_round(perpendicular_pair(), 3, DVec2::new(5.0, -30.0), 40);
+}
+
+/// The Angle drag in 40 small steps.
+#[test]
+#[ignore = "known failure: #344"]
+fn angle_344_pair_keeps_its_way_round_in_many_steps() {
     keeps_its_way_round(angle_pair(), 3, DVec2::new(-20.0, -20.0), 40);
 }
 
@@ -158,7 +173,7 @@ fn a_leg_dragged_past_its_corner_stops_there() {
             let end = run.end[2];
             assert!(run.committed, "{steps} steps, {dy}: not committed");
             assert!(
-                (end.x - 10.0).abs() < 1e-9 && (0.0..=5.0).contains(&end.y),
+                close(end, v(10.0, end.y), 10.0) && (0.0..=5.0).contains(&end.y),
                 "{steps} steps, {dy}: the leg's end ended at {end}, not between the corner and \
                  where it began"
             );
@@ -449,8 +464,11 @@ fn a_move_about_a_fixed_corner_is_not_flung() {
 /// Guard: a parallelogram linkage (base fixed, three kept lengths, crank Parallel to rocker),
 /// the crank's end dragged to places on a circle of radius 12 about its pivot (the crank is 10
 /// long, so the point can't land; no pair turns). Where the crank ends should move a little
-/// when the pointer does: on main at most 2.4° for 2.5° of pointer. A first attempt jumped
-/// 31.5°, and went backwards between 57.5° and 72.5°.
+/// when the pointer does: on main at most 2.4° for 2.5° of pointer, and that at the first
+/// sample, from the start pose, where all four points lie on the x axis: the parallelogram's
+/// collinear change-point, the one place a path-following drag may rightly pick its branch
+/// differently (check there first if this fails only from 0° to 2.5°). The second attempt
+/// jumped 31.5° (at 77.5°).
 #[test]
 fn a_linkage_follows_the_pointer_continuously() {
     let v = DVec2::new;
@@ -493,8 +511,11 @@ fn a_linkage_follows_the_pointer_continuously() {
 }
 
 /// Guard: a sliver has no way round to keep. A leg 1e-9 long square to a fixed line is dragged
-/// up and down by 2 in 10 frames: main goes both ways. A first attempt held it to a way round
-/// and refused every frame down.
+/// up and down by 2 in 10 frames: main goes both ways. The second attempt held it to a way
+/// round and refused every frame down. The threshold is the part's solve bar, not ε: for this
+/// 10 mm part the bar is 1e-9 × a quarter of its size, 2.5e-9 mm (solver decision 2), so the
+/// leg is under it; a line no longer than the bar has no way round to keep (a test scaled to
+/// ε, about 1e-13 here, would wrongly keep this one's).
 #[test]
 fn a_sliver_goes_either_way() {
     let v = DVec2::new;

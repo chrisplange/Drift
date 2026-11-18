@@ -1908,8 +1908,9 @@ fn a_carried_step_that_does_not_finish_whole_goes_in_halves() {
         rels: vec![Rel::Midpoint(4, 0)],
     };
     let offset = p(-17.99131491084439, 0.0);
-    // (Without the line holding the dragged midpoint carried along, the move doesn't go: the
-    // test of `carry_holding` carrying a part and landing.)
+    // (A premise check, not a guard: without the line holding the dragged midpoint carried
+    // along, the move doesn't go, so this test still covers `carry_holding` carrying a part and
+    // landing. Drop it when the solver audit's PR 4 or PR 5 removes that carry.)
     let mut without = Built::new(&sketch, Similarity::IDENTITY).unwrap();
     without.ed.drag_no_carry = true;
     let ids = [without.curves[2]];

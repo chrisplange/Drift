@@ -1448,3 +1448,126 @@ fn blocks_work_over_the_link_and_wait_for_a_block_edit() {
     assert_eq!(ed.doc, before);
     assert!(ed.block_edit.is_some(), "the edit goes on");
 }
+
+fn eid_of(id: &str) -> drift_core::EntityId {
+    drift_core::EntityId(id[1..].parse().expect("an entity id"))
+}
+
+fn eids(v: &Value) -> Vec<drift_core::EntityId> {
+    v.as_array()
+        .unwrap_or_else(|| panic!("no list in {v}"))
+        .iter()
+        .map(|id| eid_of(id.as_str().expect("an id")))
+        .collect()
+}
+
+/// #476: two rectangles one script draws side by side, sharing two corners, are two
+/// figures: Tab on a side of either picks that rectangle's four sides.
+#[test]
+fn rectangles_a_script_draws_sharing_corners_chain_apart() {
+    let mut s = Session::new();
+    let made = ok(
+        &mut s,
+        "run_script",
+        json!({ "script": "rect a about 100 x 50 at 0,0\nrect b about 100 x 50 at 100,0" }),
+    );
+    let sides = |r: &str| -> std::collections::BTreeSet<drift_core::EntityId> {
+        ["south", "east", "north", "west"]
+            .iter()
+            .map(|k| eid_of(str_at(&made, &["names", &format!("{r}.{k}")])))
+            .collect()
+    };
+    let (a, b) = (sides("a"), sides("b"));
+    assert_eq!(
+        eid_of(str_at(&made, &["names", "a.se"])),
+        eid_of(str_at(&made, &["names", "b.sw"])),
+        "the corners are shared: {made}"
+    );
+    for r in [&a, &b] {
+        for side in r {
+            assert_eq!(&s.editor.chain_of(*side), r, "{made}");
+        }
+    }
+}
+
+/// #476: one `add_geometry` call with two closed polylines sharing a corner makes each
+/// its own figure.
+#[test]
+fn closed_polylines_one_call_draws_sharing_a_corner_are_separate_figures() {
+    let mut s = Session::new();
+    let made = ok(
+        &mut s,
+        "add_geometry",
+        json!({ "items": [
+            { "type": "polyline", "points": [[0, 0], [10, 0], [10, 10], [0, 10]], "closed": true },
+            { "type": "polyline", "points": [[10, 10], [20, 10], [20, 20], [10, 20]], "closed": true }
+        ]}),
+    );
+    let (p, q) = (
+        eids(&made["created"][0]["lines"]),
+        eids(&made["created"][1]["lines"]),
+    );
+    let doc = &s.editor.doc;
+    let figure = |lines: &[drift_core::EntityId]| {
+        let f = doc.figure_of(lines[0]);
+        assert!(f.is_some());
+        assert!(lines.iter().all(|l| doc.figure_of(*l) == f), "{made}");
+        f
+    };
+    assert_ne!(figure(&p), figure(&q), "{made}");
+    assert_eq!(s.editor.chain_of(p[0]), p.iter().copied().collect());
+    assert_eq!(s.editor.chain_of(q[0]), q.iter().copied().collect());
+}
+
+/// #476: a polyline, open or closed, is one figure; one a script starts on an open end of
+/// an existing path joins that path, as drawing on from a path's end does. One started
+/// on a closed shape's corner stays apart.
+#[test]
+fn a_polyline_is_one_figure_and_continues_a_path_from_its_open_end() {
+    let mut s = Session::new();
+    let made = ok(
+        &mut s,
+        "add_geometry",
+        json!({ "items": [
+            { "type": "polyline", "points": [[0, 0], [10, 0], [10, 10]] },
+            { "type": "polyline", "points": [[50, 0], [60, 0], [60, 10]], "closed": true }
+        ]}),
+    );
+    let (open, closed) = (
+        eids(&made["created"][0]["lines"]),
+        eids(&made["created"][1]["lines"]),
+    );
+    {
+        let doc = &s.editor.doc;
+        for lines in [&open, &closed] {
+            let f = doc.figure_of(lines[0]);
+            assert!(f.is_some());
+            assert!(lines.iter().all(|l| doc.figure_of(*l) == f), "{made}");
+        }
+        assert_ne!(doc.figure_of(open[0]), doc.figure_of(closed[0]));
+    }
+    let more = ok(
+        &mut s,
+        "run_script",
+        json!({ "script": "polyline on (10,10) (0,10) (0,5)\npolyline off (60,10) (70,10)" }),
+    );
+    let names = |n: &str| -> Vec<drift_core::EntityId> {
+        (1..)
+            .map_while(|k| more["names"].get(format!("{n}[{k}]")))
+            .map(|v| eid_of(v.as_str().unwrap()))
+            .collect()
+    };
+    let (on, off) = (names("on"), names("off"));
+    assert_eq!(on.len(), 2, "{more}");
+    assert_eq!(off.len(), 1, "{more}");
+    let doc = &s.editor.doc;
+    let path = doc.figure_of(open[0]);
+    assert!(on.iter().all(|l| doc.figure_of(*l) == path), "{more}");
+    assert_ne!(doc.figure_of(off[0]), doc.figure_of(closed[0]), "{more}");
+    let whole: std::collections::BTreeSet<_> = open.iter().chain(&on).copied().collect();
+    assert_eq!(s.editor.chain_of(open[0]), whole);
+    assert_eq!(
+        s.editor.chain_of(closed[0]),
+        closed.iter().copied().collect()
+    );
+}

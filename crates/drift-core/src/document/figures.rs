@@ -177,6 +177,19 @@ impl Document {
             .created_in_transaction()
             .into_iter()
             .filter(|id| !pieces.contains(id))
+            .collect();
+        self.figure_curves(&new);
+    }
+
+    /// Give the curves `curves` that are in no figure yet their figures, by the rule of
+    /// [`figure_new_curves`](Self::figure_new_curves): those joined end to end form one
+    /// figure, which joins an existing shape only at one of its open ends. For an edit that
+    /// names its shapes one by one (an AI-link item or script statement, #476), so shapes made
+    /// in one step that share corners stay apart. Points, circles and ellipses are left out.
+    pub fn figure_curves(&mut self, curves: &[EntityId]) {
+        let new: Vec<EntityId> = curves
+            .iter()
+            .copied()
             .filter(|id| {
                 self.entities
                     .get(id)

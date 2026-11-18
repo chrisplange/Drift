@@ -169,7 +169,7 @@ back:
 | 4 | The same, dragged outward past the round's radius | **Refused**, every frame: "the drag never grows a radius it doesn't move" | Same test; LOG 2026-11-11 |
 | 5 | Two arcs sharing an end, radii 8 and 12, one centre fixed, the other dragged further than they reach (e13) | **Refused** past the last shape where they meet. By the solver's `unkept` report, not by `breaks_held_shape` | `a_drag_the_kept_radii_cannot_follow_still_stops` (`drag_props.rs:2876–2885`) |
 | 6 | A can't-land drag whose solve does not finish inside the cap | **Refused** (0.63 % of drag solves) | Audit, PR 3's notes |
-| 7 | A drag that can't land and either crushes a line it doesn't move to nothing, or shortens it by more than 50 times the pointer's move while flinging an end more than 100 times it | **Refused**; short of that, it goes | `held_shapes::` pin and crank tests (`held_shapes.rs:636–784`) |
+| 7 | A drag that can't land and either crushes a line it doesn't move to nothing, or shortens it by more than 50 times the pointer's move while flinging an end more than 100 times it | **Refused**; short of that, it goes | `held_shapes::` pin and crank tests (`held_shapes.rs:645–793`) |
 
 So today's rule, as built: **relations give way** (rows 1 and 2); **a held radius never grows, and
 may shrink (in a frame that doesn't land, no faster than ten times the pointer)** (rows 3

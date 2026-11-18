@@ -403,18 +403,21 @@ fn a_point_on_a_fixed_line_dragged_off_it_slides_along_it() {
             let frames = 20;
             let off = DVec2::new(10.0, 14.0) * scale;
             ed.doc.begin();
-            let mut went = 0;
-            for _ in 0..frames {
-                went += u32::from(ed.drag(&[q], off / f64::from(frames), &Param::point(q)));
-            }
             let what = format!("{scale}× at {at}");
+            let mut went = 0;
+            for k in 1..=frames {
+                went += u32::from(ed.drag(&[q], off / f64::from(frames), &Param::point(q)));
+                // As near as it can on every frame, not only at rest: the foot of the pointer
+                // so far.
+                let now = ed.doc.point(q).unwrap();
+                let pointer = off * f64::from(k) / f64::from(frames);
+                let foot = start + along * pointer.dot(along);
+                assert!(
+                    now.distance(foot) < 1e-6 * scale,
+                    "{what}, frame {k}: at {now}, the pointer's foot is {foot}"
+                );
+            }
             assert_eq!(went, frames, "{what}: {went} of {frames} frames went");
-            let now = ed.doc.point(q).unwrap();
-            let foot = start + along * off.dot(along);
-            assert!(
-                now.distance(foot) < 1e-6 * scale,
-                "{what}: at {now}, the pointer's foot is {foot}"
-            );
             assert_eq!(ed.doc.point(a).unwrap(), pa, "{what}");
             assert_eq!(ed.doc.point(b).unwrap(), pb, "{what}");
             assert_eq!(broken(&ed.doc, None), None, "{what}");
@@ -429,6 +432,11 @@ fn a_point_on_a_fixed_line_dragged_off_it_slides_along_it() {
 /// as a circle, at the origin and a kilometre out. Without the Equal, A's radius is the drag's
 /// to dictate and follows (row 3): every frame goes, the circle growing to 8 and the arc
 /// growing too, B unchanged.
+///
+/// A refused frame leaves A where it was, and doesn't slide it to the nearest allowed shape
+/// (the owner's answer 2). B's fixed centre is the ruling's case, but today it isn't what stops
+/// the drag: with B's centre free the drag is refused just the same, because B's radius is
+/// one the drag doesn't move and so is never grown. This test doesn't tell those apart.
 #[test]
 fn a_round_equal_to_a_fixed_centre_round_stops_when_dragged_off_its_tangent_line() {
     for at in [DVec2::ZERO, DVec2::new(1e6, 0.0)] {
@@ -482,12 +490,12 @@ fn a_round_equal_to_a_fixed_centre_round_stops_when_dragged_off_its_tangent_line
                 let radius = |ed: &Editor, r| drift_solver::radius_of(&ed.doc, r).unwrap();
                 assert_eq!((radius(&ed, ra), radius(&ed, rb)), (5.0, 5.0), "{what}");
                 ed.doc.begin();
-                let dragged: Vec<Param> = ed
-                    .doc
-                    .defining_points([ra])
-                    .into_iter()
-                    .flat_map(Param::point)
-                    .collect();
+                let points: Vec<EntityId> = ed.doc.defining_points([ra]).into_iter().collect();
+                let at_points = |ed: &Editor| -> Vec<DVec2> {
+                    points.iter().map(|&p| ed.doc.point(p).unwrap()).collect()
+                };
+                let was = at_points(&ed);
+                let dragged: Vec<Param> = points.iter().copied().flat_map(Param::point).collect();
                 let mut went = 0;
                 for _ in 0..30 {
                     went += u32::from(ed.drag(&[ra], DVec2::new(0.0, -0.1), &dragged));
@@ -498,6 +506,7 @@ fn a_round_equal_to_a_fixed_centre_round_stops_when_dragged_off_its_tangent_line
                         went == 0 && now_a == 5.0 && now_b == 5.0,
                         "{what}: {went} of 30 frames went, radii 5 -> {now_a}, {now_b}"
                     );
+                    assert_eq!(at_points(&ed), was, "{what}: A moved");
                 } else {
                     // The circle's radius follows the drag to 8. The arc goes too, growing A
                     // (its ends are dragged with it, so how far is the solve's to choose; not

@@ -145,6 +145,9 @@ pub struct Editor {
     /// Whether a drag leaves the curves holding its dragged points where they are rather than
     /// carry them (see `DragFrame::holding`; for the tests: a drag as it was without).
     pub(crate) drag_no_carry: bool,
+    /// Whether the drag running is a move to a typed place ([`Editor::move_point_to`]),
+    /// which keeps no Parallel, Perpendicular or Angle pair's way round (#344).
+    typed_move: bool,
     /// How many times the last drag call tried a frame again with the solver's fold steps
     /// (see `Editor::drag_frame`; for the tests).
     pub(crate) drag_folds: u32,

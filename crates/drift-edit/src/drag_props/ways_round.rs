@@ -126,31 +126,124 @@ fn pairs_keep_their_way_round_in_many_steps() {
     keeps_its_way_round(angle_pair(), 3, DVec2::new(-20.0, -20.0), 40);
 }
 
-/// A drag that turns the free line right round its fixed start (its end taken in a half
-/// circle to the other side) can't keep the pair: the free line is held to its partner's
-/// direction, so its end can only slide along it. Dragging the end straight across to the far
-/// side asks the pair to flip, which the drag must not do: wherever it stops, the pair is still
-/// the way round it began.
+/// The stop rule (#344): where only the other way round reaches the pointer, or keeping the
+/// pair would reshape its lines, the drag stops at the last shape that keeps the pair. A leg
+/// square to a fixed line, its foot fixed and its length free, dragged by its end down past
+/// the corner: on main it flipped through the corner and followed the pointer. Now it stops
+/// at the corner, never past it and never off on the far side (a one-step drag past the
+/// corner leaves the leg where it was; in steps it goes down to the corner and stays).
 #[test]
-fn a_drag_asking_for_the_flip_never_takes_it() {
-    let mut built = parallel_pair();
-    // Hold the free line's start too: now only its end can move, along the line.
-    let start = built.points[2];
-    let at = built.ed.doc.point(start).unwrap();
-    built
-        .ed
-        .add_constraints("Fix", &[Constraint::Fix { point: start, at }])
-        .unwrap();
-    let id = built.points[3];
-    let run = drag(&mut built, &[id], DVec2::new(-20.0, 0.0), 10).unwrap();
-    let before = turn_between(&built.sketch, &run.start, 0, 1);
-    let after = turn_between(&built.sketch, &run.end, 0, 1);
-    let change = (after - before + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU)
-        - std::f64::consts::PI;
+fn a_leg_dragged_past_its_corner_stops_there() {
+    let v = DVec2::new;
+    let sketch = Sketch {
+        points: vec![v(0.0, 0.0), v(10.0, 0.0), v(10.0, 5.0)],
+        curves: vec![Curve::Line(0, 1), Curve::Line(1, 2)],
+        rels: vec![Rel::Fix(0), Rel::Fix(1), Rel::Perpendicular(0, 1)],
+    };
+    for steps in [1, 20] {
+        for dy in [-5.01, -6.0, -8.0, -10.0, -30.0] {
+            let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+            let id = built.points[2];
+            let run = drag(&mut built, &[id], v(0.0, dy), steps).unwrap();
+            let end = run.end[2];
+            assert!(run.committed, "{steps} steps, {dy}: not committed");
+            assert!(
+                (end.x - 10.0).abs() < 1e-9 && (0.0..=5.0).contains(&end.y),
+                "{steps} steps, {dy}: the leg's end ended at {end}, not between the corner and \
+                 where it began"
+            );
+            if steps == 20 {
+                // (Within a frame's move of the corner: the drag stops at its last frame that
+                // keeps the pair.)
+                assert!(
+                    end.y <= dy.abs() / 20.0 + 1e-9,
+                    "{steps} steps, {dy}: stopped at {end}, short of the corner"
+                );
+            }
+        }
+    }
+    // Short of the corner, the drag follows the pointer as before.
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let id = built.points[2];
+    let run = drag(&mut built, &[id], v(0.0, -4.0), 1).unwrap();
     assert!(
-        change.abs() < std::f64::consts::FRAC_PI_2,
-        "the pair turned round: {:.1}° to {:.1}°",
-        before.to_degrees(),
-        after.to_degrees(),
+        close(run.end[2], v(10.0, 1.0), 10.0),
+        "ended at {}",
+        run.end[2]
+    );
+}
+
+/// The stop rule (#344): a free line parallel to a fixed one, its length free, dragged by its
+/// end past its start. Keeping the pair the way round it began, nothing says where the start
+/// should go (on a first build the solve's path flung it tens of millimetres ahead of the
+/// pointer, a different place for each pointer position), so the drag stops with the end at
+/// the start: never flung, never the other way round. With the start fixed, the same.
+#[test]
+fn a_free_line_dragged_past_its_start_stops_there() {
+    let v = DVec2::new;
+    for fixed_start in [false, true] {
+        let mut rels = vec![Rel::Fix(0), Rel::Fix(1), Rel::Parallel(0, 1)];
+        if fixed_start {
+            rels.push(Rel::Fix(2));
+        }
+        let sketch = Sketch {
+            points: vec![v(0.0, -10.0), v(20.0, -10.0), v(0.0, 0.0), v(10.0, 0.0)],
+            curves: vec![Curve::Line(0, 1), Curve::Line(2, 3)],
+            rels,
+        };
+        for steps in [1, 20] {
+            for dx in [-10.1, -11.0, -14.6, -20.0, -40.0] {
+                let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+                let id = built.points[3];
+                let run = drag(&mut built, &[id], v(dx, 0.5), steps).unwrap();
+                let (start, end) = (run.end[2], run.end[3]);
+                let what = format!("start fixed {fixed_start}, {steps} steps, {dx}");
+                assert!(run.committed, "{what}: not committed");
+                assert!(
+                    end.x > start.x,
+                    "{what}: the pair turned round: start {start}, end {end}"
+                );
+                assert!(
+                    start.distance(v(0.0, 0.0)) < 1.0 && end.x <= 10.0,
+                    "{what}: the line went off: start {start}, end {end}"
+                );
+            }
+        }
+    }
+}
+
+/// A move to a typed place (the inspector's coordinates, a typed line angle, the AI link's
+/// move_point) keeps no pair's way round: the place typed may be the other way round outright,
+/// and it is met as main met it. The leg kept square to a fixed line is turned to -90°.
+#[test]
+fn a_typed_move_may_turn_a_pair_round() {
+    let v = DVec2::new;
+    let sketch = Sketch {
+        points: vec![v(0.0, 0.0), v(10.0, 0.0), v(10.0, 5.0)],
+        curves: vec![Curve::Line(0, 1), Curve::Line(1, 2)],
+        rels: vec![Rel::Fix(0), Rel::Fix(1), Rel::Perpendicular(0, 1)],
+    };
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let leg = built.curves[1];
+    assert!(
+        built.ed.set_line_angle(leg, -90.0),
+        "the typed angle was refused"
+    );
+    let end = built.ed.doc.point(built.points[2]).unwrap();
+    assert!(close(end, v(10.0, -5.0), 10.0), "the leg's end is at {end}");
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let id = built.points[2];
+    assert!(
+        built.ed.move_point_to(id, v(10.0, -3.0)),
+        "the typed move was refused"
+    );
+    let end = built.ed.doc.point(id).unwrap();
+    assert!(close(end, v(10.0, -3.0), 10.0), "the leg's end is at {end}");
+    // And a drag after it keeps the pair again.
+    let run = drag(&mut built, &[id], v(0.0, 10.0), 1).unwrap();
+    assert!(
+        run.end[2].y <= 0.0,
+        "the drag after turned the pair: {}",
+        run.end[2]
     );
 }

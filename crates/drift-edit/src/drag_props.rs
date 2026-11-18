@@ -1908,6 +1908,14 @@ fn a_carried_step_that_does_not_finish_whole_goes_in_halves() {
         rels: vec![Rel::Midpoint(4, 0)],
     };
     let offset = p(-17.99131491084439, 0.0);
+    // (Without the line holding the dragged midpoint carried along, the move doesn't go: what
+    // makes this the test of `carry_holding` carrying a part and landing, since #344 let g7's
+    // move land with no carry.)
+    let mut without = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    without.ed.drag_no_carry = true;
+    let ids = [without.curves[2]];
+    let run = drag(&mut without, &ids, offset, 1).unwrap();
+    assert!(run.refused > 0, "the move went without the carry");
     let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
     let ids = [built.curves[2]];
     let run = drag(&mut built, &ids, offset, 1).unwrap();
@@ -2334,8 +2342,8 @@ fn a_move_held_on_a_line_at_its_tangent_end_lands() {
 /// #282, #283: where something pins the part, a move is never carried: a fixed point (or a
 /// fixed x), a locked layer, or geometry generated from the part (an offset) keeps the part
 /// from moving whole, and the drag is what it was without the carry (g7's move). Since #344
-/// g7's move lands with no carry, so this only checks that a pin changes nothing about it: no
-/// test now shows `carry_holding` itself carrying a part and landing.
+/// g7's move lands with no carry, so this only checks that a pin changes nothing about it
+/// (`a_carried_step_that_does_not_finish_whole_goes_in_halves` shows a carry landing).
 /// What pins a part, by name, done to a built sketch.
 type Pin = (&'static str, fn(&mut Built));
 

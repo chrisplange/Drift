@@ -2524,43 +2524,45 @@ fn pair_to(doc: &mut Document, to: DVec2) -> (EntityId, EntityId, [EntityId; 2])
     (fixed, free, [p[2], p[3]])
 }
 
-/// #344: lines lying exactly square to the root a new relation asks for. The undirected row's
-/// slope (the sine's) is zero there, so the solve had no way to turn the line; the directed
-/// row's is the line's turn, so it meets the relation, turning the line a quarter turn.
+/// #344: a commit meets a Parallel, Perpendicular or Angle pair either way round (only a drag
+/// keeps a pair's way round). Relation census case 221: adding Horizontal to a line kept square
+/// to another takes the line through zero length and out the other way. A row kept the way
+/// round the start lay could not let the line pass, and the solve ran to its cap.
 #[test]
-fn a_relation_square_to_its_lines_still_solves() {
-    for (to, relation) in [
-        (v(0.0, 15.0), 0),  // Parallel, the free line square to the fixed one.
-        (v(10.0, 5.0), 1),  // Perpendicular, the free line parallel.
-        (v(-10.0, 5.0), 2), // A 90° Angle, the free line the other way along.
+fn a_commit_may_turn_a_pair_round() {
+    let mut doc = Document::new();
+    let p1 = doc.add_point(v(-3.552713678800501e-15, 0.0));
+    let p2 = doc.add_point(v(17.320508075688775, 9.999999999999998));
+    let p3 = doc.add_point(v(17.32050807568877, 30.0));
+    let p4 = doc.add_point(v(-1.9980084500925877, 15.176380902050418));
+    let p5 = doc.add_point(v(0.5901820009326197, 24.8356391649411));
+    let p6 = doc.add_point(v(12.320508075688767, 21.339745962155614));
+    let arc = doc.add_arc(p2, p3, p1).unwrap();
+    let l8 = doc.add_line(p2, p4).unwrap();
+    let l9 = doc.add_line(p4, p5).unwrap();
+    doc.add_line(p3, p6).unwrap();
+    for c in [
+        Constraint::Perpendicular { a: l8, b: l9 },
+        Constraint::PointOnCurve {
+            point: p4,
+            curve: arc,
+        },
+        Constraint::Distance {
+            a: p3,
+            b: p6,
+            value: 10.000000000000002,
+        },
+        Constraint::Horizontal { line: l9 },
     ] {
-        let mut doc = Document::new();
-        let (a, b, [s, e]) = pair_to(&mut doc, to);
-        doc.add_constraint(match relation {
-            0 => Constraint::Parallel { a, b },
-            1 => Constraint::Perpendicular { a, b },
-            _ => Constraint::Angle {
-                a,
-                b,
-                degrees: 90.0,
-            },
-        })
-        .unwrap();
-        let report = solved(&mut doc);
-        assert!(report.converged, "relation {relation}: {report:?}");
-        let d = doc.point(e).unwrap() - doc.point(s).unwrap();
-        let want = if relation == 0 { d.y } else { d.x };
-        assert!(
-            want.abs() < 1e-6,
-            "relation {relation}: the free line is {d}"
-        );
-        assert!((d.length() - 10.0).abs() < 1e-6, "relation {relation}: {d}");
+        doc.add_constraint(c).unwrap();
     }
+    let report = solved(&mut doc);
+    assert!(report.converged, "{report:?}");
 }
 
 /// #344: a relation added to lines that are nearer its far root (lines 170° apart, made
-/// Parallel) meets it there, turning a line 10°, not 170°: lines meet a Parallel either way
-/// round, and the way round is the geometry's.
+/// Parallel) meets it there, turning a line 10°, not 170°: a commit meets a pair either way
+/// round.
 #[test]
 fn a_new_relation_meets_its_nearer_way_round() {
     let mut doc = Document::new();

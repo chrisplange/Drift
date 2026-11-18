@@ -286,7 +286,8 @@ fn touching_end(
 /// - Where each tangency touched at a curve's end (see `touching_end`).
 /// - Which way round each Parallel, Perpendicular and Angle pair was met (see `way_round`):
 ///   a step that turns a line past square to its partner still heads back to the way round
-///   the drag began with, not on to the other (#344).
+///   the drag began with, not on to the other (#344). Only a drag freezes these: every other
+///   solve meets a pair either way round.
 #[derive(Clone, Debug, Default)]
 pub struct Frozen {
     touching: HashMap<(EntityId, EntityId), Option<(EntityId, Touching)>>,
@@ -316,6 +317,38 @@ pub fn freeze(doc: &Document, relations: &[(Option<ConstraintId>, Lowered)]) -> 
         }
     }
     frozen
+}
+
+impl Frozen {
+    /// The same forms, with no pair's way round: its pairs met either way round, as any
+    /// solve but a drag meets them (for a move to a typed place, which may ask for the other
+    /// way round outright).
+    pub fn without_ways(mut self) -> Self {
+        self.ways.clear();
+        self
+    }
+
+    /// The lines of the frozen pairs.
+    pub fn pair_lines(&self) -> impl Iterator<Item = EntityId> + '_ {
+        self.ways.keys().flat_map(|&(a, b, _)| [a, b])
+    }
+
+    /// The lines of each frozen pair that `doc` now lies with the other way round to how it
+    /// was frozen: what a drag's step asks to turn round, once its dragged points are moved
+    /// and before it is solved.
+    pub fn asked_other_way(&self, doc: &Document) -> Vec<EntityId> {
+        let mut lines: Vec<EntityId> = self
+            .ways
+            .iter()
+            .filter(|&(&(a, b, phi), &far)| {
+                way_round(doc, a, b, f64::from_bits(phi)).is_some_and(|now| now != far)
+            })
+            .flat_map(|(&(a, b, _), _)| [a, b])
+            .collect();
+        lines.sort_unstable();
+        lines.dedup();
+        lines
+    }
 }
 
 /// The lines and the angle φ (radians, from `a` to `b`) of a Parallel, Perpendicular or
@@ -578,15 +611,17 @@ impl System {
             Some(EntityKind::Line { a, b }) => Length::Points([x(a), y(a), x(b), y(b)]),
             _ => radius(id),
         };
-        // A Parallel, Perpendicular or Angle pair is met the way round it was frozen, or as
-        // it lies now: a directed row, one root and no fold short of 180° (#344).
-        let directed = |a: EntityId, b: EntityId, phi: f64| {
-            let far = frozen
-                .and_then(|f| f.ways.get(&(a, b, phi.to_bits())).copied())
-                .or_else(|| way_round(doc, a, b, phi))
-                .unwrap_or(false);
-            let phi = if far { phi + std::f64::consts::PI } else { phi };
-            Equation::directed_angle(line(a), line(b), phi)
+        // A Parallel, Perpendicular or Angle pair a drag froze is met the way round it was
+        // frozen: a directed row, one root and no fold short of 180° (#344). Any other solve
+        // meets it either way round, as the lines lie: the undirected row.
+        let angle_row = |a: EntityId, b: EntityId, phi: f64| match frozen
+            .and_then(|f| f.ways.get(&(a, b, phi.to_bits())).copied())
+        {
+            Some(far) => {
+                let phi = if far { phi + std::f64::consts::PI } else { phi };
+                Equation::directed_angle(line(a), line(b), phi)
+            }
+            None => Equation::angle(line(a), line(b), phi),
         };
 
         // ---- Substitution: merge equal parameters, pin fixed ones ----
@@ -680,7 +715,7 @@ impl System {
                 | Constraint::Angle { .. } => {
                     let (a, b, phi) = angle_asked(constraint).expect("an angle relation");
                     rows.push(Row {
-                        equation: directed(a, b, phi),
+                        equation: angle_row(a, b, phi),
                         source: Some(cid),
                         owner: None,
                     })

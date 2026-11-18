@@ -5,7 +5,7 @@
 //! squares). An angle row is either undirected, `sin(θ − φ)` from normalised cross/dot
 //! products (zero at φ and at φ + 180°, its slope zero at φ ± 90°), or directed: the angle
 //! error itself, `atan2` of the same pair, one root and slope 1 everywhere, its jump of 360°
-//! at φ + 180°, as far from the root as an angle gets (#344).
+//! at φ + 180°, as far from the root as an angle gets (#344; a drag's frozen pairs only).
 
 /// A length-like quantity: the distance between two points, or a radius parameter.
 #[derive(Clone, Copy, Debug, PartialEq)]

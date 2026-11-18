@@ -828,6 +828,7 @@ impl Editor {
             return true;
         }
         self.doc.begin();
+        self.typed_move = true;
         let dragged: Vec<Param> = Param::point(point).into_iter().collect();
         if !self.drag(&[point], to - from, &dragged) {
             // Too far for one solve: go in steps.
@@ -846,6 +847,7 @@ impl Editor {
             }
             self.drag(&[point], to - now, &dragged);
         }
+        self.typed_move = false;
         let allowed = 1e-6 * (1.0 + (to - from).length());
         let reached = self
             .doc

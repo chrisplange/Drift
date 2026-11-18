@@ -1694,7 +1694,8 @@ fn components(sys: &System, tol: &Tolerances) -> (Vec<Component>, Vec<usize>) {
 }
 
 /// Residual tolerance for one row at `values`, in its component's frame: the component's
-/// length bar; for an angle between lines, a sine, the bar over the shorter line (its end
+/// length bar; for an angle between lines (a sine, or a drag's directed angle error), the
+/// bar over the shorter line (its end
 /// within the length bar of where the angle puts it), so that an angle row is held to the
 /// same bar as every length, at any size and place (the floor of ulps of stored values only
 /// meets it about a million part-sizes out, as it meets the length bar: no edge between);
@@ -2267,7 +2268,7 @@ fn newton(
             })
             .unzip();
         // N = JᵀJ and the right-hand side −JᵀF, with every row scaled to a unit gradient: an
-        // angle's residual is a sine and its gradient goes as one over the lines' lengths,
+        // angle's residual is a sine (or an angle) and its gradient goes as one over the lines' lengths,
         // a distance's residual is a length and its gradient a unit vector, so unscaled the
         // rows would be weighted against each other by the size of the sketch wherever the
         // step isn't exact, and the same drag would come out differently on the same sketch

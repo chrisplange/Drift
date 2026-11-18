@@ -843,7 +843,14 @@ impl Editor {
         }
         for (part, r) in out.iter_mut().zip(relations) {
             // (The drawing is as the drag found it: where the relations hold.)
-            part.frozen = Rc::new(drift_solver::freeze(&self.doc, &r));
+            // (A move to a typed place keeps no pair's way round: the place typed may be the
+            // other way round outright, and the move reaches it or is refused whole.)
+            let frozen = drift_solver::freeze(&self.doc, &r);
+            part.frozen = Rc::new(if self.typed_move {
+                frozen.without_ways()
+            } else {
+                frozen
+            });
             part.relations = Rc::new(r);
         }
         for (id, c) in self.doc.constraints() {
@@ -1755,6 +1762,16 @@ impl Editor {
                 _ => None,
             })
             .collect();
+        // The frozen pairs' lines as they were before the step (#344, the stop rule below).
+        let line_vector = |doc: &drift_core::Document, line: EntityId| match doc.get(line)?.kind {
+            EntityKind::Line { a, b } => Some(doc.point(b).ok()? - doc.point(a).ok()?),
+            _ => None,
+        };
+        let pair_lines: HashMap<EntityId, DVec2> = frame
+            .frozen
+            .pair_lines()
+            .filter_map(|line| Some((line, line_vector(&self.doc, line)?)))
+            .collect();
         self.doc
             .translate_within(ids.iter().copied(), delta, frame.scope);
         // Translating keeps the arcs it touches circular by putting their ends back on their
@@ -1768,6 +1785,9 @@ impl Editor {
             }
         }
         self.keep_smooth_anchors(frame.smooth, ids, delta);
+        // The lines of the pairs the drag froze that the step, moved and not yet solved, lies
+        // with the other way round (#344): it asks those pairs to turn round.
+        let asked = frame.frozen.asked_other_way(&self.doc);
         frame.solves_left -= 1;
         self.drag_solved += frame.scope.len();
         let report = drift_solver::solve(
@@ -1823,7 +1843,26 @@ impl Editor {
             )
             .map(|&(line, ..)| line)
             .collect();
-        if !unfinished && flipped.is_empty() && !orientation.turned(&self.doc) {
+        // The stop rule for frozen pairs (#344): a drag keeps each Parallel, Perpendicular and
+        // Angle pair the way round it began. A step that asks a pair to turn round goes only
+        // where keeping the pair is a move along: the dragged points land, and each line of
+        // the pair is as it was before the step, moved along whole (the same way, the same
+        // length). Otherwise (only the other way round reaches the pointer, or keeping the
+        // pair would reshape its lines into whatever the solve's path gives) the step is split
+        // like a step that turns something, so the drag stops at the last shape that keeps the
+        // pair, never off on the far side of the turn.
+        let stopped = !asked.is_empty()
+            && (!self.landed(frame, delta, before)
+                || asked.iter().any(|&line| {
+                    match (pair_lines.get(&line), line_vector(&self.doc, line)) {
+                        (Some(&was), Some(now)) => {
+                            (now - was).length()
+                                > drift_solver::landed_within(frame.bar, now.abs().max(was.abs()))
+                        }
+                        _ => true,
+                    }
+                }));
+        if !unfinished && !stopped && flipped.is_empty() && !orientation.turned(&self.doc) {
             return true;
         }
         if depth >= MAX_SPLITS && !unfinished {

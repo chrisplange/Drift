@@ -103,16 +103,23 @@ impl Document {
                 .collect()
         };
         let (a, b) = (open(&at[0]), open(&at[1]));
-        if !a.is_empty() && !b.is_empty() {
-            let both: Vec<EntityId> = a.into_iter().chain(b).collect();
+        let both: Vec<EntityId> = a.iter().chain(&b).copied().collect();
+        // (Curves in no figure on both sides chain already; new ones get theirs when the
+        // edit is committed, joined by the merged point.)
+        if !a.is_empty() && !b.is_empty() && both.iter().any(|c| self.figure_of(*c).is_some()) {
             self.join_figures(&both);
         }
     }
 
-    /// The curves in no figure joined end to end with `start`, itself included (none if
-    /// `start` is in a figure).
+    /// The curves in no figure joined end to end with `start` on its layer, itself included
+    /// (none if `start` is in a figure): the chain Tab picked in a drawing from before
+    /// figures.
     fn unfigured_chain(&self, start: EntityId) -> Vec<EntityId> {
-        let unfigured = |e: &Entity| e.figure.is_none() && e.kind.ends().is_some();
+        let Some(layer) = self.entities.get(&start).map(|e| e.layer) else {
+            return Vec::new();
+        };
+        let unfigured =
+            |e: &Entity| e.figure.is_none() && e.kind.ends().is_some() && e.layer == layer;
         if !self.entities.get(&start).is_some_and(unfigured) {
             return Vec::new();
         }
@@ -287,5 +294,71 @@ impl Document {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{DVec2, History};
+
+    /// #439 review: a step committed again (reopened, or replayed after being set aside, as
+    /// fills that follow an edit late do) leaves the curves its first commit left in no
+    /// figure in none, and keeps the figures it gave.
+    #[test]
+    fn a_step_committed_again_keeps_its_figures() {
+        let mut doc = Document::new();
+        let p = [(0.0, 0.0), (10.0, 0.0), (20.0, 0.0), (20.0, 10.0)]
+            .map(|(x, y)| doc.add_point(DVec2::new(x, y)));
+        let old = doc.add_line(p[0], p[1]).unwrap();
+        // A piece of the old line (in no figure), and a new line drawn apart.
+        doc.begin();
+        let piece = doc.add_line(p[1], p[2]).unwrap();
+        doc.copy_figure(old, piece);
+        let tx = doc.commit("Split");
+        assert_eq!(doc.figure_of(piece), None);
+        doc.begin();
+        let q = doc.add_point(DVec2::new(30.0, 10.0));
+        let drawn = doc.add_line(p[3], q).unwrap();
+        let drawn_tx = doc.commit("Line");
+        let figure = doc.figure_of(drawn);
+        assert!(figure.is_some());
+        // Reopened and committed again.
+        let mut back = History::default();
+        back.put_back(tx.clone());
+        back.put_back(drawn_tx.clone());
+        assert!(back.undo(&mut doc));
+        doc.reopen(tx.clone());
+        let tx = doc.commit("Split");
+        assert_eq!(doc.figure_of(piece), None, "reopened");
+        // Set aside and replayed.
+        let mut back = History::default();
+        back.put_back(tx.clone());
+        assert!(back.undo(&mut doc));
+        doc.begin();
+        doc.replay(&tx);
+        doc.commit("Split");
+        assert_eq!(doc.figure_of(piece), None, "replayed");
+        doc.begin();
+        doc.replay(&drawn_tx);
+        doc.commit("Line");
+        assert_eq!(doc.figure_of(drawn), figure, "its figure kept");
+        assert_eq!(doc.figure_of(old), None);
+    }
+
+    /// #439 review: curves made in one edit whose ends are merged in it (wall centrelines
+    /// joined as they are drawn) are one figure, not left in none.
+    #[test]
+    fn new_curves_merged_in_their_edit_are_one_figure() {
+        let mut doc = Document::new();
+        doc.begin();
+        let p = [(0.0, 0.0), (10.0, 0.0), (10.0, 1.0), (10.0, 10.0)]
+            .map(|(x, y)| doc.add_point(DVec2::new(x, y)));
+        let a = doc.add_line(p[0], p[1]).unwrap();
+        let b = doc.add_line(p[2], p[3]).unwrap();
+        doc.merge_points(p[2], p[1]).unwrap();
+        doc.commit("Walls");
+        assert!(doc.figure_of(a).is_some());
+        assert_eq!(doc.figure_of(a), doc.figure_of(b));
     }
 }

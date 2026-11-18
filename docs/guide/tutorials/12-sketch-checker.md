@@ -15,7 +15,7 @@ over from an edit. These are common in imported DXF files.
 
 ## 1. Open the checker
 
-Choose **Edit → Check sketch…** (or find "Check sketch" in the command palette, Ctrl+K). The
+Choose **Modify → Check sketch…** (or find "Check sketch" in the command palette, Ctrl+K). The
 import report has a **Check sketch…** button too.
 
 The window lists every issue it finds, and each is ringed on the canvas while the window is
@@ -59,7 +59,7 @@ pick the ones on top; Delete then removes them and leaves those underneath.
 
 ## What you learned
 
-- **Edit → Check sketch…** finds gaps, short ends and curves of no length.
+- **Modify → Check sketch…** finds gaps, short ends and curves of no length.
 - **Fix all** closes them in one undo step, keeping the sketch solvable.
 
 ## Next

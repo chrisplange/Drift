@@ -200,7 +200,7 @@ fn leader_target(ed: &Editor, p: &Pointer) -> Option<drift_core::Anchor> {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Centre marks and centre lines
+// Center marks and centre lines
 
 /// Click a circle or arc for a centre mark; then another circle, arc or point for a centre line
 /// through both centres. Two lines give a centre line midway between them.
@@ -266,7 +266,7 @@ impl Tool for CentreMarkTool {
                             add_annotation(
                                 ed,
                                 Annotation::CentreMark { curve: hit },
-                                "Centre mark",
+                                "Center mark",
                             );
                         }
                         self.first = Some(hit);

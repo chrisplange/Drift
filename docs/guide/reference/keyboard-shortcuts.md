@@ -57,7 +57,7 @@ does the last command or tool again, as in AutoCAD.
 | Ctrl+' | **Grid** | Show or hide the grid |
 | Shift+G | **Snap to grid** | Snap to the grid |
 | Shift+Alt+W | **Thin lines** | Thin lines: every line one pixel wide |
-| Shift+C | **Constraint status colours** | Colour curves by constraint status, or by their own and their layer's colours |
+| Shift+C | **Sketch status colors** | Color curves by sketch status, or by their own and their layer's colors |
 | Shift+Alt+V | **Always show end points** | Show every end point, or only those of hovered and picked curves |
 | Alt+D | **Dimensions and notes** | Show or hide dimensions and notes (shown again at each start) |
 | Alt+H | **Hidden annotations (faded)** | Show hidden dimensions and notes, faded, to pick and show them again |
@@ -86,7 +86,7 @@ does the last command or tool again, as in AutoCAD.
 | Key | Command | Does |
 |---|---|---|
 | W | **Wall** | Walls along a centreline: they join the walls they meet. W again: arcs; Space: orientation |
-| Shift+O | **Door / window** | Doors, windows and openings in walls: hover a wall, click to place. Space: the way it opens; type the offset, Tab: width |
+| Shift+O | **Opening** | Doors, windows and openings in walls: hover a wall, click to place. Space: the way it opens; type the offset, Tab: width |
 | I | **Place block** | Place copies of a block from the Blocks tab; R turns, X mirrors |
 
 With no key (use the Build menu or the command palette): **Walls from curves**, **Walls from lines**, **Join walls**, **Unjoin walls**, **Explode walls**.
@@ -112,7 +112,7 @@ With no key (use the Modify menu or the command palette): **Scale**, **Join corn
 | D | **Dimension** | Click geometry, then place the label: the type follows |
 | N | **Note** | Text, with a leader if you start on geometry |
 
-With no key (use the Annotate menu or the command palette): **Section mark**, **Elevation mark**, **Centre mark**, **View**, **Align picked dimensions**, **Space picked dimensions evenly**, **Hide picked dimensions and notes on the canvas**, **Leave picked dimensions and notes off sheets**.
+With no key (use the Annotate menu or the command palette): **Section mark**, **Elevation mark**, **Center mark**, **View**, **Align picked dimensions**, **Space picked dimensions evenly**, **Hide picked dimensions and notes on the canvas**, **Leave picked dimensions and notes off sheets**.
 
 ## Arrange
 

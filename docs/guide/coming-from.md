@@ -12,7 +12,7 @@ Everywhere: the command palette (Ctrl+K) finds any command by name, and ? lists 
 | Temporary dimensions on a picked wall | The same: pick one line and dashed dimensions appear. Click a value to type a new one; the lock makes it permanent; drag the far end's square to measure to something else. [Temporary dimensions](tutorials/05-temporary-dimensions.md). |
 | Tab to cycle and pick chains | Tab highlights the chain of connected curves under the pointer; click picks it. |
 | Thin lines (TL) | Shift+Alt+W, or the status bar. |
-| Families | Blocks, with a library of US doors, windows, cabinets, fixtures and furniture, named "Family – Type". [Blocks](tutorials/07-blocks.md). No parametric blocks yet: each size is its own block. Doors and windows hosted in walls have their own tool, **Door / window** (Shift+O), with US or metric families and types ([Doors and windows](tutorials/15-openings.md)). |
+| Families | Blocks, with a library of US doors, windows, cabinets, fixtures and furniture, named "Family – Type". [Blocks](tutorials/07-blocks.md). No parametric blocks yet: each size is its own block. Doors and windows hosted in walls have their own tool, **Opening** (Shift+O), with US or metric families and types ([Doors and windows](tutorials/15-openings.md)). |
 | Sheets, views, view titles, scales | Views are drawn on the canvas with the **View** tool (a named crop at a scale) and dragged onto sheets from the **Views** list. Reframe a view's crop and every sheet it's on follows. Unlike Revit, a view can go on several sheets. Each placed view has a title and a number. Architectural and engineering scales are there. [Sheets and output](tutorials/10-sheets-and-output.md). |
 | Crop region, Crop Region Visible | A view's crop shows on the canvas with its name, with grips to reframe it. **View → View crops** (Shift+Alt+B) shows or hides them all, a view's **Crop** switch just that one. Crops are rectangles, not rotated, and never print. No separate annotation crop yet: dimensions and notes are cut at the crop. |
 | Hide in view / hide on sheet | Each dimension and note can be off the canvas and / or off sheets. Not per view yet. |
@@ -39,7 +39,7 @@ What's different: Drift is 2D only. Walls are drawn as 2D walls with joins, door
 | Paper space layouts and viewports | Sheets and views. A DXF's layouts come in as sheets. |
 | MOVE, ROTATE with base point | G and R with the selection, B to pick the base point or pivot; type values. Or drag the selection and type a distance: it moves that far towards the pointer. |
 | COPY | Shift+D, or Ctrl+C / Ctrl+V. |
-| PEDIT join / OVERKILL | **Edit → Check sketch…** joins gaps; the status bar finds overlapping curves. |
+| PEDIT join / OVERKILL | **Modify → Check sketch…** joins gaps; the status bar finds overlapping curves. |
 | DWG | **File → Import…** reads DWG (the AutoCAD 2000 to 2018 formats) as DXF is read; **File → Open…** opens one as a new drawing. **File → Export → DWG / DXF…** writes DWG or DXF for AutoCAD 2018 and later (or DXF R12). |
 
 What's different: geometry in Drift can carry constraints. With **Auto relations** on, a
@@ -63,7 +63,7 @@ Drift's sketcher is modelled on the SolidWorks sketch.
 | Construction geometry (For construction) | Alt+C. |
 | Sketch fillet / chamfer | F (F again for chamfer). Click a corner, or Shift+click several (or pick a shape first), then size on the canvas by moving the pointer, or type it: one size for all, one undo step. |
 | Convert entities, offset, mirror, patterns | Offset (O), Mirror (M), linear and circular arrays in the **Inspector**. |
-| Repair sketch | **Edit → Check sketch…** |
+| Repair sketch | **Modify → Check sketch…** |
 | Drawings | Sheets with views, title blocks (modern, ISO 7200, ASME Y14.1, border only, or blank paper) and ISO or ASME dimension styles. |
 | Splines | The pen tool (P) draws Bézier curves the Illustrator way. |
 

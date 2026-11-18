@@ -9,7 +9,7 @@ annotations on the canvas or leave them off the sheets.
 Time: about 15 minutes.
 
 Open the example (**File → Open example**). The annotation tools are in the **Annotate**
-group of the tool palette (**Elevation mark** and **Centre mark** are in **Section mark**'s
+group of the tool palette (**Elevation mark** and **Center mark** are in **Section mark**'s
 flyout: right-click it, or hold it down), and in the **Annotate** menu.
 
 ## 1. A note with a leader
@@ -59,7 +59,7 @@ behind the text so it reads over hatches and lines. Double-click a note to edit 
 
 ## 2. A centre mark
 
-1. Click **Centre mark** (in the **Section mark** flyout of the tool palette), or choose it
+1. Click **Center mark** (in the **Section mark** flyout of the tool palette), or choose it
    from the **Annotate** menu.
 2. Click the bore.
 
@@ -219,7 +219,7 @@ the drawing, so a later change to the drawing's style still reaches it.
 
 ## What you learned
 
-- N places notes (with a leader if you start on geometry); **Centre mark**, **Section mark**
+- N places notes (with a leader if you start on geometry); **Center mark**, **Section mark**
   and **Elevation mark** are in the **Annotate** group (the last two in **Section mark**'s
   flyout).
 - Double-click a dimension for before / after text and chips like TYP and EQ.

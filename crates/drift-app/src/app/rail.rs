@@ -38,11 +38,13 @@ impl DriftApp {
             return;
         }
         self.note_family_tool();
-        // Too short for the rail's rows: shorter rows, and hairlines for the headers.
-        let rows: usize = RAIL.iter().map(|(_, slots)| slots.len()).sum();
-        let headers = RAIL.iter().filter(|(c, _)| c.is_some()).count();
-        let short =
-            wide && ui.available_height() < rows as f32 * ROW + headers as f32 * 26.0 + 12.0;
+        // Too short for the rail's rows: first shorter rows and tighter headers, and only
+        // when that still doesn't fit, hairlines for the headers.
+        let rows = RAIL.iter().map(|(_, slots)| slots.len()).sum::<usize>() as f32;
+        let headers = RAIL.iter().filter(|(c, _)| c.is_some()).count() as f32;
+        let room = ui.available_height();
+        let tight = wide && room < rows * ROW + headers * 26.0 + 12.0;
+        let short = tight && room < rows * SHORT_ROW + headers * 16.0 + 12.0;
         let mut picked = None;
         let output = egui::ScrollArea::vertical()
             .auto_shrink([false, false])
@@ -52,13 +54,21 @@ impl DriftApp {
                     if wide && !short {
                         ui.spacing_mut().item_spacing.y = 0.0;
                         if let Some(c) = category {
-                            ui.add_space(if i > 0 { 7.0 } else { 2.0 });
+                            let gap = match (i > 0, tight) {
+                                (false, _) => 2.0,
+                                (true, false) => 7.0,
+                                (true, true) => 3.0,
+                            };
+                            ui.add_space(gap);
                             let color = theme::neutrals(ui.visuals().dark_mode).secondary;
                             theme::caps_header_in(ui, c.label(), color);
-                            ui.add_space(2.0);
+                            if !tight {
+                                ui.add_space(2.0);
+                            }
                         }
+                        let height = if tight { SHORT_ROW } else { ROW };
                         for slot in *slots {
-                            picked = picked.or(self.rail_place(ui, slot, Some(ROW)));
+                            picked = picked.or(self.rail_place(ui, slot, Some(height)));
                         }
                     } else {
                         ui.spacing_mut().item_spacing.y = 0.0;
@@ -384,11 +394,12 @@ fn draw_icon(p: &egui::Painter, r: egui::Rect, icon: Option<Icon>, c: egui::Colo
     }
 }
 
-/// A family's mark: a small triangle at the icon's lower right.
+/// A family's mark: a small triangle at the icon's lower right (big enough to be seen on a
+/// large screen, so the flyout isn't known from the tooltip alone).
 fn family_mark(p: &egui::Painter, icon: egui::Rect, c: egui::Color32) {
-    let b = icon.right_bottom() + egui::vec2(2.0, 2.0);
+    let b = icon.right_bottom() + egui::vec2(3.0, 3.0);
     p.add(egui::Shape::convex_polygon(
-        vec![b, b - egui::vec2(5.0, 0.0), b - egui::vec2(0.0, 5.0)],
+        vec![b, b - egui::vec2(7.0, 0.0), b - egui::vec2(0.0, 7.0)],
         c,
         egui::Stroke::NONE,
     ));

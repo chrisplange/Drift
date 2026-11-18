@@ -2251,16 +2251,22 @@ fn midpoint_at_a_touching_end() -> Sketch {
 const MIDPOINT_MOVE: DVec2 = DVec2::new(-2.7019888370729976, 17.00429950861392);
 
 /// #283: a move whose one solve converged on the far branch (a line turned past square to the
-/// one it is kept parallel to), its dragged points 7 off target, was kept. The line holding
-/// the dragged midpoint is carried along instead: everything lands, the line moved whole.
+/// one it is kept parallel to), its dragged points 7 off target, was kept; #283 carried the line
+/// holding the dragged midpoint along instead. Since #344 the Parallel pair has one root, the
+/// way round the drag began with, so the solve lands with no carry: everything lands, the line
+/// holding the midpoint moved whole.
 #[test]
-fn a_move_that_lands_off_carries_the_line_its_midpoint_is_held_on() {
+fn a_move_past_square_to_its_parallel_lands_with_no_carry() {
     let sketch = midpoint_at_a_touching_end();
     for t in [Similarity::IDENTITY, SMALL] {
         let start = Built::new(&sketch, t).unwrap().positions();
         let (went, end, pushed) = move_once(&sketch, t, &[3, 4, 5], MIDPOINT_MOVE, false, |_| ());
-        assert!(went && pushed, "at scale {}", t.scale);
-        // The dragged points (the arc's, both lines') and the carried line's ends.
+        assert!(
+            went && !pushed,
+            "at scale {}: went {went}, carried {pushed}",
+            t.scale
+        );
+        // The dragged points (the arc's, both lines') and the holding line's ends.
         for i in [0, 1, 2, 4, 5, 6, 7, 8] {
             let want = start[i] + t.vector(MIDPOINT_MOVE);
             assert!(
@@ -2327,7 +2333,9 @@ fn a_move_held_on_a_line_at_its_tangent_end_lands() {
 
 /// #282, #283: where something pins the part, a move is never carried: a fixed point (or a
 /// fixed x), a locked layer, or geometry generated from the part (an offset) keeps the part
-/// from moving whole, and the drag is what it was without the carry (g7's move, landing off).
+/// from moving whole, and the drag is what it was without the carry (g7's move). Since #344
+/// g7's move lands with no carry, so this only checks that a pin changes nothing about it: no
+/// test now shows `carry_holding` itself carrying a part and landing.
 /// What pins a part, by name, done to a built sketch.
 type Pin = (&'static str, fn(&mut Built));
 

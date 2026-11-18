@@ -1852,14 +1852,10 @@ impl Editor {
         // pair would reshape its lines into whatever the solve's path gives) the step is split
         // like a step that turns something, so the drag stops at the last shape that keeps the
         // pair, never off on the far side of the turn.
-        // A frozen pair's line the solve took through itself (one end now past where the other
-        // was before the step) is judged the same way, though the step didn't ask it: a pair
-        // turned by what the drag pulls along, not by the dragged points themselves.
-        let crossed = pair_lines.iter().filter_map(|(&line, &(a0, b0))| {
-            let (a1, b1) = line_ends(&self.doc, line)?;
-            let was = b0 - a0;
-            ((b1 - a0).dot(was) <= 0.0 || (b0 - a1).dot(was) <= 0.0).then_some(line)
-        });
+        // (Only pairs the moved geometry asks to turn are judged. A pair the solve turns through
+        // what the drag pulls along, nothing dragged on its lines, is not: telling that from a
+        // pair that swings round whole needs the path, not one step; known gap, PR 5's
+        // continuation, pinned in `drag_props::ways_round`.)
         let moved_whole = |line: EntityId| match (pair_lines.get(&line), line_ends(&self.doc, line))
         {
             (Some(&(a0, b0)), Some((a1, b1))) => {
@@ -1869,12 +1865,8 @@ impl Editor {
             }
             _ => false,
         };
-        let stopped = (!asked.is_empty() && !self.landed(frame, delta, before))
-            || asked
-                .iter()
-                .copied()
-                .chain(crossed)
-                .any(|line| !moved_whole(line));
+        let stopped = !asked.is_empty()
+            && (!self.landed(frame, delta, before) || asked.iter().any(|&line| !moved_whole(line)));
         if !unfinished && !stopped && flipped.is_empty() && !orientation.turned(&self.doc) {
             return true;
         }

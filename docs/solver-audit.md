@@ -482,11 +482,13 @@ PR 0 puts the bar in `scripts/solver-bar/` (its README runs all seven). **Known 
   - **The stop rule** (`Editor::drag_in_steps`; the owner chose this strict form over "the
     dragged points land" alone, 2026-11-18): a step that, moved and not yet solved, lies with a
     frozen pair the other way round goes only if its dragged points land and each line of that
-    pair comes out as it was before the step, moved along whole. A frozen pair's line the solve
-    took through itself (one end now past where the other was before the step) must come out
-    moved along whole too: a pair turned by what the drag pulls along (the second review's
-    case). Otherwise the step is split like a step that turns something, so the drag stops at
-    its last shape that keeps the pair.
+    pair comes out as it was before the step, moved along whole. Otherwise the step is split
+    like a step that turns something, so the drag stops at its last shape that keeps the pair.
+  - **Known gap:** a pair the solve turns through what the drag pulls along (nothing dragged on
+    its lines) isn't judged, and its free end can still be flung (second review; pinned,
+    ignored, in `drag_props::ways_round`). A check after the solve (an end past where the other
+    was) also stopped Perpendicular pairs that swing round whole: one step can't tell them
+    apart; it needs the path, PR 5's continuation.
     Without it the first build let the dragged point give way: a leg dragged past its corner
     jumped to the far side of it, and a free line's other end was flung tens of millimetres,
     differently for each pointer position.

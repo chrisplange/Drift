@@ -364,6 +364,160 @@ fn a_lever_still_goes_at_any_advantage() {
     }
 }
 
+/// Row 2 of `docs/solver-audit-references.md` 3.1 (the owner's answer of 2026-11-18 on #362: a
+/// point kept from the pointer only by relations still goes, as near as it can): a point held
+/// on a line whose ends are fixed, dragged off it in 20 frames along a slant. Every frame goes,
+/// the point stays on the line and lands at the foot of the pointer on it, and the line's ends
+/// don't move, at any size and place.
+#[test]
+fn a_point_on_a_fixed_line_dragged_off_it_slides_along_it() {
+    for at in [DVec2::ZERO, DVec2::new(1e5, 0.0), DVec2::new(1e6, -1e6)] {
+        for scale in [0.1, 1.0, 10.0] {
+            let v = |x: f64, y: f64| at + DVec2::new(x, y) * scale;
+            let mut ed = Editor::default();
+            ed.doc.begin();
+            let a = ed.doc.add_point(v(0.0, 0.0));
+            let b = ed.doc.add_point(v(40.0, 10.0));
+            let line = ed.doc.add_line(a, b).unwrap();
+            let q = ed.doc.add_point(v(8.0, 2.0));
+            for c in [
+                Constraint::PointOnCurve {
+                    point: q,
+                    curve: line,
+                },
+                Constraint::Fix {
+                    point: a,
+                    at: v(0.0, 0.0),
+                },
+                Constraint::Fix {
+                    point: b,
+                    at: v(40.0, 10.0),
+                },
+            ] {
+                ed.doc.add_constraint(c).unwrap();
+            }
+            assert!(ed.commit("Sketch"));
+            let start = ed.doc.point(q).unwrap();
+            let (pa, pb) = (v(0.0, 0.0), v(40.0, 10.0));
+            let along = (pb - pa).normalize();
+            let frames = 20;
+            let off = DVec2::new(10.0, 14.0) * scale;
+            ed.doc.begin();
+            let mut went = 0;
+            for _ in 0..frames {
+                went += u32::from(ed.drag(&[q], off / f64::from(frames), &Param::point(q)));
+            }
+            let what = format!("{scale}× at {at}");
+            assert_eq!(went, frames, "{what}: {went} of {frames} frames went");
+            let now = ed.doc.point(q).unwrap();
+            let foot = start + along * off.dot(along);
+            assert!(
+                now.distance(foot) < 1e-6 * scale,
+                "{what}: at {now}, the pointer's foot is {foot}"
+            );
+            assert_eq!(ed.doc.point(a).unwrap(), pa, "{what}");
+            assert_eq!(ed.doc.point(b).unwrap(), pb, "{what}");
+            assert_eq!(broken(&ed.doc, None), None, "{what}");
+        }
+    }
+}
+
+/// The owner's ruling of 2026-11-12, confirmed on #362 on 2026-11-18 (rows 4 and 5 refuse): a
+/// round A, centre free, radius 5, tangent to a fixed line, set Equal to a round B whose centre
+/// is fixed, dragged straight off the line in 30 frames of 0.1. To follow, A must grow, and so
+/// B, which the drag doesn't move: every frame is refused and both radii stay 5, as an arc and
+/// as a circle, at the origin and a kilometre out. Without the Equal, A's radius is the drag's
+/// to dictate and follows (row 3): every frame goes, the circle growing to 8 and the arc
+/// growing too, B unchanged.
+#[test]
+fn a_round_equal_to_a_fixed_centre_round_stops_when_dragged_off_its_tangent_line() {
+    for at in [DVec2::ZERO, DVec2::new(1e6, 0.0)] {
+        for circle in [false, true] {
+            for equal in [true, false] {
+                let v = |x: f64, y: f64| at + DVec2::new(x, y);
+                let mut ed = Editor::default();
+                ed.doc.begin();
+                let mut round = |c: DVec2| {
+                    let centre = ed.doc.add_point(c);
+                    let r = if circle {
+                        ed.doc.add_circle(centre, 5.0).unwrap()
+                    } else {
+                        let a = ed.doc.add_point(c + DVec2::new(5.0, 0.0));
+                        let b = ed.doc.add_point(c - DVec2::new(5.0, 0.0));
+                        ed.doc.add_arc(centre, a, b).unwrap()
+                    };
+                    (centre, r)
+                };
+                let (_, ra) = round(v(0.0, 0.0));
+                let (cb, rb) = round(v(30.0, 0.0));
+                let l0 = ed.doc.add_point(v(-10.0, 5.0));
+                let l1 = ed.doc.add_point(v(10.0, 5.0));
+                let line = ed.doc.add_line(l0, l1).unwrap();
+                let mut relations = vec![
+                    Constraint::Tangent { a: line, b: ra },
+                    Constraint::Fix {
+                        point: l0,
+                        at: v(-10.0, 5.0),
+                    },
+                    Constraint::Fix {
+                        point: l1,
+                        at: v(10.0, 5.0),
+                    },
+                    Constraint::Fix {
+                        point: cb,
+                        at: v(30.0, 0.0),
+                    },
+                ];
+                if equal {
+                    relations.push(Constraint::Equal { a: ra, b: rb });
+                }
+                for k in relations {
+                    ed.doc.add_constraint(k).unwrap();
+                }
+                assert!(ed.commit("Sketch"));
+                let what = format!(
+                    "{} at {at}, equal {equal}",
+                    if circle { "circle" } else { "arc" }
+                );
+                let radius = |ed: &Editor, r| drift_solver::radius_of(&ed.doc, r).unwrap();
+                assert_eq!((radius(&ed, ra), radius(&ed, rb)), (5.0, 5.0), "{what}");
+                ed.doc.begin();
+                let dragged: Vec<Param> = ed
+                    .doc
+                    .defining_points([ra])
+                    .into_iter()
+                    .flat_map(Param::point)
+                    .collect();
+                let mut went = 0;
+                for _ in 0..30 {
+                    went += u32::from(ed.drag(&[ra], DVec2::new(0.0, -0.1), &dragged));
+                }
+                let (now_a, now_b) = (radius(&ed, ra), radius(&ed, rb));
+                if equal {
+                    assert!(
+                        went == 0 && now_a == 5.0 && now_b == 5.0,
+                        "{what}: {went} of 30 frames went, radii 5 -> {now_a}, {now_b}"
+                    );
+                } else {
+                    // The circle's radius follows the drag to 8. The arc goes too, growing A
+                    // (its ends are dragged with it, so how far is the solve's to choose; not
+                    // pinned): what stops it above is the Equal.
+                    let follows = if circle {
+                        (now_a - 8.0).abs() < 1e-6
+                    } else {
+                        now_a > 5.0
+                    };
+                    assert!(
+                        went == 30 && follows && now_b == 5.0,
+                        "{what}: {went} of 30 frames went, radii 5 -> {now_a}, {now_b}"
+                    );
+                    assert_eq!(broken(&ed.doc, None), None, "{what}");
+                }
+            }
+        }
+    }
+}
+
 /// A shallow arc (chord 100, sagitta 2) whose ends are fixed, tangent at its apex to a short
 /// line dragged straight up: its radius must change some 300 times as fast as the line moves
 /// to follow it. The drag lands, so it is never judged: it goes, at any size and place.

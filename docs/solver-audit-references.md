@@ -164,12 +164,12 @@ back:
 | # | Case | Today on main | Source |
 |---|---|---|---|
 | 1 | A point at a fixed distance from a fixed pivot, on a line that swings (a lever), dragged off its circle | **Goes.** The point swings round; "the dragged point can't land" | `held_shapes::a_lever_still_goes_at_any_advantage` (`held_shapes.rs:309–365`) |
-| 2 | A point on a line whose ends are fixed, pointer off the line | **Goes**, sliding along the line. By reading the code only; no test found. The least certain row | — |
+| 2 | A point on a line whose ends are fixed, pointer off the line | **Goes**, sliding along the line to the foot of the pointer, its ends unmoved | `held_shapes::a_point_on_a_fixed_line_dragged_off_it_slides_along_it` (added 2026-11-18) |
 | 3 | A point on a circle or arc with a fixed centre and a free radius, dragged inward | **Goes.** The round's radius follows the point down | `a_point_dragged_across_its_circles_centre_is_refused_only_on_it` (`editor/tests.rs:1310–1391`); also `held_shapes::slow_radius_growth_stops_too` ("the other way, shrinking it, goes") |
 | 4 | The same, dragged outward past the round's radius | **Refused**, every frame: "the drag never grows a radius it doesn't move" | Same test; LOG 2026-11-11 |
 | 5 | Two arcs sharing an end, radii 8 and 12, one centre fixed, the other dragged further than they reach (e13) | **Refused** past the last shape where they meet. By the solver's `unkept` report, not by `breaks_held_shape` | `a_drag_the_kept_radii_cannot_follow_still_stops` (`drag_props.rs:2876–2885`) |
 | 6 | A can't-land drag whose solve does not finish inside the cap | **Refused** (0.63 % of drag solves) | Audit, PR 3's notes |
-| 7 | A drag that can't land and either crushes a line it doesn't move to nothing, or shortens it by more than 50 times the pointer's move while flinging an end more than 100 times it | **Refused**; short of that, it goes | `held_shapes::` pin and crank tests (`held_shapes.rs:482–630`) |
+| 7 | A drag that can't land and either crushes a line it doesn't move to nothing, or shortens it by more than 50 times the pointer's move while flinging an end more than 100 times it | **Refused**; short of that, it goes | `held_shapes::` pin and crank tests (`held_shapes.rs:636–784`) |
 
 So today's rule, as built: **relations give way** (rows 1 and 2); **a held radius never grows, and
 may shrink (in a frame that doesn't land, no faster than ten times the pointer)** (rows 3
@@ -177,7 +177,10 @@ and 4); **a held line may lengthen, and may shorten at the
 geometry's own pace, but is not flung short or crushed** (row 7).
 Rows 1 and 2 differ from row 6 only in whether the solve finishes inside its cap, which is not
 a rule anyone chose. The 2026-11-12 ruling (a round set Equal to a fixed-centre round stops when
-dragged off its tangent line) belongs with row 4; no test of it was found in what was read.
+dragged off its tangent line) belongs with row 4; its test is
+`held_shapes::a_round_equal_to_a_fixed_centre_round_stops_when_dragged_off_its_tangent_line`
+(added 2026-11-18). The owner's answers to the four questions below are on #362 (2026-11-18):
+yes to 1 and 2, no to 3 (the radius follows), yes to 4.
 
 Two readings of PR 5 are on the table, and neither reproduces that table:
 

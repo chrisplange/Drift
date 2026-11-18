@@ -1571,3 +1571,37 @@ fn a_polyline_is_one_figure_and_continues_a_path_from_its_open_end() {
         closed.iter().copied().collect()
     );
 }
+
+/// #476 review: items of one call that continue each other from open ends are one figure,
+/// as the faces and end caps of a wall a script draws are.
+#[test]
+fn items_of_one_call_that_continue_a_path_are_one_figure() {
+    let mut s = Session::new();
+    let made = ok(
+        &mut s,
+        "add_geometry",
+        json!({ "items": [
+            { "type": "line", "from": [0, 0], "to": [10, 0] },
+            { "type": "line", "from": [10, 0], "to": [10, 10] },
+            { "type": "line", "from": [10, 10], "to": [0, 0] }
+        ]}),
+    );
+    let lines: std::collections::BTreeSet<_> = (0..3)
+        .map(|i| eid_of(str_at(&made["created"][i], &["id"])))
+        .collect();
+    for l in &lines {
+        assert_eq!(&s.editor.chain_of(*l), &lines, "{made}");
+    }
+    let wall = ok(
+        &mut s,
+        "run_script",
+        json!({ "script": "wall w from 100,0 to 1100,0 thick 200 centre" }),
+    );
+    let (left, right) = (
+        eid_of(str_at(&wall, &["names", "w.left"])),
+        eid_of(str_at(&wall, &["names", "w.right"])),
+    );
+    let chain = s.editor.chain_of(left);
+    assert!(chain.contains(&right), "{wall}");
+    assert_eq!(chain.len(), 4, "faces and caps: {wall}");
+}

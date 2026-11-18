@@ -2,20 +2,81 @@
 //! canvas, the note text editor, and the inspector for a picked annotation.
 
 use drift_core::{
-    Anchor, Annotation, AnnotationId, Leader, LeaderEnd, LeaderShape, NoteFrame, OrdinateAxis,
-    TextAlign,
+    Anchor, Annotation, AnnotationId, Leader, LeaderEnd, LeaderShape, NoteFrame, NoteStyle,
+    OrdinateAxis, TextAlign,
 };
 
 use crate::notes::{self, NoteLayout};
 use crate::*;
 
-/// A note whose text is being typed on the canvas.
+/// Which note is being typed: one in the model, or a sheet's own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NoteTarget {
+    Model(AnnotationId),
+    Sheet(drift_core::SheetId, drift_core::SheetAnnotationId),
+}
+
+/// A note whose text is being typed on the canvas, straight into the note: the keyboard
+/// goes to a field out of sight, and the caret and the selection are drawn on the note.
 pub(crate) struct NoteEdit {
-    pub id: AnnotationId,
-    pub text: String,
-    pub focus: bool,
-    /// The note was just created: an empty result removes it again.
+    pub target: NoteTarget,
+    /// The note was just placed: left empty, it goes again in the step that placed it.
     pub new: bool,
+    /// The next change to the words joins the last undo step: this visit's typing, or the
+    /// step that placed a new note.
+    merge: bool,
+    /// The first frame: the field takes the keyboard.
+    starting: bool,
+    /// Where the click that began the typing was (screen): the caret starts there.
+    caret_at: Option<egui::Pos2>,
+    /// The caret and the other end of the selection (characters), as the field has them.
+    cursor: Option<(usize, usize)>,
+    /// A caret and selection to give the field.
+    set_cursor: Option<(usize, usize)>,
+    /// The primary button went down in the text and is still down (selecting).
+    grip: bool,
+    /// The pointer was used in the text this frame (taking the keyboard from the field).
+    touched: bool,
+    /// When the caret last moved (it blinks after a while still).
+    blink: f64,
+}
+
+impl NoteEdit {
+    /// The caret and the other end of the selection, in characters.
+    #[cfg(test)]
+    pub(crate) fn cursor(&self) -> Option<(usize, usize)> {
+        self.cursor
+    }
+
+    fn new(target: NoteTarget, new: bool, merge: bool, caret_at: Option<egui::Pos2>) -> Self {
+        Self {
+            target,
+            new,
+            merge,
+            starting: true,
+            caret_at,
+            cursor: None,
+            set_cursor: None,
+            grip: false,
+            touched: false,
+            blink: 0.0,
+        }
+    }
+}
+
+/// The range of the line (between Returns) the caret `i` is on, in characters.
+pub(crate) fn paragraph_range(text: &str, i: usize) -> (usize, usize) {
+    let chars: Vec<char> = text.chars().collect();
+    let i = i.min(chars.len());
+    let start = chars[..i]
+        .iter()
+        .rposition(|c| *c == '\n')
+        .map_or(0, |k| k + 1);
+    let end = chars[i..]
+        .iter()
+        .position(|c| *c == '\n')
+        .map_or(chars.len(), |k| i + k);
+    (start, end)
 }
 
 /// A grip on a picked note: a leader's tip (to re-attach it), a bent leader's bend, or a "+"
@@ -188,7 +249,7 @@ impl DriftApp {
         if response.double_clicked_by(PointerButton::Primary)
             && let Some(id) = at.and_then(note_at)
         {
-            self.open_note_edit(id, false);
+            self.open_note_edit_at(id, false, at);
             return true;
         }
         if response.clicked_by(PointerButton::Primary) {
@@ -510,14 +571,6 @@ impl DriftApp {
     ) {
         let space = self.anno_space(map);
         for l in layouts {
-            if self
-                .drawing
-                .note_edit
-                .as_ref()
-                .is_some_and(|e| e.id == l.id)
-            {
-                continue;
-            }
             let r = drift_core::AnnotationRef::Annotation(l.id);
             // Each in its own style: the drawing's, with its own settings in place.
             let draft = self.drawing.editor.doc.draft_style_for(r);
@@ -626,15 +679,21 @@ impl DriftApp {
     }
 
     /// Start typing a note's text on the canvas (other annotations open the inspector).
+    /// `new`: the note was just placed (the step that placed it is the last undo step).
     pub(crate) fn open_note_edit(&mut self, id: AnnotationId, new: bool) {
+        self.open_note_edit_at(id, new, None);
+    }
+
+    /// [`Self::open_note_edit`], the caret where `at` (on screen) is on the text.
+    pub(crate) fn open_note_edit_at(
+        &mut self,
+        id: AnnotationId,
+        new: bool,
+        at: Option<egui::Pos2>,
+    ) {
         match self.drawing.editor.doc.annotation(id) {
-            Some(Annotation::Note { text, .. }) => {
-                self.drawing.note_edit = Some(NoteEdit {
-                    id,
-                    text: text.clone(),
-                    focus: true,
-                    new,
-                });
+            Some(Annotation::Note { .. }) => {
+                self.start_note_edit(NoteTarget::Model(id), new, at);
                 self.drawing.editor.selected_annotation = Some(id);
             }
             Some(_) => {
@@ -645,99 +704,549 @@ impl DriftApp {
         }
     }
 
-    /// The in-place note editor: Return adds a line, clicking away keeps the text, Esc
-    /// cancels (removing a note that was just placed).
-    pub(crate) fn note_editor(&mut self, ctx: &egui::Context, layouts: &[NoteLayout]) {
-        let Some(mut edit) = self.drawing.note_edit.take() else {
+    /// Start typing into a note (a sheet's or the model's): the caret goes where `at` is on
+    /// its text, or at the end.
+    pub(crate) fn start_note_edit(
+        &mut self,
+        target: NoteTarget,
+        new: bool,
+        at: Option<egui::Pos2>,
+    ) {
+        if self.drawing.note_edit.as_ref().map(|e| e.target) == Some(target) {
             return;
-        };
-        let Some(rect) = layouts
-            .iter()
-            .find(|l| l.id == edit.id)
-            .and_then(NoteLayout::text_rect)
-        else {
-            return;
-        };
-        let field = egui::Id::new("note_edit_field");
-        // As big as the text shows, within reason for typing in.
-        let space = self.anno_space(&self.canvas_map());
-        let font = (notes::text_size(&self.drawing.editor.doc, space.sizing)
-            * space.zoom.map_or(1.0, |z| z.k))
-        .clamp(8.0, 40.0);
-        let mut keep = true;
-        egui::Area::new(egui::Id::new("note_edit"))
-            .fixed_pos(rect.left_top() - egui::vec2(6.0, 4.0))
-            .order(egui::Order::Foreground)
-            .show(ctx, |ui| {
-                egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    let response = ui.add(
-                        egui::TextEdit::multiline(&mut edit.text)
-                            .id(field)
-                            .font(egui::FontId::proportional(font))
-                            .hint_text("Note")
-                            .return_key(egui::KeyboardShortcut::new(
-                                egui::Modifiers::SHIFT,
-                                Key::Enter,
-                            ))
-                            .desired_rows(1)
-                            .desired_width(rect.width().max(160.0)),
-                    );
-                    let enter = response.has_focus()
-                        && ui.input(|i| i.key_pressed(Key::Enter) && !i.modifiers.shift);
-                    if edit.focus {
-                        response.request_focus();
-                        edit.focus = false;
-                    } else if enter {
-                        keep = false;
-                        response.surrender_focus();
-                        self.finish_note_edit(&edit, false);
-                    } else if response.lost_focus() {
-                        keep = false;
-                        let cancelled = ui.input(|i| i.key_pressed(Key::Escape));
-                        self.finish_note_edit(&edit, cancelled);
-                    }
-                    ui.label(
-                        egui::RichText::new("Return to finish · Shift+Return for a new line")
-                            .small()
-                            .weak(),
-                    );
-                });
-            });
-        if keep {
-            self.drawing.note_edit = Some(edit);
+        }
+        self.finish_note_edit();
+        // A note just placed: its first words join the step that placed it.
+        self.drawing.note_edit = Some(NoteEdit::new(target, new, new, at));
+    }
+
+    /// Whether a sheet's note is being typed.
+    pub(crate) fn typing_sheet_note(&self) -> bool {
+        matches!(
+            self.drawing.note_edit.as_ref().map(|e| e.target),
+            Some(NoteTarget::Sheet(..))
+        )
+    }
+
+    /// The words and the style of a note.
+    fn note_words(&self, target: NoteTarget) -> Option<(String, NoteStyle)> {
+        let doc = &self.drawing.editor.doc;
+        match target {
+            NoteTarget::Model(id) => match doc.annotation(id)? {
+                Annotation::Note { text, style, .. } => Some((text.clone(), *style)),
+                _ => None,
+            },
+            NoteTarget::Sheet(sheet, id) => match doc.sheet_annotation(sheet, id)? {
+                drift_core::SheetAnnotation::Note { text, style, .. } => {
+                    Some((text.clone(), *style))
+                }
+                _ => None,
+            },
         }
     }
 
-    fn finish_note_edit(&mut self, edit: &NoteEdit, cancelled: bool) {
-        let text = edit.text.trim_end().to_owned();
-        let Some(Annotation::Note {
-            at, leaders, style, ..
-        }) = self.drawing.editor.doc.annotation(edit.id).cloned()
+    /// Write a note's words and style back, its text moved by `shift` (on screen, through
+    /// `map`): one undo step named `label`, or joined to the last one (`merge`). True if
+    /// anything changed.
+    #[allow(clippy::too_many_arguments)]
+    fn put_note(
+        &mut self,
+        target: NoteTarget,
+        text: String,
+        style: NoteStyle,
+        shift: egui::Vec2,
+        map: &ScreenMap,
+        label: &str,
+        merge: bool,
+    ) -> bool {
+        let by = {
+            let o = map.rect.center();
+            map.to_world(o + shift) - map.to_world(o)
+        };
+        let ed = &mut self.drawing.editor;
+        let changed = match target {
+            NoteTarget::Model(id) => {
+                let Some(Annotation::Note {
+                    text: was,
+                    at,
+                    leaders,
+                    style: had,
+                }) = ed.doc.annotation(id).cloned()
+                else {
+                    return false;
+                };
+                if was == text && had == style {
+                    return false;
+                }
+                let at = ed
+                    .doc
+                    .note_text_pos(at, &leaders)
+                    .and_then(|pos| ed.doc.note_at(pos + by, &leaders))
+                    .unwrap_or(at);
+                ed.doc.begin();
+                ed.doc
+                    .set_annotation(
+                        id,
+                        Annotation::Note {
+                            text,
+                            at,
+                            leaders,
+                            style,
+                        },
+                    )
+                    .is_ok()
+            }
+            NoteTarget::Sheet(sheet, id) => {
+                let Some(mut a) = ed.doc.sheet_annotation(sheet, id).cloned() else {
+                    return false;
+                };
+                let drift_core::SheetAnnotation::Note {
+                    text: was,
+                    style: had,
+                    at,
+                    ..
+                } = &mut a
+                else {
+                    return false;
+                };
+                if *was == text && *had == style {
+                    return false;
+                }
+                *was = text;
+                *had = style;
+                *at += by;
+                ed.doc.begin();
+                ed.doc.set_sheet_annotation(sheet, id, a).is_ok()
+            }
+        };
+        if !changed {
+            ed.doc.rollback();
+            return false;
+        }
+        let tx = ed.doc.commit(label);
+        if merge {
+            ed.history.merge_into_last(tx);
+        } else {
+            ed.history.push(tx);
+        }
+        ed.sync();
+        true
+    }
+
+    /// How far a note's text moves (on screen) when it is set as `to` instead of as `from`:
+    /// the side its lines align to and its top stay put, so the text grows away from where
+    /// the typing started (as in any editor), not both ways from its middle.
+    fn note_growth(
+        painter: &egui::Painter,
+        from: &notes::NoteText,
+        to: &notes::NoteText,
+    ) -> egui::Vec2 {
+        let size = |t: &notes::NoteText| t.galley(painter, egui::Color32::WHITE).rect.size();
+        let d = size(to) - size(from);
+        let x = match from.align {
+            egui::Align::Min => d.x / 2.0,
+            egui::Align::Center => 0.0,
+            egui::Align::Max => -d.x / 2.0,
+        };
+        egui::vec2(x, d.y / 2.0)
+    }
+
+    /// The model note being typed, on the canvas (see [`Self::live_note`]).
+    pub(crate) fn note_editor(&mut self, ctx: &egui::Context, layouts: &[NoteLayout]) {
+        let Some(target) = self.drawing.note_edit.as_ref().map(|e| e.target) else {
+            return;
+        };
+        let NoteTarget::Model(id) = target else {
+            // (A sheet's note is typed on its sheet.)
+            if !self.drawing.view.sheet_preview {
+                self.finish_note_edit();
+            }
+            return;
+        };
+        let Some(text) = layouts
+            .iter()
+            .find(|l| l.id == id)
+            .and_then(|l| l.text.clone())
+        else {
+            // Hidden (annotations off, its layer hidden) or gone: done with.
+            self.finish_note_edit();
+            return;
+        };
+        let canvas = self.drawing.view.canvas_rect;
+        let painter = ctx
+            .layer_painter(egui::LayerId::background())
+            .with_clip_rect(canvas);
+        let map = self.canvas_map();
+        self.live_note(ctx, &painter, &map, &text, canvas, false);
+    }
+
+    /// The sheet note being typed, on the sheet drawn in `rect` (see [`Self::live_note`]).
+    pub(crate) fn sheet_note_editor(
+        &mut self,
+        ctx: &egui::Context,
+        painter: &egui::Painter,
+        rect: egui::Rect,
+        layouts: &[crate::sheet_notes::SheetLayout],
+    ) {
+        let Some(NoteTarget::Sheet(sheet, id)) = self.drawing.note_edit.as_ref().map(|e| e.target)
         else {
             return;
         };
-        if (cancelled || text.trim().is_empty()) && edit.new {
-            // A note placed but never written goes away (part of the same undo step).
-            self.drawing.editor.doc.begin();
-            self.drawing.editor.doc.remove_annotation(edit.id);
-            self.drawing.editor.commit("Note");
-            self.drawing.editor.selected_annotation = None;
+        let text = layouts
+            .iter()
+            .filter(|_| self.current_sheet() == Some(sheet))
+            .find(|l| l.id == id)
+            .and_then(|l| match &l.shape {
+                crate::sheet_notes::SheetShape::Note(n) => n.text.clone(),
+                crate::sheet_notes::SheetShape::Dimension(_) => None,
+            });
+        let Some(text) = text else {
+            self.finish_note_edit();
+            return;
+        };
+        let map = self.paper_map(rect);
+        self.live_note(ctx, &painter.with_clip_rect(rect), &map, &text, rect, true);
+    }
+
+    /// Typing a note in place, as a text is typed (`text_editor`): the keyboard goes to a
+    /// field out of sight, for all a field knows (the clipboard, composed characters, the
+    /// platform's keys), and every change goes straight into the note, so its frame and
+    /// leaders follow. The caret and the selection are drawn on the note as it is set
+    /// (`text`, on `painter`, mapped by `map`). A click in the text puts the caret there, a
+    /// drag selects, a double click selects a word and a triple click a line; Up, Down,
+    /// Home and End go by the lines as set; Return adds a line; Ctrl+B and Ctrl+I switch
+    /// the note's bold and italic. Esc or a press anywhere else on `canvas` finishes,
+    /// keeping the text. `paper`: the note is on a sheet's white paper, whatever the theme.
+    fn live_note(
+        &mut self,
+        ctx: &egui::Context,
+        painter: &egui::Painter,
+        map: &ScreenMap,
+        text: &notes::NoteText,
+        canvas: egui::Rect,
+        paper: bool,
+    ) {
+        let Some(mut edit) = self.drawing.note_edit.take() else {
+            return;
+        };
+        let Some((words, style)) = self.note_words(edit.target) else {
+            return;
+        };
+        let now = ctx.input(|i| i.time);
+        let field = egui::Id::new("note_edit_field");
+        let count = words.chars().count();
+        let caret = text.caret_map(painter);
+
+        // The pointer: in the text it moves the caret or selects; anywhere else on the
+        // canvas it finishes.
+        let (pressed, down, at, shift, double, triple) = ctx.input(|i| {
+            (
+                i.pointer.primary_pressed(),
+                i.pointer.primary_down(),
+                i.pointer.interact_pos(),
+                i.modifiers.shift,
+                i.pointer.button_double_clicked(PointerButton::Primary),
+                i.pointer.button_triple_clicked(PointerButton::Primary),
+            )
+        });
+        let from = edit.cursor.map(|c| c.1);
+        if !edit.starting {
+            let on_canvas = |p: egui::Pos2| {
+                canvas.contains(p) && ctx.layer_id_at(p) == Some(painter.layer_id())
+            };
+            if pressed && let Some(p) = at.filter(|p| on_canvas(*p)) {
+                if !text.rect.expand(6.0).contains(p) {
+                    self.drawing.note_edit = Some(edit);
+                    self.finish_note_edit();
+                    return;
+                }
+                let to = caret.index_at(p);
+                edit.set_cursor = Some((to, from.filter(|_| shift).unwrap_or(to)));
+                edit.grip = true;
+                edit.touched = true;
+            } else if edit.grip {
+                edit.touched = true;
+                if down {
+                    if let Some(p) = at {
+                        let to = caret.index_at(p);
+                        edit.set_cursor = Some((to, from.unwrap_or(to)));
+                    }
+                } else {
+                    edit.grip = false;
+                    let now_at = edit.cursor.map_or(0, |c| c.0);
+                    if triple {
+                        let (start, end) = paragraph_range(&words, now_at);
+                        edit.set_cursor = Some((end, start));
+                    } else if double {
+                        let (start, end) = drift_draft::outline::word_range(&words, now_at);
+                        edit.set_cursor = Some((end, start));
+                    }
+                }
+            }
+        }
+
+        // Where the typing starts: at the click that began it, or at the end.
+        if edit.starting && edit.set_cursor.is_none() {
+            let to = edit.caret_at.take().map_or(count, |p| caret.index_at(p));
+            edit.set_cursor = Some((to, to));
+        }
+        // Up, Down, Home and End go by the lines as they are set on the canvas, which the
+        // field knows nothing of; Ctrl+B and Ctrl+I set the whole note bold or italic.
+        let mut restyled = style;
+        if !edit.starting
+            && ctx.memory(|m| m.has_focus(field))
+            && let Some((now_at, from)) = edit.cursor
+        {
+            for key in [
+                egui::Key::ArrowUp,
+                egui::Key::ArrowDown,
+                egui::Key::Home,
+                egui::Key::End,
+            ] {
+                let pressed = ctx.input_mut(|i| {
+                    if i.consume_key(egui::Modifiers::SHIFT, key) {
+                        Some(true)
+                    } else {
+                        i.consume_key(egui::Modifiers::NONE, key).then_some(false)
+                    }
+                });
+                if let Some(extend) = pressed {
+                    let to = match key {
+                        egui::Key::ArrowUp => caret.line_step(now_at, -1),
+                        egui::Key::ArrowDown => caret.line_step(now_at, 1),
+                        egui::Key::Home => caret.line_ends(now_at).0,
+                        _ => caret.line_ends(now_at).1,
+                    };
+                    edit.set_cursor = Some((to, if extend { from } else { to }));
+                }
+            }
+            if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::B)) {
+                restyled.bold = !restyled.bold;
+            }
+            if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::I)) {
+                restyled.italic = !restyled.italic;
+            }
+        }
+        if restyled != style {
+            let mut to = text.clone();
+            to.bold = restyled.bold;
+            to.italic = restyled.italic;
+            let shift = Self::note_growth(painter, text, &to);
+            let label = match edit.target {
+                NoteTarget::Model(_) => "Edit note",
+                NoteTarget::Sheet(..) => "Edit sheet note",
+            };
+            self.put_note(
+                edit.target,
+                words.clone(),
+                restyled,
+                shift,
+                map,
+                label,
+                false,
+            );
+            // Typing after it is a step of its own.
+            edit.merge = false;
+            edit.blink = now;
+        }
+        if let Some((to, from)) = edit.set_cursor.take() {
+            let mut state = egui::TextEdit::load_state(ctx, field).unwrap_or_default();
+            state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::two(
+                    egui::text::CCursor::new(from.min(count)),
+                    egui::text::CCursor::new(to.min(count)),
+                )));
+            state.store(ctx, field);
+            edit.blink = now;
+        }
+
+        // The field, out of sight by the caret (where a window for composing characters
+        // opens) and click-through.
+        let [foot, head] = caret.caret(edit.cursor.map_or(count, |c| c.0));
+        let mut typed = words.clone();
+        let response = egui::Area::new(egui::Id::new("note_edit"))
+            .fixed_pos(head)
+            .constrain(false)
+            .interactable(false)
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                ui.set_clip_rect(egui::Rect::from_min_size(
+                    head - egui::vec2(16.0, 16.0),
+                    egui::Vec2::ZERO,
+                ));
+                ui.add(
+                    egui::TextEdit::multiline(&mut typed)
+                        .id(field)
+                        .desired_rows(1)
+                        .desired_width(260.0),
+                )
+            })
+            .inner;
+        if response.changed() && typed != words {
+            let mut to = text.clone();
+            to.text = if typed.is_empty() {
+                " ".to_owned()
+            } else {
+                typed.clone()
+            };
+            let shift = Self::note_growth(painter, text, &to);
+            let label = match edit.target {
+                NoteTarget::Model(_) => "Note text",
+                NoteTarget::Sheet(..) => "Sheet note text",
+            };
+            if self.put_note(edit.target, typed, restyled, shift, map, label, edit.merge) {
+                // Typing is one undo step per visit to the note.
+                edit.merge = true;
+            }
+            edit.blink = now;
+        }
+        if edit.starting {
+            response.request_focus();
+            edit.starting = false;
+        } else if std::mem::take(&mut edit.touched) {
+            // A press or a click in the text took the keyboard from the field: give it back.
+            response.request_focus();
+        } else if !response.has_focus() {
+            // Esc, or a click elsewhere: done, the text kept.
+            self.drawing.note_edit = Some(edit);
+            self.finish_note_edit();
             return;
         }
-        if cancelled || text.trim().is_empty() {
+        let cursor = egui::TextEdit::load_state(ctx, field)
+            .and_then(|state| state.cursor.char_range())
+            .map(|r| (r.primary.index.0, r.secondary.index.0));
+        if cursor != edit.cursor {
+            edit.blink = now;
+        }
+        edit.cursor = cursor;
+        let (blink, grip) = (edit.blink, edit.grip);
+        self.drawing.note_edit = Some(edit);
+
+        // The caret and the selection, on the note as it was laid out this frame (a change
+        // just typed shows on the next, asked for now).
+        if response.changed() {
+            ctx.request_repaint();
+        }
+        let dark = ctx.style_of(ctx.theme()).visuals.dark_mode;
+        let colors = OverlayColors::new(dark);
+        let (to, from) = cursor.unwrap_or((count, count));
+        for r in caret.selection(from, to) {
+            painter.rect_filled(r, 0.0, colors.window.gamma_multiply(0.35));
+        }
+        // Steady for half a second after it moves, then half a second off and on.
+        let since = (now - blink).max(0.0);
+        if since % 1.0 < 0.5 {
+            let ink = if dark && !paper {
+                egui::Color32::WHITE
+            } else {
+                egui::Color32::BLACK
+            };
+            painter.line_segment([foot, head], egui::Stroke::new(1.5, ink));
+        }
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64(0.5 - since % 0.5));
+        if words.is_empty() {
+            painter.text(
+                foot + egui::vec2(8.0, 0.0),
+                egui::Align2::LEFT_BOTTOM,
+                "Type the note",
+                egui::FontId::proportional(12.0),
+                colors.window.gamma_multiply(0.7),
+            );
+        }
+        // Composed characters (accents, Chinese, Japanese…) open their window at the caret.
+        ctx.output_mut(|o| {
+            o.ime = Some(egui::output::IMEOutput {
+                purpose: egui::IMEPurpose::Normal,
+                rect: canvas,
+                cursor_rect: egui::Rect::from_two_pos(foot, head),
+                should_interrupt_composition: false,
+            });
+        });
+        // An I-beam over the text.
+        if !grip
+            && let Some(p) = ctx.input(|i| i.pointer.hover_pos())
+            && canvas.contains(p)
+            && text.rect.expand(6.0).contains(p)
+            && ctx.layer_id_at(p) == Some(painter.layer_id())
+        {
+            ctx.set_cursor_icon(egui::CursorIcon::Text);
+        }
+    }
+
+    /// Stop typing the note being typed, keeping its text. Trailing spaces and lines go
+    /// (with the typing, in its step). A note left empty goes: a new one in the step that
+    /// placed it, so no undo brings a blank note back.
+    pub(crate) fn finish_note_edit(&mut self) {
+        let Some(edit) = self.drawing.note_edit.take() else {
+            return;
+        };
+        let Some((words, style)) = self.note_words(edit.target) else {
+            return;
+        };
+        // (One with leaders still shows them.)
+        let bare = match edit.target {
+            NoteTarget::Model(id) => matches!(
+                self.drawing.editor.doc.annotation(id),
+                Some(Annotation::Note { leaders, .. }) if leaders.is_empty()
+            ),
+            NoteTarget::Sheet(sheet, id) => matches!(
+                self.drawing.editor.doc.sheet_annotation(sheet, id),
+                Some(drift_core::SheetAnnotation::Note { leaders, .. }) if leaders.is_empty()
+            ),
+        };
+        if words.trim().is_empty() && (edit.new || bare) {
+            let ed = &mut self.drawing.editor;
+            if let NoteTarget::Model(id) = edit.target
+                && ed.selected_annotation == Some(id)
+            {
+                ed.selected_annotation = None;
+            }
+            if edit.new && edit.merge {
+                // Placed and never kept: the step that placed it (with any typing) is taken
+                // back and forgotten, so no undo brings a blank note back.
+                ed.history.discard_last(1, &mut ed.doc);
+            } else {
+                ed.doc.begin();
+                let label = match edit.target {
+                    NoteTarget::Model(id) => {
+                        ed.doc.remove_annotation(id);
+                        "Note"
+                    }
+                    NoteTarget::Sheet(sheet, id) => {
+                        ed.doc.remove_sheet_annotation(sheet, id);
+                        "Sheet note"
+                    }
+                };
+                let tx = ed.doc.commit(label);
+                // (With the typing that emptied it.)
+                if edit.merge {
+                    ed.history.merge_into_last(tx);
+                } else {
+                    ed.history.push(tx);
+                }
+            }
+            ed.sync();
+            if let NoteTarget::Sheet(_, id) = edit.target
+                && self.drawing.view.sheet_annotation == Some(id)
+            {
+                self.pick_sheet_annotation(None);
+            }
             return;
         }
-        self.drawing.editor.doc.begin();
-        let _ = self.drawing.editor.doc.set_annotation(
-            edit.id,
-            Annotation::Note {
-                text,
-                at,
-                leaders,
+        let trimmed = words.trim_end().to_owned();
+        if trimmed != words {
+            let map = self.canvas_map();
+            self.put_note(
+                edit.target,
+                trimmed,
                 style,
-            },
-        );
-        self.drawing.editor.commit("Note text");
+                egui::Vec2::ZERO,
+                &map,
+                "Note text",
+                edit.merge,
+            );
+        }
     }
 
     /// "Add centre marks" for selected circles and arcs that don't have one yet.

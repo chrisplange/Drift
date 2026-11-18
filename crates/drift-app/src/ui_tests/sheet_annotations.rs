@@ -40,6 +40,22 @@ fn click(h: &mut Harness<'_, DriftApp>, at: Pos2) {
     h.run();
 }
 
+/// A click with no time between the press and the release.
+fn quick_click(h: &mut Harness<'_, DriftApp>, at: Pos2) {
+    h.hover_at(at);
+    h.run();
+    button(h, at, true);
+    h.step();
+    button(h, at, false);
+    h.run();
+}
+
+/// [`quick_click`] at a paper point of the sheet shown.
+fn quick_click_paper(h: &mut Harness<'_, DriftApp>, p: DVec2) {
+    let at = on_paper(h, p);
+    quick_click(h, at);
+}
+
 /// A click at a paper point of the sheet shown.
 fn click_paper(h: &mut Harness<'_, DriftApp>, p: DVec2) {
     let at = on_paper(h, p);
@@ -98,7 +114,7 @@ fn text_of(h: &Harness<'_, DriftApp>, sheet: SheetId, id: SheetAnnotationId) -> 
     let l = layouts.iter().find(|l| l.id == id).expect("laid out");
     match &l.shape {
         crate::sheet_notes::SheetShape::Dimension(d) => d.text_rect.center(),
-        crate::sheet_notes::SheetShape::Note(n) => n.text_rect().expect("text").center(),
+        crate::sheet_notes::SheetShape::Note(n) => n.text.as_ref().expect("text").rect.center(),
     }
 }
 
@@ -210,7 +226,9 @@ fn the_note_tool_works_on_a_sheet_and_its_text_is_typed_and_restyled() {
     assert_eq!(leaders[0].leader.to.entity(), Some(p.line));
     assert!(leaders[0].port.is_some(), "tied through the view");
     assert_eq!(h.state().drawing.editor.doc.annotations().count(), 0);
-    // Its text field has the keyboard: typing goes to the note, as one undo step.
+    // It is typed on the sheet straight away (#431): typing goes into the note, joining
+    // the step that placed it.
+    assert!(h.state().typing_sheet_note(), "typing on the sheet");
     h.run();
     let before = depth(&h);
     for word in ["SEE ", "DETAIL 3"] {
@@ -221,21 +239,44 @@ fn the_note_tool_works_on_a_sheet_and_its_text_is_typed_and_restyled() {
         SheetAnnotation::Note { text, .. } => text.clone(),
         _ => unreachable!(),
     };
+    let style_now = |h: &Harness<'_, DriftApp>| match &annotations(h, p.sheet)[0].1 {
+        SheetAnnotation::Note { style, .. } => (style.bold, style.italic),
+        _ => unreachable!(),
+    };
     assert_eq!(text_now(&h), "SEE DETAIL 3");
-    assert_eq!(depth(&h), before + 1, "typing is one undo step");
-    // Restyled in the Inspector: bold.
+    assert_eq!(
+        depth(&h),
+        before,
+        "typing joins the step that placed the note"
+    );
+    save_png("drift_ui_sheet_note_typing.png", &mut h);
+    // Ctrl+B and Ctrl+I while typing: the whole note bold, then italic, a step each.
+    h.key_press_modifiers(egui::Modifiers::COMMAND, Key::B);
+    h.run();
+    assert_eq!(style_now(&h), (true, false));
+    h.key_press_modifiers(egui::Modifiers::COMMAND, Key::I);
+    h.run();
+    assert_eq!(style_now(&h), (true, true));
+    assert_eq!(depth(&h), before + 2, "a style change is its own step");
+    assert!(h.state().typing_sheet_note(), "still typing");
+    // Esc: done, the text kept.
+    h.key_press(Key::Escape);
+    h.run();
+    h.run();
+    assert!(!h.state().typing_sheet_note());
+    assert_eq!(text_now(&h), "SEE DETAIL 3");
+    // The Inspector's Bold does the same as Ctrl+B.
     h.get_by_label("Bold").click();
     h.run();
-    assert!(matches!(
-        &annotations(&h, p.sheet)[0].1,
-        SheetAnnotation::Note { style, .. } if style.bold
-    ));
-    assert_eq!(depth(&h), before + 2, "a style change is its own step");
-    // Undo: the style, then the text; the note itself is a step of its own before them.
-    h.state_mut().undo();
-    h.state_mut().undo();
+    assert_eq!(style_now(&h), (false, true));
+    assert_eq!(depth(&h), before + 3);
+    // Undo: the styles one at a time, then the note and its text together.
+    for _ in 0..3 {
+        h.state_mut().undo();
+    }
     h.run();
-    assert_eq!(text_now(&h), "");
+    assert_eq!(text_now(&h), "SEE DETAIL 3");
+    assert_eq!(style_now(&h), (false, false));
     assert_eq!(annotations(&h, p.sheet)[0].0, id);
     h.state_mut().undo();
     h.run();
@@ -287,8 +328,8 @@ fn a_sheet_note_is_picked_dragged_and_deleted_and_an_empty_one_is_not_left_behin
     h.run();
     click_paper(&mut h, V(60.0, 250.0));
     assert_eq!(annotations(&h, p.sheet).len(), 2);
-    // Esc leaves its text field, Esc again puts the tool down, Esc again lets go of it.
-    for _ in 0..3 {
+    // Esc finishes the typing (the empty note goes), Esc again puts the tool down.
+    for _ in 0..2 {
         h.key_press(Key::Escape);
         h.run();
     }
@@ -733,10 +774,11 @@ fn two_notes_placed_without_typing_leave_no_empty_note_for_undo() {
     };
     h.state_mut().set_tool(ToolKind::Note);
     h.run();
-    // Note A, nothing typed; then note B: the pick moves, and A goes.
+    // Note A, nothing typed; then note B: the click finishes A, which goes, and places B.
     click_paper(&mut h, V(60.0, 250.0));
     let a = annotations(&h, p.sheet)[0].0;
-    click_paper(&mut h, V(60.0, 60.0));
+    // (A quick click: the caret's blink keeps frames coming while it's typed.)
+    quick_click_paper(&mut h, V(60.0, 60.0));
     h.run();
     let now = annotations(&h, p.sheet);
     assert_eq!(now.len(), 1, "{now:?}");
@@ -768,8 +810,8 @@ fn two_notes_placed_without_typing_leave_no_empty_note_for_undo() {
     h.run();
     h.event(Event::Text("KEEP".into()));
     h.run();
-    click_paper(&mut h, V(60.0, 60.0));
-    click_paper(&mut h, V(120.0, 60.0));
+    quick_click_paper(&mut h, V(60.0, 60.0));
+    quick_click_paper(&mut h, V(120.0, 60.0));
     h.run();
     let texts: Vec<String> = annotations(&h, p.sheet)
         .iter()

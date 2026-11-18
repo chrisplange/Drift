@@ -37,6 +37,9 @@ mod layer_toggles;
 /// The live link: assistants editing the open drawing.
 #[cfg(not(target_arch = "wasm32"))]
 mod link;
+/// Notes typed live on the canvas, as in a design app (#431).
+#[cfg(not(feature = "demo"))]
+mod note_typing;
 /// Selection filters you can combine.
 mod pick_filters;
 /// Which relations show their symbols: Off, Picked only, All (#337).
@@ -3072,7 +3075,7 @@ fn drafting_tools_annotate_the_plate() {
             .collect()
     };
 
-    // A note with a leader from the top edge; type its text and press Return.
+    // A note with a leader from the top edge; type its text and press Esc.
     h.get_by_label("Note").click();
     h.run();
     click_world(&mut h, DVec2::new(40.0, 80.0));
@@ -3083,7 +3086,7 @@ fn drafting_tools_annotate_the_plate() {
     );
     h.event(Event::Text("DEBURR ALL EDGES".into()));
     h.run();
-    h.key_press(Key::Enter);
+    h.key_press(Key::Escape);
     h.run();
     h.run();
     assert!(h.state().drawing.note_edit.is_none());
@@ -4900,7 +4903,7 @@ fn text_is_typed_in_place_and_windows_open() {
         .map(|(_, t)| t.text.clone())
         .collect();
     assert_eq!(texts, ["Hall"]);
-    h.key_press(Key::Enter);
+    h.key_press(Key::Escape);
     h.run();
     h.run();
     assert!(h.state().drawing.editor.editing_text.is_none());
@@ -6443,7 +6446,7 @@ fn the_drawing_font_is_kept_in_the_drawing_and_used_everywhere() {
 fn sketch_text_runs_to_several_lines() {
     use drift_core::{SketchText, TextAlign};
     let Some(mut h) = harness() else { return };
-    // Place a text and type two lines: Shift+Enter starts the second, Enter finishes.
+    // Place a text and type two lines: Return starts the second, Esc finishes.
     h.key_press_modifiers(EguiModifiers::SHIFT, Key::T);
     h.run();
     assert_eq!(h.state().tool.kind(), ToolKind::Text);
@@ -6457,7 +6460,7 @@ fn sketch_text_runs_to_several_lines() {
         .expect("typing in place");
     h.event(Event::Text("PLAN".into()));
     h.run();
-    h.key_press_modifiers(EguiModifiers::SHIFT, Key::Enter);
+    h.key_press(Key::Enter);
     h.run();
     assert!(
         h.state().drawing.editor.editing_text.is_some(),
@@ -6465,12 +6468,12 @@ fn sketch_text_runs_to_several_lines() {
     );
     h.event(Event::Text("Level 2".into()));
     h.run();
-    h.key_press(Key::Enter);
+    h.key_press(Key::Escape);
     h.run();
     h.run();
     assert!(
         h.state().drawing.editor.editing_text.is_none(),
-        "Enter finishes"
+        "Esc finishes"
     );
     let text = h.state().drawing.editor.doc.text(id).cloned().unwrap();
     assert_eq!(text.text, "PLAN\nLevel 2");
@@ -6612,7 +6615,7 @@ fn text_is_typed_straight_onto_the_canvas() {
     h.key_press(Key::End);
     h.run();
     assert_eq!(h.state().drawing.text_cursor, Some((16, 16)));
-    h.key_press_modifiers(EguiModifiers::SHIFT, Key::Enter);
+    h.key_press(Key::Enter);
     h.run();
     h.event(Event::Text("ab".into()));
     h.run();
@@ -6703,15 +6706,28 @@ fn text_is_typed_straight_onto_the_canvas() {
     h.run();
     assert_eq!(h.state().drawing.text_cursor, Some((18, 7)));
 
-    // Enter finishes. All of it was one undo step after the placing.
+    // Return adds a line (#431); Esc finishes, keeping the text but not the empty line
+    // left at its end. All of it was one undo step after the placing.
+    h.key_press(Key::ArrowDown);
+    h.run();
+    h.key_press(Key::End);
+    h.run();
     h.key_press(Key::Enter);
+    h.run();
+    assert_eq!(
+        h.state().drawing.editor.editing_text,
+        Some(id),
+        "still typing"
+    );
+    assert_eq!(words(&h, id), "HELLO! SMALL WORLD\nab\n");
+    h.key_press(Key::Escape);
     h.run();
     h.run();
     assert_eq!(h.state().drawing.editor.editing_text, None);
     assert_eq!(
         words(&h, id),
         "HELLO! SMALL WORLD\nab",
-        "Enter adds no line"
+        "Esc keeps the text"
     );
     h.state_mut().undo();
     assert_eq!(words(&h, id), "");
@@ -6761,7 +6777,7 @@ fn text_is_typed_straight_onto_the_canvas() {
     h.event(Event::Text("!".into()));
     h.run();
     assert_eq!(words(&h, id), "HELSLO! SMALL WORLD\nab!");
-    h.key_press(Key::Enter);
+    h.key_press(Key::Escape);
     h.run();
     h.run();
     assert_eq!(h.state().drawing.editor.editing_text, None);
@@ -7007,7 +7023,7 @@ fn g_moves_a_picked_text() {
         .expect("typing in place");
     h.event(Event::Text("MOVE ME".into()));
     h.run();
-    h.key_press(Key::Enter);
+    h.key_press(Key::Escape);
     h.run();
     h.run();
     assert_eq!(h.state().drawing.editor.sole_text(), Some(id));

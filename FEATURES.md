@@ -86,7 +86,7 @@ Seeded 2026-11-09 from the command registry, importers/exporters, agent schema a
 - Dimensions: aligned, linear, angular, radial, ordinate. `crates/drift-edit/src/tools/dimension.rs`
 - Align and space dimensions. `crates/drift-app/src/app/dim_align.rs`
 - Single and multi-line text, edited in place. `crates/drift-edit/src/tools/text.rs`
-- Leaders and notes. `crates/drift-app/src/app/note_ui.rs`
+- Leaders and notes, typed straight onto the canvas or sheet (Ctrl+B / Ctrl+I: whole-note bold, italic). `crates/drift-app/src/app/note_ui.rs`
 - Centre marks. `crates/drift-edit/src/tools/annotate.rs`
 - Annotation scale with auto-scale. `crates/drift-app/src/app/scale_menu.rs`
 - Fonts. `crates/drift-core/src/fonts.rs`

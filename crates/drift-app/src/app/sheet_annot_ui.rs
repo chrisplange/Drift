@@ -9,6 +9,7 @@ use drift_edit::sheet_annotations::{OnSheet, SheetPort, ToSheet, moved};
 use eframe::egui::{self, PointerButton};
 
 use crate::annotations::{AnnotationColors, AnnotationState, DimOwn};
+use crate::app::note_ui::NoteTarget;
 use crate::app::sheet_editor::SheetPick;
 use crate::overlay::ScreenMap;
 use crate::sheet_notes::{self, SheetLayout, SheetShape};
@@ -271,6 +272,13 @@ impl DriftApp {
         if self.drawing.view.view_drag.is_some() || self.drawing.view.view_box.is_some() {
             return false;
         }
+        // While a note is typed, a click on the sheet is the typing's (it moves the caret,
+        // or finishes).
+        if self.typing_sheet_note()
+            && (response.clicked() || response.drag_started() || response.dragged())
+        {
+            return true;
+        }
         let zoom = f64::from(self.drawing.view.preview.zoom);
         if response.drag_started_by(PointerButton::Primary)
             && let Some(from) = ui.input(|i| i.pointer.press_origin())
@@ -336,9 +344,14 @@ impl DriftApp {
                 Some(hit) => {
                     self.pick_sheet_annotation(Some(hit));
                     self.show_panel(crate::dock::Panel::Inspector);
-                    // A double-click on a note: its text, to type.
-                    if response.double_clicked_by(PointerButton::Primary) {
-                        self.drawing.view.focus_sheet_note = true;
+                    // A double-click on a note: its text, typed on the sheet.
+                    if response.double_clicked_by(PointerButton::Primary)
+                        && matches!(
+                            self.drawing.editor.doc.sheet_annotation(id, hit),
+                            Some(SheetAnnotation::Note { .. })
+                        )
+                    {
+                        self.start_note_edit(NoteTarget::Sheet(id, hit), false, Some(pos));
                     }
                     return true;
                 }
@@ -411,6 +424,13 @@ impl DriftApp {
         let Some(pos) = response.hover_pos().or(response.interact_pointer_pos()) else {
             return;
         };
+        // While a note is typed, a click on the sheet is the typing's (it moves the caret,
+        // or finishes); it places nothing.
+        if self.typing_sheet_note()
+            && (response.clicked() || response.drag_started() || response.dragged())
+        {
+            return;
+        }
         let map = self.paper_map(rect);
         let paper = map.to_world(pos);
         let port = self.sheet_tool_viewport(sheet, paper);
@@ -468,22 +488,22 @@ impl DriftApp {
         self.drawing.editor.on_sheet = None;
         self.drawing.view.pointer = Some(pointer);
         self.drawing.editor.sync();
-        // What it just made is picked; a note's text is typed in the Inspector.
+        // What it just made is picked; a note's text is typed on the sheet, straight away.
         if let Some(made) = self.drawing.editor.out.new_sheet_annotation.take() {
             self.pick_sheet_annotation(Some(made));
             self.show_panel(crate::dock::Panel::Inspector);
         }
         if let Some(note) = self.drawing.editor.out.pending_sheet_note_edit.take() {
-            self.drawing.view.focus_sheet_note = true;
             self.drawing.view.sheet_note_placed = Some(note);
+            self.start_note_edit(NoteTarget::Sheet(id, note), true, None);
         }
         ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
     }
 
-    /// Over the sheet as drawn: the picked and hovered annotations in the pick colours, and
-    /// what the tool in hand is about to make.
+    /// Over the sheet as drawn: the picked and hovered annotations in the pick colours, the
+    /// note being typed with its caret, and what the tool in hand is about to make.
     pub(crate) fn paint_sheet_annotations(
-        &self,
+        &mut self,
         painter: &egui::Painter,
         rect: egui::Rect,
         sheet: &Sheet,
@@ -507,6 +527,7 @@ impl DriftApp {
             };
             l.paint(painter, state, &colors);
         }
+        self.sheet_note_editor(&painter.ctx().clone(), painter, rect, layouts);
         if !self.sheet_tool() {
             return;
         }

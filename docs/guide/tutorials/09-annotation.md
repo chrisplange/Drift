@@ -17,7 +17,7 @@ flyout: right-click it, or hold it down), and in the **Annotate** menu.
 1. Press N for the **Note** tool.
 2. Click the plate's top edge. That's where the leader's arrow goes.
 3. Click above the plate, where the text goes.
-4. Type `DEBURR ALL EDGES` and press Enter. (Shift+Enter starts a new line; Esc cancels.)
+4. Type `DEBURR ALL EDGES`, then press Esc or click away. (Return starts a new line.)
 
 For a note without a leader, click empty canvas in step 2 and go straight to typing.
 For several leaders, Shift+click more geometry after the first, then click where the text

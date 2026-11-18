@@ -479,20 +479,28 @@ PR 0 puts the bar in `scripts/solver-bar/` (its README runs all seven). **Known 
     commits main accepted, relation census case 221), and a commit has no pointer to stop at.
     The fold at ±90° in commits stays (a Perpendicular added to exactly parallel lines still
     stalls as on main).
-  - **The stop rule** (`Editor::drag_in_steps`): a step that, moved and not yet solved, lies
-    with a frozen pair the other way round goes only if its dragged points land and each line
-    of that pair comes out as it was before the step, moved along whole. Otherwise it is split
-    like a step that turns something, so the drag stops at its last shape that keeps the pair.
+  - **The stop rule** (`Editor::drag_in_steps`; the owner chose this strict form over "the
+    dragged points land" alone, 2026-11-18): a step that, moved and not yet solved, lies with a
+    frozen pair the other way round goes only if its dragged points land and each line of that
+    pair comes out as it was before the step, moved along whole. A frozen pair's line the solve
+    took through itself (one end now past where the other was before the step) must come out
+    moved along whole too: a pair turned by what the drag pulls along (the second review's
+    case). Otherwise the step is split like a step that turns something, so the drag stops at
+    its last shape that keeps the pair.
     Without it the first build let the dragged point give way: a leg dragged past its corner
     jumped to the far side of it, and a free line's other end was flung tens of millimetres,
     differently for each pointer position.
-  - Moves to a typed place (`move_point_to`, `set_line_angle`, the AI link's move_point) freeze
-    no way round: what is typed may be the other way round outright, and is met as before.
+  - Moves to a typed place freeze no way round (`Editor::as_typed`): typed coordinates and line
+    angles (`move_point_to`, `set_line_angle`), a nudge, the move tool's typed distance, the AI
+    link's moves. What is typed may be the other way round outright, and is met as before.
   - The jump at 180° from the frozen root: a step that starts there is the one the stop rule
     judges; a finished solve has one root to meet.
   - Not done here: σmin at the solve's exit (what PR 5 reads), and the drag-side work-arounds
     stay (`carry_holding` also serves tangency folds, #282). Drags that main finished only by
-    flipping a pair now stop (heavy seeds free_move 20 and similarity 5).
+    flipping a pair now stop: heavy seeds free_move 7, 8, 11, 12, 14, 16, 20 and similarity 5
+    (each traced to a pair turned 180° on main), and the strict rule also stops drags main
+    finished keeping the pair (heavy move_lands_exactly 17; 5 of the 28 census drags per place
+    that now stop). See `scripts/solver-bar/expected.txt`.
 
 ### PR 5: a drag is a continuation
 - A drag frame follows the path t ∈ [0, 1] from the drag's start offset to the pointer:

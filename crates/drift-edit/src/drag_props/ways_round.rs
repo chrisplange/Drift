@@ -247,3 +247,129 @@ fn a_typed_move_may_turn_a_pair_round() {
         run.end[2]
     );
 }
+
+/// The stop rule judges a frozen pair the solve turns, not only one the dragged points turn
+/// (#344, second review): a free line Q→R parallel to a fixed one, its length free, its start Q
+/// pulled along by a horizontal bar of kept length from P, and P dragged right past R. Nothing
+/// dragged is on Q→R, so the moved geometry doesn't lie the other way round; on a first build
+/// the solve then flung R 19 to 29 mm ahead of Q, a different place for each pointer position.
+/// Now the drag stops with Q short of R, R within a millimetre of where it was.
+#[test]
+fn a_pair_the_solve_turns_stops_the_drag_too() {
+    let v = DVec2::new;
+    let sketch = Sketch {
+        points: vec![
+            v(0.0, -10.0),
+            v(20.0, -10.0),
+            v(0.0, 0.0),
+            v(10.0, 0.0),
+            v(-5.0, 0.0),
+        ],
+        curves: vec![Curve::Line(0, 1), Curve::Line(2, 3), Curve::Line(4, 2)],
+        rels: vec![
+            Rel::Fix(0),
+            Rel::Fix(1),
+            Rel::Parallel(0, 1),
+            Rel::Horizontal(2),
+            Rel::Length(2),
+        ],
+    };
+    for steps in [1, 20] {
+        for dx in [12.0, 20.0, 40.0] {
+            let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+            let id = built.points[4];
+            let run = drag(&mut built, &[id], v(dx, 0.5), steps).unwrap();
+            let (q, r) = (run.end[2], run.end[3]);
+            assert!(run.committed, "{steps} steps, {dx}: not committed");
+            assert!(
+                r.x > q.x && r.x <= 11.0,
+                "{steps} steps, {dx}: Q at {q}, R at {r}"
+            );
+        }
+    }
+}
+
+/// The same with two pairs in one part: a free line T→S parallel to a fixed one, its length
+/// free, and a leg S→U of kept length square to the fixed line. Dragging U takes the leg along
+/// whole (a pair the step asks to turn, met by a move along), while T→S, which the step doesn't
+/// ask, would have to turn or have T flung; the drag stops instead.
+#[test]
+fn a_second_pair_turned_by_the_solve_stops_the_drag() {
+    let v = DVec2::new;
+    let sketch = Sketch {
+        points: vec![
+            v(0.0, -10.0),
+            v(20.0, -10.0),
+            v(0.0, 0.0),
+            v(10.0, 0.0),
+            v(10.0, 5.0),
+        ],
+        curves: vec![Curve::Line(0, 1), Curve::Line(2, 3), Curve::Line(3, 4)],
+        rels: vec![
+            Rel::Fix(0),
+            Rel::Fix(1),
+            Rel::Parallel(0, 1),
+            Rel::Perpendicular(0, 2),
+            Rel::Length(2),
+        ],
+    };
+    for steps in [1, 20] {
+        for off in [v(-15.0, -10.0), v(-30.0, -10.0), v(-15.0, 2.0)] {
+            let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+            let id = built.points[4];
+            let run = drag(&mut built, &[id], off, steps).unwrap();
+            let (t, s) = (run.end[2], run.end[3]);
+            assert!(run.committed, "{steps} steps, {off}: not committed");
+            assert!(
+                s.x > t.x && t.x >= -1.0,
+                "{steps} steps, {off}: T at {t}, S at {s}"
+            );
+        }
+    }
+}
+
+/// Moves of curves by a typed amount are moves to a typed place too (#344, second review):
+/// a nudge, and a move as the AI link makes it (`Editor::as_typed` around one drag), of a cap
+/// line on a leg kept square to a fixed line, down past the corner, are met as on main.
+#[test]
+fn typed_moves_of_curves_may_turn_a_pair_round() {
+    let v = DVec2::new;
+    let sketch = Sketch {
+        points: vec![v(0.0, 0.0), v(10.0, 0.0), v(10.0, 5.0), v(15.0, 5.0)],
+        curves: vec![Curve::Line(0, 1), Curve::Line(1, 2), Curve::Line(2, 3)],
+        rels: vec![Rel::Fix(0), Rel::Fix(1), Rel::Perpendicular(0, 1)],
+    };
+    // A nudge.
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    built.ed.selection = [built.curves[2]].into_iter().collect();
+    assert_eq!(
+        built.ed.nudge(v(0.0, -8.0)),
+        Some(true),
+        "the nudge was refused"
+    );
+    let end = built.ed.doc.point(built.points[2]).unwrap();
+    assert!(close(end, v(10.0, -3.0), 10.0), "nudged to {end}");
+    // As the AI link's move: one drag, refused means rolled back.
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let ids = [built.curves[2]];
+    let dragged = dragged_by(&built.ed, &ids);
+    built.ed.doc.begin();
+    assert!(
+        built
+            .ed
+            .as_typed(|ed| ed.drag(&ids, v(0.0, -8.0), &dragged)),
+        "the AI link's move was refused"
+    );
+    let end = built.ed.doc.point(built.points[2]).unwrap();
+    assert!(close(end, v(10.0, -3.0), 10.0), "moved to {end}");
+    built.ed.doc.rollback();
+    // The same move as a pointer's drag keeps the pair: it stops at the corner.
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let ids = [built.curves[2]];
+    let run = drag(&mut built, &ids, v(0.0, -8.0), 20).unwrap();
+    assert!(
+        (0.0..=5.0).contains(&run.end[2].y),
+        "the drag went past the corner: {}",
+        run.end[2]
+    );
+}

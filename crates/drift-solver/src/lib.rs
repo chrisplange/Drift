@@ -1695,8 +1695,8 @@ fn components(sys: &System, tol: &Tolerances) -> (Vec<Component>, Vec<usize>) {
 
 /// Residual tolerance for one row at `values`, in its component's frame: the component's
 /// length bar; for an angle between lines (a sine, or a drag's directed angle error), the
-/// bar over the shorter line (its end
-/// within the length bar of where the angle puts it), so that an angle row is held to the
+/// bar over the shorter line (its end within the length bar of where the angle puts it), so
+/// that an angle row is held to the
 /// same bar as every length, at any size and place (the floor of ulps of stored values only
 /// meets it about a million part-sizes out, as it meets the length bar: no edge between);
 /// for an ellipse's tangency, the unitless angle bar.

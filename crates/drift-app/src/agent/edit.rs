@@ -53,7 +53,8 @@ fn shift(s: &mut Session, ids: &[EntityId], delta: DVec2) -> Result<(), String> 
         .copied()
         .flat_map(Param::point)
         .collect();
-    if !ed.drag(ids, delta, &dragged) {
+    // (A move the AI asks for is a move to a typed place: see `Editor::as_typed`.)
+    if !ed.as_typed(|ed| ed.drag(ids, delta, &dragged)) {
         ed.doc.rollback();
         ed.sync();
         return Err(

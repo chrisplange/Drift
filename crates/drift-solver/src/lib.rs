@@ -2135,8 +2135,17 @@ fn newton(
             dragging,
             iteration,
         );
-        #[cfg(not(feature = "exit-counts"))]
-        let _ = exit;
+        if std::env::var_os("DRIFT_NEWTON_DEBUG").is_some() {
+            eprintln!(
+                "  finish {} at {iteration}: converged {converged} unkept {unkept}",
+                match exit {
+                    Stop::Settled => "settled",
+                    Stop::Conflict => "conflict",
+                    Stop::Cap => "cap",
+                    Stop::NoStep => "nostep",
+                }
+            );
+        }
         ComponentOutcome {
             converged,
             iterations: iteration,
@@ -2149,16 +2158,28 @@ fn newton(
     #[cfg(feature = "exit-counts")]
     let stage2 = |stop: usize, stationary: f64| {
         let b = bar.get().length;
+        if std::env::var_os("DRIFT_NEWTON_DEBUG").is_some() {
+            eprintln!("  stage2 stop {stop} stationary {stationary:.3e} bar {b:.3e}");
+        }
         exits::record_stage2(stop, dragging, stationary > b * b);
     };
     #[cfg(not(feature = "exit-counts"))]
-    let stage2 = |_: usize, _: f64| {};
+    let stage2 = |stop: usize, stationary: f64| {
+        if std::env::var_os("DRIFT_NEWTON_DEBUG").is_some() {
+            eprintln!("  stage2 stop {stop} stationary {stationary:.3e} bar {:.3e}", bar.get().length);
+        }
+    };
     let mut last_stationary = f64::NAN;
     let mut in_stage2 = false;
     // The second rank, the dragged (0) and then the carried (1), brought where they are asked
     // to be once the rows hold (2: done), and its trust region.
     let mut pointer_rank = 0usize;
-    let mut pointer_radius = across;
+    // (Its region is a length over every column it moves: wide enough for every point to move
+    // as far as the drawing is across, as the whole part does when a move of curves carries it
+    // along. Narrower, the step to the dragged targets was cut at the region's edge into one
+    // that reshaped what it should carry.)
+    let pointer_across = across * (n as f64).sqrt();
+    let mut pointer_radius = pointer_across;
     for iteration in 0..MAX_ITERATIONS {
         if !res.iter().all(|f| f.is_finite()) || !jac.iter().flatten().all(|(_, g)| g.is_finite()) {
             return finish(Stop::NoStep, iteration, false, most_ratio, false);
@@ -2265,7 +2286,7 @@ fn newton(
                     }
                 }
                 pointer_rank += 1;
-                pointer_radius = across;
+                pointer_radius = pointer_across;
                 continue;
             }
             // What this rank's step leaves where it is (the ranks above), and how mobile each
@@ -2296,6 +2317,30 @@ fn newton(
                 }
             }
             let mu = MIN_CHANGE * max_diag_of(&normal);
+            // The kept shapes in its metric, as in the relations' stage: among the moves that
+            // bring the dragged home, the one that keeps the shapes (a round the move doesn't
+            // drag carried along, not reshaped), each as heavy as its points, KEEP_SHAPE times
+            // over. The shapes' stage meets them after.
+            let shape_metric: Vec<(Vec<(usize, f64)>, f64)> = soft_terms
+                .iter()
+                .zip(&soft_roots)
+                .filter_map(|((grad, _), &(_, rank))| {
+                    let grad: Vec<(usize, f64)> =
+                        grad.iter().copied().filter(|&(c, _)| !held[c]).collect();
+                    let own = grad
+                        .iter()
+                        .map(|&(c, _)| 1.0 / metric[c])
+                        .fold(f64::INFINITY, f64::min);
+                    own.is_finite().then_some((grad, KEEP_SHAPE * own * rank))
+                })
+                .collect();
+            for (grad, w) in &shape_metric {
+                for (i, &(c1, g1)) in grad.iter().enumerate() {
+                    for &(c2, g2) in &grad[..=i] {
+                        normal.add_product(c1, c2, mu * w * g1, g2);
+                    }
+                }
+            }
             let shift: Vec<f64> = metric
                 .iter()
                 .zip(&held)
@@ -2303,7 +2348,7 @@ fn newton(
                 .collect();
             let Some(factor) = normal.factor(&shift) else {
                 pointer_rank += 1;
-                pointer_radius = across;
+                pointer_radius = pointer_across;
                 continue;
             };
             let once = |r: &[f64]| {
@@ -2320,7 +2365,13 @@ fn newton(
             };
             let project = |r: &[f64]| {
                 let v = once(r);
-                let weighted: Vec<f64> = v.iter().zip(&metric).map(|(v, m)| v / m).collect();
+                let mut weighted: Vec<f64> = v.iter().zip(&metric).map(|(v, m)| v / m).collect();
+                for (grad, w) in &shape_metric {
+                    let along: f64 = grad.iter().map(|&(c, g)| g * v[c]).sum();
+                    for &(c, g) in grad {
+                        weighted[c] += w * g * along;
+                    }
+                }
                 once(&weighted)
             };
             let distance = |a: &[f64], b: &[f64]| {
@@ -2331,6 +2382,12 @@ fn newton(
                     .map(|((a, b), _)| a * b)
                     .sum::<f64>()
             };
+            if std::env::var_os("DRIFT_NEWTON_DEBUG").is_some() {
+                let ty: Vec<f64> = comp.unknowns.iter().map(|&g| if axis_of(sys, g) == Some(1) { 1.0 } else { 0.0 }).collect();
+                let jt: f64 = scaled_jac.iter().map(|row| row.iter().map(|&(c, g)| g * ty[c]).sum::<f64>().powi(2)).sum();
+                let mob: Vec<String> = metric.iter().map(|m| format!("{m:.0e}")).collect();
+                eprintln!("  pointer: |J ty|^2 {jt:.3e} metric {mob:?} axes {:?}", comp.unknowns.iter().map(|&g| axis_of(sys, g)).collect::<Vec<_>>());
+            }
             let half_square = |offs: &mut dyn Iterator<Item = f64>| {
                 0.5 * offs.map(|o| o * o).sum::<f64>()
             };
@@ -2436,11 +2493,13 @@ fn newton(
                     match kept {
                         Some((((trial_res, trial_jac), trial_own), gain)) => {
                             if gain > 0.75 && stepped >= 0.99 * pointer_radius {
-                                pointer_radius = (2.0 * pointer_radius).min(across);
+                                pointer_radius = (2.0 * pointer_radius).min(pointer_across);
                             }
                             if std::env::var_os("DRIFT_NEWTON_DEBUG").is_some() {
                                 let d: Vec<f64> = comp.unknowns.iter().map(|g| trial[*g] - values[*g]).collect();
-                                eprintln!("  pointer step {:.3e} x {:.3e} gain {gain:.3}", moved(&d), moved(&x));
+                                let cost = |v: &[f64]| v.iter().map(|a| a * a).sum::<f64>() + shape_metric.iter().map(|(g, w)| w * g.iter().map(|&(c, gg)| gg * v[c]).sum::<f64>().powi(2)).sum::<f64>();
+                                let ty: Vec<f64> = comp.unknowns.iter().map(|&g| if axis_of(sys, g) == Some(1) { -18.0 } else { 0.0 }).collect();
+                                eprintln!("  pointer step {:.3e} x {:.3e} gain {gain:.3} cost x {:.1} cost t {:.1} shapes {:?}", moved(&d), moved(&x), cost(&x), cost(&ty), shape_metric.iter().map(|(g,w)| (g.len(), *w)).collect::<Vec<_>>());
                             }
                             let step: Vec<f64> = comp.unknowns.iter().map(|g| trial[*g] - values[*g]).collect();
                             let step = moved(&step);
@@ -2466,7 +2525,7 @@ fn newton(
             }
             if done {
                 pointer_rank += 1;
-                pointer_radius = across;
+                pointer_radius = pointer_across;
                 continue;
             }
             break;
@@ -2477,6 +2536,10 @@ fn newton(
 
         if rows_hold {
             // The second stage: the preferences, among the rows' solutions.
+            if !in_stage2 && std::env::var_os("DRIFT_NEWTON_DEBUG").is_some() {
+                let offs: Vec<String> = soft_terms.iter().zip(&is_radius).map(|((g, o), r)| format!("{}{:.2e}{:?}", if *r {"R"} else {"L"}, o, g.iter().map(|(c,_)| *c).collect::<Vec<_>>())).collect();
+                eprintln!("  stage2 enters: {}", offs.join(" "));
+            }
             in_stage2 = true;
             if soft_terms
                 .iter()

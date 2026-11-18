@@ -52,6 +52,117 @@ impl NoteText {
             color,
         )
     }
+
+    /// The text as it is set on screen, for a caret: where each character is.
+    pub fn caret_map(&self, painter: &egui::Painter) -> NoteCaret {
+        let galley = self.galley(painter, Color32::WHITE);
+        // Where `paint_annotation` puts it (a note's text is never turned).
+        let origin = self.center - galley.rect.center().to_vec2();
+        // (An empty note is set as one space, to have a size.)
+        let count = if self.text == " " {
+            0
+        } else {
+            self.text.chars().count()
+        };
+        NoteCaret {
+            galley,
+            origin,
+            count,
+        }
+    }
+}
+
+/// A note's text as set on screen, to put a caret and a selection on it: characters are
+/// counted (not bytes), from the start of the text.
+#[derive(Clone, Debug)]
+pub struct NoteCaret {
+    galley: std::sync::Arc<egui::Galley>,
+    origin: Pos2,
+    count: usize,
+}
+
+impl NoteCaret {
+    fn cursor(i: usize) -> egui::text::CCursor {
+        egui::text::CCursor::new(i)
+    }
+
+    fn clamped(&self, c: egui::text::CCursor) -> usize {
+        c.index.0.min(self.count)
+    }
+
+    /// The character boundary nearest `p` (on screen).
+    pub fn index_at(&self, p: Pos2) -> usize {
+        self.clamped(self.galley.cursor_from_pos(p - self.origin))
+    }
+
+    /// The caret before character `i`, from its foot to its head (on screen).
+    pub fn caret(&self, i: usize) -> [Pos2; 2] {
+        let r = self
+            .galley
+            .pos_from_cursor(Self::cursor(i.min(self.count)))
+            .translate(self.origin.to_vec2());
+        [r.left_bottom(), r.left_top()]
+    }
+
+    /// The boxes a selection from `a` to `b` covers, a line at a time (on screen).
+    pub fn selection(&self, a: usize, b: usize) -> Vec<Rect> {
+        let (a, b) = (a.min(b).min(self.count), a.max(b).min(self.count));
+        if a == b {
+            return Vec::new();
+        }
+        let from = self.galley.layout_from_cursor(Self::cursor(a));
+        let to = self.galley.layout_from_cursor(Self::cursor(b));
+        let start = self.galley.pos_from_cursor(Self::cursor(a));
+        let end = self.galley.pos_from_cursor(Self::cursor(b));
+        let mut out = Vec::new();
+        for (k, row) in self
+            .galley
+            .rows
+            .iter()
+            .enumerate()
+            .take(to.row + 1)
+            .skip(from.row)
+        {
+            let line = row.rect();
+            // A line the selection runs on past shows a little of its end, as editors do.
+            let left = if k == from.row {
+                start.min.x
+            } else {
+                line.left()
+            };
+            let right = if k == to.row {
+                end.min.x
+            } else {
+                line.right() + row.row.size.y * 0.25
+            };
+            out.push(
+                Rect::from_x_y_ranges(left..=right, row.min_y()..=row.max_y())
+                    .translate(self.origin.to_vec2()),
+            );
+        }
+        out
+    }
+
+    /// The caret a line up (`-1`) or down (`1`) from `i`, as the lines are set: at the same
+    /// place along the line, or the start (end) of the text from the first (last) line.
+    pub fn line_step(&self, i: usize, by: i32) -> usize {
+        let c = Self::cursor(i.min(self.count));
+        let (to, _) = if by < 0 {
+            self.galley.cursor_up_one_row(&c, None)
+        } else {
+            self.galley.cursor_down_one_row(&c, None)
+        };
+        self.clamped(to)
+    }
+
+    /// The start and the end of the line (as set) the caret `i` is on.
+    pub fn line_ends(&self, i: usize) -> (usize, usize) {
+        let c = Self::cursor(i.min(self.count));
+        (
+            self.clamped(self.galley.cursor_begin_of_row(&c)),
+            self.clamped(self.galley.cursor_end_of_row(&c)),
+        )
+    }
 }
 
 /// Lay out text in the drafting font.
@@ -167,11 +278,6 @@ impl NoteLayout {
         self.leaders
             .iter()
             .position(|l| l.points.windows(2).any(|w| near(w[0], w[1])))
-    }
-
-    /// Where an in-place text editor goes.
-    pub fn text_rect(&self) -> Option<Rect> {
-        self.text.as_ref().map(|t| t.rect)
     }
 }
 
@@ -936,12 +1042,6 @@ fn frame_outline(r: Rect, frame: NoteFrame) -> Vec<Pos2> {
             r.left_top(),
         ],
     }
-}
-
-/// Font size for drafting text at the document's style (logical points), sized for
-/// `sizing`.
-pub fn text_size(doc: &Document, sizing: Sizing) -> f32 {
-    DimStyle::sized(&doc.draft_style(), sizing).text
 }
 
 impl NoteText {

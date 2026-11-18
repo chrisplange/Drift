@@ -49,7 +49,7 @@ become dimensions when **Auto relations** is on.
 | **Center arc** | A, A, A | Centre, start (sets the radius), end. Move round the centre to choose the direction. | Radius, then sweep. |
 | **Slot** | U | **Straight** (two end centres, then the width), **Centre** (the middle, then an end centre) or **Arc** (the arc's centre, the two end centres, then the width). U again cycles; also in the top bar. | Length, then width. |
 | **Point** | V | Click to place a point. | X, Tab, Y. |
-| **Text** | Shift+T | Click where the text starts (its baseline), or in an existing text, and type. Enter finishes; Shift+Enter starts a new line. Top bar: **Height** (on paper; new text is that at the drawing scale). | — |
+| **Text** | Shift+T | Click where the text starts (its baseline), or in an existing text, and type. Return starts a new line; Esc or a click away finishes. Top bar: **Height** (on paper; new text is that at the drawing scale). | — |
 | **Fill / hatch** | H | Click inside a closed area to fill or hatch it with the style in the top bar. Alt+click a fill to pick up its style. The Rectangle, Polygon, Circle, Ellipse, Slot and Pen tools' bars have a **Fill** switch that fills closed shapes as they are drawn, in the same style. See [Fills and hatches](../tutorials/06-fills-and-hatches.md). | — |
 
 ## Build
@@ -84,7 +84,7 @@ and **Explode walls** are in the **Build** menu; **Walls from curves** and
 | Tool | Key | What it does |
 |---|---|---|
 | **Dimension** | D | Click geometry, then place the label; the kind follows what you clicked and where the label goes. Top bar: **Single** / **Chain** / **Baseline**, **Overall**, **Show dimensions**, **Show relations**. See [Constraints and dimensions](../tutorials/02-constraints-and-dimensions.md). On a sheet's tab it makes a reference dimension that belongs to the sheet and reads the model's true size through the view you click in: see [Notes and dimensions on the sheet](../tutorials/10-sheets-and-output.md#notes-and-dimensions-on-the-sheet). |
-| **Note** | N | Click for a note, or click geometry first for a leader to it. Type; Enter finishes, Shift+Enter adds a line. On a sheet's tab it makes a note that belongs to the sheet, its leaders tied to the model through a view; its text is typed in the Inspector. |
+| **Note** | N | Click for a note, or click geometry first for a leader to it, and type on the canvas. Return adds a line; Esc or a click away finishes; Ctrl+B and Ctrl+I make the note bold or italic. Double-click a note to type in it again. On a sheet's tab it makes a note that belongs to the sheet, its leaders tied to the model through a view; its text is typed on the sheet the same way. |
 | **Center mark** | — | Click a circle or arc for a centre mark; then another circle, arc or point for a centre line between them. Two lines give a centre line midway. |
 | **Section mark** | — | Two clicks for the cutting line, with a lettered flag at each end. X / Y keep it to an axis. |
 | **Elevation mark** | — | Click where it goes, then towards what it looks at. X / Y keep it to an axis; Alt allows any angle. |

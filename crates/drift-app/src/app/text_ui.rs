@@ -4,11 +4,6 @@ use drift_core::{SketchText, TextAlign, TextFont};
 
 use crate::*;
 
-/// The key that starts a new line while typing text (Return alone finishes).
-fn new_line_key() -> egui::KeyboardShortcut {
-    egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, egui::Key::Enter)
-}
-
 /// Text with capitals shorter than this on screen (in points) is typed in a field under it:
 /// a caret in it would be too small to see or to aim at.
 const LIVE_MIN_POINTS: f64 = 6.0;
@@ -33,8 +28,7 @@ fn text_field(words: &mut String, id: egui::Id) -> egui::TextEdit<'_> {
         .id(id)
         .char_limit(drift_edit::texts::MAX_TEXT_CHARS)
         .desired_rows(1)
-        // Return finishes; a new line is Shift+Return.
-        .return_key(Some(new_line_key()))
+        // (Return adds a line; Esc or a click elsewhere finishes.)
         .desired_width(260.0)
 }
 
@@ -240,8 +234,18 @@ impl DriftApp {
         t.height * self.drawing.view.camera.scale >= LIVE_MIN_POINTS
     }
 
-    /// Stop typing into the text on the canvas.
+    /// Stop typing into the text on the canvas, keeping it: spaces and empty lines left at
+    /// its end go (in the typing's step).
     fn finish_text(&mut self) {
+        if let Some(id) = self.drawing.editor.editing_text
+            && self.drawing.text_typing == Some(id)
+            && let Some(t) = self.drawing.editor.doc.text(id)
+        {
+            let kept = t.text.trim_end().to_owned();
+            if kept != t.text && !kept.is_empty() {
+                self.drawing.editor.type_text(id, &kept, true);
+            }
+        }
         self.drawing.editor.editing_text = None;
         self.drawing.editor.text_caret_at = None;
         self.drawing.text_typing = None;
@@ -253,8 +257,7 @@ impl DriftApp {
     }
 
     /// The pointer in the text being typed: a press puts the caret there (Shift: selects up
-    /// to there), a drag selects, a double click selects a word and a triple click
-    /// everything. A press anywhere else on the canvas finishes the typing. True when the
+    /// to there), a drag selects, a double click selects a word and a triple click a line. A press anywhere else on the canvas finishes the typing. True when the
     /// pointer was used here.
     pub(crate) fn text_pointer(
         &mut self,
@@ -305,7 +308,8 @@ impl DriftApp {
             self.drawing.text_grip = false;
             let caret = self.drawing.text_cursor.map_or(0, |c| c.0);
             if response.triple_clicked() {
-                self.drawing.text_set_cursor = Some((t.text.chars().count(), 0));
+                let (start, end) = crate::app::note_ui::paragraph_range(&t.text, caret);
+                self.drawing.text_set_cursor = Some((end, start));
             } else if response.double_clicked() {
                 let (start, end) = drift_draft::outline::word_range(&t.text, caret);
                 self.drawing.text_set_cursor = Some((end, start));
@@ -329,8 +333,8 @@ impl DriftApp {
     /// Typing a text in place. The keyboard goes to a text field, for all a field knows
     /// (the clipboard, composed characters, the platform's keys): out of sight when the
     /// text is large enough to show a caret and a selection of its own on the canvas, and
-    /// under the text when it is too small for that. Return, Esc or a click elsewhere
-    /// finishes; Shift+Return starts a new line.
+    /// under the text when it is too small for that. Return adds a line; Esc or a click
+    /// elsewhere finishes, keeping the text.
     pub(crate) fn text_editor(&mut self, ui: &mut egui::Ui, map: &ScreenMap, on: &egui::Painter) {
         let Some(id) = self.drawing.editor.editing_text else {
             self.drawing.text_focused = None;
@@ -433,7 +437,7 @@ impl DriftApp {
                                 words.lines().count().max(1) + usize::from(words.ends_with('\n'));
                             ui.add(
                                 text_field(&mut words, field)
-                                    .hint_text("Type the text, then Enter (Shift+Enter: new line)")
+                                    .hint_text("Type the text · Esc to finish")
                                     .desired_rows(rows),
                             )
                         })
@@ -448,14 +452,13 @@ impl DriftApp {
             self.drawing.text_typing = Some(id);
             self.drawing.text_blink = now;
         }
-        let enter = ctx.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift);
         if starting {
             response.request_focus();
             self.drawing.text_focused = Some(id);
         } else if std::mem::take(&mut self.drawing.text_touched) {
             // A press or a click in the text took the keyboard from the field: give it back.
             response.request_focus();
-        } else if !response.has_focus() || enter {
+        } else if !response.has_focus() {
             response.surrender_focus();
             self.finish_text();
             return;
@@ -502,7 +505,7 @@ impl DriftApp {
             on.text(
                 foot + egui::vec2(8.0, 0.0),
                 egui::Align2::LEFT_BOTTOM,
-                "Type, then Enter",
+                "Type the text",
                 egui::FontId::proportional(12.0),
                 colors.window.gamma_multiply(0.7),
             );
@@ -550,16 +553,13 @@ impl DriftApp {
         ui.add_space(4.0);
         let mut words = t.text.clone();
         let rows = words.lines().count().clamp(1, 8);
-        let edit = ui
-            .add(
-                egui::TextEdit::multiline(&mut words)
-                    .hint_text("Type the text")
-                    .char_limit(drift_edit::texts::MAX_TEXT_CHARS)
-                    .desired_rows(rows)
-                    .return_key(Some(new_line_key()))
-                    .desired_width(f32::INFINITY),
-            )
-            .on_hover_text("Shift+Enter starts a new line");
+        let edit = ui.add(
+            egui::TextEdit::multiline(&mut words)
+                .hint_text("Type the text")
+                .char_limit(drift_edit::texts::MAX_TEXT_CHARS)
+                .desired_rows(rows)
+                .desired_width(f32::INFINITY),
+        );
         if edit.changed() {
             // Typing is one undo step per visit to the field.
             let continuing = self.drawing.text_typing == Some(id);

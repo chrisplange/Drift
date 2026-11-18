@@ -692,9 +692,13 @@ fn pin_line(built: &Built) -> f64 {
     p[5].distance(p[0])
 }
 
-/// The pin's drag, at every size, turn and place: refused, its line kept.
+/// The pin's drag, at every size, turn and place, goes, with nothing crushed or flung (the
+/// owner's decision of 2026-11-18 on #362, rows 1 and 2 of the 3.1 table: only relations keep
+/// its lines from the pointer, so it follows as near as they allow). Its free line's length
+/// changes no faster than the pointer moves, and no point moves more than a hundred times it. (Main refused it: its
+/// one solve from the pointer's place slid the free point along its line, 15 to 3.1.)
 #[test]
-fn a_drag_that_cant_land_doesnt_crush_a_line_it_doesnt_move() {
+fn the_pins_drag_goes_with_nothing_crushed_or_flung() {
     let (plan, pick, offset) = the_pin();
     let sketch = plan.sketch().unwrap();
     for (scale, turn, shift) in [
@@ -710,29 +714,34 @@ fn a_drag_that_cant_land_doesnt_crush_a_line_it_doesnt_move() {
         let mut built = Built::new(&sketch, t).unwrap();
         let ids = pick.ids(&built);
         let start = built.positions();
+        let was = pin_line(&built);
         let run = drag(&mut built, &ids, t.vector(offset), 1).unwrap();
-        assert_eq!(run.refused, 1, "{scale}× turned {turn} at {shift}: went");
-        assert_eq!(
-            built.positions(),
-            start,
-            "{scale}× turned {turn} at {shift}"
+        let what = format!("{scale}× turned {turn} at {shift}");
+        assert_eq!(run.refused, 0, "{what}: refused");
+        // (Its length changes no faster than the pointer moves: not crushed, not flung.)
+        let now = pin_line(&built);
+        assert!(
+            (now - was).abs() <= offset.length() * scale,
+            "{what}: line {was} to {now}"
         );
+        let most = 100.0 * offset.length() * scale;
+        for (i, (a, b)) in start.iter().zip(built.positions()).enumerate() {
+            assert!(a.distance(b) <= most, "{what}: point {i} moved {}", a.distance(b));
+        }
     }
 }
 
-/// The same drag in 64 frames: the early frames, where the line shortens slower than a hundred
-/// times their offset, go; once a frame's would be faster it is refused, and the drag rests on
-/// the last that went. However the frames fall, the line never shortens by more than a hundred
-/// times the whole drag (the one-frame drag keeps it whole).
+/// The same drag in 2, 8 and 64 frames goes every frame, and its line never shortens by more
+/// than a hundred times the whole drag.
 #[test]
-fn the_pin_in_many_frames_rests_on_the_last_that_went() {
+fn the_pin_in_many_frames_goes_and_keeps_its_line() {
     let (plan, pick, offset) = the_pin();
     let sketch = plan.sketch().unwrap();
     for frames in [2, 8, 64] {
         let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
         let ids = pick.ids(&built);
         let run = drag(&mut built, &ids, offset, frames).unwrap();
-        assert!(run.refused > 0, "{frames} frames");
+        assert_eq!(run.refused, 0, "{frames} frames");
         let shortened = 15.0 - pin_line(&built);
         assert!(
             shortened <= 100.0 * offset.length(),
@@ -818,11 +827,30 @@ fn with_old_conflict(sketch: &Sketch) -> Built {
 
 /// An old conflict elsewhere in the part excuses only what it holds, even where it shares a
 /// point with what the rule holds (it hangs from the sketch's first point, the pin's fixed end):
-/// the pin's crush and seed 16's growth are still refused beside it. (Driven directly: the
-/// harness wants every relation met after a drag, which a drawing in conflict never is.)
+/// seed 16's growth is still refused beside it, and the pin's drag (which goes, nothing
+/// crushed: the owner's decision of 2026-11-18) goes beside it as alone. (Driven directly:
+/// the harness wants every relation met after a drag, which a drawing in conflict never is.)
 #[test]
 fn an_old_conflict_elsewhere_doesnt_excuse_a_broken_shape() {
-    for (plan, pick, offset) in [the_pin(), seed_16()] {
+    {
+        let (plan, pick, offset) = the_pin();
+        let mut built = with_old_conflict(&plan.sketch().unwrap());
+        let ids = pick.ids(&built);
+        let dragged: Vec<Param> = built
+            .ed
+            .doc
+            .defining_points(ids.iter().copied())
+            .into_iter()
+            .flat_map(Param::point)
+            .collect();
+        let was = pin_line(&built);
+        built.ed.doc.begin();
+        assert!(built.ed.drag(&ids, offset, &dragged));
+        let now = pin_line(&built);
+        assert!((now - was).abs() <= offset.length(), "line {was} to {now}");
+        built.ed.doc.rollback();
+    }
+    for (plan, pick, offset) in [seed_16()] {
         let sketch = plan.sketch().unwrap();
         let mut built = with_old_conflict(&sketch);
         let ids = pick.ids(&built);
@@ -1026,18 +1054,17 @@ fn an_old_conflict_beside_a_small_drag_changes_nothing() {
     }
 }
 
-/// Undo and redo over a drag the rules held part of the way: the pin in 64 frames (the early
-/// frames go, the rest are refused) and committed is one undo step, which puts the start back
-/// exactly, and redo the last shape that went, exactly.
+/// Undo and redo over the pin's drag in 64 frames, committed: one undo step, which puts the
+/// start back exactly, and redo the last shape, exactly.
 #[test]
-fn a_held_drag_undoes_and_redoes_whole() {
+fn a_pin_drag_undoes_and_redoes_whole() {
     let (plan, pick, offset) = the_pin();
     let sketch = plan.sketch().unwrap();
     let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
     let ids = pick.ids(&built);
     let start = built.positions();
     let run = drag(&mut built, &ids, offset, 64).unwrap();
-    assert!(run.refused > 0 && run.committed);
+    assert!(run.committed);
     let end = built.positions();
     assert_ne!(end, start);
     assert!(built.ed.undo());
@@ -1190,13 +1217,12 @@ fn an_unsettled_start_holds_for_its_first_hundredth_then_goes() {
 }
 
 /// The same with a radius (Fable's #361 follow-up): beside the lever, a circle centred on its
-/// far end, its radius dimensioned 5 and left at 6. Each frame's solve settles the radius by 1,
-/// which the radius rule reads as the drag changing a held radius by more than `SHAPE_HOLD`
-/// (10) times the pointer's offset: so the drag holds until the pointer has moved a tenth of
-/// the unsettled amount, then settles with it. A whole drag shorter than that never settles
-/// (the frames are refused and the radius stays 6). The same at the origin and a kilometre out.
+/// far end, its radius dimensioned 5 and left at 6. A held radius is held outright now, not to
+/// a pace (`SHAPE_HOLD` went with the solver audit's PR 5, the owner's decision of 2026-11-18
+/// on #362): the first frame goes and settles the radius to its dimension, shrinking it, at
+/// the origin and a kilometre out, however short the drag.
 #[test]
-fn an_unsettled_radius_holds_for_a_tenth_then_settles() {
+fn an_unsettled_radius_settles_at_the_first_frame() {
     for at in [DVec2::ZERO, DVec2::new(1e6, 0.0)] {
         for (off, frames) in [(0.2, 64u32), (0.07, 64)] {
             let v = |x: f64, y: f64| at + DVec2::new(x, y);
@@ -1253,17 +1279,13 @@ fn an_unsettled_radius_holds_for_a_tenth_then_settles() {
                     first.get_or_insert(target.length());
                 }
             }
-            if off >= 0.1 {
-                let first = first.expect("goes in the end");
-                assert!(
-                    (0.09..=0.11).contains(&first),
-                    "at {at}, {off} in {frames}: first went at {first}"
-                );
-                assert!((radius(&ed) - 5.0).abs() < 1e-6, "at {at}: settled");
-            } else {
-                assert_eq!(first, None, "at {at}, {off} in {frames}: went");
-                assert_eq!(radius(&ed), 6.0, "at {at}: never settles");
-            }
+            let step = off / f64::from(frames);
+            let first = first.expect("goes");
+            assert!(
+                first <= step * (1.0 + 1e-9),
+                "at {at}, {off} in {frames}: first went at {first}"
+            );
+            assert!((radius(&ed) - 5.0).abs() < 1e-6, "at {at}: settled");
         }
     }
 }

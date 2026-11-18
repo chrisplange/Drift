@@ -1103,9 +1103,15 @@ fn tangent_touching_at_an_arc_end_on_the_line_lands_exactly() {
         doc.point(c3).unwrap(),
     );
     let u = (ps2 - pc2).normalize();
+    // (To the solve's bar, the owner's decision of 2026-11-18 on #362: before the audit's PR 5
+    // a landing pass solved again after every drag and left these under 1e-9 by the way.)
     let (on, square) = (u.perp_dot(pc1 - pc2), u.dot(pc3 - pc1));
-    assert!(on.abs() < 1e-9, "c1 {on} off L");
-    assert!(square.abs() < 1e-9, "R3's radius {square} off square to L");
+    assert!(on.abs() <= report.bar, "c1 {on} off L (bar {})", report.bar);
+    assert!(
+        square.abs() <= report.bar,
+        "R3's radius {square} off square to L (bar {})",
+        report.bar
+    );
 }
 
 /// #97: the same double root where a line stands on an arc's circle (its end on the circle)

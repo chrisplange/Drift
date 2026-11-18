@@ -247,6 +247,12 @@ struct DragPart {
     /// first to the second as the drag found them: the way round each is frozen at, which
     /// every step of the drag's path keeps (#344; see [`Editor::follow`]).
     pairs: Vec<(EntityId, EntityId, f64)>,
+    /// A dragged point starts on another point of the part it isn't joined to (closer than
+    /// [`NO_WAY_ROUND`]): a line through the two has no direction until the drag gives it one,
+    /// so the path's first step takes its branch from the pointer's direction, swinging the
+    /// line round, however far that throws it (#278's forced swing; the owner's decision of
+    /// 2026-11-18 on #362). Any later jump still stops the drag.
+    swing_start: bool,
 }
 
 /// The parts of a drag that go exactly where they are moved ([`DragPart::moves_whole`]), as
@@ -312,6 +318,8 @@ struct DragFrame<'a> {
     /// Its pairs' ways round ([`DragPart::pairs`]), kept at every step but in a move to a
     /// typed place (see [`Editor::as_typed`]).
     pairs: &'a [(EntityId, EntityId, f64)],
+    /// The path's first step may jump ([`DragPart::swing_start`]).
+    swing_start: bool,
     /// The bar the frame's first solve was held to (zero before one): the coarsest any later
     /// solve of the frame is held to (`SolveOptions::bar_cap`).
     first_bar: f64,
@@ -482,6 +490,7 @@ impl Editor {
                 first_bar: 0.0,
                 held_radii: &part.held_radii,
                 pairs: &part.pairs,
+                swing_start: part.swing_start,
             };
             let went = self.drag_frame_steps(&mut frame, to, &part.start);
             let breaks = went && self.breaks_held_shape(part, to, frame.bar);
@@ -729,6 +738,7 @@ impl Editor {
                 touching: Rc::default(),
                 holding: Vec::new(),
                 pairs: Vec::new(),
+                swing_start: false,
                 free_dragged: Vec::new(),
                 held_radii: Vec::new(),
                 held_lines: Vec::new(),
@@ -842,6 +852,23 @@ impl Editor {
                 self.line_vector(line)
                     .filter(|v| v.length() > NO_WAY_ROUND)
             };
+            let joined: Vec<(EntityId, EntityId)> = part
+                .constraints
+                .iter()
+                .filter_map(|&(_, c)| match c {
+                    Constraint::Coincident { a, b } => Some((a, b)),
+                    _ => None,
+                })
+                .collect();
+            part.swing_start = part.free_dragged.iter().any(|&(id, at, _)| {
+                part.start.points.iter().any(|&(other, p)| {
+                    other != id
+                        && p.distance(at) <= NO_WAY_ROUND
+                        && !part.dragged_set.contains(&Param::X(other))
+                        && !joined.contains(&(id, other))
+                        && !joined.contains(&(other, id))
+                })
+            });
             part.pairs = part
                 .constraints
                 .iter()
@@ -1594,7 +1621,9 @@ impl Editor {
                 .fold(0.0, f64::max);
             let step_speed = moved / (next - t);
             let fast = step_speed > (SPEED_UP * speed).max(START_SPEED * delta.length());
-            let continuous = !fast || too_fast.is_some_and(|was| step_speed <= SETTLED_SPEED * was);
+            let continuous = !fast
+                || too_fast.is_some_and(|was| step_speed <= SETTLED_SPEED * was)
+                || (t == 0.0 && frame.swing_start);
             if std::env::var_os("DRIFT_PATH_DEBUG").is_some() {
                 eprintln!(
                     "path t {t:.6} h {h:.3e} unfinished {unfinished} speed {step_speed:.3e} of {speed:.3e} contraction {:.3e} flipped {} turns {turns} grows {} pairs {} conv {} conflicts {:?}",

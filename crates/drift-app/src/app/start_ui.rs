@@ -713,7 +713,7 @@ impl DriftApp {
         ui.label(
             egui::RichText::new(
                 "What the canvas shows (grid, end points, dimensions, relations, line \
-                 weights, status colours) and snapping to the grid are in the View menu. How \
+                 weights, status colors) and snapping to the grid are in the View menu. How \
                  a drawing's areas and fills behave is saved with it, in File → Drawing \
                  settings.",
             )

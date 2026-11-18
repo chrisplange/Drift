@@ -1401,8 +1401,8 @@ fn table() -> Vec<Spec> {
             "view.status_colours",
             C::View,
             K::Toggle(ViewFlag::Status),
-            "Constraint status colours",
-            "Colour curves by constraint status, or by their own and their layer's colours",
+            "Sketch status colors",
+            "Color curves by sketch status, or by their own and their layer's colors",
         )
         .keys(const { &[shift(Key::C)] })
         .in_grab(),

@@ -1,4 +1,4 @@
-//! Openings: a door placed in a room's wall with the Door / window tool (Shift+O, Space for
+//! Openings: a door placed in a room's wall with the Opening tool (Shift+O, Space for
 //! its swing), picked by its jamb and deleted, undone, then saved and opened again as it was.
 
 use super::*;
@@ -36,7 +36,7 @@ fn smoke_openings_place_pick_delete_and_reopen() {
     view(&mut h, DVec2::new(-20.0, -20.0), DVec2::new(160.0, 80.0));
     room(&mut h);
     let ring = poche(&mut h);
-    // The Door / window tool, a door 30 wide (its leaf 28).
+    // The Opening tool, a door 30 wide (its leaf 28).
     h.key_press_modifiers(EguiModifiers::SHIFT, Key::O);
     h.run();
     assert_eq!(h.state().tool.kind(), ToolKind::Opening);

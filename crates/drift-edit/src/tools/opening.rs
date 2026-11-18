@@ -1,4 +1,4 @@
-//! Door / window: hover a wall and click to place the tool bar's door, window or cased
+//! Opening: hover a wall and click to place the tool bar's door, window or cased
 //! opening in it. It shows the cut and the symbol live, centred on the pointer and kept clear
 //! of the corners; Space steps through the four ways it can open (right-in, left-in,
 //! left-out, right-out). Typing a value sets its offset from the nearer corner, and Tab

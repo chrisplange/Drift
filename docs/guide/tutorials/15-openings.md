@@ -30,7 +30,7 @@ thickness and the cut and the symbol follow.
 
 ## 1. Place a door
 
-1. Press **Shift+O** for the **Door / window** tool (in the tool palette under **Build**, in
+1. Press **Shift+O** for the **Opening** tool (in the tool palette under **Build**, in
    the **Build** menu, or type `DOOR` in the command palette).
 2. In the top bar, pick **Door – Single Swing** and a type, for example `3′0″ × 6′8″`.
 3. Hover a wall. The cut and the door show where it would go, centred on the pointer and kept

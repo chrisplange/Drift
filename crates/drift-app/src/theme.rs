@@ -586,6 +586,16 @@ pub fn caps_header_in(ui: &mut egui::Ui, title: &str, color: Color32) {
     ui.label(job);
 }
 
+/// The fill of a control that is on without calling for attention: a segmented control's
+/// picked segment, a pick filter toggle while everything is picked.
+pub fn raised(dark: bool) -> Color32 {
+    if dark {
+        Color32::from_rgb(0x4a, 0x4e, 0x56)
+    } else {
+        Color32::WHITE
+    }
+}
+
 /// A segmented control (macOS-style): one rounded track with the selected segment raised.
 /// Returns the clicked segment.
 pub fn segmented<T: Copy + PartialEq>(
@@ -596,11 +606,7 @@ pub fn segmented<T: Copy + PartialEq>(
     let dark = ui.visuals().dark_mode;
     let n = neutrals(dark);
     let track = n.control;
-    let raised = if dark {
-        Color32::from_rgb(0x4a, 0x4e, 0x56)
-    } else {
-        Color32::WHITE
-    };
+    let raised = raised(dark);
     let width = ui.available_width();
     let height = 26.0;
     let (rect, track_response) = ui.allocate_exact_size(vec2(width, height), egui::Sense::hover());

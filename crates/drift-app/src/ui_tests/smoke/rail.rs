@@ -139,7 +139,7 @@ fn smoke_rail_flyouts_and_families() {
         .click_secondary();
     h.run();
     assert!(h.state().rail_flyout.is_some());
-    let flyout: Vec<f32> = ["3-point arc", "Tangent arc", "Centre arc"]
+    let flyout: Vec<f32> = ["3-point arc", "Tangent arc", "Center arc"]
         .iter()
         .map(|l| {
             h.get_all_by_label(l)
@@ -160,7 +160,7 @@ fn smoke_rail_flyouts_and_families() {
         h.run();
         assert_eq!(h.state().tool.kind(), expected);
     }
-    assert!(on_rail(&h, "Centre arc").is_some(), "the family shows it");
+    assert!(on_rail(&h, "Center arc").is_some(), "the family shows it");
 }
 
 /// The tooltips on screen.

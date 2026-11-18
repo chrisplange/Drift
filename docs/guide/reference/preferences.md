@@ -102,7 +102,7 @@ says in the status bar what it just did.
 | **Origin axes** | | Yes |
 | **Snap to grid** | Shift+G | Yes |
 | **Thin lines** (every line one pixel wide; never changes the output) | Shift+Alt+W | Yes |
-| **Constraint status colours** (off: each curve's own or its layer's colour) | Shift+C | Yes |
+| **Sketch status colors** (off: each curve's own or its layer's color) | Shift+C | Yes |
 | **Always show end points** (off: only on hovered or picked curves; an arc's or circle's centre shows only while it is hovered or picked, and while the pointer moves in from it to the centre) | Shift+Alt+V | Yes |
 | **Dimensions and notes** | Alt+D | No: shown again at each start |
 | **Annotations at print size** (dimensions and notes at their printed size for the drawing scale, so they zoom with the drawing; off: one size on screen) | | Yes |

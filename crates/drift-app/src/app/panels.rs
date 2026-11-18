@@ -405,6 +405,16 @@ impl DriftApp {
     /// out (saying why) when it can't run; a check mark for a setting. Returns true if it
     /// ran.
     pub(crate) fn command_item(&mut self, ui: &mut egui::Ui, command: Command) -> bool {
+        self.command_item_in(ui, command, false)
+    }
+
+    /// [`Self::command_item`] in a menu of switches: a plain command is set in by a check
+    /// mark's room too, so every row starts at one edge.
+    fn checked_menu_item(&mut self, ui: &mut egui::Ui, command: Command) -> bool {
+        self.command_item_in(ui, command, true)
+    }
+
+    fn command_item_in(&mut self, ui: &mut egui::Ui, command: Command, room: bool) -> bool {
         let Some(spec) = commands::spec(command) else {
             return false;
         };
@@ -412,19 +422,37 @@ impl DriftApp {
             return false;
         }
         let label = self.menu_label(spec);
-        let keys = spec.key_text(cfg!(target_os = "macos"));
+        // A menu's shortcut runs that very item, so a cycle's later tools (Ellipse after
+        // Circle's C) show none: the key is on the cycle's first tool, and the tooltip says
+        // what pressing it again does.
+        let later_in_cycle = matches!(command, Command::Tool(kind) if kind.cycle_head() != kind && spec.keys.is_empty());
+        let keys = if later_in_cycle {
+            String::new()
+        } else {
+            spec.key_text(cfg!(target_os = "macos"))
+        };
         let enabled = spec.when.holds(self);
         let response = match self.command_state(command) {
             Some(on) => {
                 ui.add_enabled_ui(enabled, |ui| theme::menu_check(ui, on, &label, &keys))
                     .inner
             }
+            None if room => {
+                let check = egui::Atom::custom(egui::Id::new("menu_check"), egui::vec2(14.0, 14.0));
+                let button = egui::Button::new((check, label));
+                let button = if keys.is_empty() {
+                    button
+                } else {
+                    button.shortcut_text(keys)
+                };
+                ui.add_enabled(enabled, button)
+            }
             // (Shortcut text, even empty, becomes part of the button's accessible label.)
             None if keys.is_empty() => ui.add_enabled(enabled, egui::Button::new(label)),
             None => ui.add_enabled(enabled, egui::Button::new(label).shortcut_text(keys)),
         };
         let response = response
-            .on_hover_text(spec.description)
+            .on_hover_text(spec.does())
             .on_disabled_hover_text(spec.when.reason());
         if !response.clicked() {
             return false;
@@ -567,18 +595,9 @@ impl DriftApp {
                         Some(C::Copy),
                         Some(C::Paste),
                         Some(C::PasteInPlace),
-                        None,
-                        Some(C::CheckSketch),
+                        Some(C::Duplicate),
                         None,
                         Some(C::Delete),
-                        Some(C::Construction),
-                        Some(C::Group),
-                        Some(C::Ungroup),
-                        Some(C::Duplicate),
-                        Some(C::MakeBlock),
-                        Some(C::BlockFromGroup),
-                        Some(C::Explode),
-                        Some(C::ExplodeToGroup),
                         None,
                         Some(C::SelectAll),
                         None,
@@ -587,15 +606,18 @@ impl DriftApp {
                 );
             });
             ui.menu_button("View", |ui| {
-                self.command_item(ui, C::Palette);
-                ui.menu_button("Panels", |ui| self.panels_menu(ui));
+                // Every row set in by a check mark's room, switch or not, so the menu has
+                // one left edge.
+                self.checked_menu_item(ui, C::Palette);
+                let room = egui::Atom::custom(egui::Id::new("menu_check"), egui::vec2(14.0, 14.0));
+                ui.menu_button((room, "Panels"), |ui| self.panels_menu(ui));
                 ui.separator();
+                for command in [C::SheetPreview, C::ZoomToFit, C::ZoomToSelection] {
+                    self.checked_menu_item(ui, command);
+                }
                 self.command_items(
                     ui,
                     &[
-                        Some(C::SheetPreview),
-                        Some(C::ZoomToFit),
-                        Some(C::ZoomToSelection),
                         None,
                         Some(C::Toggle(ViewFlag::Grid)),
                         Some(C::Toggle(ViewFlag::Axes)),
@@ -620,10 +642,15 @@ impl DriftApp {
                     ],
                 );
                 ui.separator();
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Appearance").weak());
-                    ui.set_max_width(ui.min_rect().width() + 170.0);
-                    theme::appearance(ui);
+                let room = egui::Atom::custom(egui::Id::new("menu_check"), egui::vec2(14.0, 14.0));
+                ui.menu_button((room, "Appearance"), |ui| {
+                    let current = theme::Look::current(ui.ctx());
+                    for look in theme::Look::ALL {
+                        if theme::menu_check(ui, look == current, look.label(), "").clicked() {
+                            theme::set_look(ui.ctx(), look);
+                            ui.close();
+                        }
+                    }
                 });
             });
             for category in [Category::Draw, Category::Build] {
@@ -631,8 +658,26 @@ impl DriftApp {
             }
             ui.menu_button("Modify", |ui| {
                 self.category_menu(ui, Category::Modify);
-                ui.separator();
+                // Drift's object menu: grouping, blocks and construction belong with the
+                // other commands that change what is picked (Illustrator's Object menu).
+                self.command_items(
+                    ui,
+                    &[
+                        None,
+                        Some(C::Group),
+                        Some(C::Ungroup),
+                        Some(C::MakeBlock),
+                        Some(C::BlockFromGroup),
+                        Some(C::Explode),
+                        Some(C::ExplodeToGroup),
+                        None,
+                        Some(C::Construction),
+                        None,
+                    ],
+                );
                 ui.menu_button("Arrange", |ui| self.category_menu(ui, Category::Arrange));
+                ui.separator();
+                self.command_item(ui, C::CheckSketch);
             });
             ui.menu_button("Annotate", |ui| self.category_menu(ui, Category::Annotate));
             ui.menu_button("Help", |ui| {
@@ -1843,9 +1888,9 @@ impl DriftApp {
                     toggle(
                         ui,
                         Glyph::Status,
-                        "Status colours",
+                        "Status colors",
                         &mut self.status_colors,
-                        "Constraint status colours (on) or layer and line colours (off) · Shift+C",
+                        "Sketch status colors (on) or layer and line colors (off) · Shift+C",
                     );
                     toggle(
                         ui,

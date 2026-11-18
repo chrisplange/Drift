@@ -112,7 +112,7 @@ insertion point, and the ends, middles and centres of its own curves.
 1. Draw something: a 600 × 600 rectangle with a circle inside, for a table and a lamp.
 2. Pick it all (drag a box round it).
 3. Under **New block** at the top of the **Blocks** panel, type a name (or keep the
-   suggested one) and click **Make**. You can also use **Edit → Make block**, or **Make
+   suggested one) and click **Make**. You can also use **Modify → Make block**, or **Make
    block** in the top bar's **Actions** menu or the right-click menu.
 4. Drift asks for the block's **base point**, the point a copy is placed by. Click a snap
    point: the table's back-left corner, say. Press Enter to use the middle of what you
@@ -164,7 +164,7 @@ way: a name, what it holds (a group's members, a copy's block), **Edit in place*
 **Ungroup** or **Explode**.
 
 - **Make block from group:** pick a group and click **Make block** in the **Inspector**
-  (also on the right-click menu, **Edit → Make block from group** and the command
+  (also on the right-click menu, **Modify → Make block from group** and the command
   palette). The block is named after the group (with a number if a block already has the
   name), its base point is the middle of the group, and it keeps the group's fills. A copy
   takes the group's place.

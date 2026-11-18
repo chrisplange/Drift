@@ -1,4 +1,4 @@
-//! The Door / window tool and openings in the editor: placing, the swing, typed offset and
+//! The Opening tool and openings in the editor: placing, the swing, typed offset and
 //! width, sliding along the wall, flipping, and what happens to openings when their wall
 //! moves, splits, explodes or goes (docs/walls-design.md §6, §9.3).
 

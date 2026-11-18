@@ -54,6 +54,21 @@ fn pick_filter_toggles(
     let mut out = None;
     ui.spacing_mut().item_spacing.x = 2.0;
     caption(ui, "Pick");
+    // Everything picked is the usual state: the toggles show on in a quiet neutral, and
+    // the accent is kept for a narrowed filter, which is worth noticing.
+    let all = filter.is_all();
+    let dark = ui.visuals().dark_mode;
+    let strong = ui.visuals().strong_text_color();
+    let quiet_on = |text: &str| {
+        egui::Button::new(egui::RichText::new(text).size(12.0).color(strong))
+            .fill(theme::raised(dark))
+            .stroke(if dark {
+                egui::Stroke::NONE
+            } else {
+                egui::Stroke::new(1.0, theme::neutrals(dark).control_border)
+            })
+            .min_size(egui::vec2(0.0, 22.0))
+    };
     for kind in PickKind::ALL {
         let on = filter.has(kind);
         let label = match kind {
@@ -61,18 +76,24 @@ fn pick_filter_toggles(
             PickKind::Blocks => "Blocks",
             k => k.label(),
         };
-        let response = ui
-            .add(
-                egui::Button::new(egui::RichText::new(label).size(12.0))
-                    .selected(on)
-                    .min_size(egui::vec2(0.0, 22.0)),
-            )
-            .on_hover_text(format!(
-                "{}: picks {} · Alt-click or double-click: pick only {}",
-                kind.label(),
-                kind.picks(),
-                kind.label().to_lowercase()
-            ));
+        let button = if all {
+            quiet_on(label)
+        } else if on {
+            egui::Button::new(egui::RichText::new(label).size(12.0))
+                .selected(true)
+                .min_size(egui::vec2(0.0, 22.0))
+        } else {
+            egui::Button::new(egui::RichText::new(label).size(12.0).weak())
+                .fill(egui::Color32::TRANSPARENT)
+                .stroke(egui::Stroke::new(1.0, theme::neutrals(dark).control_border))
+                .min_size(egui::vec2(0.0, 22.0))
+        };
+        let response = ui.add(button).on_hover_text(format!(
+            "{}: picks {} · Alt-click or double-click: pick only {}",
+            kind.label(),
+            kind.picks(),
+            kind.label().to_lowercase()
+        ));
         response.widget_info(|| {
             egui::WidgetInfo::selected(
                 egui::WidgetType::Checkbox,
@@ -90,15 +111,19 @@ fn pick_filter_toggles(
         }
     }
     ui.add_space(2.0);
-    if ui
-        .add_enabled(
-            !filter.is_all(),
-            egui::Button::new(egui::RichText::new("All").size(12.0))
-                .min_size(egui::vec2(0.0, 22.0)),
-        )
-        .on_hover_text("Pick everything again")
-        .clicked()
-    {
+    // All: pressed while everything is picked; a click puts everything back otherwise.
+    let all_button = if all {
+        quiet_on("All")
+    } else {
+        egui::Button::new(egui::RichText::new("All").size(12.0)).min_size(egui::vec2(0.0, 22.0))
+    };
+    let response = ui.add(all_button).on_hover_text(if all {
+        "Everything is picked"
+    } else {
+        "Pick everything again"
+    });
+    response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, all, "All"));
+    if response.clicked() && !all {
         out = Some(PickFilter::ALL);
     }
     out

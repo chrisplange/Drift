@@ -1,4 +1,4 @@
-//! The Door / window tool's bar (size set, family, type, width, the way it opens) and the
+//! The Opening tool's bar (size set, family, type, width, the way it opens) and the
 //! Inspector for picked openings.
 
 use drift_core::{Hand, OpeningAt, OpeningId, Symbol, WallFace};
@@ -60,7 +60,7 @@ impl DriftApp {
         }
     }
 
-    /// The Door / window tool's bar: `[US (imperial) ▾] · [Door – Single Swing ▾] [3′0″ ×
+    /// The Opening tool's bar: `[US (imperial) ▾] · [Door – Single Swing ▾] [3′0″ ×
     /// 6′8″ ▾] · Width [ … ] · Right, in | Left, in | Left, out | Right, out`. What is set here
     /// is kept for the next drawing too.
     pub(crate) fn opening_tool_bar(&mut self, ui: &mut egui::Ui) {

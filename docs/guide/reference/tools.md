@@ -12,12 +12,12 @@ button down, for the others. The place shows the one used last.
 |---|---|
 | **Rectangle** | Polygon, Slot |
 | **Circle** | Ellipse, Partial ellipse |
-| **3-point arc** | Tangent arc, Centre arc |
+| **3-point arc** | Tangent arc, Center arc |
 | **Wall** | Walls from curves, Walls from lines |
 | **Trim** | Extend, Split |
 | **Fillet** | Chamfer |
 | **Linear array** | Circular array |
-| **Section mark** | Elevation mark, Centre mark |
+| **Section mark** | Elevation mark, Center mark |
 
 Esc cancels the step in progress; pressed again, it returns to **Select**. While a block or
 group is open for editing, the tools work only on what's inside it; Esc or **Finish editing**
@@ -46,7 +46,7 @@ become dimensions when **Auto relations** is on.
 | **Partial ellipse** | C, C, C | As the ellipse, then where it starts and ends (anticlockwise). | Half-lengths. |
 | **3-point arc** | A | Start, end, then a point on the arc. | Chord length, Tab, angle; then radius. |
 | **Tangent arc** | A, A | Starts from the end of a line, arc, partial ellipse or pen curve, tangent to it. Chains like a polyline; L switches to lines. | Radius, Tab, sweep. |
-| **Centre arc** | A, A, A | Centre, start (sets the radius), end. Move round the centre to choose the direction. | Radius, then sweep. |
+| **Center arc** | A, A, A | Centre, start (sets the radius), end. Move round the centre to choose the direction. | Radius, then sweep. |
 | **Slot** | U | **Straight** (two end centres, then the width), **Centre** (the middle, then an end centre) or **Arc** (the arc's centre, the two end centres, then the width). U again cycles; also in the top bar. | Length, then width. |
 | **Point** | V | Click to place a point. | X, Tab, Y. |
 | **Text** | Shift+T | Click where the text starts (its baseline), or in an existing text, and type. Return starts a new line; Esc or a click away finishes. Top bar: **Height** (on paper; new text is that at the drawing scale). | — |
@@ -62,7 +62,7 @@ and **Explode walls** are in the **Build** menu; **Walls from curves** and
 | Tool | Key | What it does |
 |---|---|---|
 | **Wall** | W | Click the centreline corner by corner; back in the first corner closes a ring, Enter or Esc ends. Starting or ending anywhere in another wall joins it (in its corner: an L; along it: a T; along the run itself: a T into itself); on another curve, stops against it. The preview shows the join before you click. W again (or A / L mid-run) switches to arcs (the end, then a point it curves through); drag at the next corner to bend the segment; Space steps the orientation (Left face → Right face → Centre); Backspace takes the last segment back. Top bar: **Thickness** (with presets), **Left face** / **Centre** / **Right face**, **Straight** / **Arc**, **Poché**. See [Walls](../tutorials/14-walls.md). Typed: Length, Tab, angle. |
-| **Door / window** | Shift+O | Hover a wall: the door, window or cased opening shows cut into it, centred on the pointer and kept clear of the corners; click to place (the tool stays in hand). Space steps through the four ways it opens (hinge left or right, into the room or out). A picked opening slides along its wall when dragged, and flips by its two arrows. Top bar: the drawing's **size set** (US imperial or generic metric), the **family** and **type** (named by its leaf; the wall is cut to its rough opening), the **Opening** width (any width will do), and the way it opens. See [Doors and windows](../tutorials/15-openings.md). Typed: offset from the nearer corner, Tab, width. |
+| **Opening** | Shift+O | Hover a wall: the door, window or cased opening shows cut into it, centred on the pointer and kept clear of the corners; click to place (the tool stays in hand). Space steps through the four ways it opens (hinge left or right, into the room or out). A picked opening slides along its wall when dragged, and flips by its two arrows. Top bar: the drawing's **size set** (US imperial or generic metric), the **family** and **type** (named by its leaf; the wall is cut to its rough opening), the **Opening** width (any width will do), and the way it opens. See [Doors and windows](../tutorials/15-openings.md). Typed: offset from the nearer corner, Tab, width. |
 | **Place block** | I | Copies of the block picked in the **Blocks** panel follow the pointer; click to place. R turns the next copy 90°, X mirrors it. |
 
 ## Modify
@@ -85,7 +85,7 @@ and **Explode walls** are in the **Build** menu; **Walls from curves** and
 |---|---|---|
 | **Dimension** | D | Click geometry, then place the label; the kind follows what you clicked and where the label goes. Top bar: **Single** / **Chain** / **Baseline**, **Overall**, **Show dimensions**, **Show relations**. See [Constraints and dimensions](../tutorials/02-constraints-and-dimensions.md). On a sheet's tab it makes a reference dimension that belongs to the sheet and reads the model's true size through the view you click in: see [Notes and dimensions on the sheet](../tutorials/10-sheets-and-output.md#notes-and-dimensions-on-the-sheet). |
 | **Note** | N | Click for a note, or click geometry first for a leader to it, and type on the canvas. Return adds a line; Esc or a click away finishes; Ctrl+B and Ctrl+I make the note bold or italic. Double-click a note to type in it again. On a sheet's tab it makes a note that belongs to the sheet, its leaders tied to the model through a view; its text is typed on the sheet the same way. |
-| **Centre mark** | — | Click a circle or arc for a centre mark; then another circle, arc or point for a centre line between them. Two lines give a centre line midway. |
+| **Center mark** | — | Click a circle or arc for a centre mark; then another circle, arc or point for a centre line between them. Two lines give a centre line midway. |
 | **Section mark** | — | Two clicks for the cutting line, with a lettered flag at each end. X / Y keep it to an axis. |
 | **Elevation mark** | — | Click where it goes, then towards what it looks at. X / Y keep it to an axis; Alt allows any angle. |
 | **View** | — | Drag a rectangle, or click two corners: a view of the model with that crop, at the last view's scale, to place on sheets. It's picked, with its grips, to name and reframe. See [Sheets and output](../tutorials/10-sheets-and-output.md#3-draw-a-view-on-the-canvas). |
@@ -104,7 +104,7 @@ Some actions work on the selection instead of being tools: scale (the transform 
 handles), duplicate (Shift+D), group (Ctrl+G), make block, explode, linear
 and circular arrays (the **Inspector**'s **Array** section, previewed on the canvas until
 applied; they repeat picked block copies, texts and notes too), arrange (Ctrl+] and Ctrl+[), clear relations and dimensions, check
-sketch (**Edit → Check sketch…**), **Select overlapping curves**, **Join corners** (an area
+sketch (**Modify → Check sketch…**), **Select overlapping curves**, **Join corners** (an area
 fill's corners that touch but aren't one point), **Edit fill** (a shape's fill on its own),
 **Detach offset** (an offset as plain curves that no longer follow), and **Join walls**,
 **Unjoin walls** and **Explode walls**.

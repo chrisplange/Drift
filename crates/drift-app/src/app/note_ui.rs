@@ -1291,7 +1291,7 @@ impl DriftApp {
                     .doc
                     .add_annotation(Annotation::CentreMark { curve });
             }
-            self.drawing.editor.commit("Centre marks");
+            self.drawing.editor.commit("Center marks");
         }
     }
 

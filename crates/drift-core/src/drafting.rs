@@ -424,7 +424,7 @@ impl Annotation {
         match self {
             Annotation::Note { leaders, .. } if leaders.is_empty() => "Note",
             Annotation::Note { .. } => "Leader note",
-            Annotation::CentreMark { .. } => "Centre mark",
+            Annotation::CentreMark { .. } => "Center mark",
             Annotation::Centreline { .. } => "Centre line",
             Annotation::HoleCallout { .. } => "Hole callout",
             Annotation::ChamferCallout { .. } => "Chamfer callout",

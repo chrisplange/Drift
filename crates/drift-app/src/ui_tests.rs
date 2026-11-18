@@ -5220,7 +5220,7 @@ fn control_bar_overlap_warning_and_corner_angles() {
         "Origin axes",
         "End points",
         "Auto relations",
-        "Status colours",
+        "Status colors",
     ] {
         let r = h.get_by_label(name).rect();
         assert!(
@@ -6957,8 +6957,8 @@ fn check_sketch_finds_and_fixes_gaps() {
         "not closed"
     );
 
-    // Edit → Check sketch…: two issues, marked on the canvas.
-    h.get_by_label("Edit").click();
+    // Modify → Check sketch…: two issues, marked on the canvas.
+    h.get_by_label("Modify").click();
     h.run();
     h.get_by_label("Check sketch…").click();
     h.run();

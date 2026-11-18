@@ -2899,29 +2899,24 @@ fn a_drag_the_kept_radii_cannot_follow_still_stops() {
 }
 
 /// Moving `picked` of `sketch` by `offset` in one call, with the curves holding its dragged
-/// points carried where they may or not (`no_carry`), and tried with the fold steps where
-/// it can't be made otherwise or not (`no_fold`): whether it went, where the points end,
-/// whether it pushed curves along, how many times it was tried with the fold steps, and
-/// how many solves it ran.
-fn move_with_folds(
+/// points carried where they may or not (`no_carry`): whether it went, where the points end,
+/// whether it pushed curves along, and how many solves it ran.
+fn move_counted(
     sketch: &Sketch,
     picked: &[usize],
     offset: DVec2,
     no_carry: bool,
-    no_fold: bool,
-) -> (bool, Vec<DVec2>, bool, u32, u32) {
+) -> (bool, Vec<DVec2>, bool, u32) {
     let mut built = Built::new(sketch, Similarity::IDENTITY).unwrap();
     let ids: Vec<EntityId> = picked.iter().map(|&i| built.curves[i]).collect();
     let dragged = dragged_by(&built.ed, &ids);
     built.ed.drag_no_carry = no_carry;
-    built.ed.drag_no_fold = no_fold;
     built.ed.doc.begin();
     let went = built.ed.drag(&ids, offset, &dragged);
     let out = (
         went,
         built.positions(),
         built.ed.drag_pushed(),
-        built.ed.drag_folds,
         built.ed.drag_solves(),
     );
     built.ed.doc.rollback();
@@ -2960,26 +2955,13 @@ fn f3s_move_stops_rather_than_grow_its_arc() {
     built.ed.doc.rollback();
 }
 
-/// #282: a pinned part is never tried with the fold steps: f3's sketch with its arc's far
-/// end fixed tries them not once (its move is refused: it would grow the arc; see
-/// `f3s_move_stops_rather_than_grow_its_arc`).
-#[test]
-fn a_pinned_part_is_never_tried_with_the_fold_steps() {
-    let (sketch, offset) = never_finishes();
-    let (_, _, pushed, folds, _) = move_with_folds(&sketch, &[1, 4], offset, false, false);
-    assert!(!pushed);
-    assert_eq!(folds, 0);
-}
-
 /// #282: the two lines held on an arc a diameter apart (its kept radius at a fold), with
-/// nothing carrying the arc: the move goes, lands, and keeps the radius. It took the fold
-/// steps before PR 3; the solve itself meets a kept radius at a fold now, so it goes without
-/// them, and they aren't tried.
+/// nothing carrying the arc: the move goes, lands, and keeps the radius.
 #[test]
 fn a_move_held_at_a_fold_goes() {
     let (sketch, offset) = held_a_diameter_apart();
-    let (went, end, _, folds, _) = move_with_folds(&sketch, &[1, 2], offset, true, false);
-    assert!(went && folds == 0, "went {went}, tried {folds} times");
+    let (went, end, ..) = move_counted(&sketch, &[1, 2], offset, true);
+    assert!(went, "it didn't go");
     let start = Built::new(&sketch, Similarity::IDENTITY)
         .unwrap()
         .positions();
@@ -2992,16 +2974,13 @@ fn a_move_held_at_a_fold_goes() {
         );
     }
     assert!((end[1].distance(end[2]) - 8.0).abs() < 1e-8);
-    let (went, ..) = move_with_folds(&sketch, &[1, 2], offset, true, true);
-    assert!(went, "it didn't go without the fold steps");
 }
 
-/// #282: a part too big for a solve that runs to the solver's cap to fit in what a frame may
-/// spend on the fold steps is never tried with them: the held-a-diameter move with 2,000
-/// bars held at their lengths hanging from the arc, nothing carrying the arc, is refused
-/// with the same solves as without them.
+/// #282: a big part's refused move costs no more than its path's budget: the
+/// held-a-diameter move with 2,000 bars held at their lengths hanging from the arc, nothing
+/// carrying the arc, is refused within `PATH_SOLVES` solves (200).
 #[test]
-fn a_big_part_is_never_tried_with_the_fold_steps() {
+fn a_big_parts_refused_move_costs_its_paths_budget_at_most() {
     let (mut sketch, offset) = held_a_diameter_apart();
     let mut last = 0;
     for k in 0..2_000 {
@@ -3011,11 +2990,9 @@ fn a_big_part_is_never_tried_with_the_fold_steps() {
         sketch.rels.push(Rel::Length(sketch.curves.len() - 1));
         last = next;
     }
-    let with = move_with_folds(&sketch, &[1, 2], offset, true, false);
-    let without = move_with_folds(&sketch, &[1, 2], offset, true, true);
-    assert!(!with.0);
-    assert_eq!(with.3, 0, "tried with the fold steps");
-    assert_eq!(with.4, without.4);
+    let (went, _, _, solves) = move_counted(&sketch, &[1, 2], offset, true);
+    assert!(!went);
+    assert!(solves <= 200, "{solves} solves");
 }
 
 /// An arc a line ends on, tangent to it, with a second, vertical line as long as it holding
@@ -3086,37 +3063,28 @@ fn lands_off_hung(from: usize, pair: bool) -> (Sketch, [usize; 3], DVec2, usize)
     (sketch, picked, offset, a)
 }
 
-/// #282: a kept try with the fold steps flings nothing: `lands_off` with a pair of
-/// perpendicular lines hanging from point 3, a sixteenth of the move in one call. With the
-/// minimum change scaled down and nothing limiting the kept shapes' step, round-off turned
-/// the pair 320 mm away across a drawing some 40 mm across. The hung points move no more
-/// than a few millimetres further than today's steps move them.
+/// #282: `lands_off` with a pair of perpendicular lines hanging from point 3, a sixteenth of
+/// the move in one call, flings nothing: the fold try that went before PR 5 once turned the
+/// pair 320 mm away across a drawing some 40 mm across. The move goes, and the hung points
+/// move no farther than the drawing is across.
 #[test]
-fn a_try_with_the_fold_steps_flings_nothing() {
+fn lands_off_with_a_hung_pair_flings_nothing() {
     let (sketch, picked, offset, a) = lands_off_hung(3, true);
     let start = Built::new(&sketch, Similarity::IDENTITY)
         .unwrap()
         .positions();
-    let (went, end, _, folds, _) = move_with_folds(&sketch, &picked, offset / 16.0, false, false);
-    let today = move_with_folds(&sketch, &picked, offset / 16.0, false, true).1;
-    assert!(went && folds > 0, "went {went}, tried {folds} times");
+    let (went, end, ..) = move_counted(&sketch, &picked, offset / 16.0, false);
+    assert!(went, "it didn't go");
     for i in [a, a + 1] {
-        let (moved, was) = (start[i].distance(end[i]), start[i].distance(today[i]));
-        assert!(
-            moved <= 2.0 * was + 2.0,
-            "hung point {i} moved {moved}, today {was}"
-        );
+        let moved = start[i].distance(end[i]);
+        assert!(moved <= 40.0, "hung point {i} moved {moved}");
     }
 }
 
-/// #282: a try with the fold steps never refuses a move today's steps take, nor sends it a
-/// way they wouldn't: `lands_off` with a chain of three square lines hanging from point 11,
-/// 15/16 of the move, in 1, 2 and 4 calls. Today's steps take each call, landing a little
-/// off; with the fold steps each goes too, as today's steps leave it to the bit or landed
-/// exactly. (A try's solves that wandered, left in the frame, sent the whole move down the
-/// stepped path today's steps never took, where a step failed and the move was refused.)
+/// #282: `lands_off` with a chain of three square lines hanging from point 11, 15/16 of the
+/// move, in 1, 2 and 4 calls: every call goes and lands.
 #[test]
-fn a_try_with_the_fold_steps_never_refuses_what_today_takes() {
+fn lands_off_with_a_hung_chain_goes_and_lands() {
     let (sketch, picked, offset, _) = lands_off_hung(11, false);
     let to = offset * 15.0 / 16.0;
     let start = Built::new(&sketch, Similarity::IDENTITY)
@@ -3124,86 +3092,27 @@ fn a_try_with_the_fold_steps_never_refuses_what_today_takes() {
         .positions();
     let dragged = [0, 1, 2, 4, 7, 8, 11];
     for calls in [1u32, 2, 4] {
-        let run = |no_fold: bool| {
-            let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
-            let ids: Vec<EntityId> = picked.iter().map(|&i| built.curves[i]).collect();
-            let dragged = dragged_by(&built.ed, &ids);
-            built.ed.drag_no_fold = no_fold;
-            built.ed.doc.begin();
-            let mut out = Vec::new();
-            let mut folds = 0;
-            for _ in 0..calls {
-                let went = built.ed.drag(&ids, to / f64::from(calls), &dragged);
-                folds += built.ed.drag_folds;
-                out.push((went, built.positions()));
+        let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+        let ids: Vec<EntityId> = picked.iter().map(|&i| built.curves[i]).collect();
+        let by = dragged_by(&built.ed, &ids);
+        built.ed.doc.begin();
+        for k in 0..calls {
+            let went = built.ed.drag(&ids, to / f64::from(calls), &by);
+            assert!(went, "call {} of {calls} refused", k + 1);
+            let at = to * f64::from(k + 1) / f64::from(calls);
+            let end = built.positions();
+            for &i in &dragged {
+                assert!(
+                    close(end[i], start[i] + at, (start[i] + at).length()),
+                    "call {} of {calls}: point {i} at {}, not {}",
+                    k + 1,
+                    end[i],
+                    start[i] + at
+                );
             }
-            built.ed.doc.rollback();
-            (out, folds)
-        };
-        let (with, folds) = run(false);
-        let (without, _) = run(true);
-        assert!(
-            folds > 0,
-            "never tried with the fold steps in {calls} calls"
-        );
-        for (k, (a, b)) in with.iter().zip(&without).enumerate() {
-            assert!(
-                b.0,
-                "call {} of {calls} refused without the fold steps",
-                k + 1
-            );
-            assert!(a.0, "call {} of {calls} refused", k + 1);
-            let at = to * f64::from(k as u32 + 1) / f64::from(calls);
-            let landed = dragged
-                .iter()
-                .all(|&i| close(a.1[i], start[i] + at, (start[i] + at).length()));
-            assert!(
-                a.1 == b.1 || landed,
-                "call {} of {calls}: neither today's nor landed",
-                k + 1
-            );
         }
+        built.ed.doc.rollback();
     }
-}
-
-/// #282: a try with the fold steps that fails leaves the frame exactly as today's steps left
-/// it. Each of 16 lengths of `lands_off`'s move made four times as long, in one call: where it
-/// is tried with the fold steps, the move either lands (the try was kept) or goes or not and
-/// leaves every point (to the bit), and what it pushed, as it does without the fold steps; and
-/// there are tries of both kinds, the failed ones having moved the geometry before they were
-/// undone. (Since PR 3 every try along the move as found lands: four times as long, the later
-/// ones fail.)
-#[test]
-fn a_try_with_the_fold_steps_that_fails_leaves_the_frame_as_it_was() {
-    let (sketch, picked, offset) = lands_off();
-    let start = Built::new(&sketch, Similarity::IDENTITY)
-        .unwrap()
-        .positions();
-    let dragged = [0, 1, 2, 4, 7, 8, 11];
-    let (mut kept, mut undone) = (0, 0);
-    for k in 1..=16 {
-        let to = 4.0 * offset * f64::from(k) / 16.0;
-        let with = move_with_folds(&sketch, &picked, to, false, false);
-        let without = move_with_folds(&sketch, &picked, to, false, true);
-        if with.3 == 0 {
-            continue;
-        }
-        let landed = with.0
-            && dragged
-                .iter()
-                .all(|&i| close(with.1[i], start[i] + to, (start[i] + to).length()));
-        if landed && with.1 != without.1 {
-            kept += 1;
-        } else {
-            undone += 1;
-            assert_eq!(
-                (with.0, &with.1, with.2),
-                (without.0, &without.1, without.2),
-                "{k}/16 of the move"
-            );
-        }
-    }
-    assert!(kept > 0 && undone > 0, "{kept} tries kept, {undone} undone");
 }
 
 mod census;

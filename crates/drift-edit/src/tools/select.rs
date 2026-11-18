@@ -406,12 +406,20 @@ impl SelectTool {
         } else {
             grab.dragged()
         };
-        if !grab.ids.is_empty() && !ed.drag(&grab.ids, offset, &dragged) {
-            // Too far for one solve (constraints pull the rest along): go in steps.
-            const STEPS: u32 = 16;
-            for _ in 0..STEPS {
-                ed.drag(&grab.ids, offset / f64::from(STEPS), &dragged);
+        // A typed offset is a move to a typed place (#344): see [`Editor::as_typed`].
+        let apply = |ed: &mut Editor| {
+            if !grab.ids.is_empty() && !ed.drag(&grab.ids, offset, &dragged) {
+                // Too far for one solve (constraints pull the rest along): go in steps.
+                const STEPS: u32 = 16;
+                for _ in 0..STEPS {
+                    ed.drag(&grab.ids, offset / f64::from(STEPS), &dragged);
+                }
             }
+        };
+        if any_typed(grab.typed) {
+            ed.as_typed(apply);
+        } else {
+            apply(ed);
         }
         // After the geometry, so notes land where they're taken whatever their leaders did.
         ed.place_riders(&grab.riders, &|p| p + offset);

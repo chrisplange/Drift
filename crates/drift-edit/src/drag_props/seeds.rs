@@ -2169,9 +2169,9 @@ fn h_untouched_line_kept_with_an_angle_relation_at_any_size_and_place() {
 /// A drag a kilometre out (a census case: a line hanging from a midpoint, held perpendicular
 /// and equal to another, a curve and points on curves, dragged in 17 frames), where each
 /// frame's solve stops with the kept lengths off by about a billionth of themselves. That isn't
-/// a stretch, and isn't tried again: every frame is exactly as with no try at all. (Taken for
-/// one, the try landed across the fold on some frames, and the line jumped out by up to 2.3 mm
-/// for a frame and back the next.)
+/// a stretch: every frame ends where the same drag at the origin, moved out, does. (Taken for
+/// one, the length try before PR 5 landed across the fold on some frames, and the line jumped
+/// out by up to 2.3 mm for a frame and back the next.)
 #[test]
 fn a_solves_leftover_far_out_is_not_taken_for_a_stretch() {
     let plan = Plan {
@@ -2232,9 +2232,8 @@ fn a_solves_leftover_far_out_is_not_taken_for_a_stretch() {
         shift: DVec2::new(1e6, 1e6),
     };
     let offset = DVec2::new(3.1715384551452965, 2.422796244862606);
-    let frames = |no_try: bool| {
+    let frames = |t: Similarity| {
         let mut built = Built::new(&sketch, t).unwrap();
-        built.ed.drag_no_length_try = no_try;
         let ids = Pick::Curves(10082016649297418272).ids(&built);
         let dragged: Vec<Param> = built
             .ed
@@ -2255,9 +2254,16 @@ fn a_solves_leftover_far_out_is_not_taken_for_a_stretch() {
         }
         out
     };
-    let (with, without) = (frames(false), frames(true));
-    for (k, (a, b)) in with.iter().zip(&without).enumerate() {
-        assert_eq!(a, b, "frame {}: differs from the drag with no try", k + 1);
+    let (far, near) = (frames(t), frames(Similarity::IDENTITY));
+    for (k, (a, b)) in far.iter().zip(&near).enumerate() {
+        for (p, q) in a.iter().zip(b) {
+            let q = *q + t.shift;
+            assert!(
+                close(*p, q, q.length()),
+                "frame {}: {p} far out, {q} from the origin's",
+                k + 1
+            );
+        }
     }
 }
 

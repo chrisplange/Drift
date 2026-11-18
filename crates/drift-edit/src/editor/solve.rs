@@ -818,6 +818,17 @@ impl Editor {
         done
     }
 
+    /// Run `f` as a move to a typed place (typed coordinates, a typed distance or angle, a
+    /// nudge, the AI link's moves): its drags keep no Parallel, Perpendicular or Angle pair's
+    /// way round (#344), since what is typed may be the other way round outright, and the move
+    /// reaches it or is refused whole. A pointer's drag keeps them.
+    pub fn as_typed<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let was = std::mem::replace(&mut self.typed_move, true);
+        let out = f(self);
+        self.typed_move = was;
+        out
+    }
+
     /// Move a point to typed coordinates (one undo step), its relations pulling the rest
     /// along. False, with nothing changed, if they hold it somewhere else.
     pub fn move_point_to(&mut self, point: EntityId, to: DVec2) -> bool {
@@ -829,23 +840,25 @@ impl Editor {
         }
         self.doc.begin();
         let dragged: Vec<Param> = Param::point(point).into_iter().collect();
-        if !self.drag(&[point], to - from, &dragged) {
-            // Too far for one solve: go in steps.
-            const STEPS: u32 = 16;
-            for _ in 0..STEPS {
-                self.drag(&[point], (to - from) / f64::from(STEPS), &dragged);
+        self.as_typed(|ed| {
+            if !ed.drag(&[point], to - from, &dragged) {
+                // Too far for one solve: go in steps.
+                const STEPS: u32 = 16;
+                for _ in 0..STEPS {
+                    ed.drag(&[point], (to - from) / f64::from(STEPS), &dragged);
+                }
             }
-        }
-        // A drag follows the target closely rather than exactly: close what's left.
-        for _ in 0..4 {
-            let Ok(now) = self.doc.point(point) else {
-                break;
-            };
-            if now.distance(to) < 1e-10 {
-                break;
+            // A drag follows the target closely rather than exactly: close what's left.
+            for _ in 0..4 {
+                let Ok(now) = ed.doc.point(point) else {
+                    break;
+                };
+                if now.distance(to) < 1e-10 {
+                    break;
+                }
+                ed.drag(&[point], to - now, &dragged);
             }
-            self.drag(&[point], to - now, &dragged);
-        }
+        });
         let allowed = 1e-6 * (1.0 + (to - from).length());
         let reached = self
             .doc
@@ -901,7 +914,7 @@ impl Editor {
                 .copied()
                 .flat_map(Param::point)
                 .collect();
-            if !self.drag(&ids, delta, &dragged) {
+            if !self.as_typed(|ed| ed.drag(&ids, delta, &dragged)) {
                 self.doc.rollback();
                 self.sync();
                 return Some(false);

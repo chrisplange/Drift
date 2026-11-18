@@ -1315,122 +1315,60 @@ fn length_try_sketch(at: DVec2, refused: bool) -> (Editor, EntityId, Vec<Param>,
     (Editor::new(doc), moved, dragged, [p0, q, r, m, s])
 }
 
-/// A try at keeping a hanging line's length that fails leaves the frame exactly as today's
-/// steps left it ([`length_try_sketch`]: the hanging line's length must change). Frames are
-/// tried and none kept, and the drag ends bit for bit where it does with the try switched off,
-/// pushing as much, at the origin, 100 mm out and a kilometre out.
+/// A drag whose hanging line's length must change ([`length_try_sketch`]) goes the same at
+/// the origin, 100 mm out and a kilometre out: the same frames go, and each point ends where
+/// the origin's drag, moved out, puts it.
 #[test]
-fn a_failed_try_at_keeping_a_length_leaves_the_frame_as_it_was() {
-    for at in [DVec2::ZERO, DVec2::new(100.0, -50.0), DVec2::new(1e6, 0.0)] {
-        let run = |no_try: bool| {
-            let (mut ed, moved, dragged, points) = length_try_sketch(at, false);
-            ed.drag_no_length_try = no_try;
-            ed.doc.begin();
-            let mut tries = (0, 0);
-            let mut went = Vec::new();
-            let mut applied = DVec2::ZERO;
-            for k in 1..=8 {
-                let target = DVec2::new(4.0, 1.0) * (f64::from(k) / 8.0);
-                let ok = ed.drag(&[moved], target - applied, &dragged);
-                if ok {
-                    applied = target;
-                }
-                went.push(ok);
-                tries.0 += ed.drag_length_tries.0;
-                tries.1 += ed.drag_length_tries.1;
-            }
-            let at_end: Vec<DVec2> = points.iter().map(|&p| ed.doc.point(p).unwrap()).collect();
-            (went, at_end, ed.drag_pushed(), tries)
-        };
-        let (went, at_end, pushed, tries) = run(false);
-        let (went_off, at_end_off, pushed_off, tries_off) = run(true);
-        assert!(tries.0 > 0, "at {at}: never tried");
-        assert_eq!(tries.1, 0, "at {at}: a try was kept");
-        assert_eq!(tries_off, (0, 0));
-        assert_eq!(went, went_off, "at {at}");
-        assert_eq!(at_end, at_end_off, "at {at}: not bit for bit");
-        assert_eq!(pushed, pushed_off, "at {at}");
-    }
-}
-
-/// A frame refused today stays refused with the try at keeping a length, and leaves the
-/// drawing as it was ([`length_try_sketch`] with the moved line's start taken onto a circle's
-/// centre: crushed, F1). The try is made only after a step that went, so it may run on the
-/// frame's earlier steps, but it never turns a refused frame into one that goes.
-#[test]
-fn a_frame_refused_today_stays_refused_with_the_try_at_keeping_a_length() {
-    for no_try in [false, true] {
-        let (mut ed, moved, dragged, points) = length_try_sketch(DVec2::ZERO, true);
-        ed.drag_no_length_try = no_try;
-        let start: Vec<DVec2> = points.iter().map(|&p| ed.doc.point(p).unwrap()).collect();
+fn a_hanging_line_that_must_stretch_goes_the_same_far_out() {
+    let run = |at: DVec2| {
+        let (mut ed, moved, dragged, points) = length_try_sketch(at, false);
         ed.doc.begin();
-        let went = ed.drag(&[moved], DVec2::new(-10.0, 0.0), &dragged);
-        assert!(!went, "with no_try {no_try}: went");
-        let now: Vec<DVec2> = points.iter().map(|&p| ed.doc.point(p).unwrap()).collect();
-        assert_eq!(
-            now, start,
-            "with no_try {no_try}: a refused frame moved something"
-        );
+        let mut went = Vec::new();
+        let mut ends = Vec::new();
+        let mut applied = DVec2::ZERO;
+        for k in 1..=8 {
+            let target = DVec2::new(4.0, 1.0) * (f64::from(k) / 8.0);
+            let ok = ed.drag(&[moved], target - applied, &dragged);
+            if ok {
+                applied = target;
+            }
+            went.push(ok);
+            ends.push(
+                points
+                    .iter()
+                    .map(|&p| ed.doc.point(p).unwrap() - at)
+                    .collect::<Vec<DVec2>>(),
+            );
+        }
+        (went, ends)
+    };
+    let (went, ends) = run(DVec2::ZERO);
+    for at in [DVec2::new(100.0, -50.0), DVec2::new(1e6, 0.0)] {
+        let (went_out, ends_out) = run(at);
+        assert_eq!(went, went_out, "at {at}");
+        for (k, (a, b)) in ends.iter().zip(&ends_out).enumerate() {
+            for (p, q) in a.iter().zip(b) {
+                assert!(
+                    p.distance(*q) <= 1e-6 * 20.0,
+                    "at {at}, frame {}: {p} against {q}",
+                    k + 1
+                );
+            }
+        }
     }
 }
 
-/// The tries at keeping a length share one budget across a drag call's parts: ten copies of
-/// [`length_try_sketch`]'s failing kind (each its own part, each trying every frame and
-/// failing) dragged in one call run no more than `LENGTH_TRY_SOLVES` (32) solves on their
-/// tries a frame, where ten budgets of their own would run each part's.
+/// A frame that crushes the moved line's start onto a circle's centre ([`length_try_sketch`]
+/// with the start taken onto it: F1) is refused, and leaves the drawing as it was.
 #[test]
-fn many_parts_trying_to_keep_a_length_share_one_budget() {
-    let mut doc = drift_core::Document::new();
-    doc.begin();
-    let mut moved = Vec::new();
-    for t in 0..10 {
-        let o = DVec2::new(60.0 * f64::from(t), 0.0);
-        let v = |x: f64, y: f64| o + DVec2::new(x, y);
-        let p0 = doc.add_point(v(0.0, 0.0));
-        let q = doc.add_point(v(10.0, 0.0));
-        let r = doc.add_point(v(10.0, 6.0));
-        let m = doc.add_point(v(10.0, 3.0));
-        let s = doc.add_point(v(20.0, 3.0));
-        let stretched = doc.add_line(p0, q).unwrap();
-        let line = doc.add_line(q, r).unwrap();
-        let hanging = doc.add_line(m, s).unwrap();
-        for c in [
-            Constraint::Fix {
-                point: p0,
-                at: v(0.0, 0.0),
-            },
-            Constraint::Midpoint { point: m, line },
-            Constraint::Equal {
-                a: hanging,
-                b: stretched,
-            },
-        ] {
-            doc.add_constraint(c).unwrap();
-        }
-        moved.push(line);
-    }
-    doc.commit("Sketch");
-    let mut ed = Editor::new(doc);
-    let dragged: Vec<Param> = ed
-        .doc
-        .defining_points(moved.iter().copied())
-        .into_iter()
-        .flat_map(Param::point)
-        .collect();
+fn a_frame_that_crushes_onto_a_centre_is_refused_and_moves_nothing() {
+    let (mut ed, moved, dragged, points) = length_try_sketch(DVec2::ZERO, true);
+    let start: Vec<DVec2> = points.iter().map(|&p| ed.doc.point(p).unwrap()).collect();
     ed.doc.begin();
-    let mut applied = DVec2::ZERO;
-    for k in 1..=4 {
-        let target = DVec2::new(4.0, 1.0) * (f64::from(k) / 4.0);
-        if ed.drag(&moved, target - applied, &dragged) {
-            applied = target;
-        }
-        let (tries, kept, solves) = ed.drag_length_tries;
-        assert!(
-            tries > 0 && kept == 0,
-            "frame {k}: {tries} tries, {kept} kept"
-        );
-        assert!(solves <= 32, "frame {k}: the tries ran {solves} solves");
-    }
+    let went = ed.drag(&[moved], DVec2::new(-10.0, 0.0), &dragged);
+    assert!(!went, "went");
+    let now: Vec<DVec2> = points.iter().map(|&p| ed.doc.point(p).unwrap()).collect();
+    assert_eq!(now, start, "a refused frame moved something");
 }
 
 /// The comparison `an_old_conflict_beside_a_small_drag_changes_nothing` made before PR 2
@@ -1442,9 +1380,9 @@ fn many_parts_trying_to_keep_a_length_share_one_budget() {
 /// point of the part, the lines' among them, and at the fold those steps fall the other way.
 /// Counting each place once, or sizing the steps by the solver's component, each makes this
 /// pass and moves other fold cases the other way (heavy similarity seeds, a free move refused).
-/// The step ladder is replaced by PR 5's continuation (parked as later).
+/// The step ladder is replaced by PR 5's continuation, whose steps are in the path's own
+/// measure, not the part's size.
 #[test]
-#[ignore = "PR 5 (parked): drag_from_start's steps read the part's other lines; 29 of 32 frames"]
 fn the_arcs_drag_beside_lines_on_the_fixed_centre_is_their_drag_alone() {
     let mut built = Built::new(&two_arcs_one_fixed(), Similarity::IDENTITY).unwrap();
     let ids = [built.points[3]];

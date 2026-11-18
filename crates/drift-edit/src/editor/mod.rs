@@ -145,19 +145,9 @@ pub struct Editor {
     /// Whether a drag leaves the curves holding its dragged points where they are rather than
     /// carry them (see `DragFrame::holding`; for the tests: a drag as it was without).
     pub(crate) drag_no_carry: bool,
-    /// How many times the last drag call tried a frame again with the solver's fold steps
-    /// (see `Editor::drag_frame`; for the tests).
-    pub(crate) drag_folds: u32,
-    /// Whether a drag never tries a frame with the fold steps (for the tests: a drag as it
-    /// was without).
-    pub(crate) drag_no_fold: bool,
-    /// How many times the last drag call tried a frame again to keep a hanging line's length,
-    /// how many of those it kept, and the solves the tries ran (see `Editor::keep_lengths`;
-    /// for the tests).
-    pub(crate) drag_length_tries: (u32, u32, u32),
-    /// Whether a drag never tries to keep a hanging line's length (for the tests: a drag as it
-    /// was without).
-    pub(crate) drag_no_length_try: bool,
+    /// Whether the drag running is a move to a typed place ([`Editor::move_point_to`]),
+    /// which keeps no Parallel, Perpendicular or Angle pair's way round (#344).
+    typed_move: bool,
     /// Whether the modal move's confirm never keeps the open move (for the tests: the move
     /// rolled back and made again from the start, as it was; see `Editor::land_whole_move`).
     pub(crate) land_whole_off: bool,

@@ -90,6 +90,10 @@ pub struct System {
     /// The points that are only arcs' centres: no line, curve end or other curve's point
     /// uses them. They count towards no component's size (see [`System::arcs`]).
     pub centres_only: HashSet<EntityId>,
+    /// Per group, where a solve is asked to bring it, and its rank (0 dragged, 1 carried):
+    /// the solve's second rank, after the relations (see `crate::newton`). Empty, or `None`
+    /// for a group asked nothing.
+    pub targets: Vec<Option<(f64, usize)>>,
 }
 
 /// A shape to keep where the relations leave it open (see [`System::keep`]).
@@ -1341,6 +1345,7 @@ impl System {
             keep_of_group: Vec::new(),
             keep: keep_shape,
             bars: Vec::new(),
+            targets: Vec::new(),
             arcs,
             centres_only,
         }

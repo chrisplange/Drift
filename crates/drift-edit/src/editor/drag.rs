@@ -476,8 +476,12 @@ impl Editor {
                 held_radii: &part.held_radii,
                 pairs: &part.pairs,
             };
-            ok = self.drag_frame_steps(&mut frame, to, &part.start)
-                && !self.breaks_held_shape(part, to, frame.bar);
+            let went = self.drag_frame_steps(&mut frame, to, &part.start);
+            let breaks = went && self.breaks_held_shape(part, to, frame.bar);
+            if std::env::var_os("DRIFT_PATH_DEBUG").is_some() {
+                eprintln!("frame went {went} breaks {breaks} pushed {}", frame.pushed);
+            }
+            ok = went && !breaks;
             self.drag_solves += PATH_SOLVES - frame.solves_left;
             pushed |= frame.pushed;
             if !ok {
@@ -1467,8 +1471,11 @@ impl Editor {
         // before this one, twice its size, would have, where only that refused it.
         let mut speed = 0.0f64;
         let mut too_fast: Option<f64> = None;
+        // The curves the last refused step whose solve finished turned (see `turned`).
+        let mut turning: Vec<EntityId> = Vec::new();
         while t < 1.0 {
             if frame.solves_left == 0 {
+                *turned = turning;
                 return false;
             }
             let mut here = self.geometry_of(frame.scope);
@@ -1594,20 +1601,23 @@ impl Editor {
                 h = (2.0 * h).min(1.0 - t);
                 speed = step_speed;
                 too_fast = None;
+                turning.clear();
                 continue;
             }
             let only_fast =
                 !unfinished && flipped.is_empty() && !turns && !self.grows_held_radius(frame);
             too_fast = (fast && only_fast).then_some(step_speed);
-            let finest = h <= STEP_RESOLUTION;
-            if finest && !unfinished {
-                // Even the finest step turns these. (A solve that didn't finish left the
+            let mut pairs = self.turned_pairs(frame);
+            if !unfinished && (turns || !flipped.is_empty() || !pairs.is_empty()) {
+                // What this step turns, nearest the break. (A solve that didn't finish left the
                 // geometry part way, which says nothing of what turns.)
-                *turned = orientation.turned_curves(&self.doc);
-                turned.append(&mut flipped);
+                turning = orientation.turned_curves(&self.doc);
+                turning.append(&mut flipped);
+                turning.append(&mut pairs);
             }
             self.restore_geometry(&here);
-            if finest {
+            if h <= STEP_RESOLUTION {
+                *turned = turning;
                 return false;
             }
             h /= 2.0;
@@ -1636,11 +1646,17 @@ impl Editor {
     /// was held to has no way round to keep (a sliver); nor does a move to a typed place keep
     /// any ([`Editor::as_typed`]: what is typed may be the other way round outright).
     fn keeps_pairs(&self, frame: &DragFrame<'_>) -> bool {
+        self.turned_pairs(frame).is_empty()
+    }
+
+    /// The lines of `frame`'s pairs that aren't the way round the drag found them (see
+    /// [`keeps_pairs`](Self::keeps_pairs)).
+    fn turned_pairs(&self, frame: &DragFrame<'_>) -> Vec<EntityId> {
         use std::f64::consts::{FRAC_PI_2, PI, TAU};
         if self.typed_move {
-            return true;
+            return Vec::new();
         }
-        frame.pairs.iter().all(|&(a, b, was)| {
+        let kept = |&&(a, b, was): &&(EntityId, EntityId, f64)| {
             let (Some(u), Some(v)) = (self.line_vector(a), self.line_vector(b)) else {
                 return true;
             };
@@ -1654,7 +1670,13 @@ impl Editor {
             }
             let now = u.perp_dot(v).atan2(u.dot(v));
             ((now - was + PI).rem_euclid(TAU) - PI).abs() < FRAC_PI_2
-        })
+        };
+        frame
+            .pairs
+            .iter()
+            .filter(|p| !kept(p))
+            .flat_map(|&(a, b, _)| [a, b])
+            .collect()
     }
 
     /// A line's vector from its start to its end, as it stands.

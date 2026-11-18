@@ -22,12 +22,26 @@ const PATH_SOLVES: u32 = 200;
 /// frame's move of a real break (a fold, a turn of the shape).
 const STEP_RESOLUTION: f64 = 1.0 / (1u32 << 20) as f64;
 
-/// The most a step's corrector may move geometry after its first step, as a share of how far
-/// that first step (the path's tangent) moved it ([`drift_solver::SolveReport::contraction`]):
-/// more, and the step went somewhere its tangent says nothing about (round a fold, to another
-/// solution), and is taken again at half the size. On a smooth path the share falls with the
-/// step, so a small enough step always passes.
-const CONTRACTION: f64 = 0.5;
+/// How much faster than the step before a step of a frame's path may move the geometry
+/// (the largest move of any point, over the step's share of the path): a path speeds up
+/// smoothly, so halving the step brings its speed next to the last one's, but a jump moves
+/// as far however short the step, its speed growing without bound as the step halves, and
+/// is never taken. Scale-free, so the same at any size and place.
+const SPEED_UP: f64 = 4.0;
+
+/// How much faster than the pointer a step of a frame's path may always move the geometry,
+/// whatever the step before it did (its first step, or one from where nothing moved): a
+/// hundredfold, what `small_drag_is_continuous` allows a small drag to move anything (as
+/// [`LINE_HOLD`] is). Past it, a step goes only where the path has sped up step by step
+/// ([`SPEED_UP`]), or where halving the step leaves its speed as it was ([`SETTLED_SPEED`]).
+const START_SPEED: f64 = 100.0;
+
+/// A step faster than [`SPEED_UP`] and [`START_SPEED`] allow still goes where it is no more
+/// than this much faster than the same step was at twice the size: the path's own speed,
+/// which settles as the step shrinks (a lever of any advantage, from its start). A jump
+/// moves as far however short the step, so its speed doubles each time the step halves, and
+/// it never goes; nor does a path running into a fold, whose speed grows by √2 a halving.
+const SETTLED_SPEED: f64 = 1.25;
 
 /// Lines no longer than this (mm) have no way round that a drag keeps (see
 /// [`Editor::drag`]'s steps): a flattened curve's error, below anything drawn.
@@ -1449,6 +1463,10 @@ impl Editor {
         };
         let mut t = 0.0f64;
         let mut h = 1.0f64;
+        // How fast the last step moved the geometry (see [`SPEED_UP`]), and how fast the step
+        // before this one, twice its size, would have, where only that refused it.
+        let mut speed = 0.0f64;
+        let mut too_fast: Option<f64> = None;
         while t < 1.0 {
             if frame.solves_left == 0 {
                 return false;
@@ -1542,9 +1560,21 @@ impl Editor {
                 .map(|&(line, ..)| line)
                 .collect();
             let turns = orientation.turned(&self.doc);
+            let moved = here
+                .points
+                .iter()
+                .map(|&(id, p)| self.doc.point(id).map_or(0.0, |q| q.distance(p)))
+                .chain(here.circles.iter().map(|&(id, r)| match self.doc.get(id).map(|e| e.kind) {
+                    Some(EntityKind::Circle { radius, .. }) => (radius - r).abs(),
+                    _ => 0.0,
+                }))
+                .fold(0.0, f64::max);
+            let step_speed = moved / (next - t);
+            let fast = step_speed > (SPEED_UP * speed).max(START_SPEED * delta.length());
+            let continuous = !fast || too_fast.is_some_and(|was| step_speed <= SETTLED_SPEED * was);
             if std::env::var_os("DRIFT_PATH_DEBUG").is_some() {
                 eprintln!(
-                    "path t {t:.6} h {h:.3e} unfinished {unfinished} contraction {:.3e} flipped {} turns {turns} grows {} pairs {} conv {} conflicts {:?}",
+                    "path t {t:.6} h {h:.3e} unfinished {unfinished} speed {step_speed:.3e} of {speed:.3e} contraction {:.3e} flipped {} turns {turns} grows {} pairs {} conv {} conflicts {:?}",
                     report.contraction,
                     flipped.len(),
                     self.grows_held_radius(frame),
@@ -1554,7 +1584,7 @@ impl Editor {
                 );
             }
             if !unfinished
-                && report.contraction <= CONTRACTION
+                && continuous
                 && flipped.is_empty()
                 && !turns
                 && !self.grows_held_radius(frame)
@@ -1562,8 +1592,13 @@ impl Editor {
             {
                 t = next;
                 h = (2.0 * h).min(1.0 - t);
+                speed = step_speed;
+                too_fast = None;
                 continue;
             }
+            let only_fast =
+                !unfinished && flipped.is_empty() && !turns && !self.grows_held_radius(frame);
+            too_fast = (fast && only_fast).then_some(step_speed);
             let finest = h <= STEP_RESOLUTION;
             if finest && !unfinished {
                 // Even the finest step turns these. (A solve that didn't finish left the

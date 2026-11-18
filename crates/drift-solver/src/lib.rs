@@ -182,13 +182,13 @@ pub struct SolveReport {
     pub converged: bool,
     /// Newton iterations used by the slowest component.
     pub iterations: usize,
-    /// How far the solve moved any point after its first step, over how far that first step
-    /// moved it (each the largest move of any point, so the same at any size and however the
+    /// How well the solve's steps contracted: the most any of its steps moved next to the step
+    /// before it (each the largest move of any point, so the same at any size and however the
     /// drawing is turned), the most of any component; zero where a component took one step or
-    /// none. The first step is the solve's linearisation from where it began (the path's
-    /// tangent, in a drag's step), so on a smooth path this falls with the step: a drag's
-    /// continuation accepts a step only where it is small (see `Editor::drag`), and a solve
-    /// that wanders round a fold to another solution shows here.
+    /// none. A solve heading for a nearby solution takes ever shorter steps (Newton's
+    /// monotonicity test); one that wanders round a fold to another takes a longer step after
+    /// a shorter one. A drag's continuation accepts a step only where this is small (see
+    /// `Editor::drag`).
     pub contraction: f64,
     /// Constraints that could not be satisfied.
     pub conflicts: Vec<ConstraintId>,
@@ -1766,8 +1766,7 @@ fn scaled_norm2(res: &[f64], scales: &[f64]) -> f64 {
 struct ComponentOutcome {
     converged: bool,
     iterations: usize,
-    /// How far it moved after its first step, over how far that step moved it: see
-    /// [`SolveReport::contraction`].
+    /// The most any step moved next to the one before: see [`SolveReport::contraction`].
     contraction: f64,
     /// A kept radius that the free geometry could change was left off: see `newton`.
     unkept: bool,
@@ -2095,28 +2094,10 @@ fn newton(
     // (Where the solve began: in a drag, its steps together move no point farther from it than
     // the drawing is across; see the first stage.)
     let entry: Vec<f64> = comp.unknowns.iter().map(|g| values[*g]).collect();
-    // (Where its first step left it, for its contraction: see `SolveReport::contraction`.)
-    let mut first: Option<Vec<f64>> = None;
-    let contraction = |first: &Option<Vec<f64>>, values: &[f64]| {
-        let Some(first) = first else {
-            return 0.0;
-        };
-        let stepped: Vec<f64> = first.iter().zip(&entry).map(|(f, e)| f - e).collect();
-        let after: Vec<f64> = comp
-            .unknowns
-            .iter()
-            .zip(first)
-            .map(|(g, f)| values[*g] - f)
-            .collect();
-        let (stepped, after) = (moved(&stepped), moved(&after));
-        if after == 0.0 {
-            0.0
-        } else if stepped > 0.0 {
-            after / stepped
-        } else {
-            f64::INFINITY
-        }
-    };
+    // (How far its last accepted step moved, and the most any step moved next to the one
+    // before it: its contraction, see `SolveReport::contraction`.)
+    let mut last_step = 0.0f64;
+    let mut most_ratio = 0.0f64;
     // (Where the second stage began: in an edit, the preferences' steps together move no
     // point farther from it than the drawing is across. The first stage's aren't bounded so:
     // a dimension typed ten times longer rightly moves geometry far.)
@@ -2180,7 +2161,7 @@ fn newton(
     let mut pointer_radius = across;
     for iteration in 0..MAX_ITERATIONS {
         if !res.iter().all(|f| f.is_finite()) || !jac.iter().flatten().all(|(_, g)| g.is_finite()) {
-            return finish(Stop::NoStep, iteration, false, contraction(&first, values), false);
+            return finish(Stop::NoStep, iteration, false, most_ratio, false);
         }
         let mut rows_hold = converged(&res, values);
         // Where the rows hold, they hold to the bar of the part as the solve leaves it too, as
@@ -2461,11 +2442,14 @@ fn newton(
                                 let d: Vec<f64> = comp.unknowns.iter().map(|g| trial[*g] - values[*g]).collect();
                                 eprintln!("  pointer step {:.3e} x {:.3e} gain {gain:.3}", moved(&d), moved(&x));
                             }
+                            let step: Vec<f64> = comp.unknowns.iter().map(|g| trial[*g] - values[*g]).collect();
+                            let step = moved(&step);
+                            if last_step > 0.0 {
+                                most_ratio = most_ratio.max(step / last_step);
+                            }
+                            last_step = step;
                             values.copy_from_slice(&trial);
                             leave_storage();
-                            if first.is_none() {
-                                first = Some(comp.unknowns.iter().map(|g| values[*g]).collect());
-                            }
                             res = trial_res;
                             jac = trial_jac;
                             own = trial_own;
@@ -2503,7 +2487,7 @@ fn newton(
                     Stop::Settled,
                     iteration,
                     true,
-                    contraction(&first, values),
+                    most_ratio,
                     unkept(&free_radius, values),
                 );
             }
@@ -2550,7 +2534,7 @@ fn newton(
                     Stop::Settled,
                     iteration,
                     true,
-                    contraction(&first, values),
+                    most_ratio,
                     unkept(&free_radius, values),
                 );
             };
@@ -2652,7 +2636,7 @@ fn newton(
                     Stop::Settled,
                     iteration,
                     true,
-                    contraction(&first, values),
+                    most_ratio,
                     unkept(&free_radius, values),
                 );
             }
@@ -2726,7 +2710,7 @@ fn newton(
                     Stop::Settled,
                     iteration,
                     true,
-                    contraction(&first, values),
+                    most_ratio,
                     unkept(&free_radius, values),
                 );
             }
@@ -2804,11 +2788,14 @@ fn newton(
                     if gain > 0.75 && stepped >= 0.99 * radius {
                         radius = (2.0 * radius).min(across);
                     }
+                    let step: Vec<f64> = comp.unknowns.iter().map(|g| trial[*g] - values[*g]).collect();
+                    let step = moved(&step);
+                    if last_step > 0.0 {
+                        most_ratio = most_ratio.max(step / last_step);
+                    }
+                    last_step = step;
                     values.copy_from_slice(&trial);
                     leave_storage();
-                    if first.is_none() {
-                        first = Some(comp.unknowns.iter().map(|g| values[*g]).collect());
-                    }
                     res = trial_res;
                     jac = trial_jac;
                     own = trial_own;
@@ -2821,7 +2808,7 @@ fn newton(
                     Stop::Settled,
                     iteration + 1,
                     converged(&res, values),
-                    contraction(&first, values),
+                    most_ratio,
                     unkept(&free_radius, values),
                 );
             }
@@ -2967,11 +2954,14 @@ fn newton(
             } else {
                 1.0
             };
+            let step: Vec<f64> = comp.unknowns.iter().map(|g| trial[*g] - values[*g]).collect();
+            let step = moved(&step);
+            if last_step > 0.0 {
+                most_ratio = most_ratio.max(step / last_step);
+            }
+            last_step = step;
             values.copy_from_slice(&trial);
             leave_storage();
-            if first.is_none() {
-                first = Some(comp.unknowns.iter().map(|g| values[*g]).collect());
-            }
             res = trial_res;
             jac = trial_jac;
             own = trial_own;
@@ -3009,7 +2999,7 @@ fn newton(
                 },
                 iteration + 1,
                 rows_hold,
-                contraction(&first, values),
+                most_ratio,
                 false,
             );
         }
@@ -3021,7 +3011,7 @@ fn newton(
         Stop::Cap,
         MAX_ITERATIONS,
         converged(&res, values),
-        contraction(&first, values),
+        most_ratio,
         unkept(&free_radius, values),
     )
 }

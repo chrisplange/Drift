@@ -84,7 +84,7 @@ Commands, scripts and raw logs: `E:\Drift\solver-audit-logs\` (`census.sh`, `cen
 | **#280** | Same drag, different result at another size. 7 pins: 2 left from before #377, 4 that #377 added, and `tangent_and_parallel`, re-ignored by #381 | (a) for 4 pins, (b) for 2, (c) for 1 | Per pin in section 2 | PR 2 + PR 3 |
 | **#366** | 1 km out, a hanging line's length try lands across a fold for one frame | (a): main's coarse far-out finish stretches the line on the catch-up frame; then (d): the length try, a bolt-on, jumps the fold | Case 14647 at 1 km: main refuses frame 4, then jumps 3.05 mm and **7.59 mm**, and leaves the 30 mm line at 29.999999. `lfa`: no refusal, 1.523 mm every frame (the pointer's speed), lengths held, identical at 1 km and 1.41 km | PR 2 |
 | **#362** | Seven continuity seeds still jump on small drags | (d), with (c): a single solve per frame picks a branch, and nothing tracks the path | All 7 fail under `lfa` with the **same point and the same move to 12 digits** as main (jumps of 15 to 524 mm for drags of 0.1 to 0.5 mm). Not size, not tolerance | PR 5 |
-| **#344** | A big step flips a Parallel, Perpendicular or Angle pair to the other way round | (f): the residual sin(θ − φ) is zero at φ and at φ + π, and its gradient vanishes at φ ± 90°, a fold built into the equation (`equations.rs` ~485) | Code: the equation has two roots by construction; #331 dodges it only when a relation holds a dragged point | PR 4 |
+| **#344** | A big step flips a Parallel, Perpendicular or Angle pair to the other way round | (f): the residual sin(θ − φ) is zero at φ and at φ + π, and its gradient vanishes at φ ± 90°, a fold built into the equation (`equations.rs` ~485) | Code: the equation has two roots by construction; #331 dodges it only when a relation holds a dragged point | PR 4 + PR 5 |
 | **#349** | Perpendicular refused as a conflict on a held chain | (b): "didn't converge in 100 iterations" is the conflict test | All 12 cases tried (10 to 2,000 bars, middle and end) are refused at cap 100; **all 12 are added at cap 10,000**, in 341 to 5,070 iterations. Not a conflict | PR 3 |
 | **#350** | Parallel stretches the line it is made parallel to | (e): a commit's solve has no shape preference at all (`plain()` in `solve.rs` strips them), so the minimum-norm step moves whatever coordinate is cheapest, a length included | Code; same family as #284 | PR 6 (needs your call, decision 5) |
 | **#351** | A failed active-element try costs ~1 s on a big drawing | (b): a try that can't converge only stops at the cap | Same mechanism as #349 | PR 3 |
@@ -460,11 +460,31 @@ PR 0 puts the bar in `scripts/solver-bar/` (its README runs all seven). **Known 
   with the branch fixed).
 - The solver reports σmin of the rows at its exit (a cheap estimate from the factor), so a caller
   can tell "at a fold" from "met".
-- **Closes:** #344; it is also what PR 5's fold test reads.
+- **Closes:** #344 with PR 5 (tried alone and parked, see below); it is also what PR 5's
+  fold test reads.
 - **Deletes:** the drag-side orientation work-arounds for those pairs (#331's carry stays only
   where it is about behaviour).
 - **Risk:** medium. A relation added the other way round to its current geometry must still
   flip it once, which needs a test of its own.
+- **Tried for #344 on 2026-11-18, parked** (branch `claude/pair-way-round-344`; the tests are
+  `drag_props::ways_round`, its pins ignored as `known failure: #344`, its guards live). Two
+  builds, each cross-examined by an Opus and a Fable reviewer:
+  - Directed rows (the angle error from `atan2` of the directed cross/dot pair, one root) in
+    every solve, with the way round frozen at a drag's start: commits main accepts were refused
+    (a line could not pass through zero length), and a drag whose pointer needed the other way
+    round let the dragged point give way to wherever the solve's path went.
+  - Directed rows in drags only, with a stop rule (a step that asks a frozen pair to turn goes
+    only if the dragged points land and the pair's lines come out moved along whole): commits
+    were as on main and the issue's drags kept their pairs, but drags were still flung, by
+    halved steps the rule never judged, by moves about a fixed corner, and by pairs the solve
+    turned through what the drag pulled along. Drags where no pair turned also ended
+    elsewhere (a hanging line stretched from 20 to 45 mm; a linkage jumping 31.5° for 2.5° of
+    pointer): where an unlandable or under-determined solve ends depends on its path, and the
+    angle error's path differs from the sine's.
+  - Lesson: each frame solves from the pointer's translated start, often 180° from the frozen
+    root, so no test of one step can tell a pair kept by a move along from one kept by a fling.
+    #344 needs PR 5's path from the drag's start; the directed row, `freeze` and the measured
+    bar (heavy seeds, censuses) on that branch are inputs to it.
 
 ### PR 5: a drag is a continuation
 - A drag frame follows the path t ∈ [0, 1] from the drag's start offset to the pointer:
@@ -476,7 +496,7 @@ PR 0 puts the bar in `scripts/solver-bar/` (its README runs all seven). **Known 
 - At a fold, at a bifurcation, or where a held radius would have to change, it stops at the last
   valid t: the binding rule, stated once.
 - It still solves from the drag's start each frame (path independence) and part by part.
-- **Closes:** #362, and #366 for good if PR 2 hasn't.
+- **Closes:** #362, #344 with PR 4's directed rows, and #366 for good if PR 2 hasn't.
 - **Deletes:** `land`, the heavy dragged weight, `drag_from_start`'s substep rule,
   `drag_towards`, `drag_in_steps`' halvings, `MAX_SPLITS`, `WANDERED`/`wandered`,
   `DRAG_SOLVES`, `UNFINISHED_WORK`, the fold try and its budgets, `keep_lengths` and every

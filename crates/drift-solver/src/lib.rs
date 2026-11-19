@@ -684,6 +684,11 @@ const CG_RESOLVED: f64 = 1e-14;
 /// a double root's last hair, far below anything a relation holds a goal off by.
 const NEAR_BARS: f64 = 1e4;
 
+/// A pointer step that gains less than this share of what it promised, or more than one over
+/// it, has mispredicted: the rows' curvature counts in the steps after it (see `newton`'s
+/// pointer stage).
+const MISPREDICTED: f64 = 2.0 / 3.0;
+
 /// How many steps of a pointer stage that holds the kept shapes may fail to come back onto
 /// the rows and the shapes before the stage stops where it is (see `newton`'s pointer stage).
 const UNKEPT_STEPS: usize = 3;
@@ -3261,6 +3266,12 @@ fn newton(
                                 own = trial_own;
                                 pointer_finished = finish;
                                 anchor_refused = 0;
+                                // (A step that gained far from what it promised, either way,
+                                // has mispredicted as surely as one refused: a crank's end
+                                // dragged across near its pivot gains twice what the misfit's
+                                // own curvature says, step after step, each a small share of
+                                // the way.)
+                                pointer_curved |= !(MISPREDICTED..=1.0 / MISPREDICTED).contains(&gain);
                                 if faith {
                                     pointer_stopped = true;
                                     pointer_radius = pointer_across;

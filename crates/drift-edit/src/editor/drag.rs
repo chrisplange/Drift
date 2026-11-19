@@ -1332,6 +1332,12 @@ impl Editor {
         }
         let mut turned = Vec::new();
         let mut ok = self.follow(frame, frame.ids, delta, &[], before, &mut turned);
+        if std::env::var_os("DRIFT_PATH_DEBUG").is_some() {
+            eprintln!(
+                "follow ok {ok} turned {turned:?} solves_left {} curves {}",
+                frame.solves_left, frame.curves
+            );
+        }
         if !ok {
             self.restore_geometry(before);
         }
@@ -1497,21 +1503,18 @@ impl Editor {
                 .iter()
                 .any(|q| frame.dragged_set.contains(q))
         };
-        // Where the drag began: each step's last rank brings back towards it what nothing
-        // above decides, so the frame ends where its target says, whatever steps its path took
-        // (`SolveOptions::anchor`).
-        let anchor: HashMap<Param, f64> = before
-            .points
-            .iter()
-            .flat_map(|&(id, p)| [(Param::X(id), p.x), (Param::Y(id), p.y)])
-            .collect();
         let mut t = 0.0f64;
         let mut h = 1.0f64;
         // How fast the last step moved the geometry (see [`SPEED_UP`]), and how fast the step
         // before this one, twice its size, would have, where only that refused it.
         let mut speed = 0.0f64;
         let mut too_fast: Option<f64> = None;
-        // The curves the last refused step whose solve finished turned (see `turned`).
+        // The curves the last refused step whose solve finished turned (see `turned`), kept
+        // past the steps that go after it: a path that closes in on a turn, where the shape is
+        // singular, can have its finest steps fail to finish rather than turn (tangent,
+        // tangent and parallel at once: which one, round-off decides), and still stops at
+        // that turn (the similarity property: one copy carried the turning curves, the other
+        // found none to carry).
         let mut turning: Vec<EntityId> = Vec::new();
         // An unsettled start (relations the drawing doesn't meet as the drag finds it: an
         // import, an old unsolved edit) is settled by the path's first solve, by however much
@@ -1581,7 +1584,6 @@ impl Editor {
                     dragged: frame.dragged.to_vec(),
                     carried: carried.to_vec(),
                     to: targets(at),
-                    anchor: anchor.clone(),
                     scope: Some(frame.scope.clone()),
                     // Rounds keep their size where the move leaves it open, at their size as
                     // the drag began (a drag's kept radii are held; the solve lets go of a
@@ -1642,9 +1644,10 @@ impl Editor {
                 || (t == 0.0 && frame.swing_start);
             if std::env::var_os("DRIFT_PATH_DEBUG").is_some() {
                 eprintln!(
-                    "path t {t:.6} h {h:.3e} unfinished {unfinished} speed {step_speed:.3e} of {speed:.3e} contraction {:.3e} flipped {} turns {turns} grows {} pairs {} conv {} conflicts {:?}",
+                    "path t {t:.6} h {h:.3e} unfinished {unfinished} speed {step_speed:.3e} of {speed:.3e} contraction {:.3e} flipped {} turns {turns} {:?} grows {} pairs {} conv {} conflicts {:?}",
                     report.contraction,
                     flipped.len(),
+                    orientation.turned_curves(&self.doc),
                     self.grows_held_radius(frame),
                     self.keeps_pairs(frame),
                     report.converged,
@@ -1668,7 +1671,6 @@ impl Editor {
                 h = (2.0 * h).min(1.0 - t);
                 speed = step_speed;
                 too_fast = None;
-                turning.clear();
                 continue;
             }
             let only_fast =

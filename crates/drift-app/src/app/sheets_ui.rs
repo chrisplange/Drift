@@ -2402,44 +2402,30 @@ impl DriftApp {
         else {
             return;
         };
-        let Some(original) = self.drawing.editor.doc.view(view_id).cloned() else {
-            return;
-        };
-        let mut view = original.clone();
-        let mut typing = false;
-        theme::row(ui, "Name", |ui| {
-            typing |= ui
-                .add(
-                    egui::TextEdit::singleline(&mut view.name)
-                        .hint_text("Plan, Detail A…")
-                        .desired_width(ui.available_width() - 8.0),
-                )
-                .changed();
-        });
-        theme::row(ui, "Scale", |ui| {
-            self.scale_menu(ui, "model_view_scale", &mut view.scale);
-        });
-        // Four switches in two even columns.
-        theme::row(ui, "Show", |ui| {
-            egui::Grid::new("model_view_show")
-                .num_columns(2)
-                .spacing([16.0, 4.0])
-                .show(ui, |ui| {
-                    ui.checkbox(&mut view.dimensions, "Dimensions")
-                        .on_hover_text("Dimensions and ordinates, in this view");
-                    ui.checkbox(&mut view.notes, "Notes")
-                        .on_hover_text("Notes and callouts, in this view");
-                    ui.end_row();
-                    ui.checkbox(&mut view.construction, "Construction")
-                        .on_hover_text(CONSTRUCTION_TIP);
-                    ui.checkbox(&mut view.crop_visible, "Crop")
-                        .on_hover_text("Its crop and name on the canvas (they never print)");
-                    ui.end_row();
-                });
-        });
-        self.update_view(view_id, view, typing);
-        self.referenced_by(ui, view_id);
+        // A placed view is set up in the Inspector (pick it on a sheet), so its settings
+        // aren't repeated here (#425). One on no sheet has no Inspector yet: its name and
+        // scale (what placing it starts from) are set here.
         let placed = self.drawing.editor.doc.sheets_showing(view_id);
+        if placed.is_empty()
+            && let Some(original) = self.drawing.editor.doc.view(view_id).cloned()
+        {
+            let mut view = original.clone();
+            let mut typing = false;
+            theme::row(ui, "Name", |ui| {
+                typing |= ui
+                    .add(
+                        egui::TextEdit::singleline(&mut view.name)
+                            .hint_text("Plan, Detail A…")
+                            .desired_width(ui.available_width() - 8.0),
+                    )
+                    .changed();
+            });
+            theme::row(ui, "Scale", |ui| {
+                self.scale_menu(ui, "model_view_scale", &mut view.scale);
+            });
+            self.update_view(view_id, view, typing);
+        }
+        self.referenced_by(ui, view_id);
         ui.horizontal_wrapped(|ui| {
             if let Some(sheet) = current {
                 let here = placed.contains(&sheet);
@@ -2531,7 +2517,19 @@ impl DriftApp {
             let mut view = original.clone();
             let mut fit = false;
             let mut fill = false;
-            theme::row(ui, "Title", |ui| {
+            // The view itself: what every sheet it is on shows (#425). The crop's switch on
+            // the model canvas is the view's too, though it never prints.
+            let model_view = self.drawing.editor.doc.view(original.id).cloned();
+            let mut crop_visible = model_view.as_ref().is_some_and(|v| v.crop_visible);
+            theme::section(ui, "View");
+            let on = self.drawing.editor.doc.sheets_showing(original.id).len();
+            if on > 1 {
+                ui.label(
+                    egui::RichText::new(format!("On {on} sheets: a change here shows on each."))
+                        .weak(),
+                );
+            }
+            theme::row(ui, "Name", |ui| {
                 typing |= ui
                     .add(
                         egui::TextEdit::singleline(&mut view.name)
@@ -2551,16 +2549,7 @@ impl DriftApp {
             if view.scale != original.scale {
                 view.frame.size = original.frame.size * original.scale / view.scale;
             }
-            theme::row(ui, "Frame", |ui| {
-                fill = ui
-                    .button("Fill drawing area")
-                    .on_hover_text(
-                        "Frame it to the sheet's whole drawing area (after changing the paper \
-                         size, say), cropping more or less of the model",
-                    )
-                    .clicked();
-            });
-            // What the view shows, then how it is framed, in two even columns.
+            // What the view shows, in two even columns.
             theme::row(ui, "Show", |ui| {
                 egui::Grid::new("view_show")
                     .num_columns(2)
@@ -2573,11 +2562,11 @@ impl DriftApp {
                         ui.end_row();
                         ui.checkbox(&mut view.construction, "Construction")
                             .on_hover_text(CONSTRUCTION_TIP);
-                        ui.end_row();
-                        ui.checkbox(&mut view.title, "Title")
-                            .on_hover_text("Its title and scale, written under it");
-                        ui.checkbox(&mut view.border, "Border")
-                            .on_hover_text("Print the frame's outline");
+                        ui.add_enabled(
+                            model_view.is_some(),
+                            egui::Checkbox::new(&mut crop_visible, "Crop"),
+                        )
+                        .on_hover_text("Its crop and name on the model canvas (they never print)");
                         ui.end_row();
                     });
             });
@@ -2612,6 +2601,34 @@ impl DriftApp {
                 });
             });
             self.referenced_by(ui, original.id);
+            if let Some(v) = model_view
+                && crop_visible != v.crop_visible
+            {
+                self.update_view(original.id, drift_core::View { crop_visible, ..v }, false);
+            }
+            // Where and how this sheet shows it.
+            theme::section(ui, "On this sheet");
+            theme::row(ui, "Frame", |ui| {
+                fill = ui
+                    .button("Fill drawing area")
+                    .on_hover_text(
+                        "Frame it to the sheet's whole drawing area (after changing the paper \
+                         size, say), cropping more or less of the model",
+                    )
+                    .clicked();
+            });
+            theme::row(ui, "Show", |ui| {
+                egui::Grid::new("placed_view_show")
+                    .num_columns(2)
+                    .spacing([16.0, 4.0])
+                    .show(ui, |ui| {
+                        ui.checkbox(&mut view.title, "Title")
+                            .on_hover_text("Its name and scale, written under it");
+                        ui.checkbox(&mut view.border, "Border")
+                            .on_hover_text("Print the frame's outline");
+                        ui.end_row();
+                    });
+            });
             if fit {
                 crate::output::fit_view(bounds, &mut view, imperial);
             }

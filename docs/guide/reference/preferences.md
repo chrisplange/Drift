@@ -166,5 +166,5 @@ at first are the values you had set in Preferences. The status bar says so as it
 save it to keep them in the file.
 
 The tool bars' **Fill** switch (fill closed shapes as they are drawn), the **Wall** tool's
-thickness, justification and poché, and **Walls from lines**' **Lines used** are remembered as
+thickness, justification and fill, and **Walls from lines**' **Lines used** are remembered as
 you last left them.

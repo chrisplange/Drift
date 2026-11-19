@@ -133,7 +133,7 @@ impl NotAShape {
     /// Why, in a few words, for the Inspector and the status line.
     pub fn reason(&self) -> String {
         match self {
-            NotAShape::Wall => "a wall's poché".into(),
+            NotAShape::Wall => "a wall's fill".into(),
             NotAShape::Walls => "bounded by walls".into(),
             NotAShape::Open => "its shape's outline is cut open".into(),
             NotAShape::InAShape => "its lines are part of another shape".into(),

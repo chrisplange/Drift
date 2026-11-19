@@ -183,7 +183,8 @@ fn smoke_sheet_with_a_view_title_block_and_export() {
         h.state().drawing.output_dialog.is_some(),
         "Print asks for the sheets"
     );
-    assert!(h.query_by_label("Print…").is_some());
+    // (The Sheets panel stays in front, with its own Print… button.)
+    assert!(h.get_all_by_label("Print…").count() >= 2);
     h.get_by_label("Cancel").click();
     h.run();
     assert!(h.state().drawing.output_dialog.is_none());
@@ -522,4 +523,140 @@ fn smoke_sheet_preview_during_a_block_edit() {
     h.run();
     assert_eq!(made(&h), start + 2, "made again once, shown again");
     assert_eq!(preview(&h), page(&mut h));
+}
+
+/// #425: what a click in the Sheets panel asks for (a new sheet, a sheet from the list) keeps
+/// the Sheets panel in front; it used to swap the dock to the Inspector, hiding the list being
+/// worked in. A view picked on the paper still brings the Inspector forward.
+#[test]
+fn smoke_sheet_panel_clicks_keep_it_in_front() {
+    use crate::app::sheet_editor::sheet_label;
+    let Some(mut h) = harness() else { return };
+    let first = a_sheet(&mut h);
+    let front = |h: &Harness<'_, DriftApp>| h.state().layout.active[1];
+    h.state_mut().show_panel(Panel::Sheets);
+    h.run();
+    h.get_by_label("New sheet").click();
+    h.run();
+    h.run();
+    let second = h.state().current_sheet().expect("the new sheet");
+    assert_ne!(second, first);
+    assert_eq!(front(&h), Some(Panel::Sheets), "New sheet keeps the list");
+    // The first sheet, from the list (not its tab over the canvas).
+    let label = sheet_label(h.state().drawing.editor.doc.sheet(first).unwrap());
+    let canvas = h.state().drawing.view.canvas_rect;
+    h.get_all_by_label(&label)
+        .find(|n| n.rect().left() > canvas.right())
+        .expect("the first sheet's row")
+        .click();
+    h.run();
+    h.run();
+    assert_eq!(h.state().current_sheet(), Some(first), "the row shows it");
+    assert_eq!(front(&h), Some(Panel::Sheets), "and keeps the list");
+    // A view picked on the paper: its settings come forward.
+    let views = h
+        .state()
+        .drawing
+        .editor
+        .doc
+        .placed_views(h.state().drawing.editor.doc.sheet(first).unwrap());
+    let at = h.state().paper_to_preview(canvas, views[0].frame.at);
+    h.hover_at(at);
+    h.run();
+    button(&h, at, true);
+    h.run();
+    button(&h, at, false);
+    h.run();
+    h.run();
+    assert_eq!(
+        front(&h),
+        Some(Panel::Inspector),
+        "a view picked on the paper"
+    );
+}
+
+/// #425: a placed view's settings are in one place, the Inspector: the view itself (its name,
+/// scale, what it shows, the crop on the model canvas), then how this sheet shows it. The
+/// Sheets panel's list keeps only what to do with a view.
+#[test]
+fn smoke_sheet_view_settings_in_one_place() {
+    use crate::app::sheet_editor::SheetPick;
+    let Some(mut h) = harness() else { return };
+    let id = a_sheet(&mut h);
+    let view = placed_first(&h.state().drawing.editor, id);
+    {
+        let app = h.state_mut();
+        app.drawing.view.sheet_view = 0;
+        app.drawing.picked_view = Some(view);
+        app.drawing.view.sheet_pick = SheetPick::View;
+    }
+    h.run();
+    h.run();
+    for label in ["Name", "Scale", "Crop", "Title", "Border"] {
+        assert!(
+            h.query_by_label(label).is_some(),
+            "the Inspector has {label}"
+        );
+    }
+    // Its two sections, painted headers: the view itself (name to crop), then this sheet's
+    // (title and border).
+    let header = |h: &Harness<'_, DriftApp>, title: &str| {
+        h.output()
+            .shapes
+            .iter()
+            .find_map(|c| match &c.shape {
+                egui::Shape::Text(t) if t.galley.job.text.eq_ignore_ascii_case(title) => {
+                    Some(t.pos.y)
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("the {title} section"))
+    };
+    let y = |h: &Harness<'_, DriftApp>, label: &str| h.get_by_label(label).rect().top();
+    let (view_at, sheet_at) = (header(&h, "View"), header(&h, "On this sheet"));
+    assert!(view_at < y(&h, "Name") && y(&h, "Crop") < sheet_at);
+    assert!(sheet_at < y(&h, "Title") && sheet_at < y(&h, "Border"));
+    save_png("drift_smoke_sheet_view_inspector.png", &mut h);
+    // The crop's switch is the view's own, and undoes.
+    let crop = |h: &Harness<'_, DriftApp>| {
+        h.state()
+            .drawing
+            .editor
+            .doc
+            .view(view)
+            .unwrap()
+            .crop_visible
+    };
+    let was = crop(&h);
+    h.get_by_label("Crop").click();
+    h.run();
+    h.run();
+    assert_eq!(crop(&h), !was, "Crop sets the view's crop");
+    h.state_mut().undo();
+    h.run();
+    assert_eq!(crop(&h), was);
+    // The Sheets panel's Views list: the view picked, its actions, and no second set of fields.
+    h.state_mut().show_panel(Panel::Sheets);
+    h.run();
+    h.run();
+    assert!(h.query_by_label("Zoom to view").is_some());
+    for label in ["Name", "Scale", "Crop"] {
+        assert!(
+            h.query_by_label(label).is_none(),
+            "no {label} in the Sheets panel"
+        );
+    }
+    // A view on no sheet has no Inspector yet: the list keeps its name and scale.
+    let unplaced = {
+        let ed = &mut h.state_mut().drawing.editor;
+        ed.doc.begin();
+        let copy = ed.doc.view(view).unwrap().clone();
+        let id = ed.doc.add_view(copy);
+        ed.commit("Another view");
+        id
+    };
+    h.state_mut().drawing.picked_view = Some(unplaced);
+    h.run();
+    h.run();
+    assert!(h.query_by_label("Name").is_some() && h.query_by_label("Scale").is_some());
 }

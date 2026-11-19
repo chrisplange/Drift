@@ -118,7 +118,8 @@ With the select tool:
 Crops and their names are for working on the canvas. They never print or export.
 
 - **View → View crops** (Shift+Alt+B) shows or hides every crop.
-- A view's own **Crop** switch (in the top bar, or the **Views** list) hides just that one,
+- A view's own **Crop** switch (in the top bar, or in the Inspector once it's on a sheet)
+  hides just that one,
   like Revit's **Crop Region Visible**. A hidden crop can't be picked on the canvas, but you
   can still pick its view in the list. Its crop then shows faintly while picked.
 
@@ -129,9 +130,6 @@ and the sheets it's on (or **not placed**).
 
 - **Click** a view to pick it. Its crop shows on the canvas with its grips.
 - **Double-click** it, or click **Zoom to view**, to see its crop in the model.
-- For the picked view: **Name**, **Scale**, and **Show**: **Dimensions**, **Notes**,
-  **Construction** and **Crop**. Dimensions, notes and construction geometry are shown or
-  hidden in this view wherever it's placed.
 - **Referenced by** lists the section and elevation marks that point at the view. Click
   one to pick it in the model.
 - **Delete view** deletes it. If it's on sheets, Drift asks first, and deleting takes it
@@ -182,10 +180,10 @@ Dashed guides show what lined up. Hold Ctrl to place freely.
 ### The views on a sheet
 
 Pick a view by clicking it on the sheet. The **Inspector** shows the views on the sheet
-(**Views on this sheet**), and for the picked one:
+(**Views on this sheet**), and for the picked one two sections. **View** is the view itself,
+the same on every sheet it's on (with several, it says so):
 
-- **Title:** its name. Tick **Title** under **Show** to print the name, with the scale
-  beneath it, under the view.
+- **Name:** its name, as the canvas and the marks show it.
 - **Scale:** choose from the menu, or type one under **Custom** at its foot (`1:75`,
   `5" = 1'-0"`, `2:1`) and press Enter. The crop stays as it is in the model, so the frame
   grows or shrinks on every sheet the view is on. The menu is the one the drawing scale
@@ -195,10 +193,8 @@ Pick a view by clicking it on the sheet. The **Inspector** shows the views on th
   [Sheet scales](../reference/units.md#sheet-scales).
 - **Fit:** the largest scale at which the whole drawing fits the frame, centred. The frame
   stays as it is on the paper, and the crop changes to suit.
-- **Fill drawing area:** frames the view to the sheet's whole drawing area, after a change
-  of paper size, say.
-- **Show:** **Dimensions**, **Notes**, **Construction**, **Title** and **Border**.
-  **Construction** puts the view's construction geometry on the sheet as thin, light grey
+- **Show:** **Dimensions**, **Notes**, **Construction** and **Crop** (its crop on the model
+  canvas, which never prints). **Construction** puts the view's construction geometry on the sheet as thin, light grey
   dashed lines (off to start with). It prints and exports to PDF and SVG as the preview
   shows it, in the sheet's **Colours**. Points and an import's fill edges stay out.
 - **Referenced by:** the marks that point at the view.
@@ -206,6 +202,13 @@ Pick a view by clicking it on the sheet. The **Inspector** shows the views on th
   a setting-out layer in the plan but not in the details, say. Dimensions and notes on
   nothing but that layer's geometry go with it. A layer hidden or set not to print in the
   **Layers** panel is greyed out here: it's off in every view.
+
+**On this sheet** is how this sheet shows it:
+
+- **Fill drawing area:** frames the view to the sheet's whole drawing area, after a change
+  of paper size, say.
+- **Show:** **Title** prints its name, with the scale beneath it, under the view;
+  **Border** prints the frame's outline.
 
 If the views on a sheet have different scales, the title block's scale reads **As shown**.
 

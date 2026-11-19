@@ -64,6 +64,14 @@ fn smoke_walls_room_tee_and_thickness() {
         .into_iter()
         .collect();
     assert_eq!(picked.len(), 1);
+    // Its fill is called Fill, as any shape's is (#425).
+    h.state_mut().show_panel(Panel::Inspector);
+    h.run();
+    assert!(
+        h.get_all_by_label("Fill").next().is_some(),
+        "the wall's Fill row"
+    );
+    assert!(h.query_by_label("Poché").is_none());
     h.state_mut()
         .drawing
         .editor

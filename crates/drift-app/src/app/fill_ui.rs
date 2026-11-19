@@ -3,7 +3,7 @@
 use drift_core::{FillId, FillKind, Hatch};
 use drift_draft::{Pattern, Placement};
 
-use crate::layers_ui::{color_choice, weight_combo};
+use crate::layers_ui::{color_choice, color_choice_of, weight_combo};
 use crate::*;
 use drift_edit::fills::{FillStyle, PatternLibrary};
 
@@ -195,7 +195,7 @@ fn fill_style_fields(
             theme::row(ui, "Pattern", |ui| {
                 ui.horizontal(|ui| {
                     swatch(ui, patterns.get(&h.pattern), egui::vec2(34.0, 20.0));
-                    let width = ui.available_width() - 6.0;
+                    let width = ui.available_width();
                     pattern_combo(ui, h, patterns, id, width);
                 });
             });
@@ -418,7 +418,7 @@ impl DriftApp {
                     ));
                 });
             }
-            ui.add_space(10.0);
+            ui.add_space(12.0);
             if theme::danger_button(ui, "Delete").clicked() {
                 self.drawing.editor.delete_selection();
             }
@@ -437,17 +437,16 @@ impl DriftApp {
         self.hatch_patterns
             .update(self.drawing.editor.doc.custom_patterns());
         app::panels::title(ui, Some(ToolKind::Fill), "Fill / hatch", "New fills");
-        ui.label(
-            egui::RichText::new(if self.drawing.editor.repick_fill.is_some() {
+        theme::hint(
+            ui,
+            if self.drawing.editor.repick_fill.is_some() {
                 "Click inside the area that should be the fill's new boundary."
             } else if self.drawing.editor.fill_eyedropper {
                 "Click a fill or hatch to pick up its style."
             } else {
                 "Click inside a closed area to fill it with this style; click a fill again to \
                  give it this style. Alt+click a fill to pick up its style."
-            })
-            .small()
-            .weak(),
+            },
         );
         theme::section(ui, "New fills");
         let mut style = self.drawing.editor.prefs.fill_style.clone();
@@ -499,9 +498,29 @@ impl DriftApp {
     }
 
     /// Solid or hatch, and the colour or pattern, of a fill style (`salt` keeps its
-    /// pattern list's id apart from others on screen).
+    /// pattern list's id apart from others on screen), across a bar.
     pub(crate) fn style_bar(&mut self, ui: &mut egui::Ui, style: &mut FillStyle, salt: &str) {
         let dark = ui.visuals().dark_mode;
+        self.style_kind(ui, style);
+        match &mut style.kind {
+            FillKind::Solid => {
+                if let Some(c) = color_choice_of(ui, style.color, "By layer", dark, 90.0) {
+                    style.color = c;
+                }
+            }
+            FillKind::Hatch(h) => {
+                swatch(
+                    ui,
+                    self.hatch_patterns.get(&h.pattern),
+                    egui::vec2(34.0, 20.0),
+                );
+                pattern_combo(ui, h, &self.hatch_patterns, salt, 120.0);
+            }
+        }
+    }
+
+    /// Whether a fill style is solid or a hatch.
+    pub(crate) fn style_kind(&mut self, ui: &mut egui::Ui, style: &mut FillStyle) {
         self.hatch_patterns
             .update(self.drawing.editor.doc.custom_patterns());
         let solid = matches!(style.kind, FillKind::Solid);
@@ -514,19 +533,30 @@ impl DriftApp {
                 FillKind::Hatch(Hatch::new("ANSI31"))
             };
         }
+    }
+
+    /// The colour of a solid fill style or the pattern of a hatch, as a row of an inspector
+    /// (what [`Self::style_bar`] shows after the kind).
+    pub(crate) fn style_row(&mut self, ui: &mut egui::Ui, style: &mut FillStyle, salt: &str) {
+        let dark = ui.visuals().dark_mode;
         match &mut style.kind {
             FillKind::Solid => {
-                if let Some(c) = color_choice(ui, style.color, "By layer", dark) {
-                    style.color = c;
-                }
+                theme::row(ui, "Colour", |ui| {
+                    if let Some(c) = color_choice(ui, style.color, "By layer", dark) {
+                        style.color = c;
+                    }
+                });
             }
             FillKind::Hatch(h) => {
-                swatch(
-                    ui,
-                    self.hatch_patterns.get(&h.pattern),
-                    egui::vec2(34.0, 20.0),
-                );
-                pattern_combo(ui, h, &self.hatch_patterns, salt, 120.0);
+                theme::row(ui, "Pattern", |ui| {
+                    swatch(
+                        ui,
+                        self.hatch_patterns.get(&h.pattern),
+                        egui::vec2(34.0, 20.0),
+                    );
+                    let width = ui.available_width();
+                    pattern_combo(ui, h, &self.hatch_patterns, salt, width);
+                });
             }
         }
     }

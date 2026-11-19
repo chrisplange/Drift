@@ -1187,7 +1187,7 @@ impl DriftApp {
                     .add(
                         egui::TextEdit::singleline(value)
                             .hint_text(hint)
-                            .desired_width(ui.available_width() - 8.0),
+                            .desired_width(ui.available_width()),
                     )
                     .changed();
             });
@@ -1236,21 +1236,20 @@ impl DriftApp {
                 .add(
                     egui::TextEdit::singleline(&mut sheet.fields.number)
                         .hint_text("A-101")
-                        .desired_width(ui.available_width() - 8.0),
+                        .desired_width(ui.available_width()),
                 )
                 .changed();
         });
         theme::row(ui, "Name", |ui| {
             typing |= ui
                 .add(
-                    egui::TextEdit::singleline(&mut sheet.name)
-                        .desired_width(ui.available_width() - 8.0),
+                    egui::TextEdit::singleline(&mut sheet.name).desired_width(ui.available_width()),
                 )
                 .changed();
         });
         theme::row(ui, "Status", |ui| {
             // A field of its own, with the common statuses in a menu beside it.
-            let room = ui.available_width() - 8.0;
+            let room = ui.available_width();
             typing |= ui
                 .add(
                     egui::TextEdit::singleline(&mut sheet.fields.status)
@@ -1276,7 +1275,7 @@ impl DriftApp {
         theme::row(ui, "Size", |ui| {
             egui::ComboBox::from_id_salt("paper_size")
                 .selected_text(sheet.paper.label())
-                .width(ui.available_width() - 8.0)
+                .width(ui.available_width())
                 .show_ui(ui, |ui| {
                     for p in PaperSize::STANDARD {
                         ui.selectable_value(&mut sheet.paper, p, p.label());
@@ -1298,7 +1297,7 @@ impl DriftApp {
         theme::section(ui, "Title block");
         egui::ComboBox::from_id_salt("title_block")
             .selected_text(sheet.title_block.label())
-            .width(ui.available_width() - 8.0)
+            .width(ui.available_width())
             .show_ui(ui, |ui| {
                 for t in TitleBlock::ALL {
                     ui.selectable_value(&mut sheet.title_block, t, t.label());
@@ -1349,14 +1348,17 @@ impl DriftApp {
                     .add(
                         egui::TextEdit::singleline(value)
                             .hint_text(hint)
-                            .desired_width(ui.available_width() - 8.0),
+                            .desired_width(ui.available_width()),
                     )
                     .changed();
             });
         }
         theme::row(ui, "Date", |ui| {
+            // The field takes what the button beside it leaves.
+            let button = theme::button_width(ui, "Today") + ui.spacing().item_spacing.x;
+            let width = (ui.available_width() - button).max(40.0);
             typing |= ui
-                .add(egui::TextEdit::singleline(&mut f.date).desired_width(96.0))
+                .add(egui::TextEdit::singleline(&mut f.date).desired_width(width))
                 .changed();
             if ui.small_button("Today").clicked() {
                 f.date = today();
@@ -1391,11 +1393,10 @@ impl DriftApp {
                             .desired_width(30.0),
                     )
                     .changed();
-                if ui
-                    .add(egui::Button::new("×").frame(false))
-                    .on_hover_text("Remove this revision")
-                    .clicked()
-                {
+                // (The delete button at the row's end, the description under the three.)
+                let end = 20.0 + ui.spacing().item_spacing.x;
+                ui.add_space((ui.available_width() - end).max(0.0));
+                if theme::delete_button(ui, "×", "Remove this revision").clicked() {
                     remove = Some(k);
                 }
             });
@@ -1403,7 +1404,7 @@ impl DriftApp {
                 .add(
                     egui::TextEdit::singleline(&mut r.description)
                         .hint_text("Description")
-                        .desired_width(ui.available_width() - 8.0),
+                        .desired_width(ui.available_width()),
                 )
                 .changed();
             ui.add_space(4.0);
@@ -2404,7 +2405,7 @@ impl DriftApp {
                 .add(
                     egui::TextEdit::singleline(&mut view.name)
                         .hint_text("Plan, Detail A…")
-                        .desired_width(ui.available_width() - 8.0),
+                        .desired_width(ui.available_width()),
                 )
                 .changed();
         });
@@ -2528,7 +2529,7 @@ impl DriftApp {
                     .add(
                         egui::TextEdit::singleline(&mut view.name)
                             .hint_text("Plan, Detail A…")
-                            .desired_width(ui.available_width() - 8.0),
+                            .desired_width(ui.available_width()),
                     )
                     .changed();
             });
@@ -2658,7 +2659,7 @@ impl DriftApp {
                 .map_or(String::new(), |(_, n)| n.clone());
             egui::ComboBox::from_id_salt("align_with")
                 .selected_text(shown)
-                .width(ui.available_width() - 8.0)
+                .width(ui.available_width())
                 .show_ui(ui, |ui| {
                     for (i, n) in &others {
                         ui.selectable_value(&mut with, *i, n);

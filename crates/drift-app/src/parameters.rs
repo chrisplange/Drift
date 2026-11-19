@@ -87,16 +87,18 @@ impl DriftApp {
         let mut remove = None;
         for (name, description) in &custom {
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(name).family(crate::theme::bold()));
-                ui.label(egui::RichText::new(description).weak());
+                ui.set_min_height(crate::theme::ROW_HEIGHT);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .add(egui::Button::new("×").frame(false))
-                        .on_hover_text("Remove this pattern from the drawing")
-                        .clicked()
-                    {
+                    let tip = "Remove this pattern from the drawing";
+                    if crate::theme::delete_button(ui, "×", tip).clicked() {
                         remove = Some(name.clone());
                     }
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        ui.label(egui::RichText::new(name).family(crate::theme::bold()));
+                        ui.add(
+                            egui::Label::new(egui::RichText::new(description).weak()).truncate(),
+                        );
+                    });
                 });
             });
         }
@@ -127,7 +129,7 @@ impl DriftApp {
         crate::theme::row(ui, "Format", |ui| {
             egui::ComboBox::from_id_salt("length_format")
                 .selected_text(units.length.label())
-                .width(ui.available_width() - 4.0)
+                .width(ui.available_width())
                 .show_ui(ui, |ui| {
                     for &f in formats {
                         ui.selectable_value(&mut units.length, f, f.label());
@@ -180,12 +182,16 @@ impl DriftApp {
         }
         let mut status = None;
         let mut remove = None;
+        // One grid for the rows and for the new variable under them: the name, "=", and the
+        // value taking what is left.
+        let name_width = (ui.available_width() * 0.3).clamp(64.0, 110.0).floor();
         for (id, var) in &vars {
             let value = self
                 .drawing
                 .editor
                 .evaluation()
                 .value(&self.drawing.editor.doc, *id);
+            let mut value_left = 0.0;
             ui.horizontal(|ui| {
                 // Name (renamed on Enter or when focus leaves).
                 let name = self
@@ -195,7 +201,7 @@ impl DriftApp {
                     .entry(*id)
                     .or_insert_with(|| var.name.clone());
                 let r = ui
-                    .add(egui::TextEdit::singleline(name).desired_width(70.0))
+                    .add(egui::TextEdit::singleline(name).desired_width(name_width))
                     .on_hover_text(format!("A {}", var.kind.label().to_lowercase()));
                 if r.lost_focus() {
                     let text = std::mem::take(name);
@@ -208,16 +214,18 @@ impl DriftApp {
                 } else if !r.has_focus() {
                     *name = var.name.clone();
                 }
-                ui.label("=");
+                ui.label(egui::RichText::new("=").weak());
                 let expr = self
                     .drawing
                     .params
                     .expr_text
                     .entry(*id)
                     .or_insert_with(|| var.expr.clone());
+                value_left = ui.cursor().left();
+                let room = ui.available_width() - 20.0 - ui.spacing().item_spacing.x;
                 let r = ui.add(
                     egui::TextEdit::singleline(expr)
-                        .desired_width(100.0)
+                        .desired_width(room)
                         .id(egui::Id::new(("var_expr", id.0))),
                 );
                 if r.lost_focus() {
@@ -232,12 +240,7 @@ impl DriftApp {
                 } else if !r.has_focus() {
                     *expr = var.expr.clone();
                 }
-                if crate::icons::button(ui, 22.0, false, "Delete variable", |p, r, c| {
-                    crate::icons::glyph(p, r, crate::icons::Glyph::Delete, c)
-                })
-                .on_hover_text("Delete variable")
-                .clicked()
-                {
+                if crate::theme::delete_button(ui, "Delete variable", "Delete variable").clicked() {
                     remove = Some(*id);
                 }
             });
@@ -248,7 +251,9 @@ impl DriftApp {
                 }
                 Some(Ok(v)) => {
                     ui.horizontal(|ui| {
-                        ui.add_space(84.0);
+                        // Under the expression it comes from.
+                        let indent = value_left - ui.cursor().left() + 4.0;
+                        ui.add_space(indent - ui.spacing().item_spacing.x);
                         ui.label(
                             egui::RichText::new(format!("= {}", units.format(var.kind, v))).weak(),
                         );
@@ -273,20 +278,20 @@ impl DriftApp {
             ui.add(
                 egui::TextEdit::singleline(&mut self.drawing.params.new_name)
                     .hint_text("name")
-                    .desired_width(80.0),
+                    .desired_width(name_width),
             );
-            ui.label("=");
+            ui.label(egui::RichText::new("=").weak());
             let r = ui.add(
                 egui::TextEdit::singleline(&mut self.drawing.params.new_expr)
                     .hint_text("value or expression")
-                    .desired_width(ui.available_width() - 6.0),
+                    .desired_width(ui.available_width()),
             );
             enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         });
         ui.horizontal(|ui| {
             egui::ComboBox::from_id_salt("new_kind")
                 .selected_text(self.drawing.params.new_kind.label())
-                .width(100.0)
+                .width(name_width)
                 .show_ui(ui, |ui| {
                     for k in Kind::ALL {
                         ui.selectable_value(&mut self.drawing.params.new_kind, k, k.label());
@@ -317,11 +322,14 @@ impl DriftApp {
             _ => slider_range(kind, value),
         };
         let mut v = value;
+        let width = ui.spacing().slider_width;
+        ui.spacing_mut().slider_width = ui.available_width();
         let r = ui.add(
             egui::Slider::new(&mut v, lo..=hi)
                 .show_value(false)
                 .clamping(egui::SliderClamping::Always),
         );
+        ui.spacing_mut().slider_width = width;
         if r.drag_started() {
             self.drawing.params.slider_range = Some((id, lo, hi));
         }
@@ -356,82 +364,93 @@ impl DriftApp {
         let mut status = None;
         for (id, name, whole) in options {
             ui.horizontal(|ui| {
+                ui.set_min_height(crate::theme::ROW_HEIGHT);
                 let kind = if whole { "Whole sketch" } else { "Values only" };
-                if let Some((rid, text)) = &mut self.drawing.params.renaming
-                    && *rid == id
-                {
-                    let r = ui.add(egui::TextEdit::singleline(text).desired_width(110.0));
-                    if r.lost_focus() {
-                        let text = std::mem::take(text);
-                        self.drawing.params.renaming = None;
-                        if !text.trim().is_empty() && text.trim() != name {
-                            self.drawing.editor.rename_variant(id, &text);
-                        }
-                    } else {
-                        r.request_focus();
-                    }
-                } else {
-                    let r = ui
-                        .radio(active == Some(id), &name)
-                        .on_hover_text(format!("{kind}. Click to apply; double-click to rename"));
-                    if r.double_clicked() {
-                        self.drawing.params.renaming = Some((id, name.clone()));
-                    } else if r.clicked()
-                        && active != Some(id)
-                        && let Err(e) = self.drawing.editor.apply_variant(id)
-                    {
-                        status = Some(format!("Can't apply {name}: {e}"));
-                    }
-                }
-                ui.label(
-                    egui::RichText::new(if whole { "sketch" } else { "values" })
-                        .small()
-                        .weak(),
-                );
-                let mut shown = self.drawing.params.ghosted.contains(&id);
-                let tip = if active == Some(id) {
-                    "Ghost: the drawing is in this option now"
-                } else {
-                    "Show this option faintly behind the drawing"
-                };
-                if crate::layers_ui::icon_toggle(
-                    ui,
-                    &mut shown,
-                    crate::icons::Glyph::Eye,
-                    true,
-                    tip,
-                ) {
-                    if shown {
-                        self.drawing.params.ghosted.insert(id);
-                    } else {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    if crate::theme::delete_button(ui, "×", "Delete").clicked() {
+                        self.drawing.editor.remove_variant(id);
                         self.drawing.params.ghosted.remove(&id);
                     }
-                }
-                let update_tip = if whole {
-                    "Store the sketch as it is now in this option"
-                } else {
-                    "Store the current values in this option"
-                };
-                if ui
-                    .small_button("Update")
-                    .on_hover_text(update_tip)
-                    .clicked()
-                {
-                    self.drawing.editor.update_variant(id);
-                }
-                if ui.small_button("×").on_hover_text("Delete").clicked() {
-                    self.drawing.editor.remove_variant(id);
-                    self.drawing.params.ghosted.remove(&id);
-                }
+                    let update_tip = if whole {
+                        "Store the sketch as it is now in this option"
+                    } else {
+                        "Store the current values in this option"
+                    };
+                    if ui
+                        .small_button("Update")
+                        .on_hover_text(update_tip)
+                        .clicked()
+                    {
+                        self.drawing.editor.update_variant(id);
+                    }
+                    let mut shown = self.drawing.params.ghosted.contains(&id);
+                    let tip = if active == Some(id) {
+                        "Ghost: the drawing is in this option now"
+                    } else {
+                        "Show this option faintly behind the drawing"
+                    };
+                    if crate::layers_ui::icon_toggle(
+                        ui,
+                        &mut shown,
+                        crate::icons::Glyph::Eye,
+                        true,
+                        tip,
+                    ) {
+                        if shown {
+                            self.drawing.params.ghosted.insert(id);
+                        } else {
+                            self.drawing.params.ghosted.remove(&id);
+                        }
+                    }
+                    ui.label(
+                        egui::RichText::new(if whole { "sketch" } else { "values" })
+                            .size(crate::theme::size::CAPTION)
+                            .color(crate::theme::neutrals(ui.visuals().dark_mode).tertiary),
+                    );
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        if let Some((rid, text)) = &mut self.drawing.params.renaming
+                            && *rid == id
+                        {
+                            let r = ui.add(
+                                egui::TextEdit::singleline(text)
+                                    .desired_width(ui.available_width()),
+                            );
+                            if r.lost_focus() {
+                                let text = std::mem::take(text);
+                                self.drawing.params.renaming = None;
+                                if !text.trim().is_empty() && text.trim() != name {
+                                    self.drawing.editor.rename_variant(id, &text);
+                                }
+                            } else {
+                                r.request_focus();
+                            }
+                        } else {
+                            let r = ui.radio(active == Some(id), &name).on_hover_text(format!(
+                                "{kind}. Click to apply; double-click to rename"
+                            ));
+                            if r.double_clicked() {
+                                self.drawing.params.renaming = Some((id, name.clone()));
+                            } else if r.clicked()
+                                && active != Some(id)
+                                && let Err(e) = self.drawing.editor.apply_variant(id)
+                            {
+                                status = Some(format!("Can't apply {name}: {e}"));
+                            }
+                        }
+                    });
+                });
             });
         }
+        ui.add_space(2.0);
         ui.horizontal(|ui| {
             ui.add(
                 egui::TextEdit::singleline(&mut self.drawing.params.option_name)
                     .hint_text("name")
-                    .desired_width(110.0),
+                    .desired_width(ui.available_width() - 118.0 - ui.spacing().item_spacing.x),
             );
             egui::ComboBox::from_id_salt("option_kind")
+                .width(118.0)
                 .selected_text(if self.drawing.params.option_whole {
                     "Whole sketch"
                 } else {
@@ -491,13 +510,19 @@ impl DriftApp {
         let mut unpin = None;
         for (id, c) in pinned {
             ui.horizontal(|ui| {
-                ui.label(crate::constraint_label(&self.drawing.editor.doc, &c));
+                ui.set_min_height(crate::theme::ROW_HEIGHT);
                 let value = drift_solver::measure(&self.drawing.editor.doc, &c)
                     .map_or("—".into(), |v| units.format(dimension_kind(&c), v));
-                ui.label(value);
-                if ui.small_button("Unpin").clicked() {
-                    unpin = Some(id);
-                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.small_button("Unpin").clicked() {
+                        unpin = Some(id);
+                    }
+                    ui.label(value);
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        let name = crate::constraint_label(&self.drawing.editor.doc, &c);
+                        ui.add(egui::Label::new(egui::RichText::new(name).weak()).truncate());
+                    });
+                });
             });
         }
         if let Some(id) = unpin {

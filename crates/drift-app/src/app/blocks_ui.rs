@@ -15,7 +15,7 @@ fn thumbnail(ui: &mut egui::Ui, block: &drift_core::Block, size: f32) -> egui::R
     let (rect, response) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::click());
     let visuals = ui.visuals();
     ui.painter()
-        .rect_filled(rect, 6.0, visuals.extreme_bg_color);
+        .rect_filled(rect, theme::radius::CONTROL, visuals.extreme_bg_color);
     paint_block(ui.painter(), rect.shrink(5.0), block, visuals.text_color());
     response
 }
@@ -78,12 +78,13 @@ fn library_tile(
     } else {
         visuals.extreme_bg_color
     };
-    ui.painter().rect_filled(thumb, theme::radius::MENU, fill);
+    ui.painter()
+        .rect_filled(thumb, theme::radius::CONTROL, fill);
     if added {
         ui.painter().rect_stroke(
             thumb,
-            theme::radius::MENU,
-            egui::Stroke::new(1.5, theme::accent(dark).gamma_multiply(0.7)),
+            theme::radius::CONTROL,
+            egui::Stroke::new(1.0, theme::accent(dark).gamma_multiply(0.8)),
             egui::StrokeKind::Inside,
         );
     }
@@ -93,17 +94,18 @@ fn library_tile(
         &entry.block,
         visuals.text_color(),
     );
-    let font = egui::FontId::proportional(11.0);
+    let font = egui::FontId::proportional(theme::size::CAPTION);
+    let ink = visuals.weak_text_color();
     let galley = ui
         .painter()
-        .layout(entry.type_name.clone(), font, visuals.text_color(), size.x);
+        .layout(entry.type_name.clone(), font, ink, size.x);
     ui.painter().galley(
         egui::pos2(
             rect.center().x - galley.size().x / 2.0,
             thumb.bottom() + 2.0,
         ),
         galley,
-        visuals.text_color(),
+        ink,
     );
     response
 }
@@ -206,10 +208,10 @@ impl DriftApp {
                 ui.add(
                     egui::TextEdit::singleline(&mut self.new_block_name)
                         .hint_text(format!("Block {}", blocks.len() + 1))
-                        .desired_width(ui.available_width() - 70.0),
+                        .desired_width(ui.available_width() - 56.0 - ui.spacing().item_spacing.x),
                 );
                 if ui
-                    .button("Make")
+                    .add(egui::Button::new("Make").min_size(egui::vec2(56.0, 0.0)))
                     .on_hover_text(
                         "Make a block from the selection; a copy takes its place. Then click \
                          its base point, or press Enter for the centre",
@@ -221,7 +223,7 @@ impl DriftApp {
                 }
             });
         }
-        ui.add_space(6.0);
+        ui.add_space(4.0);
         ui.add(
             egui::TextEdit::singleline(&mut self.block_search)
                 .hint_text("Search blocks and the library")
@@ -266,21 +268,28 @@ impl DriftApp {
         for (id, block) in shown {
             let picked =
                 self.tool.kind() == ToolKind::Block && self.drawing.editor.place_block == Some(*id);
+            // (Filled in once it is known whether the pointer is on the row.)
+            let backdrop = ui.painter().add(egui::Shape::Noop);
             let row = egui::Frame::new()
-                .fill(if picked {
-                    theme::accent(ui.visuals().dark_mode).gamma_multiply(0.18)
-                } else {
-                    egui::Color32::TRANSPARENT
-                })
-                .corner_radius(8.0)
                 .inner_margin(egui::Margin::same(4))
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        let thumb = thumbnail(ui, block, 44.0);
+                        ui.set_min_width(ui.available_width());
+                        ui.spacing_mut().item_spacing.x = 8.0;
+                        let thumb = thumbnail(ui, block, 40.0);
                         ui.vertical(|ui| {
-                            let name = egui::RichText::new(&block.name).family(theme::bold());
+                            ui.spacing_mut().item_spacing.y = 1.0;
+                            ui.add_space(3.0);
+                            let mut name = egui::RichText::new(&block.name);
+                            if picked {
+                                name = name.family(theme::bold());
+                            }
                             if ui
-                                .add(egui::Label::new(name).sense(egui::Sense::click()))
+                                .add(
+                                    egui::Label::new(name)
+                                        .sense(egui::Sense::click())
+                                        .truncate(),
+                                )
                                 .clicked()
                             {
                                 place = Some(*id);
@@ -297,8 +306,8 @@ impl DriftApp {
                                 } else {
                                     copies
                                 })
-                                .small()
-                                .weak(),
+                                .size(theme::size::CAPTION)
+                                .color(ui.visuals().weak_text_color()),
                             );
                         });
                         if thumb.clicked() {
@@ -306,10 +315,15 @@ impl DriftApp {
                         }
                     });
                 });
-            let response = row
-                .response
-                .interact(egui::Sense::click())
-                .on_hover_text("Click to place copies (I)");
+            let response = row.response.interact(egui::Sense::click());
+            if let Some(fill) = theme::row_fill(ui.visuals().dark_mode, picked, response.hovered())
+            {
+                ui.painter().set(
+                    backdrop,
+                    egui::epaint::RectShape::filled(response.rect, theme::radius::CONTROL, fill),
+                );
+            }
+            let response = response.on_hover_text("Click to place copies (I)");
             if response.clicked() {
                 place = Some(*id);
             }
@@ -450,24 +464,28 @@ impl DriftApp {
             .filter(|e| self.drawing.editor.doc.block_named(&e.block.name).is_none())
             .count();
         ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new(if search.is_empty() {
+            ui.set_min_height(theme::ROW_HEIGHT);
+            theme::hint(
+                ui,
+                &if search.is_empty() {
                     format!("{} blocks · imperial sizes", entries.len())
                 } else {
                     format!("{} found in all categories", entries.len())
-                })
-                .small()
-                .weak(),
+                },
             );
-            if missing > 0
+            // (At the row's end, under the menu's arrow.)
+            let add_all = missing > 0
                 && ui
-                    .small_button("Add all")
-                    .on_hover_text(format!(
-                        "Add the {missing} shown that the drawing doesn't have yet, without \
-                         placing them"
-                    ))
-                    .clicked()
-            {
+                    .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.small_button("Add all")
+                            .on_hover_text(format!(
+                                "Add the {missing} shown that the drawing doesn't have yet, \
+                                 without placing them"
+                            ))
+                            .clicked()
+                    })
+                    .inner;
+            if add_all {
                 let n = self
                     .drawing
                     .editor
@@ -484,8 +502,9 @@ impl DriftApp {
             ui.add_space(4.0);
             ui.label(
                 egui::RichText::new(family[0].family)
-                    .small()
-                    .family(theme::bold()),
+                    .size(theme::size::CAPTION)
+                    .family(theme::bold())
+                    .color(ui.visuals().weak_text_color()),
             );
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
@@ -563,10 +582,7 @@ impl DriftApp {
             .unwrap_or_else(|| name.clone());
         theme::row(ui, "Name", |ui| {
             let field = ui
-                .add(
-                    egui::TextEdit::singleline(&mut typed)
-                        .desired_width(ui.available_width() - 8.0),
-                )
+                .add(egui::TextEdit::singleline(&mut typed).desired_width(ui.available_width()))
                 .on_hover_text("The block's name: every copy shares it");
             if field.has_focus() {
                 ui.data_mut(|d| d.insert_temp(kept, typed.clone()));
@@ -584,7 +600,8 @@ impl DriftApp {
                     "{name} · {copies} {}",
                     if copies == 1 { "copy" } else { "copies" }
                 ))
-                .width(ui.available_width() - 8.0)
+                .width(ui.available_width())
+                .truncate()
                 .show_ui(ui, |ui| {
                     for (id, n) in &blocks {
                         if ui.selectable_label(*id == first.block, n).clicked() {
@@ -711,7 +728,7 @@ impl DriftApp {
                 self.drawing.editor.select_copies(first.block);
             }
         });
-        ui.add_space(10.0);
+        ui.add_space(12.0);
         if theme::danger_button(ui, "Delete").clicked() {
             self.drawing.editor.delete_selection();
         }
@@ -730,7 +747,11 @@ impl DriftApp {
             .block(edit.block)
             .map_or_else(String::new, |b| b.name.clone());
         theme::section(ui, "Editing block");
-        ui.label(egui::RichText::new(&name).family(theme::bold()).size(15.0));
+        ui.label(
+            egui::RichText::new(&name)
+                .family(theme::bold())
+                .size(theme::size::TITLE),
+        );
         ui.label(
             egui::RichText::new(
                 "Change it with any tool; what you draw becomes part of it. Every copy updates \

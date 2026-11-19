@@ -115,9 +115,7 @@ impl DriftApp {
         let mut name = group.name.clone();
         theme::row(ui, "Name", |ui| {
             if ui
-                .add(
-                    egui::TextEdit::singleline(&mut name).desired_width(ui.available_width() - 8.0),
-                )
+                .add(egui::TextEdit::singleline(&mut name).desired_width(ui.available_width()))
                 .changed()
             {
                 // Typing merges into one undo step.

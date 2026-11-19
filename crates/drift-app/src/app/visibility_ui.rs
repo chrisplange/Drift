@@ -203,7 +203,7 @@ impl DriftApp {
         theme::row(ui, "In views", |ui| {
             egui::ComboBox::from_id_salt("annotation_views")
                 .selected_text(summary)
-                .width(ui.available_width() - 8.0)
+                .width(ui.available_width())
                 .show_ui(ui, |ui| {
                     if ui.selectable_label(all, "All views").clicked() {
                         change = Some(None);

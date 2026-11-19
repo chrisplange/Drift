@@ -75,7 +75,7 @@ impl DriftApp {
         };
         egui::ComboBox::from_id_salt(id)
             .selected_text(shown)
-            .width(ui.available_width() - 8.0)
+            .width(ui.available_width())
             .height(380.0)
             // Clicking into "Find a font" mustn't close it; a pick does.
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)

@@ -20,15 +20,15 @@ fn probe_drag_is_invariant_under_similarity_10() {
             ccw: false,
         },
         Op::Step {
-            from: 1,
-            angle: 7,
-            len: 0,
+            from: 2,
+            angle: 13,
+            len: 1,
         },
         Op::OnArc {
             arc: 0,
             at: 7,
             angle: 5,
-            len: 1,
+            len: 0,
         },
         Op::Step {
             from: 26,
@@ -92,7 +92,7 @@ fn probe_drag_is_invariant_under_similarity_10() {
     length: None,
 };
     let pick = Pick::Curves(
-    8542891717419927433,
+    8907892275937324313,
 );
     let offset = DVec2::new(
     0.0,
@@ -112,45 +112,36 @@ fn probe_drag_is_invariant_under_similarity_10() {
 
 #[test]
 #[ignore = "probe"]
-fn probe_drag_is_invariant_under_similarity_11() {
+fn probe_drag_is_invariant_under_similarity_12() {
     let plan = Plan {
     ops: vec![
         Op::Arc {
             from: 0,
-            angle: 18,
+            angle: 23,
             radius: 0,
             sweep: 4,
             ccw: true,
         },
         Op::Step {
-            from: 8,
-            angle: 11,
-            len: 3,
+            from: 53,
+            angle: 23,
+            len: 1,
         },
-        Op::OnLine {
-            line: 0,
-            at: 0,
-            angle: 19,
-            len: 2,
-        },
-        Op::Arc {
-            from: 21,
-            angle: 17,
-            radius: 0,
-            sweep: 1,
-            ccw: false,
+        Op::Close {
+            from: 2,
+            to: 36,
         },
         Op::Step {
-            from: 0,
+            from: 5,
             angle: 0,
             len: 2,
         },
     ],
     extras: vec![
         false,
-        false,
-        false,
         true,
+        false,
+        false,
         false,
         false,
         false,
@@ -197,118 +188,16 @@ fn probe_drag_is_invariant_under_similarity_11() {
         false,
     ],
     fix: Some(
-        60,
-    ),
-    length: None,
-};
-    let pick = Pick::Point(
-    40,
-);
-    let offset = DVec2::new(
-    -17.76537880740859,
-    0.0,
-);
-    let steps = 6;
-    let t = Similarity {
-    scale: 0.25,
-    turn: 0.0,
-    shift: DVec2::new(
-        0.0,
-        -288.6079639043261,
-    ),
-};
-    explained(invariant(&plan, &pick, offset, steps, t)).unwrap();
-}
-
-#[test]
-#[ignore = "probe"]
-fn probe_drag_is_invariant_under_similarity_12() {
-    let plan = Plan {
-    ops: vec![
-        Op::Step {
-            from: 0,
-            angle: 22,
-            len: 2,
-        },
-        Op::OnLine {
-            line: 0,
-            at: 1,
-            angle: 10,
-            len: 2,
-        },
-        Op::Dup {
-            from: 27,
-            angle: 7,
-            len: 2,
-        },
-        Op::OnLine {
-            line: 43,
-            at: 1,
-            angle: 9,
-            len: 2,
-        },
-    ],
-    extras: vec![
-        false,
-        false,
-        true,
-        false,
-        false,
-        true,
-        true,
-        false,
-        false,
-        false,
-        true,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-    ],
-    fix: Some(
-        26,
+        8,
     ),
     length: None,
 };
     let pick = Pick::Curves(
-    15254425735770910903,
+    13422321940316738344,
 );
     let offset = DVec2::new(
-    -8.42510877572246,
-    -17.063400864507344,
+    13.755129117721863,
+    0.0,
 );
     let steps = 1;
     let t = Similarity {
@@ -316,124 +205,7 @@ fn probe_drag_is_invariant_under_similarity_12() {
     turn: 0.0,
     shift: DVec2::new(
         0.0,
-        -462.30850980444995,
-    ),
-};
-    explained(invariant(&plan, &pick, offset, steps, t)).unwrap();
-}
-
-#[test]
-#[ignore = "probe"]
-fn probe_drag_is_invariant_under_similarity_13() {
-    let plan = Plan {
-    ops: vec![
-        Op::Step {
-            from: 0,
-            angle: 2,
-            len: 0,
-        },
-        Op::Arc {
-            from: 44,
-            angle: 4,
-            radius: 0,
-            sweep: 2,
-            ccw: true,
-        },
-        Op::Close {
-            from: 3,
-            to: 11,
-        },
-        Op::Dup {
-            from: 3,
-            angle: 15,
-            len: 1,
-        },
-        Op::Step {
-            from: 2,
-            angle: 10,
-            len: 3,
-        },
-        Op::OnLine {
-            line: 19,
-            at: 3,
-            angle: 21,
-            len: 2,
-        },
-        Op::Step {
-            from: 45,
-            angle: 16,
-            len: 1,
-        },
-    ],
-    extras: vec![
-        true,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-    ],
-    fix: None,
-    length: Some(
-        28,
-    ),
-};
-    let pick = Pick::Point(
-    63,
-);
-    let offset = DVec2::new(
-    11.094087675076649,
-    -19.947824380961997,
-);
-    let steps = 1;
-    let t = Similarity {
-    scale: 0.25,
-    turn: 0.0,
-    shift: DVec2::new(
-        0.0,
-        463.09904468684647,
+        186.98370704747123,
     ),
 };
     explained(invariant(&plan, &pick, offset, steps, t)).unwrap();
@@ -447,27 +219,24 @@ fn probe_drag_is_invariant_under_similarity_14() {
         Op::Arc {
             from: 0,
             angle: 1,
-            radius: 0,
+            radius: 2,
             sweep: 1,
-            ccw: false,
+            ccw: true,
         },
-        Op::Arc {
-            from: 52,
-            angle: 1,
-            radius: 0,
-            sweep: 2,
-            ccw: false,
+        Op::Close {
+            from: 24,
+            to: 53,
         },
         Op::Arc {
             from: 33,
             angle: 17,
-            radius: 0,
-            sweep: 1,
+            radius: 1,
+            sweep: 3,
             ccw: false,
         },
         Op::Step {
             from: 0,
-            angle: 2,
+            angle: 3,
             len: 2,
         },
         Op::Close {
@@ -476,19 +245,17 @@ fn probe_drag_is_invariant_under_similarity_14() {
         },
         Op::Dup {
             from: 10,
-            angle: 4,
+            angle: 8,
             len: 1,
         },
         Op::Tangent {
-            arc: 40,
+            arc: 0,
             end: true,
-            forward: false,
+            forward: true,
             len: 0,
         },
     ],
     extras: vec![
-        false,
-        false,
         true,
         false,
         false,
@@ -496,11 +263,13 @@ fn probe_drag_is_invariant_under_similarity_14() {
         false,
         false,
         false,
-        true,
         false,
         false,
         false,
-        true,
+        false,
+        false,
+        false,
+        false,
         false,
         false,
         false,
@@ -539,21 +308,23 @@ fn probe_drag_is_invariant_under_similarity_14() {
     fix: Some(
         56,
     ),
-    length: None,
+    length: Some(
+        52,
+    ),
 };
-    let pick = Pick::Curves(
-    10209933662206102316,
+    let pick = Pick::Point(
+    60,
 );
     let offset = DVec2::new(
-    0.0,
+    7.164923455742015,
     17.546300846956495,
 );
-    let steps = 20;
+    let steps = 1;
     let t = Similarity {
-    scale: 0.25,
+    scale: 3.838692126372308,
     turn: 0.0,
     shift: DVec2::new(
-        0.0,
+        490.17111694689567,
         94.93915121554136,
     ),
 };
@@ -567,347 +338,26 @@ fn probe_drag_is_invariant_under_similarity_16() {
     ops: vec![
         Op::Arc {
             from: 0,
-            angle: 8,
-            radius: 1,
-            sweep: 4,
+            angle: 7,
+            radius: 0,
+            sweep: 0,
             ccw: true,
         },
-        Op::Arc {
-            from: 1,
-            angle: 21,
-            radius: 1,
-            sweep: 3,
-            ccw: false,
-        },
-        Op::Step {
-            from: 47,
-            angle: 7,
-            len: 1,
-        },
-        Op::OnArc {
-            arc: 30,
-            at: 11,
-            angle: 11,
-            len: 2,
-        },
-        Op::Mid {
-            line: 2,
-            angle: 7,
-            len: 0,
-        },
-    ],
-    extras: vec![
-        false,
-        false,
-        true,
-        true,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-    ],
-    fix: Some(
-        27,
-    ),
-    length: None,
-};
-    let pick = Pick::Curves(
-    12005400971653210572,
-);
-    let offset = DVec2::new(
-    0.0,
-    14.174323292153025,
-);
-    let steps = 1;
-    let t = Similarity {
-    scale: 0.25,
-    turn: 21.40432408154111,
-    shift: DVec2::new(
-        367.1844252856773,
-        0.0,
-    ),
-};
-    explained(invariant(&plan, &pick, offset, steps, t)).unwrap();
-}
-
-#[test]
-#[ignore = "probe"]
-fn probe_drag_is_invariant_under_similarity_17() {
-    let plan = Plan {
-    ops: vec![
-        Op::Arc {
-            from: 0,
-            angle: 11,
-            radius: 2,
-            sweep: 1,
-            ccw: true,
-        },
-        Op::Step {
-            from: 0,
-            angle: 10,
-            len: 1,
-        },
-        Op::Step {
-            from: 2,
-            angle: 13,
-            len: 1,
-        },
-        Op::Arc {
-            from: 26,
-            angle: 2,
-            radius: 1,
-            sweep: 2,
-            ccw: false,
-        },
-        Op::Arc {
-            from: 41,
-            angle: 2,
-            radius: 1,
-            sweep: 1,
-            ccw: false,
+        Op::Close {
+            from: 8,
+            to: 34,
         },
         Op::Tangent {
-            arc: 54,
-            end: false,
-            forward: false,
-            len: 0,
+            arc: 0,
+            end: true,
+            forward: true,
+            len: 3,
         },
-    ],
-    extras: vec![
-        true,
-        true,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-    ],
-    fix: Some(
-        9,
-    ),
-    length: None,
-};
-    let pick = Pick::Curves(
-    8859355852990347992,
-);
-    let offset = DVec2::new(
-    13.237830586994622,
-    -2.0329626285582023,
-);
-    let steps = 1;
-    let t = Similarity {
-    scale: 0.25,
-    turn: 0.0,
-    shift: DVec2::new(
-        0.0,
-        7.291562797100103,
-    ),
-};
-    explained(invariant(&plan, &pick, offset, steps, t)).unwrap();
-}
-
-#[test]
-#[ignore = "probe"]
-fn probe_drag_is_invariant_under_similarity_18() {
-    let plan = Plan {
-    ops: vec![
-        Op::Arc {
-            from: 0,
-            angle: 15,
-            radius: 1,
-            sweep: 0,
-            ccw: false,
-        },
-        Op::Arc {
-            from: 20,
+        Op::OnLine {
+            line: 0,
+            at: 0,
             angle: 6,
-            radius: 0,
-            sweep: 0,
-            ccw: false,
-        },
-        Op::Step {
-            from: 2,
-            angle: 1,
             len: 0,
-        },
-    ],
-    extras: vec![
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-    ],
-    fix: None,
-    length: None,
-};
-    let pick = Pick::Point(
-    43,
-);
-    let offset = DVec2::new(
-    18.642192258397074,
-    -15.150142334258259,
-);
-    let steps = 1;
-    let t = Similarity {
-    scale: 0.25,
-    turn: 70.37604266271786,
-    shift: DVec2::new(
-        0.0,
-        0.0,
-    ),
-};
-    explained(invariant(&plan, &pick, offset, steps, t)).unwrap();
-}
-
-#[test]
-#[ignore = "probe"]
-fn probe_drag_is_invariant_under_similarity_19() {
-    let plan = Plan {
-    ops: vec![
-        Op::Arc {
-            from: 0,
-            angle: 9,
-            radius: 0,
-            sweep: 2,
-            ccw: true,
-        },
-        Op::Arc {
-            from: 44,
-            angle: 8,
-            radius: 0,
-            sweep: 0,
-            ccw: false,
-        },
-        Op::Tangent {
-            arc: 47,
-            end: false,
-            forward: false,
-            len: 2,
         },
         Op::Tangent {
             arc: 0,
@@ -915,9 +365,10 @@ fn probe_drag_is_invariant_under_similarity_19() {
             forward: false,
             len: 0,
         },
-        Op::Step {
-            from: 2,
-            angle: 13,
+        Op::Tangent {
+            arc: 0,
+            end: true,
+            forward: false,
             len: 0,
         },
     ],
@@ -974,22 +425,24 @@ fn probe_drag_is_invariant_under_similarity_19() {
     fix: Some(
         44,
     ),
-    length: None,
+    length: Some(
+        3,
+    ),
 };
     let pick = Pick::Curves(
-    12883702180960982740,
+    2948942412519361293,
 );
     let offset = DVec2::new(
-    0.0,
-    -16.848940102060517,
+    -17.838780519226653,
+    -15.774533488702177,
 );
-    let steps = 11;
+    let steps = 1;
     let t = Similarity {
     scale: 0.25,
-    turn: 207.2585326113549,
+    turn: 0.0,
     shift: DVec2::new(
         0.0,
-        0.0,
+        -145.35376765632466,
     ),
 };
     explained(invariant(&plan, &pick, offset, steps, t)).unwrap();
@@ -997,55 +450,27 @@ fn probe_drag_is_invariant_under_similarity_19() {
 
 #[test]
 #[ignore = "probe"]
-fn probe_drag_is_invariant_under_similarity_2() {
+fn probe_drag_is_invariant_under_similarity_17() {
     let plan = Plan {
     ops: vec![
         Op::Arc {
             from: 0,
-            angle: 19,
-            radius: 2,
-            sweep: 2,
+            angle: 21,
+            radius: 0,
+            sweep: 3,
             ccw: false,
         },
-        Op::OnArc {
-            arc: 0,
-            at: 1,
-            angle: 18,
-            len: 2,
-        },
         Op::Step {
-            from: 11,
-            angle: 5,
-            len: 0,
-        },
-        Op::Mid {
-            line: 14,
-            angle: 3,
-            len: 0,
-        },
-        Op::OnLine {
-            line: 34,
-            at: 0,
-            angle: 7,
-            len: 2,
-        },
-        Op::Arc {
-            from: 1,
-            angle: 7,
-            radius: 1,
-            sweep: 3,
-            ccw: true,
-        },
-        Op::Close {
-            from: 33,
-            to: 6,
+            from: 24,
+            angle: 9,
+            len: 1,
         },
     ],
     extras: vec![
         false,
+        true,
         false,
-        true,
-        true,
+        false,
         false,
         false,
         false,
@@ -1092,24 +517,24 @@ fn probe_drag_is_invariant_under_similarity_2() {
         false,
     ],
     fix: Some(
-        58,
+        53,
     ),
     length: None,
 };
     let pick = Pick::Curves(
-    1079296240429988705,
+    11059704920171063312,
 );
     let offset = DVec2::new(
-    11.33064892758793,
-    -7.0092076192390955,
+    15.356516545878655,
+    -14.111777591849263,
 );
     let steps = 1;
     let t = Similarity {
-    scale: 0.25,
+    scale: 2.9877068064591144,
     turn: 0.0,
     shift: DVec2::new(
         0.0,
-        -169.72930566149037,
+        -23.271358444630927,
     ),
 };
     explained(invariant(&plan, &pick, offset, steps, t)).unwrap();
@@ -1122,49 +547,46 @@ fn probe_drag_is_invariant_under_similarity_20() {
     ops: vec![
         Op::Arc {
             from: 0,
-            angle: 3,
+            angle: 0,
             radius: 1,
-            sweep: 2,
+            sweep: 4,
             ccw: false,
         },
         Op::Step {
-            from: 0,
-            angle: 3,
-            len: 1,
-        },
-        Op::OnArc {
-            arc: 0,
-            at: 17,
-            angle: 22,
+            from: 46,
+            angle: 18,
             len: 2,
         },
         Op::Step {
-            from: 5,
-            angle: 6,
-            len: 1,
-        },
-        Op::Step {
-            from: 36,
-            angle: 12,
+            from: 46,
+            angle: 18,
             len: 0,
         },
-        Op::Step {
-            from: 20,
-            angle: 16,
+        Op::Arc {
+            from: 24,
+            angle: 3,
+            radius: 1,
+            sweep: 4,
+            ccw: true,
+        },
+        Op::OnLine {
+            line: 20,
+            at: 0,
+            angle: 1,
             len: 1,
         },
     ],
     extras: vec![
+        false,
+        false,
+        false,
+        false,
+        false,
         true,
         true,
         false,
         false,
-        false,
-        false,
         true,
-        false,
-        false,
-        false,
         false,
         false,
         false,
@@ -1204,23 +626,25 @@ fn probe_drag_is_invariant_under_similarity_20() {
         false,
         false,
     ],
-    fix: None,
+    fix: Some(
+        60,
+    ),
     length: None,
 };
     let pick = Pick::Curves(
-    10623740333444224106,
+    1384181044010492290,
 );
     let offset = DVec2::new(
-    -18.880935808342876,
+    -14.668959913533824,
     0.0,
 );
     let steps = 1;
     let t = Similarity {
-    scale: 0.25,
+    scale: 2.418885377995435,
     turn: 0.0,
     shift: DVec2::new(
-        0.0,
-        178.4077126183674,
+        -398.7733498599033,
+        -174.26303150165532,
     ),
 };
     explained(invariant(&plan, &pick, offset, steps, t)).unwrap();
@@ -1338,170 +762,23 @@ fn probe_drag_is_invariant_under_similarity_4() {
     ops: vec![
         Op::Arc {
             from: 0,
-            angle: 18,
-            radius: 0,
-            sweep: 0,
-            ccw: true,
-        },
-        Op::Step {
-            from: 11,
-            angle: 10,
-            len: 0,
-        },
-        Op::OnLine {
-            line: 0,
-            at: 0,
-            angle: 22,
-            len: 1,
-        },
-        Op::OnArc {
-            arc: 0,
-            at: 5,
-            angle: 2,
-            len: 0,
-        },
-        Op::Dup {
-            from: 8,
-            angle: 9,
-            len: 1,
-        },
-        Op::Mid {
-            line: 22,
-            angle: 0,
-            len: 0,
-        },
-        Op::OnArc {
-            arc: 0,
-            at: 15,
-            angle: 7,
-            len: 0,
-        },
-    ],
-    extras: vec![
-        true,
-        false,
-        false,
-        true,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-    ],
-    fix: None,
-    length: None,
-};
-    let pick = Pick::Curves(
-    5312934562240649240,
-);
-    let offset = DVec2::new(
-    17.36197153472971,
-    15.910133147337284,
-);
-    let steps = 1;
-    let t = Similarity {
-    scale: 0.25,
-    turn: 0.0,
-    shift: DVec2::new(
-        0.0,
-        -100.3680343561654,
-    ),
-};
-    explained(invariant(&plan, &pick, offset, steps, t)).unwrap();
-}
-
-#[test]
-#[ignore = "probe"]
-fn probe_drag_is_invariant_under_similarity_5() {
-    let plan = Plan {
-    ops: vec![
-        Op::Arc {
-            from: 0,
-            angle: 5,
-            radius: 0,
+            angle: 13,
+            radius: 2,
             sweep: 2,
-            ccw: true,
-        },
-        Op::Step {
-            from: 22,
-            angle: 2,
-            len: 0,
-        },
-        Op::OnLine {
-            line: 0,
-            at: 1,
-            angle: 3,
-            len: 0,
-        },
-        Op::Arc {
-            from: 2,
-            angle: 4,
-            radius: 0,
-            sweep: 0,
             ccw: true,
         },
         Op::Tangent {
             arc: 0,
             end: true,
-            forward: false,
+            forward: true,
             len: 2,
-        },
-        Op::OnArc {
-            arc: 30,
-            at: 15,
-            angle: 13,
-            len: 0,
-        },
-        Op::Step {
-            from: 9,
-            angle: 10,
-            len: 1,
         },
     ],
     extras: vec![
         false,
         false,
         false,
-        true,
+        false,
         false,
         false,
         false,
@@ -1548,24 +825,24 @@ fn probe_drag_is_invariant_under_similarity_5() {
         false,
     ],
     fix: Some(
-        9,
+        11,
     ),
     length: None,
 };
-    let pick = Pick::Curves(
-    7710219322523347356,
+    let pick = Pick::Point(
+    21,
 );
     let offset = DVec2::new(
-    -19.396793234146298,
-    14.22082754429065,
+    -14.356874404974034,
+    -10.799395503407696,
 );
     let steps = 1;
     let t = Similarity {
-    scale: 0.25,
-    turn: 30.510478411680264,
+    scale: 2.9182379202940933,
+    turn: 256.46238183877944,
     shift: DVec2::new(
+        29.953977707507867,
         0.0,
-        196.7343444219725,
     ),
 };
     explained(invariant(&plan, &pick, offset, steps, t)).unwrap();
@@ -1573,58 +850,37 @@ fn probe_drag_is_invariant_under_similarity_5() {
 
 #[test]
 #[ignore = "probe"]
-fn probe_drag_is_invariant_under_similarity_6() {
+fn probe_drag_is_invariant_under_similarity_5() {
     let plan = Plan {
     ops: vec![
         Op::Arc {
             from: 0,
-            angle: 21,
-            radius: 0,
-            sweep: 0,
-            ccw: false,
-        },
-        Op::Step {
-            from: 46,
             angle: 7,
-            len: 2,
-        },
-        Op::Arc {
-            from: 2,
-            angle: 11,
             radius: 2,
-            sweep: 3,
-            ccw: false,
+            sweep: 2,
+            ccw: true,
         },
-        Op::Step {
-            from: 0,
-            angle: 19,
-            len: 3,
-        },
-        Op::OnArc {
+        Op::Tangent {
             arc: 0,
-            at: 8,
-            angle: 5,
-            len: 1,
+            end: true,
+            forward: true,
+            len: 0,
         },
-        Op::OnArc {
-            arc: 14,
-            at: 8,
-            angle: 0,
-            len: 2,
-        },
-        Op::Close {
-            from: 49,
-            to: 59,
+        Op::OnLine {
+            line: 0,
+            at: 2,
+            angle: 1,
+            len: 0,
         },
     ],
     extras: vec![
         false,
-        true,
         false,
         false,
-        true,
         false,
-        true,
+        false,
+        false,
+        false,
         false,
         false,
         false,
@@ -1667,15 +923,17 @@ fn probe_drag_is_invariant_under_similarity_6() {
         false,
         false,
     ],
-    fix: None,
+    fix: Some(
+        61,
+    ),
     length: None,
 };
     let pick = Pick::Curves(
-    16892029386315100904,
+    272691448529772080,
 );
     let offset = DVec2::new(
-    -15.357097659669554,
-    3.2908174150228318,
+    7.956844869137463,
+    -11.458805684608038,
 );
     let steps = 1;
     let t = Similarity {
@@ -1683,7 +941,7 @@ fn probe_drag_is_invariant_under_similarity_6() {
     turn: 0.0,
     shift: DVec2::new(
         0.0,
-        -448.7091463631882,
+        -186.44298537021308,
     ),
 };
     explained(invariant(&plan, &pick, offset, steps, t)).unwrap();
@@ -1789,148 +1047,29 @@ fn probe_drag_is_invariant_under_similarity_7() {
 
 #[test]
 #[ignore = "probe"]
-fn probe_drag_is_invariant_under_similarity_8() {
-    let plan = Plan {
-    ops: vec![
-        Op::Arc {
-            from: 0,
-            angle: 3,
-            radius: 2,
-            sweep: 3,
-            ccw: true,
-        },
-        Op::Tangent {
-            arc: 0,
-            end: false,
-            forward: false,
-            len: 3,
-        },
-        Op::Step {
-            from: 29,
-            angle: 13,
-            len: 1,
-        },
-        Op::OnLine {
-            line: 1,
-            at: 3,
-            angle: 8,
-            len: 0,
-        },
-    ],
-    extras: vec![
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-    ],
-    fix: None,
-    length: None,
-};
-    let pick = Pick::Curves(
-    1425371450287138964,
-);
-    let offset = DVec2::new(
-    -12.117531591216181,
-    -18.0036231092522,
-);
-    let steps = 1;
-    let t = Similarity {
-    scale: 0.25,
-    turn: 0.0,
-    shift: DVec2::new(
-        -58.90107550604262,
-        0.0,
-    ),
-};
-    explained(invariant(&plan, &pick, offset, steps, t)).unwrap();
-}
-
-#[test]
-#[ignore = "probe"]
 fn probe_drag_is_invariant_under_similarity_9() {
     let plan = Plan {
     ops: vec![
-        Op::Step {
+        Op::Dup {
             from: 0,
-            angle: 15,
-            len: 3,
-        },
-        Op::OnLine {
-            line: 0,
-            at: 0,
-            angle: 21,
-            len: 3,
-        },
-        Op::Step {
-            from: 2,
-            angle: 16,
+            angle: 17,
             len: 0,
         },
         Op::Arc {
-            from: 9,
-            angle: 14,
-            radius: 0,
-            sweep: 0,
-            ccw: true,
+            from: 2,
+            angle: 11,
+            radius: 2,
+            sweep: 2,
+            ccw: false,
         },
         Op::Tangent {
             arc: 0,
             end: false,
-            forward: false,
+            forward: true,
             len: 3,
-        },
-        Op::Mid {
-            line: 46,
-            angle: 1,
-            len: 1,
         },
     ],
     extras: vec![
-        false,
         true,
         false,
         false,
@@ -1978,24 +1117,27 @@ fn probe_drag_is_invariant_under_similarity_9() {
         false,
         false,
         false,
+        false,
     ],
-    fix: None,
+    fix: Some(
+        18,
+    ),
     length: None,
 };
     let pick = Pick::Curves(
-    8220936942135468612,
+    17906901497116344696,
 );
     let offset = DVec2::new(
-    -14.400469524983192,
-    -6.911382640601451,
+    4.264939958895797,
+    19.793546931109862,
 );
     let steps = 1;
     let t = Similarity {
     scale: 0.25,
-    turn: 206.65827902376716,
+    turn: 0.0,
     shift: DVec2::new(
-        53.47899219770963,
         0.0,
+        162.03989851526214,
     ),
 };
     explained(invariant(&plan, &pick, offset, steps, t)).unwrap();
@@ -2110,50 +1252,44 @@ fn probe_move_lands_exactly_9() {
     ops: vec![
         Op::Step {
             from: 0,
-            angle: 16,
-            len: 0,
+            angle: 14,
+            len: 2,
+        },
+        Op::Step {
+            from: 19,
+            angle: 23,
+            len: 3,
+        },
+        Op::Step {
+            from: 2,
+            angle: 11,
+            len: 2,
         },
         Op::Dup {
-            from: 30,
-            angle: 20,
+            from: 58,
+            angle: 7,
             len: 0,
         },
-        Op::Step {
-            from: 6,
-            angle: 6,
-            len: 1,
-        },
         Op::Arc {
-            from: 17,
-            angle: 7,
-            radius: 1,
-            sweep: 1,
-            ccw: false,
-        },
-        Op::Step {
-            from: 35,
-            angle: 19,
-            len: 1,
-        },
-        Op::Tangent {
-            arc: 0,
-            end: true,
-            forward: false,
-            len: 3,
+            from: 14,
+            angle: 17,
+            radius: 0,
+            sweep: 0,
+            ccw: true,
         },
     ],
     extras: vec![
         false,
         false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
         true,
+        true,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
         false,
         false,
         false,
@@ -2196,11 +1332,11 @@ fn probe_move_lands_exactly_9() {
     length: None,
 };
     let pick = Pick::Curves(
-    8380422305955308544,
+    16394186515792174284,
 );
     let offset = DVec2::new(
-    -11.667140951098396,
-    14.843085762833717,
+    0.6931347213607743,
+    -19.189392075459143,
 );
     let steps = 1;
     explained(moves_land(&plan, &pick, offset, steps)).unwrap();

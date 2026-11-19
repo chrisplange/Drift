@@ -2716,3 +2716,118 @@ fn e_result_depends_on_size_flung_centre_whatever_the_round_off() {
         )
     );
 }
+
+#[test]
+#[ignore = "probe"]
+fn probe_similarity() {
+    let plan = Plan {
+    ops: vec![
+        Op::Arc {
+            from: 0,
+            angle: 9,
+            radius: 0,
+            sweep: 2,
+            ccw: false,
+        },
+        Op::Arc {
+            from: 3,
+            angle: 13,
+            radius: 0,
+            sweep: 0,
+            ccw: false,
+        },
+        Op::Step {
+            from: 15,
+            angle: 2,
+            len: 0,
+        },
+        Op::Step {
+            from: 61,
+            angle: 5,
+            len: 0,
+        },
+    ],
+    extras: vec![
+        false,
+        false,
+        true,
+        false,
+        false,
+        true,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+    ],
+    fix: Some(
+        10,
+    ),
+    length: None,
+};
+    let pick = Pick::Curves(
+    2268841574146122888,
+);
+    let offset = DVec2::new(0.0, -19.870537599480965);
+    let steps: u32 = 8;
+    let t = Similarity {
+    scale: 0.25,
+    turn: 0.0,
+    shift: DVec2::new(0.0, -124.96573687083355),
+};
+    let sketch = plan.sketch().unwrap();
+    let mut t = t;
+    if sketch.has_hv() {
+        t.turn = (t.turn / 90.0).round() * 90.0;
+    }
+    let mut ends = Vec::new();
+    for (name, s, o) in [("plain", Similarity::IDENTITY, offset), ("moved", t, t.vector(offset))] {
+        eprintln!("==== {name}");
+        let mut built = Built::new(&sketch, s).unwrap();
+        let ids = pick.ids(&built);
+        let run = drag(&mut built, &ids, o, steps).unwrap();
+        eprintln!("refused {} committed {}", run.refused, run.committed);
+        eprintln!("end {:?}", run.end);
+        ends.push(run.end.clone());
+    }
+    for (i, (a, b)) in ends[0].iter().zip(&ends[1]).enumerate() {
+        eprintln!("point {i}: off {:.3e} of size", t.point(*a).distance(*b) / t.scale);
+    }
+}

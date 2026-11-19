@@ -2535,6 +2535,7 @@ fn newton(
             // corner flung hundreds of millimetres out to meet a Parallel's sine, #362's seed 32).
             // The kept shapes rank below: a held radius the pointer moves is the shapes' stage's to
             // keep or report (`unkept`), and the drag's to stop on.
+            let mut refresh = false;
             while rows_hold && (pointer_rank < 2 || anchoring) {
                 let rank = pointer_rank;
                 // (Where each column of this rank is asked to be: its goal, or for the last
@@ -2597,8 +2598,28 @@ fn newton(
                             .iter()
                             .map(|goal| goal.is_some_and(|(_, r)| r <= rank))
                             .collect();
-                        let landed =
-                            reproject(&mut trial, &on_the_rows, &fixed, &mut back_normal, false, None);
+                        // (With the kept shapes held where they are, as this rank's steps held
+                        // them, unless it had to reshape them: a landing that let a held radius
+                        // go by what the rows' tolerance lets the rest move would read as a
+                        // radius the drag changed.)
+                        let hold: Option<Vec<Option<f64>>> = (!pointer_soft).then(|| {
+                            shapes
+                                .iter()
+                                .map(|shape| {
+                                    shape
+                                        .offset(|p| values[sys.group_of[p]])
+                                        .map(|(_, off)| off)
+                                })
+                                .collect()
+                        });
+                        let landed = reproject(
+                            &mut trial,
+                            &on_the_rows,
+                            &fixed,
+                            &mut back_normal,
+                            false,
+                            hold.as_deref(),
+                        );
                         let rest: Vec<f64> = comp
                             .unknowns
                             .iter()
@@ -2636,12 +2657,17 @@ fn newton(
                             res = trial_res;
                             jac = trial_jac;
                             own = trial_own;
+                            refresh = true;
                         }
                     }
                     pointer_stopped = false;
                     pointer_soft = false;
                     pointer_rank += 1;
                     pointer_radius = pointer_across;
+                    if refresh {
+                        // (The geometry moved: the shapes and the rows' scales are read again.)
+                        break;
+                    }
                     continue;
                 }
                 // What this rank's step leaves where it is (the ranks above), and how mobile each
@@ -2829,6 +2855,13 @@ fn newton(
                 let first = once(&lowered(&first_once));
                 let stationary = dot(&gradient, &first);
                 let b = bar.get().length;
+                if std::env::var_os("DRIFT_NEWTON_DEBUG").is_some() {
+                    let offs: Vec<String> = shapes
+                        .iter()
+                        .map(|s| format!("{:.3e}", s.offset(|p| values[sys.group_of[p]]).map_or(f64::NAN, |(_, o)| o)))
+                        .collect();
+                    eprintln!("  shapes at rank {rank}: {offs:?} keep {keep_shapes:?}");
+                }
                 if stage_of != (rank, pointer_soft) {
                     stage_of = (rank, pointer_soft);
                     pointer_finished = false;
@@ -2986,7 +3019,10 @@ fn newton(
                     // than a hundred times that, the rows are finished to round-off, where it
                     // stands first and then where each trial lands, so that the step is judged on
                     // what it did.
-                    let finish = promised <= FINISH_UNDER * b * (2.0 * phi_now).sqrt();
+                    // (The anchor's always: it holds the kept shapes where they settled, and
+                    // left a bar off that, a held radius would read as one the drag grew.)
+                    let finish =
+                        rank == 2 || promised <= FINISH_UNDER * b * (2.0 * phi_now).sqrt();
                     // Stationary: the model's own step, whole, moves nothing by more than the bar
                     // (or promises less than the bar squared). Not a test on how much nearer the
                     // step brings the goals: where they are out of reach the misfit is flat, and
@@ -3133,7 +3169,7 @@ fn newton(
                 }
                 break;
             }
-            if rows_hold && (pointer_rank < 2 || anchoring) {
+            if rows_hold && (pointer_rank < 2 || anchoring || refresh) {
                 continue;
             }
             if let Some((_, conv)) = pending.take() {

@@ -1117,6 +1117,11 @@ impl Editor {
             })
         });
         if grew {
+            if std::env::var_os("DRIFT_PATH_DEBUG").is_some() {
+                for &(id, was) in &part.held_radii {
+                    eprintln!("  held radius {id:?} was {was} now {:?}", drift_solver::radius_of(&self.doc, id));
+                }
+            }
             return true;
         }
         // Nor is a line the drag doesn't move crushed to nothing at the pace of #278's escape,

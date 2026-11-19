@@ -1604,12 +1604,12 @@ impl Editor {
                     to: targets(at),
                     anchor: match std::env::var("DRIFT_ANCHOR").as_deref() {
                         Ok("none") => HashMap::new(),
-                        Ok("step") => here
+                        Ok("start") => anchor.clone(),
+                        _ => here
                             .points
                             .iter()
                             .flat_map(|&(id, p)| [(Param::X(id), p.x), (Param::Y(id), p.y)])
                             .collect(),
-                        _ => anchor.clone(),
                     },
                     scope: Some(frame.scope.clone()),
                     // Rounds keep their size where the move leaves it open, at their size as

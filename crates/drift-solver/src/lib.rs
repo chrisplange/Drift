@@ -684,6 +684,11 @@ const CG_RESOLVED: f64 = 1e-14;
 /// a double root's last hair, far below anything a relation holds a goal off by.
 const NEAR_BARS: f64 = 1e4;
 
+/// Where a pointer step that takes the rows' curvature has its misfit, as `r·v`, down to this
+/// share of where it began, it is resolved (see [`CG_RESOLVED`] and `newton`'s pointer stage):
+/// a thousandth of its gradient.
+const CURVED_RESOLVED: f64 = 1e-6;
+
 /// A pointer step that gains less than this share of what it promised, or more than one over
 /// it, has mispredicted: the rows' curvature counts in the steps after it (see `newton`'s
 /// pointer stage).
@@ -3091,11 +3096,13 @@ fn newton(
                             0.0
                         }
                     };
-                    for _ in 0..if curved { n } else { terms.len() } {
+                    for k in 0..if curved { n } else { terms.len() } {
                         let hp = curvature(&p, curved);
                         let kappa = dot(&p, &hp);
                         if kappa <= 0.0 && curved {
-                            return None;
+                            // (From the first direction, the way the misfit itself points:
+                            // the model says nothing. From a later one: the step so far.)
+                            return (k > 0).then_some((x, hx, false));
                         }
                         if kappa <= 0.0 {
                             let t = to_edge(&x, &p);
@@ -3116,7 +3123,12 @@ fn newton(
                         r.iter_mut().zip(&hp).for_each(|(r, h)| *r += alpha * h);
                         v = project(&r);
                         let rv_next = dot(&r, &v);
-                        if rv_next.max(0.0).sqrt() <= b || rv_next <= CG_RESOLVED * stationary {
+                        // (With the rows' curvature, resolved to a thousandth: Newton's step
+                        // needs no more to close in, and what is left past that is the
+                        // differenced gradients' round-off, along which the model's curvature
+                        // is noise of either sign.)
+                        let resolved = if curved { CURVED_RESOLVED } else { CG_RESOLVED };
+                        if rv_next.max(0.0).sqrt() <= b || rv_next <= resolved * stationary {
                             break;
                         }
                         let beta = rv_next / rv;

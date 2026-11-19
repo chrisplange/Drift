@@ -1503,6 +1503,14 @@ impl Editor {
                 .iter()
                 .any(|q| frame.dragged_set.contains(q))
         };
+        // Where the drag began: each step's last rank brings back towards it what nothing
+        // above decides, so the frame ends where its target says, whatever steps its path took
+        // (`SolveOptions::anchor`).
+        let anchor: HashMap<Param, f64> = before
+            .points
+            .iter()
+            .flat_map(|&(id, p)| [(Param::X(id), p.x), (Param::Y(id), p.y)])
+            .collect();
         let mut t = 0.0f64;
         let mut h = 1.0f64;
         // How fast the last step moved the geometry (see [`SPEED_UP`]), and how fast the step
@@ -1589,6 +1597,7 @@ impl Editor {
                     dragged: frame.dragged.to_vec(),
                     carried: carried.to_vec(),
                     to: targets(at),
+                    anchor: anchor.clone(),
                     scope: Some(frame.scope.clone()),
                     // Rounds keep their size where the move leaves it open, at their size as
                     // the drag began (a drag's kept radii are held; the solve lets go of a

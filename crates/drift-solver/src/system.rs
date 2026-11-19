@@ -94,6 +94,9 @@ pub struct System {
     /// the solve's second rank, after the relations (see `crate::newton`). Empty, or `None`
     /// for a group asked nothing.
     pub targets: Vec<Option<(f64, usize)>>,
+    /// Per group, where the solve's last rank brings it as near as it can (see
+    /// `crate::SolveOptions::anchor`). Empty, or `None` for a group with none.
+    pub anchors: Vec<Option<f64>>,
 }
 
 /// A shape to keep where the relations leave it open (see [`System::keep`]).
@@ -1346,6 +1349,7 @@ impl System {
             keep: keep_shape,
             bars: Vec::new(),
             targets: Vec::new(),
+            anchors: Vec::new(),
             arcs,
             centres_only,
         }

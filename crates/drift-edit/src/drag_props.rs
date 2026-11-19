@@ -1078,6 +1078,14 @@ fn invariant(
     let (ids_a, ids_b) = (pick.ids(&plain), pick.ids(&moved));
     let a = drag(&mut plain, &ids_a, offset, steps)?;
     let b = drag(&mut moved, &ids_b, t.vector(offset), steps)?;
+    if std::env::var_os("DRIFT_PROBE_ENDS").is_some() {
+        eprintln!("ends: committed {:?} vs {:?}", (a.committed, a.refused), (b.committed, b.refused));
+        for i in 0..sketch.points.len() {
+            let back = (b.end[i] - t.shift) / t.scale;
+            let back = drift_core::blocks::exact_rotor(-t.turn).rotate(back);
+            eprintln!("  {i}: {:?} | {:?} | apart {:.3e}", a.end[i], back, (a.end[i] - back).length());
+        }
+    }
     prop_assert_eq!(
         (a.committed, a.refused),
         (b.committed, b.refused),

@@ -117,55 +117,6 @@ pub fn rref(m: &mut Matrix, tol: f64) -> Vec<usize> {
     pivots
 }
 
-/// The eigenvalues and eigenvectors of a small symmetric matrix (`a`, `n × n`, row-major,
-/// overwritten), by Jacobi's rotations: the vectors as the columns of the row-major matrix
-/// returned, `a = V·diag(values)·Vᵀ`.
-pub fn symmetric_eigen(a: &mut [f64], n: usize) -> (Vec<f64>, Vec<f64>) {
-    let mut v = vec![0.0; n * n];
-    for i in 0..n {
-        v[i * n + i] = 1.0;
-    }
-    for _ in 0..64 {
-        let off: f64 = (0..n)
-            .flat_map(|i| (0..n).filter(move |&j| j != i).map(move |j| (i, j)))
-            .map(|(i, j)| a[i * n + j] * a[i * n + j])
-            .sum();
-        let diag: f64 = (0..n).map(|i| a[i * n + i] * a[i * n + i]).sum();
-        if off <= 1e-30 * diag || off == 0.0 {
-            break;
-        }
-        for p in 0..n {
-            for q in p + 1..n {
-                let apq = a[p * n + q];
-                if apq == 0.0 {
-                    continue;
-                }
-                let theta = (a[q * n + q] - a[p * n + p]) / (2.0 * apq);
-                let t = theta.signum() / (theta.abs() + (theta * theta + 1.0).sqrt());
-                let t = if theta == 0.0 { 1.0 } else { t };
-                let c = 1.0 / (t * t + 1.0).sqrt();
-                let s = t * c;
-                for k in 0..n {
-                    let (akp, akq) = (a[k * n + p], a[k * n + q]);
-                    a[k * n + p] = c * akp - s * akq;
-                    a[k * n + q] = s * akp + c * akq;
-                }
-                for k in 0..n {
-                    let (apk, aqk) = (a[p * n + k], a[q * n + k]);
-                    a[p * n + k] = c * apk - s * aqk;
-                    a[q * n + k] = s * apk + c * aqk;
-                }
-                for k in 0..n {
-                    let (vkp, vkq) = (v[k * n + p], v[k * n + q]);
-                    v[k * n + p] = c * vkp - s * vkq;
-                    v[k * n + q] = s * vkp + c * vkq;
-                }
-            }
-        }
-    }
-    ((0..n).map(|i| a[i * n + i]).collect(), v)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -179,19 +130,6 @@ mod tests {
         assert!((b[0] - 0.5).abs() < 1e-15 && b[1].abs() < 1e-15);
         let mut singular = vec![1.0, 1.0, 1.0, 1.0];
         assert!(!cholesky_solve(&mut singular, 2, &mut [1.0, 1.0]));
-    }
-
-    #[test]
-    fn symmetric_eigen_rebuilds_its_matrix() {
-        let a = [4.0, 1.0, -2.0, 1.0, 3.0, 0.5, -2.0, 0.5, -1.0];
-        let mut work = a;
-        let (values, v) = symmetric_eigen(&mut work, 3);
-        for i in 0..3 {
-            for j in 0..3 {
-                let rebuilt: f64 = (0..3).map(|k| v[i * 3 + k] * values[k] * v[j * 3 + k]).sum();
-                assert!((rebuilt - a[i * 3 + j]).abs() < 1e-12);
-            }
-        }
     }
 
     #[test]

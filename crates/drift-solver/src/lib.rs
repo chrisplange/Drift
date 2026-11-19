@@ -684,6 +684,10 @@ const CG_RESOLVED: f64 = 1e-14;
 /// a double root's last hair, far below anything a relation holds a goal off by.
 const NEAR_BARS: f64 = 1e4;
 
+/// How many steps of a pointer stage that holds the kept shapes may fail to come back onto
+/// the rows and the shapes before the stage stops where it is (see `newton`'s pointer stage).
+const UNKEPT_STEPS: usize = 3;
+
 /// How many of the anchor's steps in a row may be refused before it stops where it is (see
 /// `newton`'s pointer stage).
 const ANCHOR_REFUSALS: usize = 3;
@@ -2450,6 +2454,8 @@ fn newton(
     let mut near_tried: Option<usize> = None;
     // (The anchor's steps refused in a row: see the pointer stage.)
     let mut anchor_refused = 0;
+    // (A pointer stage's steps the kept shapes, held as rows, didn't take back: see there.)
+    let mut unkept_steps = 0;
     let mut keep_shapes: Option<Vec<Option<f64>>> = None;
     // (Its rows are finished to round-off where it stands: see the pointer stage.)
     let mut pointer_finished = false;
@@ -2970,6 +2976,7 @@ fn newton(
                     stage_of = (rank, pointer_soft);
                     pointer_finished = false;
                     pointer_curved = false;
+                    unkept_steps = 0;
                     keep_shapes = hold_shapes.then(|| {
                         shapes
                             .iter()
@@ -3277,6 +3284,18 @@ fn newton(
                                 if rank == 2 {
                                     anchor_refused += 1;
                                     done |= anchor_refused >= ANCHOR_REFUSALS;
+                                }
+                                // (A step the rows and the kept shapes held with them don't
+                                // take back: the shapes can't be kept along it. A few such, each
+                                // a quarter the last, and the goals are closing on where the
+                                // shapes stop being kept at all, the two arcs' circles parting
+                                // (e13), a quarter at a time: this stage, which keeps the
+                                // shapes, has gone as far as it goes, and the next, which
+                                // reshapes what the dragged dictate, says whether a held radius
+                                // would have to give.)
+                                if rank < 2 && !pointer_soft && after.is_none() {
+                                    unkept_steps += 1;
+                                    done |= unkept_steps >= UNKEPT_STEPS;
                                 }
                             }
                         }
@@ -3861,10 +3880,12 @@ fn newton(
     if in_stage2 && converged(&res, values) {
         stage2(6, last_stationary);
     }
+    // (A drag's step that ran out before its goals' ranks were done hasn't finished, whether
+    // or not its rows hold: its dragged are part way, and a path takes a shorter step.)
     finish(
         Stop::Cap,
         MAX_ITERATIONS,
-        converged(&res, values),
+        converged(&res, values) && (pointer_rank == 2 || goals.iter().all(|g| g.is_none())),
         most_ratio,
         unkept(&free_radius, values),
     )

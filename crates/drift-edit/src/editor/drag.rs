@@ -1558,8 +1558,13 @@ impl Editor {
                 .filter_map(|&line| {
                     let (a, b, was) = direction(self, line)?;
                     // (A line too short to see has no way round to keep: imports bring in
-                    // such slivers.)
-                    (!dragged_point(a) && !dragged_point(b) && was.length() > NO_WAY_ROUND)
+                    // such slivers. Judged as the drag found it: a line the path shortens
+                    // keeps its way round to the end, through zero too. Judged where each
+                    // step began, a line shrunk below this at one step went unchecked at the
+                    // next, which turned it round unseen, at a point of the path that depends
+                    // on the drawing's size: the similarity property.)
+                    let drawn = start_of.get(&b).copied()? - start_of.get(&a).copied()?;
+                    (!dragged_point(a) && !dragged_point(b) && drawn.length() > NO_WAY_ROUND)
                         .then_some((line, a, b, was))
                 })
                 .chain(frame.lowered_lines.iter().filter_map(|&line| {

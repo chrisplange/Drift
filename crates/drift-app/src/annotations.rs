@@ -67,7 +67,7 @@ impl AnnotationColors {
                 conflict: Color32::from_rgb(0xff, 0x5d, 0x5d),
                 preview: Color32::from_rgb(0x5e, 0xd3, 0xa3),
                 driven: Color32::from_rgb(0x8a, 0x90, 0x99),
-                text_background: Color32::from_rgb(0x1b, 0x1d, 0x21),
+                text_background: crate::theme::canvas(true),
                 glyph_background: Color32::from_rgb(0x2a, 0x2e, 0x35),
             }
         } else {
@@ -78,7 +78,7 @@ impl AnnotationColors {
                 conflict: Color32::from_rgb(0xd3, 0x2f, 0x2f),
                 preview: Color32::from_rgb(0x13, 0x9a, 0x6a),
                 driven: Color32::from_rgb(0x7a, 0x80, 0x88),
-                text_background: Color32::from_rgb(0xfb, 0xfb, 0xfa),
+                text_background: crate::theme::canvas(false),
                 glyph_background: Color32::from_rgb(0xe8, 0xea, 0xee),
             }
         }

@@ -2,48 +2,6 @@
 
 use crate::*;
 
-/// Keys as keycaps ("Ctrl+Z / Ctrl+Y"); descriptions ("Click inside a closed area") as text.
-pub(crate) fn keycaps(ui: &mut egui::Ui, keys: &str) {
-    ui.spacing_mut().item_spacing.x = 4.0;
-    for (i, piece) in keys.split(" / ").enumerate() {
-        if i > 0 {
-            ui.label(egui::RichText::new("/").weak());
-        }
-        let is_key = !piece.contains(' ') || piece.len() <= 3;
-        if !is_key {
-            ui.label(egui::RichText::new(piece).weak());
-            continue;
-        }
-        let text = egui::RichText::new(piece).size(theme::size::CAPTION + 0.5);
-        let galley = egui::WidgetText::from(text).into_galley(
-            ui,
-            Some(egui::TextWrapMode::Extend),
-            f32::INFINITY,
-            egui::TextStyle::Body,
-        );
-        let size = galley.size() + egui::vec2(12.0, 6.0);
-        let (r, _) = ui.allocate_exact_size(size, egui::Sense::hover());
-        let v = ui.visuals();
-        ui.painter().rect(
-            r,
-            theme::radius::CONTROL,
-            v.faint_bg_color,
-            egui::Stroke::new(1.0, theme::hairline(ui)),
-            egui::StrokeKind::Inside,
-        );
-        // A deeper bottom edge, like a key.
-        ui.painter().line_segment(
-            [
-                r.left_bottom() + egui::vec2(3.0, -0.5),
-                r.right_bottom() + egui::vec2(-3.0, -0.5),
-            ],
-            egui::Stroke::new(1.5, theme::hairline(ui)),
-        );
-        ui.painter()
-            .galley(r.min + egui::vec2(6.0, 3.0), galley, v.text_color());
-    }
-}
-
 /// The windows Esc closes, by their egui ids, frontmost first when egui can't tell.
 const WINDOWS: [&str; 12] = [
     "unrestored",
@@ -426,7 +384,7 @@ impl DriftApp {
                                             .with_main_wrap(true),
                                         |ui| {
                                             ui.set_min_width(150.0);
-                                            keycaps(ui, &keys);
+                                            theme::keycaps(ui, &keys);
                                         },
                                     );
                                     ui.add(egui::Label::new(action).wrap());

@@ -272,7 +272,7 @@ impl DriftApp {
                     "Boundary lost: its curves no longer enclose an area. It keeps its last \
                  shape until you re-pick it.",
                 )
-                .color(egui::Color32::from_rgb(0xff, 0x5d, 0x5d))
+                .color(crate::theme::error_color(ui.visuals().dark_mode))
                 .small(),
             );
             if ui.button("Re-pick boundary").clicked() {

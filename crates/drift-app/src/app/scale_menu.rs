@@ -79,7 +79,7 @@ pub(crate) fn scale_menu(
                 ui.label(
                     egui::RichText::new(error)
                         .small()
-                        .color(egui::Color32::from_rgb(0xff, 0x5d, 0x5d)),
+                        .color(crate::theme::error_color(ui.visuals().dark_mode)),
                 );
             }
         });

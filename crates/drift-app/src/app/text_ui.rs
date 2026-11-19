@@ -181,7 +181,7 @@ impl DriftApp {
                      shown. The drawing keeps the name, and uses it where it is found."
                 ))
                 .small()
-                .color(egui::Color32::from_rgb(0xff, 0x9f, 0x0a)),
+                .color(crate::theme::amber(ui.visuals().dark_mode)),
             );
         } else if let Some(family) = &drawing {
             let kept = self
@@ -698,7 +698,7 @@ impl DriftApp {
                      text keeps the font's name, and uses it where it is found."
                 ))
                 .small()
-                .color(egui::Color32::from_rgb(0xff, 0x9f, 0x0a)),
+                .color(crate::theme::amber(ui.visuals().dark_mode)),
             );
         }
         if edited != t {

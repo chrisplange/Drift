@@ -1514,15 +1514,7 @@ impl DriftApp {
         self.drawing.view.pointer = None;
         let painter = ui.painter_at(rect);
         let dark = ui.visuals().dark_mode;
-        painter.rect_filled(
-            rect,
-            0.0,
-            if dark {
-                egui::Color32::from_rgb(0x2a, 0x2c, 0x31)
-            } else {
-                egui::Color32::from_rgb(0xd5, 0xd8, 0xde)
-            },
-        );
+        painter.rect_filled(rect, 0.0, crate::theme::desk(dark));
         let Some(sheet) = self.drawing.editor.doc.sheet(id).cloned() else {
             return;
         };
@@ -2479,7 +2471,7 @@ impl DriftApp {
                     if n == 1 { "" } else { "s" },
                     if n == 1 { "that sheet" } else { "them all" }
                 ))
-                .color(egui::Color32::from_rgb(0xff, 0x5d, 0x5d)),
+                .color(crate::theme::error_color(ui.visuals().dark_mode)),
             );
             ui.horizontal(|ui| {
                 if ui.button("Delete it").clicked() {

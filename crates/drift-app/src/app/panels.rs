@@ -1357,8 +1357,7 @@ impl DriftApp {
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
                 for option in &options {
-                    let chip = egui::Button::new(option.label).corner_radius(12.0);
-                    let mut response = ui.add(chip);
+                    let mut response = theme::chip(ui, option.label);
                     if !is_dimension && let Some(role) = ed.relation_role(option.label) {
                         response = response.on_hover_text(role);
                     }
@@ -1392,8 +1391,7 @@ impl DriftApp {
                 );
                 ui.horizontal_wrapped(|ui| {
                     for option in &pins {
-                        let chip = egui::Button::new(option.label).corner_radius(12.0);
-                        if ui.add(chip).clicked() {
+                        if theme::chip(ui, option.label).clicked() {
                             chosen = option.constraints.first().copied();
                         }
                     }
@@ -1758,7 +1756,7 @@ impl DriftApp {
                     };
                     let stacked = self.drawing.editor.overlapping_instances().len();
                     if !overlaps.is_empty() || stacked > 0 {
-                        let amber = egui::Color32::from_rgb(0xff, 0x9f, 0x0a);
+                        let amber = crate::theme::amber(ui.visuals().dark_mode);
                         let text = format!("{} overlapping", overlaps.len() + stacked);
                         let pill = theme::pill(ui, &text, amber);
                         let click = ui
@@ -2054,7 +2052,7 @@ impl DriftApp {
 /// The marker on a redundant relation's row (#305): an equals sign, already implied.
 fn redundant_marker(ui: &mut egui::Ui) {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
-    let color = egui::Color32::from_rgb(0xff, 0x9f, 0x0a);
+    let color = crate::theme::amber(ui.visuals().dark_mode);
     let c = rect.center();
     for dy in [-2.0, 2.0] {
         ui.painter().line_segment(

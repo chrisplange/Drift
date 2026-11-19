@@ -100,17 +100,93 @@ pub fn set_look(ctx: &egui::Context, look: Look) {
     apply(ctx);
 }
 
+/// One of the three looks' set of colours.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Skin {
+    Midnight,
+    Obsidian,
+    Light,
+}
+
+impl Skin {
+    #[cfg(test)]
+    const ALL: [Skin; 3] = [Skin::Midnight, Skin::Obsidian, Skin::Light];
+
+    /// The one in force for the dark or the light appearance.
+    fn current(dark: bool) -> Skin {
+        match (dark, dark_look()) {
+            (false, _) => Skin::Light,
+            (true, DarkLook::Midnight) => Skin::Midnight,
+            (true, DarkLook::Obsidian) => Skin::Obsidian,
+        }
+    }
+
+    fn accent(self) -> Color32 {
+        match self {
+            Skin::Midnight => Color32::from_rgb(0x3d, 0x8b, 0xfd),
+            Skin::Obsidian => Color32::from_rgb(0xff, 0x9d, 0x2a),
+            Skin::Light => Color32::from_rgb(0x1f, 0x6f, 0xeb),
+        }
+    }
+
+    /// One surface model in every look: the canvas is the darkest well, the panes sit above
+    /// it, and what floats (menus, dialogs, popovers) sits above the panes.
+    fn neutrals(self) -> Neutrals {
+        let c = |hex: u32| Color32::from_rgb((hex >> 16) as u8, (hex >> 8) as u8, hex as u8);
+        match self {
+            Skin::Midnight => Neutrals {
+                panel: c(0x21_23_29),
+                raised: c(0x2b_2e_35),
+                field: c(0x15_16_1a),
+                faint: c(0x28_2a_31),
+                control: c(0x31_34_3c),
+                hover: c(0x3b_3f_48),
+                pressed: c(0x47_4b_55),
+                border: c(0x36_39_40),
+                divider: c(0x0d_0e_11),
+                control_border: c(0x41_45_4f),
+                text: c(0xe7_e8_ec),
+                secondary: c(0xb1_b5_be),
+                tertiary: c(0x94_9a_a5),
+            },
+            Skin::Obsidian => Neutrals {
+                panel: c(0x23_23_25),
+                raised: c(0x2d_2d_30),
+                field: c(0x17_17_18),
+                faint: c(0x2a_2a_2c),
+                control: c(0x33_33_36),
+                hover: c(0x3d_3d_41),
+                pressed: c(0x49_49_4d),
+                border: c(0x38_38_3b),
+                divider: c(0x0f_0f_10),
+                control_border: c(0x43_43_47),
+                text: c(0xe8_e8_ea),
+                secondary: c(0xb4_b4_ba),
+                tertiary: c(0x96_96_9e),
+            },
+            Skin::Light => Neutrals {
+                panel: c(0xec_ec_ee),
+                raised: c(0xff_ff_ff),
+                field: c(0xff_ff_ff),
+                faint: c(0xe2_e2_e5),
+                control: c(0xde_de_e1),
+                hover: c(0xd3_d3_d7),
+                pressed: c(0xc7_c7_cc),
+                border: c(0xd6_d6_da),
+                divider: c(0xbc_bc_c2),
+                control_border: c(0xc2_c2_c7),
+                text: c(0x1d_1d_1f),
+                secondary: c(0x4a_4a_50),
+                tertiary: c(0x68_68_6f),
+            },
+        }
+    }
+}
+
 /// The accent colour: blue in Midnight and Light, orange in Obsidian. Used sparingly: the
 /// one primary button, focus, and the icon or text of whatever is current.
 pub fn accent(dark: bool) -> Color32 {
-    if dark {
-        match dark_look() {
-            DarkLook::Midnight => Color32::from_rgb(0x3d, 0x8b, 0xfd),
-            DarkLook::Obsidian => Color32::from_rgb(0xff, 0x9d, 0x2a),
-        }
-    } else {
-        Color32::from_rgb(0x1f, 0x6f, 0xeb)
-    }
+    Skin::current(dark).accent()
 }
 
 /// A faint tint of the accent, behind the current item in a list or rail.
@@ -118,98 +194,78 @@ pub fn accent_soft(dark: bool) -> Color32 {
     accent(dark).gamma_multiply(if dark { 0.22 } else { 0.14 })
 }
 
-/// The interface's neutrals, from the canvas to the strongest text.
+/// The interface's neutrals, from the deepest well to the strongest text.
 #[derive(Clone, Copy)]
 pub struct Neutrals {
     /// Docked panels, bars and the tool rail.
     pub panel: Color32,
     /// Dialogs, floating panels, menus and popups: a step above the panels.
     pub raised: Color32,
-    /// Text fields.
+    /// Text fields and the tracks of segmented controls: wells in a pane.
     pub field: Color32,
-    /// Quiet fills (code, key caps, stat tiles).
+    /// Quiet fills (code, stat tiles).
     pub faint: Color32,
     /// Buttons and other controls, at rest, hovered and pressed.
     pub control: Color32,
     pub hover: Color32,
     pub pressed: Color32,
-    /// Hairlines between sections and around panels.
+    /// Hairlines between sections and rows: quiet on a pane, and still there on what floats
+    /// above one (a menu's separators, a dialog's sections).
     pub border: Color32,
+    /// The line between two panes: darker than either (see [`divider`]).
+    pub divider: Color32,
     /// The outline of a control at rest.
     pub control_border: Color32,
     pub text: Color32,
     /// Labels and hints.
     pub secondary: Color32,
-    /// Captions, counts and disabled text.
+    /// Captions, counts and disabled text. It still reads (4.5:1) on a pane and on what
+    /// floats above one.
     pub tertiary: Color32,
 }
 
 pub fn neutrals(dark: bool) -> Neutrals {
-    let c = |r, g, b| Color32::from_rgb(r, g, b);
-    if dark && dark_look() == DarkLook::Midnight {
-        Neutrals {
-            panel: c(0x20, 0x22, 0x26),
-            raised: c(0x2a, 0x2d, 0x32),
-            field: c(0x16, 0x18, 0x1b),
-            faint: c(0x28, 0x2b, 0x30),
-            control: c(0x2e, 0x31, 0x36),
-            hover: c(0x38, 0x3c, 0x42),
-            pressed: c(0x43, 0x47, 0x4e),
-            border: c(0x33, 0x36, 0x3c),
-            control_border: c(0x3b, 0x3f, 0x46),
-            text: c(0xe6, 0xe7, 0xe9),
-            secondary: c(0xa3, 0xa7, 0xae),
-            tertiary: c(0x6f, 0x74, 0x7c),
-        }
-    } else if dark {
-        Neutrals {
-            panel: c(0x25, 0x25, 0x26),
-            raised: c(0x2f, 0x2f, 0x30),
-            field: c(0x19, 0x19, 0x1a),
-            faint: c(0x2b, 0x2b, 0x2c),
-            control: c(0x34, 0x34, 0x35),
-            hover: c(0x3f, 0x3f, 0x41),
-            pressed: c(0x4a, 0x4a, 0x4c),
-            border: c(0x2c, 0x2c, 0x2e),
-            control_border: c(0x42, 0x42, 0x44),
-            text: c(0xe3, 0xe3, 0xe4),
-            secondary: c(0xa1, 0xa1, 0xa4),
-            tertiary: c(0x70, 0x70, 0x74),
-        }
-    } else {
-        Neutrals {
-            panel: c(0xee, 0xef, 0xf1),
-            raised: Color32::WHITE,
-            field: Color32::WHITE,
-            faint: c(0xe6, 0xe8, 0xeb),
-            control: c(0xe2, 0xe4, 0xe8),
-            hover: c(0xd7, 0xda, 0xdf),
-            pressed: c(0xc9, 0xcd, 0xd3),
-            border: c(0xd9, 0xdb, 0xdf),
-            control_border: c(0xc6, 0xca, 0xd0),
-            text: c(0x1b, 0x1d, 0x21),
-            secondary: c(0x5d, 0x62, 0x6b),
-            tertiary: c(0x8a, 0x90, 0x99),
-        }
-    }
+    Skin::current(dark).neutrals()
 }
 
-/// Corner radii: controls (checkboxes included) and chips, menus and tooltips, dialogs and
+/// The line between two panes (a bar and the canvas, a dock and the canvas): darker than the
+/// panes, where [`hairline`] is the quiet line inside one.
+pub fn divider(dark: bool) -> Color32 {
+    neutrals(dark).divider
+}
+
+/// The drawing's background: the darkest surface of the interface, the same in both dark
+/// looks. One source for the canvas itself and for whatever is painted to match it (the
+/// active tab, handles, the gap behind dimension text): `drift_render`'s palette.
+pub fn canvas(dark: bool) -> Color32 {
+    let [r, g, b, _] = drift_render::Palette::themed(dark).background;
+    Color32::from_rgb(r, g, b)
+}
+
+/// The desk a sheet's paper lies on.
+pub fn desk(dark: bool) -> Color32 {
+    let [r, g, b, _] = drift_render::Palette::themed(dark).desk;
+    Color32::from_rgb(r, g, b)
+}
+
+/// Corner radii: controls (checkboxes included) and chips, menus and popovers, dialogs and
 /// floating panels.
 pub mod radius {
-    pub const CONTROL: u8 = 4;
-    pub const MENU: u8 = 6;
-    pub const DIALOG: u8 = 8;
+    pub const CONTROL: u8 = 5;
+    pub const MENU: u8 = 8;
+    pub const DIALOG: u8 = 10;
 }
 
 /// The type scale (points): captions and shortcuts, labels, body and controls, titles, and
-/// the start panel's and About's name.
+/// the start panel's and About's name. `SECTION` is a section's title, in bold.
 pub mod size {
     pub const CAPTION: f32 = 11.0;
-    pub const LABEL: f32 = 12.5;
-    pub const BODY: f32 = 13.0;
-    pub const TITLE: f32 = 15.0;
+    pub const SECTION: f32 = 11.5;
+    pub const LABEL: f32 = 12.0;
+    pub const BODY: f32 = 12.5;
+    pub const TITLE: f32 = 14.0;
     pub const DISPLAY: f32 = 20.0;
+    pub const MONO: f32 = 12.0;
 }
 
 /// Status colours for the definition pill.
@@ -235,6 +291,25 @@ pub fn warning_color(dark: bool) -> Color32 {
         Color32::from_rgb(0xef, 0x9f, 0x27)
     } else {
         Color32::from_rgb(0x85, 0x4f, 0x0b)
+    }
+}
+
+/// What went wrong or can't be done: an error's text, a destructive button, a lost fill.
+pub fn error_color(dark: bool) -> Color32 {
+    if dark {
+        Color32::from_rgb(0xff, 0x5d, 0x5d)
+    } else {
+        Color32::from_rgb(0xc6, 0x28, 0x28)
+    }
+}
+
+/// Amber, for a caution that asks to be read: a setting that overrides the drawing's, an
+/// import that left something out, the pie's slice that would conflict.
+pub fn amber(dark: bool) -> Color32 {
+    if dark {
+        Color32::from_rgb(0xff, 0x9f, 0x0a)
+    } else {
+        Color32::from_rgb(0x9a, 0x5b, 0x00)
     }
 }
 
@@ -362,19 +437,20 @@ fn style(s: &mut egui::Style, dark: bool) {
         (TextStyle::Heading, FontId::new(size::TITLE, bold())),
         (
             TextStyle::Monospace,
-            FontId::new(12.5, FontFamily::Monospace),
+            FontId::new(size::MONO, FontFamily::Monospace),
         ),
     ]
     .into();
 
-    // Spacing on a 4-point grid: 24-point controls, 16 points of padding in dialogs.
+    // Dense, as an instrument is: 24-point controls close together, 16 points of padding in
+    // dialogs.
     let sp = &mut s.spacing;
-    sp.item_spacing = vec2(8.0, 6.0);
-    sp.button_padding = vec2(10.0, 4.0);
+    sp.item_spacing = vec2(6.0, 5.0);
+    sp.button_padding = vec2(9.0, 3.0);
     sp.interact_size = vec2(24.0, 24.0);
     sp.icon_width = 14.0;
     sp.icon_width_inner = 8.0;
-    sp.menu_margin = Margin::same(6);
+    sp.menu_margin = Margin::same(5);
     sp.window_margin = Margin::same(16);
     sp.combo_width = 120.0;
     sp.icon_spacing = 6.0;
@@ -385,6 +461,8 @@ fn style(s: &mut egui::Style, dark: bool) {
         ..egui::style::ScrollStyle::floating()
     };
     s.interaction.tooltip_delay = 0.35;
+    // Quick: a fold or a hover settles before the eye follows it.
+    s.animation_time = 0.12;
 
     let n = neutrals(dark);
     let accent = accent(dark);
@@ -398,23 +476,27 @@ fn style(s: &mut egui::Style, dark: bool) {
     v.weak_text_color = Some(n.secondary);
     v.override_text_color = None;
     v.hyperlink_color = accent;
+    v.error_fg_color = error_color(dark);
+    v.warn_fg_color = amber(dark);
     // A quiet highlight for picked list items and selected text.
     v.selection.bg_fill = accent.gamma_multiply(if dark { 0.38 } else { 0.2 });
     v.selection.stroke = Stroke::new(1.0, if dark { n.text } else { accent });
     v.window_corner_radius = CornerRadius::same(radius::DIALOG);
     v.menu_corner_radius = CornerRadius::same(radius::MENU);
-    v.window_stroke = Stroke::new(1.0, if dark { n.control_border } else { n.border });
+    // What floats is opaque, edged, and lifted by a soft shadow: a deep one under dialogs,
+    // a short one under menus and popovers.
+    v.window_stroke = Stroke::new(1.0, n.control_border);
     v.window_shadow = Shadow {
-        offset: [0, 8],
-        blur: 24,
+        offset: [0, 12],
+        blur: 32,
         spread: 0,
-        color: Color32::from_black_alpha(if dark { 110 } else { 36 }),
+        color: Color32::from_black_alpha(if dark { 130 } else { 44 }),
     };
     v.popup_shadow = Shadow {
-        offset: [0, 4],
-        blur: 14,
+        offset: [0, 6],
+        blur: 18,
         spread: 0,
-        color: Color32::from_black_alpha(if dark { 90 } else { 28 }),
+        color: Color32::from_black_alpha(if dark { 110 } else { 32 }),
     };
     v.striped = false;
     v.indent_has_left_vline = false;
@@ -425,7 +507,7 @@ fn style(s: &mut egui::Style, dark: bool) {
     let w = &mut v.widgets;
     w.noninteractive.bg_fill = n.panel;
     w.noninteractive.weak_bg_fill = n.panel;
-    // Separators and panel edges: a hairline in the panel's own tone, never white.
+    // Separators and the lines inside a pane: a hairline in the pane's own tone, never white.
     w.noninteractive.bg_stroke = Stroke::new(1.0, n.border);
     w.noninteractive.fg_stroke = Stroke::new(1.0, n.text);
     w.noninteractive.corner_radius = radius;
@@ -448,52 +530,67 @@ fn style(s: &mut egui::Style, dark: bool) {
     w.inactive.fg_stroke = Stroke::new(1.0, n.text.gamma_multiply(0.92));
 }
 
-/// Letter-spaced caps for section titles, on one line.
-fn caps_job(ui: &egui::Ui, title: &str, color: Color32) -> egui::text::LayoutJob {
-    let mut job = egui::text::LayoutJob::single_section(
-        title.to_uppercase(),
-        egui::TextFormat {
-            font_id: FontId::new(10.5, bold()),
-            color,
-            extra_letter_spacing: 0.7,
-            ..Default::default()
-        },
-    );
-    job.wrap.max_rows = 1;
-    job.wrap.max_width = ui.available_width();
-    job
-}
-
 /// The hairline colour used between sections and rows.
 pub fn hairline(ui: &egui::Ui) -> Color32 {
     ui.visuals().widgets.noninteractive.bg_stroke.color
 }
 
-/// A quiet section header: letter-spaced caps followed by a hairline to the edge, with space
-/// above it.
-pub fn section(ui: &mut egui::Ui, title: &str) {
-    ui.add_space(14.0);
-    let color = ui.visuals().weak_text_color();
-    let galley = ui.painter().layout_job(caps_job(ui, title, color));
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 16.0), egui::Sense::hover());
-    let y = rect.center().y;
-    ui.painter().galley(
-        egui::pos2(rect.left(), y - galley.size().y / 2.0),
-        galley.clone(),
-        color,
+/// A section's title: sentence case, bold, in the secondary tone, on one line.
+fn title_galley(ui: &egui::Ui, title: &str, color: Color32) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::single_section(
+        title.to_owned(),
+        egui::TextFormat {
+            font_id: FontId::new(size::SECTION, bold()),
+            color,
+            ..Default::default()
+        },
     );
-    let x = rect.left() + galley.size().x + 8.0;
-    if x < rect.right() {
-        ui.painter().line_segment(
-            [egui::pos2(x, y), egui::pos2(rect.right(), y)],
+    job.wrap.max_rows = 1;
+    job.wrap.max_width = ui.available_width();
+    ui.painter().layout_job(job)
+}
+
+/// Height of a section's title row.
+const SECTION_ROW: f32 = 18.0;
+
+/// Room for a section's title, under the rule a section starts with: a hairline across the
+/// pane, 8 points below what came before and 6 above the title. The first thing in a pane
+/// needs no rule. Returns the title's row and the response of the whole.
+fn section_row(ui: &mut egui::Ui, sense: egui::Sense) -> (egui::Rect, egui::Response) {
+    let first = ui.min_rect().height() < 1.0;
+    // (The gap above the rule includes the spacing every row already leaves.)
+    let above = (8.0 - ui.spacing().item_spacing.y).max(0.0);
+    let lead = if first { 0.0 } else { above + 1.0 + 6.0 };
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), lead + SECTION_ROW), sense);
+    if !first {
+        ui.painter().hline(
+            rect.x_range(),
+            rect.top() + above + 0.5,
             Stroke::new(1.0, hairline(ui)),
         );
     }
-    ui.add_space(2.0);
+    let row = egui::Rect::from_min_max(
+        egui::pos2(rect.left(), rect.bottom() - SECTION_ROW),
+        rect.max,
+    );
+    (row, response)
 }
 
-/// A section that folds away: a chevron, the caps title and a hairline. Whether it is open
-/// is remembered (across runs). Returns the body's result when open.
+/// A section header: a hairline across the pane, then the title in sentence case.
+pub fn section(ui: &mut egui::Ui, title: &str) {
+    let color = ui.visuals().weak_text_color();
+    let (row, _) = section_row(ui, egui::Sense::hover());
+    let galley = title_galley(ui, title, color);
+    ui.painter().galley(
+        egui::pos2(row.left(), row.center().y - galley.size().y / 2.0),
+        galley,
+        color,
+    );
+}
+
+/// A section that folds away: the section's rule, a chevron and the title. Whether it is
+/// open is remembered (across runs). Returns the body's result when open.
 pub fn fold<R>(
     ui: &mut egui::Ui,
     id_salt: impl std::hash::Hash + std::fmt::Debug,
@@ -501,11 +598,9 @@ pub fn fold<R>(
     default_open: bool,
     body: impl FnOnce(&mut egui::Ui) -> R,
 ) -> Option<R> {
-    ui.add_space(14.0);
     let id = ui.make_persistent_id(("fold", id_salt));
     let mut open = ui.data_mut(|d| *d.get_persisted_mut_or(id, default_open));
-    let (rect, response) =
-        ui.allocate_exact_size(vec2(ui.available_width(), 18.0), egui::Sense::click());
+    let (row, response) = section_row(ui, egui::Sense::click());
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::CollapsingHeader, true, open, title)
     });
@@ -518,9 +613,9 @@ pub fn fold<R>(
     } else {
         ui.visuals().weak_text_color()
     };
-    let y = rect.center().y;
+    let y = row.center().y;
     // The chevron: right when folded, down when open.
-    let c = egui::pos2(rect.left() + 4.0, y);
+    let c = egui::pos2(row.left() + 5.0, y);
     let pts = if open {
         vec![
             c + vec2(-3.5, -1.8),
@@ -536,35 +631,28 @@ pub fn fold<R>(
     };
     ui.painter()
         .add(egui::Shape::line(pts, Stroke::new(1.4, color)));
-    let galley = ui.painter().layout_job(caps_job(ui, title, color));
-    let left = rect.left() + 14.0;
+    let galley = title_galley(ui, title, color);
     ui.painter().galley(
-        egui::pos2(left, y - galley.size().y / 2.0),
-        galley.clone(),
+        egui::pos2(row.left() + 16.0, y - galley.size().y / 2.0),
+        galley,
         color,
     );
-    let x = left + galley.size().x + 8.0;
-    if x < rect.right() {
-        ui.painter().line_segment(
-            [egui::pos2(x, y), egui::pos2(rect.right(), y)],
-            Stroke::new(1.0, hairline(ui)),
-        );
-    }
-    ui.add_space(2.0);
     open.then(|| body(ui))
 }
 
 /// A soft, full-width button for destructive actions.
 pub fn danger_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
-    let red = ui.visuals().error_fg_color;
+    let red = error_color(ui.visuals().dark_mode);
     ui.add(
         egui::Button::new(egui::RichText::new(label).color(red))
             .fill(red.gamma_multiply(0.12))
-            .min_size(vec2(ui.available_width(), 28.0)),
+            .stroke(Stroke::new(1.0, red.gamma_multiply(0.3)))
+            .min_size(vec2(ui.available_width(), 26.0)),
     )
 }
 
-/// A small, letter-spaced all-caps header (as in macOS sidebars).
+/// A small header over a group in a list or rail: sentence case, bold, in the tertiary
+/// tone.
 pub fn caps_header(ui: &mut egui::Ui, title: &str) {
     let color = neutrals(ui.visuals().dark_mode).tertiary;
     caps_header_in(ui, title, color);
@@ -572,31 +660,31 @@ pub fn caps_header(ui: &mut egui::Ui, title: &str) {
 
 /// [`caps_header`] in a colour (the tool rail's, in the secondary tone for contrast).
 pub fn caps_header_in(ui: &mut egui::Ui, title: &str, color: Color32) {
-    let mut job = egui::text::LayoutJob::default();
-    job.append(
-        &title.to_uppercase(),
-        6.0,
-        egui::TextFormat {
-            font_id: egui::FontId::new(10.0, bold()),
-            color,
-            extra_letter_spacing: 0.9,
-            ..Default::default()
-        },
-    );
-    ui.label(job);
+    let galley =
+        ui.painter()
+            .layout_no_wrap(title.to_owned(), FontId::new(size::CAPTION, bold()), color);
+    let size = vec2(galley.size().x + 6.0, galley.size().y);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
+    // Read out as it always was (in capitals), so it is never taken for the menu, the tab
+    // or the tool of the same name.
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Label, true, title.to_uppercase())
+    });
+    ui.painter()
+        .galley(rect.min + vec2(6.0, 0.0), galley, color);
 }
 
-/// The fill of a control that is on without calling for attention: a segmented control's
-/// picked segment, a pick filter toggle while everything is picked.
+/// The fill of a control that is on without calling for attention: a pick filter toggle
+/// while everything is picked.
 pub fn raised(dark: bool) -> Color32 {
     if dark {
-        Color32::from_rgb(0x4a, 0x4e, 0x56)
+        neutrals(dark).pressed
     } else {
         Color32::WHITE
     }
 }
 
-/// A segmented control (macOS-style): one rounded track with the selected segment raised.
+/// A segmented control: a well with the picked segment standing in it as a control.
 /// Returns the clicked segment.
 pub fn segmented<T: Copy + PartialEq>(
     ui: &mut egui::Ui,
@@ -605,12 +693,16 @@ pub fn segmented<T: Copy + PartialEq>(
 ) -> Option<T> {
     let dark = ui.visuals().dark_mode;
     let n = neutrals(dark);
-    let track = n.control;
-    let raised = raised(dark);
     let width = ui.available_width();
-    let height = 26.0;
+    let height = 24.0;
     let (rect, track_response) = ui.allocate_exact_size(vec2(width, height), egui::Sense::hover());
-    ui.painter().rect_filled(rect, radius::MENU, track);
+    ui.painter().rect(
+        rect,
+        radius::CONTROL + 1,
+        n.field,
+        Stroke::new(1.0, n.border),
+        egui::StrokeKind::Inside,
+    );
     // Segments share the width in proportion to their labels (so long ones fit).
     let font = FontId::new(size::LABEL, bold());
     let widths: Vec<f32> = options
@@ -638,22 +730,20 @@ pub fn segmented<T: Copy + PartialEq>(
             egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, *label)
         });
         if selected {
-            ui.painter().rect_filled(r, radius::CONTROL, raised);
-            if !dark {
-                ui.painter().rect_stroke(
-                    r,
-                    radius::CONTROL,
-                    Stroke::new(1.0, n.control_border),
-                    egui::StrokeKind::Inside,
-                );
-            }
+            ui.painter().rect(
+                r,
+                radius::CONTROL - 1,
+                n.control,
+                Stroke::new(1.0, n.control_border),
+                egui::StrokeKind::Inside,
+            );
         } else if response.hovered() {
-            ui.painter().rect_filled(r, radius::CONTROL, n.hover);
+            ui.painter().rect_filled(r, radius::CONTROL - 1, n.faint);
         }
-        let color = if selected {
-            ui.visuals().strong_text_color()
+        let color = if selected || response.hovered() {
+            n.text
         } else {
-            ui.visuals().text_color()
+            n.secondary
         };
         ui.painter().text(
             r.center(),
@@ -676,16 +766,16 @@ pub fn segmented<T: Copy + PartialEq>(
     clicked
 }
 
-/// A rounded "pill" label with a coloured dot, for status.
+/// A status label with a coloured dot, on a tint of its colour.
 pub fn pill(ui: &mut egui::Ui, text: &str, color: Color32) -> egui::Response {
-    let font = FontId::new(12.0, FontFamily::Proportional);
+    let font = FontId::new(size::LABEL, FontFamily::Proportional);
     let galley = ui
         .painter()
         .layout_no_wrap(text.to_owned(), font, ui.visuals().text_color());
-    let size = vec2(galley.size().x + 26.0, 20.0);
+    let size = vec2(galley.size().x + 25.0, 20.0);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
     ui.painter()
-        .rect_filled(rect, 10.0, color.gamma_multiply(0.16));
+        .rect_filled(rect, radius::CONTROL, color.gamma_multiply(0.16));
     let dot = rect.left_center() + vec2(10.0, 0.0);
     ui.painter().circle_filled(dot, 3.5, color);
     ui.painter().galley(
@@ -694,6 +784,126 @@ pub fn pill(ui: &mut egui::Ui, text: &str, color: Color32) -> egui::Response {
         ui.visuals().text_color(),
     );
     response
+}
+
+/// A chip: a small button for one of several things on offer (a relation, a dimension).
+/// `label` is what it shows and what it is called.
+pub fn chip(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    let n = neutrals(ui.visuals().dark_mode);
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        FontId::new(size::LABEL, FontFamily::Proportional),
+        n.text,
+    );
+    let size = vec2(galley.size().x + 16.0, 22.0);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    let enabled = ui.is_enabled();
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+    let fill = if !enabled {
+        n.faint
+    } else if response.is_pointer_button_down_on() {
+        n.pressed
+    } else if response.hovered() {
+        n.hover
+    } else {
+        n.control
+    };
+    ui.painter().rect(
+        rect,
+        radius::CONTROL,
+        fill,
+        Stroke::new(1.0, n.control_border),
+        egui::StrokeKind::Inside,
+    );
+    let color = if enabled { n.text } else { n.tertiary };
+    ui.painter().galley(
+        egui::pos2(rect.left() + 8.0, rect.center().y - galley.size().y / 2.0),
+        galley,
+        color,
+    );
+    response
+}
+
+/// The keys of a shortcut ("Ctrl+Shift+Z" is Ctrl, Shift and Z; "Ctrl++" is Ctrl and +).
+fn key_names(keys: &str) -> Vec<&str> {
+    let mut names = Vec::new();
+    let mut start = 0;
+    for (i, ch) in keys.char_indices() {
+        // A plus joins two keys when there is a key on each side of it.
+        if ch == '+' && i > start && i + 1 < keys.len() {
+            names.push(&keys[start..i]);
+            start = i + 1;
+        }
+    }
+    if start < keys.len() {
+        names.push(&keys[start..]);
+    }
+    names
+}
+
+/// A shortcut as key caps, one small rounded chip per key: "Ctrl+K" is a Ctrl cap and a K
+/// cap. The one way keys are shown, wherever they are.
+pub fn keycap(ui: &mut egui::Ui, keys: &str) -> egui::Response {
+    let dark = ui.visuals().dark_mode;
+    let n = neutrals(dark);
+    let font = FontId::new(size::CAPTION, FontFamily::Proportional);
+    let caps: Vec<_> = key_names(keys)
+        .into_iter()
+        .map(|key| {
+            ui.painter()
+                .layout_no_wrap(key.to_owned(), font.clone(), n.text)
+        })
+        .collect();
+    let (height, pad, gap) = (18.0_f32, 5.0, 3.0);
+    // (A single letter sits in a square cap.)
+    let cap_width = |g: &std::sync::Arc<egui::Galley>| (g.size().x + 2.0 * pad).max(height);
+    let width = caps.iter().map(cap_width).sum::<f32>() + gap * caps.len().saturating_sub(1) as f32;
+    let (rect, response) = ui.allocate_exact_size(vec2(width, height), egui::Sense::hover());
+    let mut x = rect.left();
+    for galley in caps {
+        let r =
+            egui::Rect::from_min_size(egui::pos2(x, rect.top()), vec2(cap_width(&galley), height));
+        x = r.right() + gap;
+        ui.painter().rect(
+            r,
+            radius::CONTROL - 1,
+            n.control,
+            Stroke::new(1.0, n.control_border),
+            egui::StrokeKind::Inside,
+        );
+        // A deeper bottom edge, like a key.
+        ui.painter().hline(
+            r.left() + 3.0..=r.right() - 3.0,
+            r.bottom() - 0.5,
+            Stroke::new(1.0, if dark { n.divider } else { n.tertiary }),
+        );
+        ui.painter().galley(
+            egui::pos2(
+                r.center().x - galley.size().x / 2.0,
+                r.center().y - galley.size().y / 2.0 - 0.5,
+            ),
+            galley,
+            n.text,
+        );
+    }
+    response
+}
+
+/// Keys as key caps ("Ctrl+Z / Ctrl+Y" is one shortcut or the other); a description in
+/// their place ("Click inside a closed area") as text.
+pub fn keycaps(ui: &mut egui::Ui, keys: &str) {
+    ui.spacing_mut().item_spacing.x = 4.0;
+    for (i, piece) in keys.split(" / ").enumerate() {
+        if i > 0 {
+            ui.label(egui::RichText::new("/").weak());
+        }
+        let is_key = !piece.contains(' ') || piece.len() <= 3;
+        if is_key {
+            keycap(ui, piece);
+        } else {
+            ui.label(egui::RichText::new(piece).weak());
+        }
+    }
 }
 
 /// Space between a row's label column and its value.
@@ -802,7 +1012,7 @@ pub fn menu_check(ui: &mut egui::Ui, on: bool, label: &str, keys: &str) -> egui:
 
 /// The frame every dialog shares (windows and modal prompts alike).
 pub fn dialog_frame(style: &egui::Style) -> egui::Frame {
-    egui::Frame::window(style).inner_margin(Margin::same(16))
+    egui::Frame::window(style).inner_margin(style.spacing.window_margin)
 }
 
 /// A dialog window: the shared frame, without egui's title bar (each dialog starts with
@@ -823,7 +1033,9 @@ pub fn close_button(ui: &mut egui::Ui) -> egui::Response {
     response
         .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Close window"));
     let n = neutrals(ui.visuals().dark_mode);
-    if response.hovered() {
+    if response.is_pointer_button_down_on() {
+        ui.painter().rect_filled(rect, radius::CONTROL, n.pressed);
+    } else if response.hovered() {
         ui.painter().rect_filled(rect, radius::CONTROL, n.hover);
     }
     let color = if response.hovered() {
@@ -853,7 +1065,7 @@ pub fn dialog_title(ui: &mut egui::Ui, title: &str, closable: bool) -> bool {
             });
         }
     });
-    ui.add_space(6.0);
+    ui.add_space(8.0);
     close
 }
 
@@ -869,6 +1081,7 @@ pub fn dialog_buttons<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R
         |ui| {
             ui.spacing_mut().interact_size.y = 28.0;
             ui.spacing_mut().button_padding.x = 14.0;
+            ui.spacing_mut().item_spacing.x = 8.0;
             add(ui)
         },
     )
@@ -894,5 +1107,104 @@ pub fn appearance(ui: &mut egui::Ui) {
     let options = Look::ALL.map(|l| (l, l.label()));
     if let Some(look) = segmented(ui, current, &options) {
         set_look(ui.ctx(), look);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Relative luminance of an opaque colour (WCAG 2).
+    fn luminance(c: Color32) -> f64 {
+        let lin = |v: u8| {
+            let v = f64::from(v) / 255.0;
+            if v <= 0.04045 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * lin(c.r()) + 0.7152 * lin(c.g()) + 0.0722 * lin(c.b())
+    }
+
+    fn contrast(a: Color32, b: Color32) -> f64 {
+        let (a, b) = (luminance(a), luminance(b));
+        (a.max(b) + 0.05) / (a.min(b) + 0.05)
+    }
+
+    /// Every tone of text reads (4.5:1, WCAG AA) on a pane and on what floats above one, in
+    /// each look: captions and disabled text too, which once didn't.
+    #[test]
+    fn text_reads_on_panes_and_on_what_floats_in_every_look() {
+        for skin in Skin::ALL {
+            let n = skin.neutrals();
+            for (surface, fill) in [("panel", n.panel), ("raised", n.raised)] {
+                for (tone, color) in [
+                    ("text", n.text),
+                    ("secondary", n.secondary),
+                    ("tertiary", n.tertiary),
+                ] {
+                    let ratio = contrast(color, fill);
+                    assert!(
+                        ratio >= 4.5,
+                        "{skin:?}: {tone} on {surface} is {ratio:.2}:1, under 4.5:1"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The surfaces step up from the canvas: the well is the darkest in the dark looks (and
+    /// the lightest in Light), the panes are above it and what floats is above the panes.
+    #[test]
+    fn surfaces_step_up_from_the_canvas() {
+        for skin in Skin::ALL {
+            let n = skin.neutrals();
+            let dark = skin != Skin::Light;
+            let [r, g, b, _] = drift_render::Palette::themed(dark).background;
+            let well = luminance(Color32::from_rgb(r, g, b));
+            let (panel, raised) = (luminance(n.panel), luminance(n.raised));
+            if dark {
+                assert!(well < panel && panel < raised, "{skin:?}");
+                assert!(luminance(n.divider) < well, "{skin:?}: the divider");
+            } else {
+                assert!(well > panel && raised > panel, "{skin:?}");
+                assert!(luminance(n.divider) < panel, "{skin:?}: the divider");
+            }
+        }
+    }
+
+    /// A hairline shows on a pane and on what floats above one (a menu's separators, a
+    /// dialog's sections), where a grey tuned to the panes alone sinks into the lighter fill.
+    #[test]
+    fn hairlines_show_on_panes_and_on_what_floats() {
+        for skin in Skin::ALL {
+            let n = skin.neutrals();
+            for (surface, fill) in [("panel", n.panel), ("raised", n.raised)] {
+                let ratio = contrast(n.border, fill);
+                assert!(ratio >= 1.12, "{skin:?}: {ratio:.2}:1 on {surface}");
+            }
+        }
+    }
+
+    /// drift-edit fades underlays towards its own copy of the canvas colour (it can't read
+    /// the palette): the copy is the canvas's.
+    #[test]
+    fn underlays_fade_towards_the_canvas() {
+        for dark in [true, false] {
+            let [r, g, b, _] = drift_render::Palette::themed(dark).background;
+            assert_eq!(drift_edit::underlays::background(dark), [r, g, b]);
+        }
+    }
+
+    #[test]
+    fn a_shortcut_splits_into_its_keys() {
+        assert_eq!(key_names("Ctrl+K"), ["Ctrl", "K"]);
+        assert_eq!(key_names("Ctrl+Shift+Z"), ["Ctrl", "Shift", "Z"]);
+        assert_eq!(key_names("L"), ["L"]);
+        assert_eq!(key_names("+"), ["+"]);
+        assert_eq!(key_names("Ctrl++"), ["Ctrl", "+"]);
+        assert_eq!(key_names("Right-click"), ["Right-click"]);
+        assert!(key_names("").is_empty());
     }
 }

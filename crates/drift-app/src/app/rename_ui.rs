@@ -69,7 +69,7 @@ impl DriftApp {
                     r.error = None;
                 }
                 if let Some(e) = &r.error {
-                    ui.colored_label(egui::Color32::from_rgb(0xff, 0x5d, 0x5d), e);
+                    ui.colored_label(crate::theme::error_color(ui.visuals().dark_mode), e);
                 }
                 if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     apply = true;

@@ -272,7 +272,7 @@ impl DriftApp {
                                 if k > 0 {
                                     ui.add_space(10.0);
                                 }
-                                app::dialogs::keycaps(ui, &keys);
+                                theme::keycaps(ui, &keys);
                                 ui.label(egui::RichText::new(what).small().weak());
                             }
                         });

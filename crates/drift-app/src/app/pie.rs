@@ -296,7 +296,7 @@ fn paint(
     let visuals = ui.visuals();
     let dark = visuals.dark_mode;
     let accent = theme::accent(dark);
-    let amber = egui::Color32::from_rgb(0xff, 0x9f, 0x0a);
+    let amber = crate::theme::amber(dark);
     let glyph_colors = AnnotationColors::new(dark);
     // The middle: a ring, with a mark towards what would be chosen.
     painter.circle_filled(

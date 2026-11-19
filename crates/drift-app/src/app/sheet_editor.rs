@@ -266,10 +266,11 @@ impl DriftApp {
             egui::Sense::hover(),
         );
         ui.painter().rect_filled(bar, 0.0, n.panel);
+        // (Between the strip and the canvas: a pane's edge, not a hairline inside one.)
         ui.painter().hline(
             bar.x_range(),
             bar.bottom() - 0.5,
-            egui::Stroke::new(1.0, n.border),
+            egui::Stroke::new(1.0, theme::divider(dark)),
         );
         let sheets: Vec<(SheetId, String)> = self
             .drawing
@@ -337,11 +338,10 @@ impl DriftApp {
             });
             // The active tab joins the canvas below it.
             // (The sheet's pasteboard, or the model's canvas.)
-            let canvas = match (on_sheet, dark) {
-                (true, true) => egui::Color32::from_rgb(0x2a, 0x2c, 0x31),
-                (true, false) => egui::Color32::from_rgb(0xd5, 0xd8, 0xde),
-                (false, true) => egui::Color32::from_rgb(0x1b, 0x1d, 0x21),
-                (false, false) => egui::Color32::from_rgb(0xfb, 0xfb, 0xfa),
+            let canvas = if on_sheet {
+                theme::desk(dark)
+            } else {
+                theme::canvas(dark)
             };
             if active {
                 let shape = egui::epaint::RectShape::filled(
@@ -775,7 +775,7 @@ impl DriftApp {
                         egui::RichText::new(
                             "Deleting them takes them out of the model and off every sheet.",
                         )
-                        .color(egui::Color32::from_rgb(0xff, 0x5d, 0x5d)),
+                        .color(crate::theme::error_color(ui.visuals().dark_mode)),
                     );
                     ui.horizontal(|ui| {
                         if ui.button("Delete them").clicked() {

@@ -20,6 +20,8 @@ mod audit_sheets;
 mod commands;
 /// Screenshots for the user guide.
 mod docs;
+/// Screenshots for judging the look, at every window size it has to look right at.
+mod fresh;
 /// The last-resort guard: a panic in a tool, a command or a file's reader (#440).
 mod guard;
 /// Aligning a hatch on a shape: handles, Pattern alignment, Align to edge, Alt-click.

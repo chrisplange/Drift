@@ -1362,7 +1362,7 @@ impl DriftApp {
         {
             if let Some(shape) = shapes.get(&id) {
                 let color = if shape.lost {
-                    egui::Color32::from_rgb(0xff, 0x5d, 0x5d)
+                    crate::theme::error_color(dark)
                 } else {
                     colors.window
                 };
@@ -1739,11 +1739,7 @@ impl DriftApp {
             stroke,
             egui::StrokeKind::Middle,
         );
-        let fill = if dark {
-            egui::Color32::from_rgb(0x1b, 0x1d, 0x21)
-        } else {
-            egui::Color32::WHITE
-        };
+        let fill = crate::theme::canvas(dark);
         for (_, at) in frame.scale_handles(pad) {
             let square = egui::Rect::from_center_size(map.to_screen(at), egui::vec2(7.0, 7.0));
             painter.rect_filled(square, 0.0, fill);

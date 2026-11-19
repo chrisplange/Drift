@@ -859,7 +859,7 @@ fn curve_limits(
         ));
     }
     if !heads_up.is_empty() {
-        let amber = egui::Color32::from_rgb(0xff, 0x9f, 0x0a);
+        let amber = crate::theme::amber(ui.visuals().dark_mode);
         ui.add_space(6.0);
         ui.label(egui::RichText::new("Before you import").strong());
         for line in heads_up.iter() {

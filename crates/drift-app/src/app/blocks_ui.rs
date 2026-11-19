@@ -366,7 +366,7 @@ impl DriftApp {
                     if ui
                         .button(
                             egui::RichText::new("Delete block and copies")
-                                .color(egui::Color32::from_rgb(0xff, 0x5d, 0x5d)),
+                                .color(crate::theme::error_color(ui.visuals().dark_mode)),
                         )
                         .clicked()
                     {

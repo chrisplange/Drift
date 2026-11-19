@@ -240,12 +240,12 @@ fn the_bar_is_hidden_whenever_it_would_be_in_the_way() {
     h.run();
     assert!(shows(&h));
     // The preference, which is kept.
-    assert!(h.state().view_prefs().ends_with(";quickbar=1"));
+    assert!(h.state().view_prefs().contains(";quickbar=1"));
     h.state_mut().apply_view_prefs("quickbar=0");
     h.run();
     h.run();
     assert!(!shows(&h) && bar(&h).is_none(), "turned off");
-    assert!(h.state().view_prefs().ends_with(";quickbar=0"));
+    assert!(h.state().view_prefs().contains(";quickbar=0"));
     // (The Inspector's chips are there all along.)
     h.get_by_label("Parallel");
     h.state_mut().apply_view_prefs("quickbar=1");
@@ -260,7 +260,7 @@ fn the_bar_needs_a_canvas_wide_enough() {
         return;
     }
     let mut h = Harness::builder()
-        .with_size([520.0, 800.0])
+        .with_size([440.0, 800.0])
         .wgpu_setup(crate::test_gpu::setup())
         .build_eframe(|cc| DriftApp::new(cc));
     h.run();

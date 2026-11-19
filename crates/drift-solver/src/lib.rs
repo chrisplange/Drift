@@ -809,6 +809,9 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
     }
     sys.anchors = anchors;
     let mut report = run(&mut sys, options, true);
+    if std::env::var_os("DRIFT_NEWTON_DEBUG").is_some() {
+        eprintln!("solve: targets {} placed {} all_placed {all_placed} conv {} it {}", sys.targets.iter().flatten().count(), placed.len(), report.converged, report.iterations);
+    }
     // Such a solve's placed values came as near as the relations let them, but where its rows
     // were off they first gave way a little (heavy, not pinned: the relations' stage moves
     // what it must), and a step back toward them can stall (a double root of the rows). So
@@ -1841,9 +1844,11 @@ enum Stop {
 ///
 /// The iteration cap ([`MAX_ITERATIONS`]) is a safety net, counted (`exits`), not a stop.
 ///
-/// `dragging` is a drag's solve (for the counts, and `fold`). `fold`: a drag's last resort
-/// (see [`SolveOptions::fold`]), where the rows' minimum change comes down as they close, so
-/// a double root of the rows is met rather than stalled a hair from it. `values` are in the
+/// `dragging` is a drag's solve (for the counts and the step bound). `goals`: where each
+/// column is asked to be and its rank (the dragged 0, the carried 1: `SolveOptions::to`);
+/// `anchors`: where the last rank brings back what nothing above decides
+/// (`SolveOptions::anchor`); `finish_rows`: a settled solve's rows are finished to round-off
+/// (not a drag's step). `values` are in the
 /// component's frame, `bar` is what its stops are measured against (`bar_now` that bar where
 /// the geometry stands: the bar only ever tightens within a solve), and `shapes` are the kept
 /// shapes over its unknowns ([`reach`]).
@@ -1859,6 +1864,7 @@ fn newton(
     across: f64,
     goals: &[Option<(f64, usize)>],
     anchors: &[Option<f64>],
+    finish_rows: bool,
 ) -> ComponentOutcome {
     // (The bar only ever tightens within a solve: see where the rows first hold.)
     let bar = std::cell::Cell::new(bar);
@@ -2096,6 +2102,77 @@ fn newton(
             }
         }
     };
+    // A settled solve's rows, finished to round-off: minimum-change Newton steps on the rows
+    // alone, the dragged and carried held where they are, for as long as each at least
+    // quarters what is left. The stages after the first bring the rows back only to within
+    // their tolerance (`reproject`), where the first stage's last step, quadratic, overshoots
+    // it to round-off; a size typed, a variable set, lands exactly, as it did when the
+    // landing pass solved again from rows left off (main's `land`). Moves nothing where the
+    // rows are within a millionth of their tolerance already, or where a step doesn't close in.
+    // (`finish_rows`: not a drag's step, which is judged against the bar, and whose held
+    // radii this would move by as much.)
+    let polish = |values: &mut [f64], back_normal: &mut Option<Skyline>| {
+        let mut trial = values.to_vec();
+        let mut best: Option<Vec<f64>> = None;
+        let mut last = f64::INFINITY;
+        for _ in 0..4 {
+            let ((res, jac), own) = evaluate_with_own(sys, &comp.rows, &trial, &col_of);
+            let tolerance = |k: usize| row_tolerance(sys, comp.rows[k], bar.get(), &trial);
+            if !(0..res.len()).all(|k| res[k].abs() <= tolerance(k)) {
+                break;
+            }
+            if (0..res.len()).all(|k| res[k].abs() <= 1e-6 * tolerance(k)) {
+                if last.is_finite() {
+                    best = Some(trial.clone());
+                }
+                break;
+            }
+            let scale = row_scales(&jac, &own, |_| true);
+            let (back_jac, back_res) = scaled_rows(&jac, &res, &scale);
+            let off: f64 = back_res.iter().map(|f| f * f).sum();
+            if !(off.is_finite() && off <= 0.25 * last) {
+                break;
+            }
+            if last.is_finite() {
+                best = Some(trial.clone());
+            }
+            last = off;
+            let normal = back_normal.get_or_insert_with(|| Skyline::new(n, &neighbors));
+            normal.clear();
+            let mut rhs = vec![Dd::default(); n];
+            for (row, f) in back_jac.iter().zip(&back_res) {
+                for (k, &(c1, g1)) in row.iter().enumerate() {
+                    if pinned[c1] {
+                        continue;
+                    }
+                    rhs[c1] = rhs[c1].add_product(-g1, *f);
+                    for &(c2, g2) in &row[..=k] {
+                        if !pinned[c2] {
+                            normal.add_product(c1, c2, g1, g2);
+                        }
+                    }
+                }
+            }
+            let mu = MIN_CHANGE * max_diag_of(normal);
+            let shift: Vec<f64> = mobility
+                .iter()
+                .zip(&pinned)
+                .map(|(m, p)| if *p { 1.0 } else { mu / m })
+                .collect();
+            let Some(factor) = normal.factor(&shift) else {
+                break;
+            };
+            let step = factor.solve_refined(&rhs);
+            for (c, g) in comp.unknowns.iter().enumerate() {
+                if !pinned[c] {
+                    trial[*g] += step[c];
+                }
+            }
+        }
+        if let Some(best) = best {
+            values.copy_from_slice(&best);
+        }
+    };
     let on_the_rows = vec![0.0; comp.rows.len()];
     let no_column = vec![false; n];
 
@@ -2261,6 +2338,9 @@ fn newton(
         let (scaled_jac, scaled_res) = scaled_rows(&jac, &res, &row_scale);
         let before = scaled_norm2(&res, &row_scale);
 
+        if std::env::var_os("DRIFT_ITER_DEBUG").is_some() {
+            eprintln!("  it {iteration} rows_hold {rows_hold} before {before:.3e} rank {pointer_rank} bar {:.3e}", bar.get().length);
+        }
         // The second rank: the dragged, then the carried, as near where they are asked to be as
         // the rows let them come (`SolveOptions::to`), each rank among the rows' solutions with
         // what ranks above it held: a projected Gauss–Newton step in a trust region, as the
@@ -3360,6 +3440,9 @@ fn newton(
             settled = None;
             continue 'solve;
         }
+        if finish_rows {
+            polish(values, &mut back_normal);
+        }
         return finish(
             Stop::Settled,
             iteration,
@@ -3369,6 +3452,9 @@ fn newton(
         );
     }
     if let Some((iteration, conv)) = settled {
+        if conv && finish_rows {
+            polish(values, &mut back_normal);
+        }
         return finish(
             Stop::Settled,
             iteration,
@@ -3601,6 +3687,7 @@ fn run(sys: &mut System, options: &SolveOptions, iterate: bool) -> SolveReport {
                 across,
                 &goals,
                 &anchors,
+                options.to.is_empty(),
             );
             for &g in &comp.unknowns {
                 bars[g] = outcome.bar;
@@ -3980,6 +4067,16 @@ pub fn free_directions_with(
 /// nothing and return false.
 fn write_back(doc: &mut Document, sys: &System) -> bool {
     if (0..sys.params.len()).any(|i| !sys.value(i).is_finite()) {
+        return false;
+    }
+    // Nor is a circle crushed to no radius or past it: the document holds no such circle, so
+    // writing the rest would leave its points off it (a point the pointer takes exactly onto
+    // a circle's centre, F1), and the crush would go unseen.
+    if sys.params.iter().enumerate().any(|(i, param)| {
+        matches!(*param, Param::Radius(id)
+            if matches!(doc.get(id).map(|e| e.kind), Some(EntityKind::Circle { .. }))
+                && sys.value(i) <= 0.0)
+    }) {
         return false;
     }
     let mut points: HashMap<EntityId, DVec2> = HashMap::new();

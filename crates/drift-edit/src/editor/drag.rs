@@ -1515,6 +1515,14 @@ impl Editor {
         let mut too_fast: Option<f64> = None;
         // The curves the last refused step whose solve finished turned (see `turned`).
         let mut turning: Vec<EntityId> = Vec::new();
+        // An unsettled start (relations the drawing doesn't meet as the drag finds it: an
+        // import, an old unsolved edit) is settled by the path's first solve, by however much
+        // it is off, which doesn't shrink with the step: read as speed, every halving doubles
+        // it, a jump. So where the first step is refused for its speed alone, one solve with
+        // the pointer where the drag began settles the start, and the path begins from there
+        // (`settle`, tried once). A true jump at the start moves nothing in that solve.
+        let mut settle = false;
+        let mut settle_tried = false;
         while t < 1.0 {
             if frame.solves_left == 0 {
                 *turned = turning;
@@ -1556,7 +1564,13 @@ impl Editor {
                     Some((line, a, b, was))
                 }))
                 .collect();
-            let next = if t + h >= 1.0 { 1.0 } else { t + h };
+            let next = if settle {
+                t
+            } else if t + h >= 1.0 {
+                1.0
+            } else {
+                t + h
+            };
             let at = if next == 1.0 { delta } else { delta * next };
             self.keep_smooth_anchors_at(frame.smooth, ids, &start_of, at);
             frame.solves_left -= 1;
@@ -1619,7 +1633,7 @@ impl Editor {
                     _ => 0.0,
                 }))
                 .fold(0.0, f64::max);
-            let step_speed = moved / (next - t);
+            let step_speed = if settle { 0.0 } else { moved / (next - t) };
             let fast = step_speed > (SPEED_UP * speed).max(START_SPEED * delta.length());
             let continuous = !fast
                 || too_fast.is_some_and(|was| step_speed <= SETTLED_SPEED * was)
@@ -1642,6 +1656,12 @@ impl Editor {
                 && !self.grows_held_radius(frame)
                 && self.keeps_pairs(frame)
             {
+                if settle {
+                    // The start, settled: the step refused for its speed is taken again
+                    // from here.
+                    settle = false;
+                    continue;
+                }
                 t = next;
                 h = (2.0 * h).min(1.0 - t);
                 speed = step_speed;
@@ -1661,6 +1681,12 @@ impl Editor {
                 turning.append(&mut pairs);
             }
             self.restore_geometry(&here);
+            if fast && only_fast && t == 0.0 && !settle_tried {
+                settle = true;
+                settle_tried = true;
+                continue;
+            }
+            settle = false;
             if h <= STEP_RESOLUTION {
                 *turned = turning;
                 return false;

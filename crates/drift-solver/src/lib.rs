@@ -679,6 +679,15 @@ const LAND_SPREAD: f64 = 100.0;
 /// arithmetic the step is met in that many.
 const CG_RESOLVED: f64 = 1e-14;
 
+/// How near its targets, in bars, a pointer rank's goals may stop and still be a near miss,
+/// placed on them for the relations' stage to bring the rest (see `newton`'s pointer stage):
+/// a double root's last hair, far below anything a relation holds a goal off by.
+const NEAR_BARS: f64 = 1e4;
+
+/// How many of the anchor's steps in a row may be refused before it stops where it is (see
+/// `newton`'s pointer stage).
+const ANCHOR_REFUSALS: usize = 3;
+
 /// A pointer rank's rows hold its misfit off hard enough for their curvature to count in
 /// its steps where the hardest multiplier is more than this share of the misfit's steepest
 /// gradient (see `newton`'s pointer stage). Below it the goals are in reach, the multipliers
@@ -2434,6 +2443,13 @@ fn newton(
     let mut stage_of = (usize::MAX, false);
     // (Its steps take the rows' curvature too: see the pointer stage.)
     let mut pointer_curved = false;
+    // A near miss of a pointer rank, placed on its targets for the relations' stage to bring
+    // the rest (see the pointer stage): the values before, and how far the rest may move;
+    // and the rank that has tried it.
+    let mut near: Option<(Vec<f64>, f64)> = None;
+    let mut near_tried: Option<usize> = None;
+    // (The anchor's steps refused in a row: see the pointer stage.)
+    let mut anchor_refused = 0;
     let mut keep_shapes: Option<Vec<Option<f64>>> = None;
     // (Its rows are finished to round-off where it stands: see the pointer stage.)
     let mut pointer_finished = false;
@@ -2472,6 +2488,12 @@ fn newton(
             if !res.iter().all(|f| f.is_finite())
                 || !jac.iter().flatten().all(|(_, g)| g.is_finite())
             {
+                if let Some((before, _)) = near.take() {
+                    values.copy_from_slice(&before);
+                    ((res, jac), own) = evaluate_with_own(sys, &comp.rows, values, &col_of);
+                    pointer_stopped = true;
+                    continue;
+                }
                 return finish(Stop::NoStep, iteration, false, most_ratio, false);
             }
             let mut rows_hold = converged(&res, values);
@@ -2561,6 +2583,30 @@ fn newton(
             // The kept shapes rank below: a held radius the pointer moves is the shapes' stage's to
             // keep or report (`unkept`), and the drag's to stop on.
             let mut refresh = false;
+            if rows_hold
+                && let Some((before, reach)) = near.take()
+            {
+                // (A near miss placed on its targets: kept where the rest moved no farther
+                // than a double root reaches.)
+                let rest: Vec<f64> = comp
+                    .unknowns
+                    .iter()
+                    .zip(goals)
+                    .map(|(g, goal)| {
+                        if goal.is_some() {
+                            0.0
+                        } else {
+                            values[*g] - before[*g]
+                        }
+                    })
+                    .collect();
+                if moved(&rest) > reach {
+                    values.copy_from_slice(&before);
+                    ((res, jac), own) = evaluate_with_own(sys, &comp.rows, values, &col_of);
+                    pointer_stopped = true;
+                    continue;
+                }
+            }
             while rows_hold && (pointer_rank < 2 || anchoring) {
                 let rank = pointer_rank;
                 // (Where each column of this rank is asked to be: its goal, or for the last
@@ -2601,6 +2647,39 @@ fn newton(
                     pointer_soft = true;
                     pointer_radius = pointer_across;
                     continue;
+                }
+                if rank < 2
+                    && pointer_stopped
+                    && near_tried != Some(rank)
+                    && misfit > LAND_BARS * bar.get().length
+                    && misfit <= NEAR_BARS * bar.get().length
+                {
+                    // A near miss: its steps stopped a hair off the targets, farther than the
+                    // rows' tolerance leaves a goal that has landed, far nearer than the rows
+                    // hold one off. That is a double root of the rows (a point held on a line
+                    // where the line ends tangent): the goals' way to their targets has no
+                    // first order left, and the rest must move as the root of how far they
+                    // still are. So they are put on their targets and the relations' stage,
+                    // which holds them heavy, brings the rest: kept where the rows hold again
+                    // with the rest moved no farther than such a root's reach (`near`); put
+                    // back otherwise. Once a rank.
+                    near_tried = Some(rank);
+                    near = Some((
+                        values.to_vec(),
+                        (2.0 * across * misfit).sqrt() + LAND_SPREAD * misfit,
+                    ));
+                    for (c, g) in comp.unknowns.iter().enumerate() {
+                        if let Some((to, r)) = goals[c]
+                            && r <= rank
+                        {
+                            values[*g] = to;
+                        }
+                    }
+                    leave_storage();
+                    ((res, jac), own) = evaluate_with_own(sys, &comp.rows, values, &col_of);
+                    pointer_stopped = false;
+                    refresh = true;
+                    break;
                 }
                 if rank < 2 && (pointer_stopped || misfit <= bar.get().length) {
                     // Landed to the bar, or as near as its steps come: put them on their targets
@@ -3174,6 +3253,7 @@ fn newton(
                                 jac = trial_jac;
                                 own = trial_own;
                                 pointer_finished = finish;
+                                anchor_refused = 0;
                                 if faith {
                                     pointer_stopped = true;
                                     pointer_radius = pointer_across;
@@ -3189,6 +3269,15 @@ fn newton(
                                 pointer_curved |= after.is_some();
                                 pointer_radius = stepped / 4.0;
                                 done = pointer_radius <= b;
+                                // (The anchor is a preference among what nothing decides:
+                                // where its steps, the rows' curvature in them, still don't do
+                                // what they promise, the rows turn there (a double root), and
+                                // what is open stays where the ranks above left it, rather than
+                                // a crawl to the bar that ends where round-off has it.)
+                                if rank == 2 {
+                                    anchor_refused += 1;
+                                    done |= anchor_refused >= ANCHOR_REFUSALS;
+                                }
                             }
                         }
                     }
@@ -3730,6 +3819,15 @@ fn newton(
             // still wouldn't hold. Every further step is smaller still (λ only grows on a refused
             // step), so the rows are as near as they get: a conflict, or the round-off floor.
             if before.sqrt() - model.max(0.0).sqrt() <= finest && model.max(0.0).sqrt() > finest {
+                if let Some((before, _)) = near.take() {
+                    // (The near miss doesn't land: as its rank's steps left it.)
+                    values.copy_from_slice(&before);
+                    ((res, jac), own) = evaluate_with_own(sys, &comp.rows, values, &col_of);
+                    pointer_stopped = true;
+                    lambda = 0.0;
+                    nu = 2.0;
+                    continue;
+                }
                 let rows_hold = converged(&res, values);
                 return finish(
                     if rows_hold {

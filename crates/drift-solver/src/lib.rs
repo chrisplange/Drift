@@ -2178,6 +2178,13 @@ fn newton(
             }
             let off: f64 = back_res.iter().map(|f| f * f).sum();
             let closing = off.is_finite() && off <= 0.25 * last;
+            if std::env::var_os("DRIFT_REPROJECT_DEBUG").is_some() {
+                eprintln!(
+                    "      reproject off {off:.3e} last {last:.3e} all_hold {all_hold} kept {} rows {:?}",
+                    back_res.len() - left.len(),
+                    back_res.iter().map(|f| format!("{f:.1e}")).collect::<Vec<_>>()
+                );
+            }
             if all_hold && (best.is_none() || closing) {
                 let there = kept_there
                     && (0..left.len())
@@ -2409,6 +2416,8 @@ fn newton(
     // (Which rank and stage of the pointer's its steps are in, and the kept shapes' offsets
     // where a stage that holds them began.)
     let mut stage_of = (usize::MAX, false);
+    // (Its steps take the rows' curvature too: see the pointer stage.)
+    let mut pointer_curved = false;
     let mut keep_shapes: Option<Vec<Option<f64>>> = None;
     // (Its rows are finished to round-off where it stands: see the pointer stage.)
     let mut pointer_finished = false;
@@ -2865,6 +2874,7 @@ fn newton(
                 if stage_of != (rank, pointer_soft) {
                     stage_of = (rank, pointer_soft);
                     pointer_finished = false;
+                    pointer_curved = false;
                     keep_shapes = hold_shapes.then(|| {
                         shapes
                             .iter()
@@ -2904,7 +2914,15 @@ fn newton(
                 // the rank stopped where the crawl did, at one size and not another. The rows'
                 // part is `−Σλ·∇²c`, each row's second derivative along the step taken by
                 // differencing its gradient a hair either way.
-                let curved = hardest > CURVED_FROM * steepest;
+                //
+                // Only once a step of this rank by the misfit's own curvature has landed on the
+                // rows and gained too little (`pointer_curved`), as NL2SOL turns to its
+                // second-order model where Gauss–Newton's stops predicting: where the goals are
+                // in reach the rows hold nothing off where the steps end, the misfit's own
+                // curvature is all there is there, and its steps land; on the way, the rows'
+                // curvature against a misfit still large says to turn where the goals only
+                // have to go.
+                let curved = pointer_curved && hardest > CURVED_FROM * steepest;
                 let curvature = |p: &[f64], curved: bool| {
                     let mut out: Vec<f64> = p
                         .iter()
@@ -2944,8 +2962,8 @@ fn newton(
                 };
                 // Steihaug's projected conjugate gradients on the misfit's model, inside
                 // `radius`: the step, the model's curvature applied to it, and whether it is the
-                // model's own (not cut at the region's edge, nor short of a direction the model
-                // curves down along).
+                // model's own (not cut at the region's edge). `None` where the rows' curvature
+                // takes the model's below nothing along a direction of the step.
                 let steihaug = |curved: bool, radius: f64| {
                     let mut x = vec![0.0; n];
                     let mut hx = vec![0.0; n];
@@ -2965,29 +2983,17 @@ fn newton(
                             0.0
                         }
                     };
-                    let mut curved = curved;
-                    for k in 0..if curved { n } else { terms.len() } {
-                        let mut hp = curvature(&p, curved);
-                        let mut kappa = dot(&p, &hp);
+                    for _ in 0..if curved { n } else { terms.len() } {
+                        let hp = curvature(&p, curved);
+                        let kappa = dot(&p, &hp);
                         if kappa <= 0.0 && curved {
-                            // The rows curve the misfit down along this direction: another
-                            // branch of their solutions opens here (a chain pushed along itself
-                            // buckles either way), which a drag doesn't take: which one would
-                            // be round-off's to say. The step stops with the directions before
-                            // it; from the first, the way the misfit itself points, it is taken
-                            // by the misfit's own curvature, which never curves down.
-                            if k > 0 {
-                                return (x, hx, false);
-                            }
-                            curved = false;
-                            hp = curvature(&p, false);
-                            kappa = dot(&p, &hp);
+                            return None;
                         }
                         if kappa <= 0.0 {
                             let t = to_edge(&x, &p);
                             x.iter_mut().zip(&p).for_each(|(x, p)| *x += t * p);
                             hx.iter_mut().zip(&hp).for_each(|(h, q)| *h += t * q);
-                            return (x, hx, false);
+                            return Some((x, hx, false));
                         }
                         let alpha = rv / kappa;
                         let next: Vec<f64> = x.iter().zip(&p).map(|(x, p)| x + alpha * p).collect();
@@ -2995,7 +3001,7 @@ fn newton(
                             let t = to_edge(&x, &p);
                             x.iter_mut().zip(&p).for_each(|(x, p)| *x += t * p);
                             hx.iter_mut().zip(&hp).for_each(|(h, q)| *h += t * q);
-                            return (x, hx, false);
+                            return Some((x, hx, false));
                         }
                         x = next;
                         hx.iter_mut().zip(&hp).for_each(|(h, q)| *h += alpha * q);
@@ -3009,11 +3015,19 @@ fn newton(
                         p.iter_mut().zip(&v).for_each(|(p, v)| *p = -v + beta * *p);
                         rv = rv_next;
                     }
-                    (x, hx, true)
+                    Some((x, hx, true))
                 };
                 let mut done = stationary <= b * b;
                 if !done {
-                    let (x, hx, whole) = steihaug(curved, pointer_radius);
+                    // (Where the rows curve the misfit down along a direction of the step,
+                    // another branch of their solutions opens (a chain pushed along itself
+                    // buckles either way), which a drag doesn't take: which one would be
+                    // round-off's to say. The step is the misfit's own curvature's there, which
+                    // never curves down.)
+                    let (x, hx, whole) = match steihaug(curved, pointer_radius) {
+                        Some(step) => step,
+                        None => steihaug(false, pointer_radius).expect("its own curvature"),
+                    };
                     let promised = -(dot(&gradient, &x) + 0.5 * dot(&x, &hx));
                     // What a row a bar off moves the misfit by: where a step promises no more
                     // than a hundred times that, the rows are finished to round-off, where it
@@ -3156,6 +3170,7 @@ fn newton(
                                         why
                                     );
                                 }
+                                pointer_curved |= after.is_some();
                                 pointer_radius = stepped / 4.0;
                                 done = pointer_radius <= b;
                             }

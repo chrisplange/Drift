@@ -857,6 +857,11 @@ pub fn keycap_at(ui: &egui::Ui, right_center: egui::Pos2, keys: &str) {
     paint_keycaps(ui, right_center - vec2(width, KEYCAP / 2.0), caps);
 }
 
+/// How wide [`keycap_at`] paints a shortcut's caps: to line rows of them up.
+pub fn keycaps_width(ui: &egui::Ui, keys: &str) -> f32 {
+    keycap_galleys(ui, keys).1
+}
+
 /// A key cap's height, the padding either side of its key, and the gap between two caps.
 const KEYCAP: f32 = 18.0;
 const KEYCAP_PAD: f32 = 5.0;

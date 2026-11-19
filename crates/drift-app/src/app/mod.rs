@@ -29,6 +29,7 @@ pub(crate) mod opening_ui;
 pub(crate) mod palette;
 pub(crate) mod panels;
 pub(crate) mod pie;
+pub(crate) mod quick_bar;
 pub(crate) mod rail;
 pub(crate) mod recovery;
 pub(crate) mod rename_ui;

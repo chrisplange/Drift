@@ -124,29 +124,33 @@ pub struct OverlayColors {
 }
 
 impl OverlayColors {
+    /// The canvas's own marks (snaps, the selection boxes) keep their colours; the labels
+    /// and the cursor's HUD are the theme's raised surface, opaque like everything that
+    /// floats.
     pub fn new(dark: bool) -> Self {
-        if dark {
-            Self {
-                snap: Color32::from_rgb(0xff, 0x9f, 0x1c),
-                window: Color32::from_rgb(0x2f, 0x9b, 0xff),
-                crossing: Color32::from_rgb(0x4c, 0xc3, 0x6b),
-                label_bg: Color32::from_rgba_unmultiplied(0x2a, 0x2d, 0x32, 0xf4),
-                label_fg: Color32::from_rgb(0xe6, 0xe8, 0xeb),
-                label_border: Color32::from_rgb(0x3b, 0x3f, 0x46),
-                field_bg: Color32::from_rgb(0x16, 0x18, 0x1b),
-                dark,
-            }
+        let n = crate::theme::neutrals(dark);
+        let (snap, window, crossing) = if dark {
+            (
+                Color32::from_rgb(0xff, 0x9f, 0x1c),
+                Color32::from_rgb(0x2f, 0x9b, 0xff),
+                Color32::from_rgb(0x4c, 0xc3, 0x6b),
+            )
         } else {
-            Self {
-                snap: Color32::from_rgb(0xe0, 0x6c, 0x00),
-                window: Color32::from_rgb(0x0b, 0x6b, 0xde),
-                crossing: Color32::from_rgb(0x1f, 0x9a, 0x45),
-                label_bg: Color32::from_rgba_unmultiplied(0xff, 0xff, 0xff, 0xf4),
-                label_fg: Color32::from_rgb(0x1d, 0x21, 0x26),
-                label_border: Color32::from_rgb(0xd9, 0xdb, 0xdf),
-                field_bg: Color32::from_rgb(0xf3, 0xf4, 0xf6),
-                dark,
-            }
+            (
+                Color32::from_rgb(0xe0, 0x6c, 0x00),
+                Color32::from_rgb(0x0b, 0x6b, 0xde),
+                Color32::from_rgb(0x1f, 0x9a, 0x45),
+            )
+        };
+        Self {
+            snap,
+            window,
+            crossing,
+            label_bg: n.raised,
+            label_fg: n.text,
+            label_border: n.control_border,
+            field_bg: n.field,
+            dark,
         }
     }
 }
@@ -432,9 +436,9 @@ pub fn cursor_hud(painter: &egui::Painter, at: Pos2, info: &CursorInfo, colors: 
     }
     let size = crate::theme::size::LABEL;
     let fg = colors.label_fg;
-    let weak = fg.gamma_multiply(0.62);
+    let weak = crate::theme::neutrals(colors.dark).secondary;
     let accent = crate::theme::accent(colors.dark);
-    let error = Color32::from_rgb(0xe5, 0x48, 0x4d);
+    let error = crate::theme::error_color(colors.dark);
     let pad = vec2(8.0, 6.0);
     let line_h = 18.0;
     let field_h = 20.0;
@@ -553,62 +557,75 @@ pub fn cursor_hud(painter: &egui::Painter, at: Pos2, info: &CursorInfo, colors: 
     }
 }
 
-/// A transient message at the bottom of the canvas (macOS-style toast), fading out as
-/// `fade` goes from 1 to 0.
-pub fn toast(painter: &egui::Painter, rect: Rect, text: &str, error: bool, dark: bool, fade: f32) {
-    let fg = if dark {
-        Color32::from_rgb(0xee, 0xee, 0xf0)
-    } else {
-        Color32::from_rgb(0x1d, 0x1d, 0x1f)
-    };
-    let bg = if dark {
-        Color32::from_rgb(0x2e, 0x30, 0x36)
-    } else {
-        Color32::WHITE
-    };
+/// Where the toast was painted this frame, in egui's memory (for whatever must keep clear
+/// of it, and for the tests).
+pub fn toast_rect_id() -> egui::Id {
+    egui::Id::new("toast_rect")
+}
+
+/// A transient message at the foot of the canvas, its bottom edge at `bottom`, fading out
+/// as `fade` goes from 1 to 0: a raised card in the theme's colours, with a dot in the
+/// accent (or in red for what went wrong). Returns where it was painted.
+pub fn toast(
+    painter: &egui::Painter,
+    rect: Rect,
+    bottom: f32,
+    text: &str,
+    error: bool,
+    dark: bool,
+    fade: f32,
+) -> Rect {
+    let n = crate::theme::neutrals(dark);
+    let radius = crate::theme::radius::MENU;
     let wrap = (rect.width() * 0.7).clamp(120.0, 560.0);
     let galley = painter.layout(
         text.to_owned(),
-        FontId::proportional(13.0),
-        fg.gamma_multiply(fade),
+        FontId::proportional(crate::theme::size::BODY),
+        n.text.gamma_multiply(fade),
         wrap,
     );
-    let size = galley.size() + vec2(44.0, 18.0);
-    let at = egui::pos2(
-        rect.center().x - size.x / 2.0,
-        rect.bottom() - size.y - 24.0,
-    );
+    let size = vec2(galley.size().x + 42.0, (galley.size().y + 16.0).max(32.0));
+    let at = egui::pos2(rect.center().x - size.x / 2.0, bottom - size.y);
     let r = Rect::from_min_size(at, size);
-    painter.add(egui::Shape::Rect(egui::epaint::RectShape::filled(
-        r.translate(vec2(0.0, 3.0)),
-        12.0,
-        Color32::from_black_alpha((50.0 * fade) as u8),
-    )));
-    painter.rect_filled(r, 12.0, bg.gamma_multiply(fade));
+    // (Lifted like a menu: a soft shadow under it.)
+    painter.add(
+        egui::epaint::Shadow {
+            offset: [0, 3],
+            blur: 12,
+            spread: 0,
+            color: Color32::from_black_alpha((if dark { 110.0 } else { 44.0 } * fade) as u8),
+        }
+        .as_shape(r, radius),
+    );
+    painter.rect_filled(r, radius, n.raised.gamma_multiply(fade));
     painter.rect_stroke(
         r,
-        12.0,
-        Stroke::new(
-            1.0,
-            Color32::from_gray(if dark { 0x44 } else { 0xd8 }).gamma_multiply(fade),
-        ),
+        radius,
+        Stroke::new(1.0, n.control_border.gamma_multiply(fade)),
         StrokeKind::Inside,
     );
     let dot = if error {
-        Color32::from_rgb(0xff, 0x45, 0x3a)
+        crate::theme::error_color(dark)
     } else {
         crate::theme::accent(dark)
     };
+    // (Beside the first line of a message that wraps.)
+    let first = galley
+        .rows
+        .first()
+        .map_or(galley.size().y, |row| row.height());
+    let text_top = r.center().y - galley.size().y / 2.0;
     painter.circle_filled(
-        r.left_center() + vec2(16.0, 0.0),
-        4.0,
+        egui::pos2(r.left() + 15.0, text_top + first / 2.0 + 0.5),
+        3.5,
         dot.gamma_multiply(fade),
     );
     painter.galley(
-        r.left_top() + vec2(28.0, 9.0),
+        egui::pos2(r.left() + 28.0, text_top),
         galley,
-        fg.gamma_multiply(fade),
+        n.text.gamma_multiply(fade),
     );
+    r
 }
 
 /// A small curved arrow: what dragging here does is turn.

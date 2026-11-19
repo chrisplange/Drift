@@ -2455,7 +2455,7 @@ fn newton(
     // A near miss of a pointer rank, placed on its targets for the relations' stage to bring
     // the rest (see the pointer stage): the values before, and how far the rest may move;
     // and the rank that has tried it.
-    let mut near: Option<(Vec<f64>, f64)> = None;
+    let mut near: Option<(Vec<f64>, f64, usize)> = None;
     let mut near_tried: Option<usize> = None;
     // (The anchor's steps refused in a row: see the pointer stage.)
     let mut anchor_refused = 0;
@@ -2499,7 +2499,7 @@ fn newton(
             if !res.iter().all(|f| f.is_finite())
                 || !jac.iter().flatten().all(|(_, g)| g.is_finite())
             {
-                if let Some((before, _)) = near.take() {
+                if let Some((before, ..)) = near.take() {
                     values.copy_from_slice(&before);
                     ((res, jac), own) = evaluate_with_own(sys, &comp.rows, values, &col_of);
                     pointer_stopped = true;
@@ -2595,7 +2595,7 @@ fn newton(
             // keep or report (`unkept`), and the drag's to stop on.
             let mut refresh = false;
             if rows_hold
-                && let Some((before, reach)) = near.take()
+                && let Some((before, reach, _)) = near.take()
             {
                 // (A near miss placed on its targets: kept where the rest moved no farther
                 // than a double root reaches.)
@@ -2671,13 +2671,14 @@ fn newton(
                     // where the line ends tangent): the goals' way to their targets has no
                     // first order left, and the rest must move as the root of how far they
                     // still are. So they are put on their targets and the relations' stage,
-                    // which holds them heavy, brings the rest: kept where the rows hold again
+                    // which leaves them there, brings the rest: kept where the rows hold again
                     // with the rest moved no farther than such a root's reach (`near`); put
                     // back otherwise. Once a rank.
                     near_tried = Some(rank);
                     near = Some((
                         values.to_vec(),
                         (2.0 * across * misfit).sqrt() + LAND_SPREAD * misfit,
+                        rank,
                     ));
                     for (c, g) in comp.unknowns.iter().enumerate() {
                         if let Some((to, r)) = goals[c]
@@ -3668,13 +3669,27 @@ fn newton(
             }
 
             // The first stage: the relations.
+            // (With a near miss placed on its targets, the goals of its rank and those above
+            // are left there: see the pointer stage.)
+            let frozen: Vec<bool> = match &near {
+                Some((_, _, rank)) => goals
+                    .iter()
+                    .map(|goal| goal.is_some_and(|(_, r)| r <= *rank))
+                    .collect(),
+                None => no_column.clone(),
+            };
             normal.clear();
             let mut rhs = vec![Dd::default(); n];
             for (row, f) in scaled_jac.iter().zip(&scaled_res) {
                 for (k, &(c1, g1)) in row.iter().enumerate() {
+                    if frozen[c1] {
+                        continue;
+                    }
                     rhs[c1] = rhs[c1].add_product(-g1, *f);
                     for &(c2, g2) in &row[..=k] {
-                        normal.add_product(c1, c2, g1, g2);
+                        if !frozen[c2] {
+                            normal.add_product(c1, c2, g1, g2);
+                        }
                     }
                 }
             }
@@ -3697,7 +3712,9 @@ fn newton(
                 let own = rank * if own.is_finite() { own } else { 1.0 };
                 for (i, &(c1, g1)) in grad.iter().enumerate() {
                     for &(c2, g2) in &grad[..=i] {
-                        normal.add_product(c1, c2, mu * KEEP_SHAPE * own * g1, g2);
+                        if !frozen[c1] && !frozen[c2] {
+                            normal.add_product(c1, c2, mu * KEEP_SHAPE * own * g1, g2);
+                        }
                     }
                 }
             }
@@ -3713,7 +3730,14 @@ fn newton(
             let shift: Vec<f64> = mobility
                 .iter()
                 .zip(&pinned)
-                .map(|(m, pinned)| mu / m + if *pinned { lambda / m } else { lambda })
+                .zip(&frozen)
+                .map(|((m, pinned), frozen)| {
+                    if *frozen {
+                        1.0
+                    } else {
+                        mu / m + if *pinned { lambda / m } else { lambda }
+                    }
+                })
                 .collect();
             let refuse = |lambda: &mut f64, nu: &mut f64| {
                 *lambda = lambda.max(1e-6 * max_diag) * *nu;
@@ -3775,7 +3799,7 @@ fn newton(
                     .collect();
                 let mut corrected = trial.clone();
                 let got =
-                    reproject(&mut corrected, &promise, &no_column, &mut back_normal, false, None);
+                    reproject(&mut corrected, &promise, &frozen, &mut back_normal, false, None);
                 let correction: Vec<f64> = comp
                     .unknowns
                     .iter()
@@ -3849,7 +3873,7 @@ fn newton(
             // still wouldn't hold. Every further step is smaller still (λ only grows on a refused
             // step), so the rows are as near as they get: a conflict, or the round-off floor.
             if before.sqrt() - model.max(0.0).sqrt() <= finest && model.max(0.0).sqrt() > finest {
-                if let Some((before, _)) = near.take() {
+                if let Some((before, ..)) = near.take() {
                     // (The near miss doesn't land: as its rank's steps left it.)
                     values.copy_from_slice(&before);
                     ((res, jac), own) = evaluate_with_own(sys, &comp.rows, values, &col_of);

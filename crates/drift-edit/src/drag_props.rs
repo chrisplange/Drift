@@ -3122,5 +3122,6 @@ fn lands_off_with_a_hung_chain_goes_and_lands() {
 mod census;
 mod held_shapes;
 mod relation_census;
+mod probes;
 mod seeds;
 mod ways_round;

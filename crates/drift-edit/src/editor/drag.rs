@@ -848,10 +848,8 @@ impl Editor {
             self.find_held_shapes(part, &locked, &made);
             // Each pair's way round as the drag finds it (#344): lines too short to see keep
             // none.
-            let seen = |line: EntityId| {
-                self.line_vector(line)
-                    .filter(|v| v.length() > NO_WAY_ROUND)
-            };
+            let seen =
+                |line: EntityId| self.line_vector(line).filter(|v| v.length() > NO_WAY_ROUND);
             let joined: Vec<(EntityId, EntityId)> = part
                 .constraints
                 .iter()
@@ -1546,7 +1544,9 @@ impl Editor {
             // measures a signed offset from (walls' centrelines under dimensioned faces) keep
             // their way round too: turned, the relation would hold the other face.
             let direction = |ed: &Self, line: EntityId| match ed.doc.get(line)?.kind {
-                EntityKind::Line { a, b } => Some((a, b, ed.doc.point(b).ok()? - ed.doc.point(a).ok()?)),
+                EntityKind::Line { a, b } => {
+                    Some((a, b, ed.doc.point(b).ok()? - ed.doc.point(a).ok()?))
+                }
                 _ => None,
             };
             let kept_lines: Vec<(EntityId, EntityId, EntityId, DVec2)> = before
@@ -1624,15 +1624,17 @@ impl Editor {
                 .map(|&(line, ..)| line)
                 .collect();
             let turns = orientation.turned(&self.doc);
-            let moved = here
-                .points
-                .iter()
-                .map(|&(id, p)| self.doc.point(id).map_or(0.0, |q| q.distance(p)))
-                .chain(here.circles.iter().map(|&(id, r)| match self.doc.get(id).map(|e| e.kind) {
-                    Some(EntityKind::Circle { radius, .. }) => (radius - r).abs(),
-                    _ => 0.0,
-                }))
-                .fold(0.0, f64::max);
+            let moved =
+                here.points
+                    .iter()
+                    .map(|&(id, p)| self.doc.point(id).map_or(0.0, |q| q.distance(p)))
+                    .chain(here.circles.iter().map(
+                        |&(id, r)| match self.doc.get(id).map(|e| e.kind) {
+                            Some(EntityKind::Circle { radius, .. }) => (radius - r).abs(),
+                            _ => 0.0,
+                        },
+                    ))
+                    .fold(0.0, f64::max);
             let step_speed = if settle { 0.0 } else { moved / (next - t) };
             let fast = step_speed > (SPEED_UP * speed).max(START_SPEED * delta.length());
             let continuous = !fast
@@ -1732,9 +1734,8 @@ impl Editor {
             let (Some(u), Some(v)) = (self.line_vector(a), self.line_vector(b)) else {
                 return true;
             };
-            let short = |w: DVec2, at: DVec2| {
-                w.length() <= drift_solver::landed_within(frame.bar, at)
-            };
+            let short =
+                |w: DVec2, at: DVec2| w.length() <= drift_solver::landed_within(frame.bar, at);
             // (A line the drag found long enough to have a way round, now too short to have
             // one, is at the turn: a step there hasn't kept it.)
             if short(u, u) || short(v, v) {
@@ -1763,8 +1764,10 @@ impl Editor {
     /// the `smooth` anchors smooth the way a drawing program does, before any solve. A handle
     /// dragged on its own swings the other one round to stay opposite, at its own length, with
     /// the anchor where it was; an anchor moved with one handle takes the other along. The
-    /// relation then holds as it is, so a solve has nothing to nudge (it would otherwise move
-    /// the anchor and both handles a little each, and the curves on either side with them).
+    /// dragged handle (and a moved anchor) are put where the step takes them too: the
+    /// relation then holds as it is, and the pointer is met, so a solve has nothing to nudge
+    /// (it would otherwise move the anchor and both handles a little each, and the curves on
+    /// either side with them).
     fn keep_smooth_anchors_at(
         &mut self,
         smooth: &[(EntityId, EntityId, EntityId)],
@@ -1782,9 +1785,11 @@ impl Editor {
                 if !goes(dragged) || goes(other) {
                     continue;
                 }
-                let (Some(&p), Some(&h), Some(&o)) =
-                    (start_of.get(&anchor), start_of.get(&dragged), start_of.get(&other))
-                else {
+                let (Some(&p), Some(&h), Some(&o)) = (
+                    start_of.get(&anchor),
+                    start_of.get(&dragged),
+                    start_of.get(&other),
+                ) else {
                     continue;
                 };
                 let to = if goes(anchor) {
@@ -1796,6 +1801,10 @@ impl Editor {
                     }
                 };
                 let _ = self.doc.set_point(other, to);
+                let _ = self.doc.set_point(dragged, h + at);
+                if goes(anchor) {
+                    let _ = self.doc.set_point(anchor, p + at);
+                }
             }
         }
     }
@@ -1815,7 +1824,6 @@ impl Editor {
             })
             .collect()
     }
-
 }
 
 #[cfg(test)]

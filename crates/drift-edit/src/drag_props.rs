@@ -2574,7 +2574,11 @@ fn dragging_a_corner_arc_leaves_the_rest_of_the_outline() {
                 assert_eq!(run.end[i], run.start[i], "point {i} moved");
             }
             // The corner went where it was taken, the left side upright and the top level.
-            assert!(run.end[2].distance(run.start[2] + offset) < 1e-9);
+            assert!(
+                run.end[2].distance(run.start[2] + offset) < 1e-9,
+                "arc {arc} steps {steps}: {}",
+                run.end[2].distance(run.start[2] + offset)
+            );
             assert!((run.end[0].x - run.end[1].x).abs() < 1e-9);
             assert!((run.end[3].y - run.end[4].y).abs() < 1e-9);
         }

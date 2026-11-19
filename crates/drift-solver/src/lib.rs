@@ -654,6 +654,17 @@ const MIN_CHANGE: f64 = 1e-10;
 /// chain of bars held at their lengths round a joint (#349), and the chain crawls again.)
 const CORRECTION_SHARE: f64 = 1.0;
 
+/// How near its targets, in bars, a pointer rank's goals may end and still be put on them
+/// exactly with the rest brought back onto the rows (see `newton`'s pointer stage): the rows'
+/// own tolerance can leave a goal a few bars off with no gradient left; a goal the rows keep
+/// off is off by the geometry, far more.
+const LAND_BARS: f64 = 100.0;
+
+/// How much farther than its goals' misfit the rest may move when a pointer rank lands them
+/// (see [`LAND_BARS`]): as far as a step's speed may outrun the pointer's (the editor's
+/// `START_SPEED`).
+const LAND_SPREAD: f64 = 100.0;
+
 /// A kept shape is met once it is off by no more than this times its own size (an arc's
 /// radius, a line's length), or the solver's tolerance where that is looser: what a solve
 /// with [`SolveOptions::fold`] must meet every shape to, and a drag's kept radius to (see
@@ -794,7 +805,11 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
     // and then solves for them (a circle's radius dragged, an offset's side, the active
     // element), as a drag's step never does (its dragged are asked to go somewhere else).
     let placed: Vec<(usize, f64)> = (0..sys.groups.len())
-        .filter_map(|g| targets[g].filter(|(to, _)| *to == sys.groups[g].value).map(|(to, _)| (g, to)))
+        .filter_map(|g| {
+            targets[g]
+                .filter(|(to, _)| *to == sys.groups[g].value)
+                .map(|(to, _)| (g, to))
+        })
         .collect();
     let all_placed = !placed.is_empty() && placed.len() == targets.iter().flatten().count();
     sys.targets = targets;
@@ -810,7 +825,13 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
     sys.anchors = anchors;
     let mut report = run(&mut sys, options, true);
     if std::env::var_os("DRIFT_NEWTON_DEBUG").is_some() {
-        eprintln!("solve: targets {} placed {} all_placed {all_placed} conv {} it {}", sys.targets.iter().flatten().count(), placed.len(), report.converged, report.iterations);
+        eprintln!(
+            "solve: targets {} placed {} all_placed {all_placed} conv {} it {}",
+            sys.targets.iter().flatten().count(),
+            placed.len(),
+            report.converged,
+            report.iterations
+        );
     }
     // Such a solve's placed values came as near as the relations let them, but where its rows
     // were off they first gave way a little (heavy, not pinned: the relations' stage moves
@@ -1914,9 +1935,11 @@ fn newton(
                 .offset(|p| values[sys.group_of[p]])
                 .is_none_or(|(_, off)| off.abs() <= bar.get().length)
         })
-        && comp.unknowns.iter().zip(goals).all(|(g, goal)| {
-            goal.is_none_or(|(to, _)| (values[*g] - to).abs() <= bar.get().length)
-        })
+        && comp
+            .unknowns
+            .iter()
+            .zip(goals)
+            .all(|(g, goal)| goal.is_none_or(|(to, _)| (values[*g] - to).abs() <= bar.get().length))
     {
         #[cfg(feature = "exit-counts")]
         exits::record(exits::Exit::Settled, dragging, 0);
@@ -2258,7 +2281,10 @@ fn newton(
     #[cfg(not(feature = "exit-counts"))]
     let stage2 = |stop: usize, stationary: f64| {
         if std::env::var_os("DRIFT_NEWTON_DEBUG").is_some() {
-            eprintln!("  stage2 stop {stop} stationary {stationary:.3e} bar {:.3e}", bar.get().length);
+            eprintln!(
+                "  stage2 stop {stop} stationary {stationary:.3e} bar {:.3e}",
+                bar.get().length
+            );
         }
     };
     let mut last_stationary = f64::NAN;
@@ -2266,6 +2292,8 @@ fn newton(
     // The second rank, the dragged (0) and then the carried (1), brought where they are asked
     // to be once the rows hold (2: done), and its trust region.
     let mut pointer_rank = 0usize;
+    // (This rank's steps stopped: nothing left to gain. It lands, where it can, before the next.)
+    let mut pointer_stopped = false;
     // (Its region is a length over every column it moves: wide enough for every point to move
     // as far as the drawing is across, as the whole part does when a move of curves carries it
     // along. Narrower, the step to the dragged targets was cut at the region's edge into one
@@ -2279,247 +2307,1141 @@ fn newton(
     // The last rank's trust region (see below).
     let mut anchor_radius = pointer_across;
     'solve: loop {
-    for iteration in first_iteration..MAX_ITERATIONS {
-        if !res.iter().all(|f| f.is_finite()) || !jac.iter().flatten().all(|(_, g)| g.is_finite()) {
-            return finish(Stop::NoStep, iteration, false, most_ratio, false);
-        }
-        let mut rows_hold = converged(&res, values);
-        // Where the rows hold, they hold to the bar of the part as the solve leaves it too, as
-        // an analysis of what it writes reads it: a solve that moves the geometry can make the
-        // part smaller than the solve found it, and a row met to the bar it began with would
-        // then be off to the drawing's own (`perturbed_satisfiable_sketches_converge`).
-        if rows_hold {
-            let now = bar_now(values);
-            if now < bar.get().length {
-                bar.set(Bar {
-                    length: now,
-                    ..bar.get()
-                });
-                rows_hold = converged(&res, values);
+        for iteration in first_iteration..MAX_ITERATIONS {
+            if !res.iter().all(|f| f.is_finite())
+                || !jac.iter().flatten().all(|(_, g)| g.is_finite())
+            {
+                return finish(Stop::NoStep, iteration, false, most_ratio, false);
             }
-        }
-        // The shapes kept: arcs' radii, lines' lengths and directions, each as how far off
-        // it is and the gradient of that over its columns.
-        let value = |p: usize| values[sys.group_of[p]];
-        let radii_met = shapes.iter().zip(&is_radius).all(|(shape, is_radius)| {
-            !is_radius
-                || shape
-                    .offset(value)
-                    .is_none_or(|(_, off)| off.abs() <= met_within(shape, value, bar.get().length))
-        });
-        // (With each one's weight in the second stage, as its square root (see
-        // `shape_weights`), and its rank in the first.)
-        let (soft_terms, soft_roots): (Vec<SoftTerm>, Vec<(f64, f64)>) = shapes
-            .iter()
-            .zip(shape_weights.iter().zip(&ranks))
-            .filter_map(|(shape, (w, rank))| {
-                let (gradient, off) = shape.offset(value)?;
-                let mut grad: Vec<(usize, f64)> = Vec::with_capacity(4);
-                for (p, g) in shape.params().iter().zip(gradient) {
-                    if let Some(&c) = col_of.get(&sys.group_of[*p]) {
-                        match grad.iter_mut().find(|(cc, _)| *cc == c) {
-                            Some(entry) => entry.1 += g,
-                            None => grad.push((c, g)),
+            let mut rows_hold = converged(&res, values);
+            // Where the rows hold, they hold to the bar of the part as the solve leaves it too, as
+            // an analysis of what it writes reads it: a solve that moves the geometry can make the
+            // part smaller than the solve found it, and a row met to the bar it began with would
+            // then be off to the drawing's own (`perturbed_satisfiable_sketches_converge`).
+            if rows_hold {
+                let now = bar_now(values);
+                if now < bar.get().length {
+                    bar.set(Bar {
+                        length: now,
+                        ..bar.get()
+                    });
+                    rows_hold = converged(&res, values);
+                }
+            }
+            // The shapes kept: arcs' radii, lines' lengths and directions, each as how far off
+            // it is and the gradient of that over its columns.
+            let value = |p: usize| values[sys.group_of[p]];
+            let radii_met = shapes.iter().zip(&is_radius).all(|(shape, is_radius)| {
+                !is_radius
+                    || shape.offset(value).is_none_or(|(_, off)| {
+                        off.abs() <= met_within(shape, value, bar.get().length)
+                    })
+            });
+            // (With each one's weight in the second stage, as its square root (see
+            // `shape_weights`), and its rank in the first.)
+            let (soft_terms, soft_roots): (Vec<SoftTerm>, Vec<(f64, f64)>) = shapes
+                .iter()
+                .zip(shape_weights.iter().zip(&ranks))
+                .filter_map(|(shape, (w, rank))| {
+                    let (gradient, off) = shape.offset(value)?;
+                    let mut grad: Vec<(usize, f64)> = Vec::with_capacity(4);
+                    for (p, g) in shape.params().iter().zip(gradient) {
+                        if let Some(&c) = col_of.get(&sys.group_of[*p]) {
+                            match grad.iter_mut().find(|(cc, _)| *cc == c) {
+                                Some(entry) => entry.1 += g,
+                                None => grad.push((c, g)),
+                            }
+                        }
+                    }
+                    Some(((grad, off), (w.sqrt(), *rank)))
+                })
+                .unzip();
+            // N = JᵀJ and the right-hand side −JᵀF, with every row scaled to a unit gradient: an
+            // angle's residual is a sine and its gradient goes as one over the lines' lengths,
+            // a distance's residual is a length and its gradient a unit vector, so unscaled the
+            // rows would be weighted against each other by the size of the sketch wherever the
+            // step isn't exact, and the same drag would come out differently on the same sketch
+            // at another size (#94). Scaled, every row counts as the distance it is off by.
+            let row_scale = row_scales(&jac, &own, |k| {
+                res[k].abs() <= row_tolerance(sys, comp.rows[k], bar.get(), values)
+            });
+            let (scaled_jac, scaled_res) = scaled_rows(&jac, &res, &row_scale);
+            let before = scaled_norm2(&res, &row_scale);
+
+            if std::env::var_os("DRIFT_ITER_DEBUG").is_some() {
+                eprintln!(
+                    "  it {iteration} rows_hold {rows_hold} before {before:.3e} rank {pointer_rank} bar {:.3e}",
+                    bar.get().length
+                );
+            }
+            // The second rank: the dragged, then the carried, as near where they are asked to be as
+            // the rows let them come (`SolveOptions::to`), each rank among the rows' solutions with
+            // what ranks above it held: a projected Gauss–Newton step in a trust region, as the
+            // shapes' below. Where the rows let them land they do; where only the rows keep them off
+            // (a lever's end dragged off its circle), the step stops where their misfit has no
+            // gradient left along the rows' solutions from where the solve began: the nearest place
+            // the rows let them reach from there, not a far solution that happens to be nearer (a
+            // corner flung hundreds of millimetres out to meet a Parallel's sine, #362's seed 32).
+            // The kept shapes rank below: a held radius the pointer moves is the shapes' stage's to
+            // keep or report (`unkept`), and the drag's to stop on.
+            while rows_hold && pointer_rank < 2 {
+                let rank = pointer_rank;
+                let terms: Vec<(usize, f64)> = comp
+                    .unknowns
+                    .iter()
+                    .zip(goals)
+                    .enumerate()
+                    .filter_map(|(c, (g, goal))| match goal {
+                        Some((to, r)) if *r == rank => Some((c, values[*g] - to)),
+                        _ => None,
+                    })
+                    .collect();
+                let misfit = terms.iter().map(|(_, off)| off.abs()).fold(0.0, f64::max);
+                if std::env::var_os("DRIFT_NEWTON_DEBUG").is_some() {
+                    eprintln!(
+                        "  rank {rank} misfit {misfit:.3e} stopped {pointer_stopped} bar {:.3e} it {iteration}",
+                        bar.get().length
+                    );
+                }
+                if pointer_stopped || misfit <= bar.get().length {
+                    // Landed to the bar, or as near as its steps come: put them on their targets
+                    // exactly, and the rest back onto the rows with them (and the ranks above)
+                    // held there, where the rows let them land, as a point set where it was asked
+                    // to be is (a drag that lands ends where its pointer says, to the bit). Its
+                    // steps bring the rows back only to their tolerance, which can leave the goals
+                    // that far off with no gradient left (a corner on a tangent arc, 1e-7 off).
+                    // Only from within [`LAND_BARS`] bars of the targets, and kept only where the
+                    // rest moves no more than [`LAND_SPREAD`] times as far: a goal the rows keep
+                    // off (a lever's end) is far off, and isn't flung onto another solution.
+                    if misfit != 0.0 && misfit <= LAND_BARS * bar.get().length {
+                        let mut trial = values.to_vec();
+                        for &(c, _) in &terms {
+                            if let Some((to, _)) = goals[c] {
+                                trial[comp.unknowns[c]] = to;
+                            }
+                        }
+                        let fixed: Vec<bool> = goals
+                            .iter()
+                            .map(|goal| goal.is_some_and(|(_, r)| r <= rank))
+                            .collect();
+                        let landed = reproject(&mut trial, &on_the_rows, &fixed, &mut back_normal);
+                        let rest: Vec<f64> = comp
+                            .unknowns
+                            .iter()
+                            .enumerate()
+                            .map(|(c, g)| {
+                                if fixed[c] {
+                                    0.0
+                                } else {
+                                    trial[*g] - values[*g]
+                                }
+                            })
+                            .collect();
+                        if std::env::var_os("DRIFT_NEWTON_DEBUG").is_some() {
+                            let travel: Vec<f64> = comp
+                                .unknowns
+                                .iter()
+                                .zip(&entry)
+                                .map(|(g, e)| values[*g] - e)
+                                .collect();
+                            eprintln!(
+                                "  try land {misfit:.3e} landed {} rest {:.3e} travel {:.3e}",
+                                landed.is_some(),
+                                moved(&rest),
+                                moved(&travel)
+                            );
+                        }
+                        if let Some(((trial_res, trial_jac), trial_own)) = landed
+                            && moved(&rest) <= LAND_SPREAD * misfit + bar.get().length
+                        {
+                            if std::env::var_os("DRIFT_NEWTON_DEBUG").is_some() {
+                                eprintln!("  land {misfit:.3e} rest {:.3e}", moved(&rest));
+                            }
+                            values.copy_from_slice(&trial);
+                            leave_storage();
+                            res = trial_res;
+                            jac = trial_jac;
+                            own = trial_own;
+                        }
+                    }
+                    pointer_stopped = false;
+                    pointer_rank += 1;
+                    pointer_radius = pointer_across;
+                    continue;
+                }
+                // What this rank's step leaves where it is (the ranks above), and how mobile each
+                // column is in its metric (its own goals as free as any point: they are what moves).
+                let held: Vec<bool> = goals
+                    .iter()
+                    .map(|goal| goal.is_some_and(|(_, r)| r < rank))
+                    .collect();
+                let metric: Vec<f64> = mobility
+                    .iter()
+                    .zip(goals)
+                    .map(|(m, goal)| match goal {
+                        Some((_, r)) if *r == rank => 1.0,
+                        _ => *m,
+                    })
+                    .collect();
+                normal.clear();
+                for row in &scaled_jac {
+                    for (k, &(c1, g1)) in row.iter().enumerate() {
+                        if held[c1] {
+                            continue;
+                        }
+                        for &(c2, g2) in &row[..=k] {
+                            if !held[c2] {
+                                normal.add_product(c1, c2, g1, g2);
+                            }
                         }
                     }
                 }
-                Some(((grad, off), (w.sqrt(), *rank)))
-            })
-            .unzip();
-        // N = JᵀJ and the right-hand side −JᵀF, with every row scaled to a unit gradient: an
-        // angle's residual is a sine and its gradient goes as one over the lines' lengths,
-        // a distance's residual is a length and its gradient a unit vector, so unscaled the
-        // rows would be weighted against each other by the size of the sketch wherever the
-        // step isn't exact, and the same drag would come out differently on the same sketch
-        // at another size (#94). Scaled, every row counts as the distance it is off by.
-        let row_scale = row_scales(&jac, &own, |k| {
-            res[k].abs() <= row_tolerance(sys, comp.rows[k], bar.get(), values)
-        });
-        let (scaled_jac, scaled_res) = scaled_rows(&jac, &res, &row_scale);
-        let before = scaled_norm2(&res, &row_scale);
-
-        if std::env::var_os("DRIFT_ITER_DEBUG").is_some() {
-            eprintln!("  it {iteration} rows_hold {rows_hold} before {before:.3e} rank {pointer_rank} bar {:.3e}", bar.get().length);
-        }
-        // The second rank: the dragged, then the carried, as near where they are asked to be as
-        // the rows let them come (`SolveOptions::to`), each rank among the rows' solutions with
-        // what ranks above it held: a projected Gauss–Newton step in a trust region, as the
-        // shapes' below. Where the rows let them land they do; where only the rows keep them off
-        // (a lever's end dragged off its circle), the step stops where their misfit has no
-        // gradient left along the rows' solutions from where the solve began: the nearest place
-        // the rows let them reach from there, not a far solution that happens to be nearer (a
-        // corner flung hundreds of millimetres out to meet a Parallel's sine, #362's seed 32).
-        // The kept shapes rank below: a held radius the pointer moves is the shapes' stage's to
-        // keep or report (`unkept`), and the drag's to stop on.
-        while rows_hold && pointer_rank < 2 {
-            let rank = pointer_rank;
-            let terms: Vec<(usize, f64)> = comp
-                .unknowns
-                .iter()
-                .zip(goals)
-                .enumerate()
-                .filter_map(|(c, (g, goal))| match goal {
-                    Some((to, r)) if *r == rank => Some((c, values[*g] - to)),
-                    _ => None,
-                })
-                .collect();
-            if terms.iter().all(|(_, off)| off.abs() <= bar.get().length) {
-                // Landed to the bar: put them on their targets exactly where the rows still
-                // hold there, as a point set where it was asked to be is (a drag that lands
-                // ends where its pointer says, to the bit).
-                if terms.iter().any(|(_, off)| *off != 0.0) {
-                    let mut trial = values.to_vec();
-                    for &(c, _) in &terms {
-                        if let Some((to, _)) = goals[c] {
-                            trial[comp.unknowns[c]] = to;
+                let mu = MIN_CHANGE * max_diag_of(&normal);
+                // The kept shapes in its metric, as in the relations' stage: among the moves that
+                // bring the dragged home, the one that keeps the shapes (a round the move doesn't
+                // drag carried along, not reshaped), each as heavy as its points, KEEP_SHAPE times
+                // over. The shapes' stage meets them after.
+                let shape_metric: Vec<(Vec<(usize, f64)>, f64)> = soft_terms
+                    .iter()
+                    .zip(&soft_roots)
+                    .filter_map(|((grad, _), &(_, rank))| {
+                        let grad: Vec<(usize, f64)> =
+                            grad.iter().copied().filter(|&(c, _)| !held[c]).collect();
+                        let own = grad
+                            .iter()
+                            .map(|&(c, _)| 1.0 / metric[c])
+                            .fold(f64::INFINITY, f64::min);
+                        own.is_finite().then_some((grad, KEEP_SHAPE * own * rank))
+                    })
+                    .collect();
+                for (grad, w) in &shape_metric {
+                    for (i, &(c1, g1)) in grad.iter().enumerate() {
+                        for &(c2, g2) in &grad[..=i] {
+                            normal.add_product(c1, c2, mu * w * g1, g2);
                         }
                     }
-                    let ((trial_res, trial_jac), trial_own) =
-                        evaluate_with_own(sys, &comp.rows, &trial, &col_of);
-                    if converged(&trial_res, &trial) {
-                        if std::env::var_os("DRIFT_NEWTON_DEBUG").is_some() {
-                            let d: Vec<f64> = comp.unknowns.iter().map(|g| trial[*g] - values[*g]).collect();
-                            eprintln!("  snap {:.3e}", moved(&d));
+                }
+                let shift: Vec<f64> = metric
+                    .iter()
+                    .zip(&held)
+                    .map(|(m, held)| if *held { 1.0 } else { mu / m })
+                    .collect();
+                let Some(factor) = normal.factor(&shift) else {
+                    pointer_rank += 1;
+                    pointer_radius = pointer_across;
+                    continue;
+                };
+                let once = |r: &[f64]| {
+                    let rhs: Vec<Dd> = r
+                        .iter()
+                        .zip(&held)
+                        .map(|(r, held)| Dd::default().add(if *held { 0.0 } else { *r }))
+                        .collect();
+                    let mut v = factor.solve_refined(&rhs);
+                    for (v, held) in v.iter_mut().zip(&held) {
+                        *v = if *held { 0.0 } else { *v * mu };
+                    }
+                    v
+                };
+                let project = |r: &[f64]| {
+                    let v = once(r);
+                    let mut weighted: Vec<f64> =
+                        v.iter().zip(&metric).map(|(v, m)| v / m).collect();
+                    for (grad, w) in &shape_metric {
+                        let along: f64 = grad.iter().map(|&(c, g)| g * v[c]).sum();
+                        for &(c, g) in grad {
+                            weighted[c] += w * g * along;
                         }
+                    }
+                    once(&weighted)
+                };
+                let distance = |a: &[f64], b: &[f64]| {
+                    a.iter()
+                        .zip(b)
+                        .zip(&held)
+                        .filter(|(_, held)| !**held)
+                        .map(|((a, b), _)| a * b)
+                        .sum::<f64>()
+                };
+                if std::env::var_os("DRIFT_NEWTON_DEBUG").is_some() {
+                    let ty: Vec<f64> = comp
+                        .unknowns
+                        .iter()
+                        .map(|&g| if axis_of(sys, g) == Some(1) { 1.0 } else { 0.0 })
+                        .collect();
+                    let jt: f64 = scaled_jac
+                        .iter()
+                        .map(|row| row.iter().map(|&(c, g)| g * ty[c]).sum::<f64>().powi(2))
+                        .sum();
+                    let mob: Vec<String> = metric.iter().map(|m| format!("{m:.0e}")).collect();
+                    eprintln!(
+                        "  pointer: |J ty|^2 {jt:.3e} metric {mob:?} axes {:?}",
+                        comp.unknowns
+                            .iter()
+                            .map(|&g| axis_of(sys, g))
+                            .collect::<Vec<_>>()
+                    );
+                }
+                let half_square =
+                    |offs: &mut dyn Iterator<Item = f64>| 0.5 * offs.map(|o| o * o).sum::<f64>();
+                let phi_now = half_square(&mut terms.iter().map(|(_, off)| *off));
+                let mut r = vec![0.0; n];
+                let mut is_goal = vec![false; n];
+                for &(c, off) in &terms {
+                    r[c] += off;
+                    is_goal[c] = true;
+                }
+                // (Projected twice, here and in the steps: where the rows keep the dragged off their
+                // targets, what is left of the misfit lies in the rows' own directions, and once
+                // leaves μ/σ² of it, which the steps would chase as far as the region lets them:
+                // a lever's end driven into its circle. Twice leaves that share squared; the
+                // projection is idempotent, so nothing else changes.)
+                let mut v = project(&r);
+                let stationary = dot(&r, &v);
+                let mut rv = stationary;
+                let b = bar.get().length;
+                let mut done = rv <= 0.0 || stationary <= b * b;
+                if !done {
+                    // Steihaug's projected conjugate gradients: the misfit's curvature is the
+                    // identity over this rank's goals.
+                    let mut x = vec![0.0; n];
+                    let mut p: Vec<f64> = v.iter().map(|v| -v).collect();
+                    let to_edge = |x: &[f64], d: &[f64]| {
+                        let (qa, qb, qc) = (
+                            distance(d, d),
+                            2.0 * distance(x, d),
+                            distance(x, x) - pointer_radius * pointer_radius,
+                        );
+                        if qa > 0.0 {
+                            (-qb + (qb * qb - 4.0 * qa * qc).max(0.0).sqrt()) / (2.0 * qa)
+                        } else {
+                            0.0
+                        }
+                    };
+                    for _ in 0..=terms.len() {
+                        let hp: Vec<f64> = p
+                            .iter()
+                            .zip(&is_goal)
+                            .map(|(p, goal)| if *goal { *p } else { 0.0 })
+                            .collect();
+                        let kappa = dot(&p, &hp);
+                        if kappa <= 0.0 {
+                            let t = to_edge(&x, &p);
+                            x.iter_mut().zip(&p).for_each(|(x, p)| *x += t * p);
+                            break;
+                        }
+                        let alpha = rv / kappa;
+                        let next: Vec<f64> = x.iter().zip(&p).map(|(x, p)| x + alpha * p).collect();
+                        if distance(&next, &next) >= pointer_radius * pointer_radius {
+                            let t = to_edge(&x, &p);
+                            x.iter_mut().zip(&p).for_each(|(x, p)| *x += t * p);
+                            break;
+                        }
+                        x = next;
+                        r.iter_mut().zip(&hp).for_each(|(r, h)| *r += alpha * h);
+                        v = project(&r);
+                        let rv_next = dot(&r, &v);
+                        if rv_next.max(0.0).sqrt() <= b {
+                            break;
+                        }
+                        let beta = rv_next / rv;
+                        p.iter_mut().zip(&v).for_each(|(p, v)| *p = -v + beta * *p);
+                        rv = rv_next;
+                    }
+                    let promised =
+                        phi_now - half_square(&mut terms.iter().map(|&(c, off)| off + x[c]));
+                    let nearer =
+                        (2.0 * phi_now).sqrt() - (2.0 * (phi_now - promised).max(0.0)).sqrt();
+                    if promised <= b * b || nearer <= b {
+                        if std::env::var_os("DRIFT_NEWTON_DEBUG").is_some() {
+                            eprintln!(
+                                "  pointer stops: misfit {:.3e} promised {promised:.3e} nearer {nearer:.3e} b {b:.3e}",
+                                (2.0 * phi_now).sqrt()
+                            );
+                        }
+                        done = true;
+                    } else {
+                        let stepped = distance(&x, &x).sqrt();
+                        let mut trial = values.to_vec();
+                        for (c, g) in comp.unknowns.iter().enumerate() {
+                            trial[*g] += x[c];
+                        }
+                        let landed = reproject(&mut trial, &on_the_rows, &held, &mut back_normal);
+                        let back: Vec<f64> = comp
+                            .unknowns
+                            .iter()
+                            .enumerate()
+                            .map(|(c, g)| trial[*g] - values[*g] - x[c])
+                            .collect();
+                        let from_entry: Vec<f64> = comp
+                            .unknowns
+                            .iter()
+                            .zip(&entry)
+                            .map(|(g, e)| trial[*g] - e)
+                            .collect();
+                        let why = if landed.is_none() {
+                            "reproject".to_string()
+                        } else {
+                            format!(
+                                "back {:.3e} from_entry {:.3e}",
+                                moved(&back),
+                                moved(&from_entry)
+                            )
+                        };
+                        let landed = landed.filter(|_| {
+                            moved(&back) <= CORRECTION_SHARE * moved(&x)
+                                && moved(&from_entry) <= across
+                        });
+                        let kept = landed.and_then(|evaluated| {
+                            let after = half_square(&mut terms.iter().map(|&(c, _)| {
+                                let to = goals[c].map_or(0.0, |(to, _)| to);
+                                trial[comp.unknowns[c]] - to
+                            }));
+                            let gain = (phi_now - after) / promised;
+                            (gain >= 0.25).then_some((evaluated, gain))
+                        });
+                        match kept {
+                            Some((((trial_res, trial_jac), trial_own), gain)) => {
+                                if gain > 0.75 && stepped >= 0.99 * pointer_radius {
+                                    pointer_radius = (2.0 * pointer_radius).min(pointer_across);
+                                }
+                                if std::env::var_os("DRIFT_NEWTON_DEBUG").is_some() {
+                                    let d: Vec<f64> = comp
+                                        .unknowns
+                                        .iter()
+                                        .map(|g| trial[*g] - values[*g])
+                                        .collect();
+                                    let cost = |v: &[f64]| {
+                                        v.iter().map(|a| a * a).sum::<f64>()
+                                            + shape_metric
+                                                .iter()
+                                                .map(|(g, w)| {
+                                                    w * g
+                                                        .iter()
+                                                        .map(|&(c, gg)| gg * v[c])
+                                                        .sum::<f64>()
+                                                        .powi(2)
+                                                })
+                                                .sum::<f64>()
+                                    };
+                                    let ty: Vec<f64> = comp
+                                        .unknowns
+                                        .iter()
+                                        .map(|&g| {
+                                            if axis_of(sys, g) == Some(1) {
+                                                -18.0
+                                            } else {
+                                                0.0
+                                            }
+                                        })
+                                        .collect();
+                                    eprintln!(
+                                        "  pointer step {:.3e} x {:.3e} gain {gain:.3} cost x {:.1} cost t {:.1} shapes {:?}",
+                                        moved(&d),
+                                        moved(&x),
+                                        cost(&x),
+                                        cost(&ty),
+                                        shape_metric
+                                            .iter()
+                                            .map(|(g, w)| (g.len(), *w))
+                                            .collect::<Vec<_>>()
+                                    );
+                                }
+                                let step: Vec<f64> = comp
+                                    .unknowns
+                                    .iter()
+                                    .map(|g| trial[*g] - values[*g])
+                                    .collect();
+                                let step = moved(&step);
+                                if last_step > 0.0 {
+                                    most_ratio = most_ratio.max(step / last_step);
+                                }
+                                last_step = step;
+                                values.copy_from_slice(&trial);
+                                leave_storage();
+                                res = trial_res;
+                                jac = trial_jac;
+                                own = trial_own;
+                            }
+                            None => {
+                                if std::env::var_os("DRIFT_NEWTON_DEBUG").is_some() {
+                                    eprintln!(
+                                        "  pointer refused stepped {stepped:.3e} radius {pointer_radius:.3e} across {across:.3e} phi {phi_now:.3e} promised {promised:.3e} terms {:?} x {:?} why {}",
+                                        terms, x, why
+                                    );
+                                }
+                                pointer_radius = stepped / 4.0;
+                                done = pointer_radius <= b;
+                            }
+                        }
+                    }
+                }
+                if done {
+                    pointer_stopped = true;
+                    pointer_radius = pointer_across;
+                    continue;
+                }
+                break;
+            }
+            if rows_hold && pointer_rank < 2 {
+                continue;
+            }
+
+            if rows_hold {
+                // The second stage: the preferences, among the rows' solutions.
+                if !in_stage2 && std::env::var_os("DRIFT_NEWTON_DEBUG").is_some() {
+                    let offs: Vec<String> = soft_terms
+                        .iter()
+                        .zip(&is_radius)
+                        .map(|((g, o), r)| {
+                            format!(
+                                "{}{:.2e}{:?}",
+                                if *r { "R" } else { "L" },
+                                o,
+                                g.iter().map(|(c, _)| *c).collect::<Vec<_>>()
+                            )
+                        })
+                        .collect();
+                    eprintln!("  stage2 enters: {}", offs.join(" "));
+                }
+                in_stage2 = true;
+                if soft_terms
+                    .iter()
+                    .all(|(_, off)| off.abs() <= bar.get().length)
+                {
+                    stage2(0, 0.0);
+                    {
+                        settled = Some((iteration, true));
+                        break;
+                    }
+                }
+                if preferences_entry.is_none() {
+                    preferences_entry = Some(comp.unknowns.iter().map(|g| values[*g]).collect());
+                }
+                // The shapes as this stage weighs them (see `shape_weights`).
+                let soft_terms: Vec<SoftTerm> = soft_terms
+                    .iter()
+                    .zip(&soft_roots)
+                    .map(|((grad, off), &(root, _))| {
+                        (
+                            grad.iter().map(|&(c, g)| (c, root * g)).collect(),
+                            root * off,
+                        )
+                    })
+                    .collect();
+                // A = JᵀJ + μ·M⁻¹ over the columns that take part (the dragged and carried as
+                // the identity, apart from the rest).
+                normal.clear();
+                for row in &scaled_jac {
+                    for (k, &(c1, g1)) in row.iter().enumerate() {
+                        if pinned[c1] {
+                            continue;
+                        }
+                        for &(c2, g2) in &row[..=k] {
+                            if !pinned[c2] {
+                                normal.add_product(c1, c2, g1, g2);
+                            }
+                        }
+                    }
+                }
+                let mu = MIN_CHANGE * max_diag_of(&normal);
+                let shift: Vec<f64> = mobility
+                    .iter()
+                    .zip(&pinned)
+                    .map(|(m, pinned)| if *pinned { 1.0 } else { mu / m })
+                    .collect();
+                let Some(factor) = normal.factor(&shift) else {
+                    // (Positive definite by construction; a factor that fails is round-off
+                    // swamping the rows, with nothing a preference's step could rely on.)
+                    stage2(5, f64::NAN);
+                    {
+                        settled = Some((iteration, true));
+                        break;
+                    }
+                };
+                // The weighted projection into the rows' null space of a gradient (`μ·A⁻¹`).
+                // (Refined against the matrix's exact values: `A⁻¹` amplifies round-off by 1/μ in
+                // the directions the rows leave free, and the projection takes that back by μ, so
+                // an unrefined solve would leave round-off of a millionth of the step in the
+                // directions neither the rows nor the shapes move, as much at one size or place as
+                // its round-off happened to make it.)
+                //
+                //
+                // For the stop, twice: once leaves μ/σ² of a direction the rows move with singular
+                // value σ, which where the rows rule a shape out (a hanging line's length an Equal
+                // dictates) is all the shape's gradient there is, and the solve chased it, refused
+                // trial after trial. The projection is idempotent in the weighted metric, so a
+                // second pass changes nothing else and leaves that share squared.
+                let once = |r: &[f64]| {
+                    let rhs: Vec<Dd> = r
+                        .iter()
+                        .zip(&pinned)
+                        .map(|(r, pinned)| Dd::default().add(if *pinned { 0.0 } else { *r }))
+                        .collect();
+                    let mut v = factor.solve_refined(&rhs);
+                    for (v, pinned) in v.iter_mut().zip(&pinned) {
+                        *v = if *pinned { 0.0 } else { *v * mu };
+                    }
+                    v
+                };
+                let project = |r: &[f64]| {
+                    let v = once(r);
+                    let weighted: Vec<f64> = v.iter().zip(&mobility).map(|(v, m)| v / m).collect();
+                    once(&weighted)
+                };
+                // The shapes' Gauss–Newton curvature GᵀG applied to a step.
+                let curvature = |p: &[f64]| {
+                    let mut out = vec![0.0; n];
+                    for (grad, _) in &soft_terms {
+                        let s: f64 = grad.iter().map(|&(c, g)| g * p[c]).sum();
+                        for &(c, g) in grad {
+                            out[c] += g * s;
+                        }
+                    }
+                    out
+                };
+                if free_radius.is_none() {
+                    free_radius = Some(
+                        shapes
+                            .iter()
+                            .zip(&is_radius)
+                            .map(|(shape, is_radius)| {
+                                let Some((gradient, _)) = shape.offset(|p| values[sys.group_of[p]])
+                                else {
+                                    return false;
+                                };
+                                let mut g = vec![0.0; n];
+                                for (p, d) in shape.params().iter().zip(gradient) {
+                                    if let Some(&c) = col_of.get(&sys.group_of[*p]) {
+                                        g[c] += d;
+                                    }
+                                }
+                                let whole: f64 = g
+                                    .iter()
+                                    .zip(&mobility)
+                                    .zip(&pinned)
+                                    .filter(|(_, pinned)| !**pinned)
+                                    .map(|((g, m), _)| g * g * m)
+                                    .sum();
+                                *is_radius && dot(&g, &once(&g)) > MIN_CHANGE.sqrt() * whole
+                            })
+                            .collect(),
+                    );
+                }
+                let phi = |terms: &[f64]| 0.5 * terms.iter().map(|off| off * off).sum::<f64>();
+                let phi_now = phi(&soft_terms.iter().map(|(_, off)| *off).collect::<Vec<_>>());
+                // The shapes' gradient Gᵀ·off, and the step by projected conjugate gradients in
+                // the trust region (Steihaug): exact in as many steps as there are shapes.
+                let mut r = vec![0.0; n];
+                for (grad, off) in &soft_terms {
+                    for &(c, g) in grad {
+                        r[c] += g * off;
+                    }
+                }
+                let mut v = once(&r);
+                let mut rv = dot(&r, &v);
+                // (The stop reads the gradient projected twice; the steps, once.)
+                let stationary = dot(&r, &project(&r));
+                // Stationary: the shapes' projected gradient, in the weighted metric, is below the
+                // bar. (Not while a kept radius is off, nor with the fold steps, which finish only
+                // where every shape is met: at a fold a shape's gradient vanishes where it can
+                // still be met, and only what the step can still gain says so (see below). A
+                // drag's kept radii are held, not only preferred: where they can be met, they are,
+                // and a drag whose radii can't follow stops (`Editor::breaks_held_shape`).)
+                last_stationary = stationary;
+                if rv <= 0.0 || (radii_met && stationary <= bar.get().length * bar.get().length) {
+                    stage2(1, stationary);
+                    {
+                        settled = Some((iteration, true));
+                        break;
+                    }
+                }
+                let mut x = vec![0.0; n];
+                let mut p: Vec<f64> = v.iter().map(|v| -v).collect();
+                // How far along `d` from `x` the region's edge is.
+                let to_edge = |x: &[f64], d: &[f64]| {
+                    let (a, b, c) = (
+                        distance(d, d),
+                        2.0 * distance(x, d),
+                        distance(x, x) - radius * radius,
+                    );
+                    if a > 0.0 {
+                        (-b + (b * b - 4.0 * a * c).max(0.0).sqrt()) / (2.0 * a)
+                    } else {
+                        0.0
+                    }
+                };
+                for _ in 0..=soft_terms.len() {
+                    let hp = curvature(&p);
+                    let kappa = dot(&p, &hp);
+                    if kappa <= 0.0 {
+                        let t = to_edge(&x, &p);
+                        x.iter_mut().zip(&p).for_each(|(x, p)| *x += t * p);
+                        break;
+                    }
+                    let alpha = rv / kappa;
+                    let next: Vec<f64> = x.iter().zip(&p).map(|(x, p)| x + alpha * p).collect();
+                    if distance(&next, &next) >= radius * radius {
+                        let t = to_edge(&x, &p);
+                        x.iter_mut().zip(&p).for_each(|(x, p)| *x += t * p);
+                        break;
+                    }
+                    x = next;
+                    r.iter_mut().zip(&hp).for_each(|(r, h)| *r += alpha * h);
+                    v = once(&r);
+                    let rv_next = dot(&r, &v);
+                    if rv_next.max(0.0).sqrt() <= bar.get().length {
+                        break;
+                    }
+                    let beta = rv_next / rv;
+                    p.iter_mut().zip(&v).for_each(|(p, v)| *p = -v + beta * *p);
+                    rv = rv_next;
+                }
+                // What the step promises: the shapes' linearisation, half their offsets squared.
+                let promised = {
+                    let terms: Vec<f64> = soft_terms
+                        .iter()
+                        .map(|(grad, off)| off + grad.iter().map(|&(c, g)| g * x[c]).sum::<f64>())
+                        .collect();
+                    phi_now - phi(&terms)
+                };
+                // Settled where the most the step could gain is below the bar squared, or (but
+                // with `fold`, which meets every shape it can) where it would bring the shapes'
+                // offsets, as one length, no more than a bar nearer: at a shape the relations hold
+                // off, a step can gain a sliver of a large misfit (more than the bar squared) while
+                // moving the misfit itself by far less than the bar, and the solve would creep on.
+                let nearer = (2.0 * phi_now).sqrt() - (2.0 * (phi_now - promised).max(0.0)).sqrt();
+                if promised <= bar.get().length * bar.get().length || nearer <= bar.get().length {
+                    stage2(
+                        if promised <= bar.get().length * bar.get().length {
+                            2
+                        } else {
+                            3
+                        },
+                        stationary,
+                    );
+                    {
+                        settled = Some((iteration, true));
+                        break;
+                    }
+                }
+                let stepped = distance(&x, &x).sqrt();
+                // The trial, back onto the rows: minimum-change Newton steps (the weighted
+                // least-change step as μ goes to zero), each at least halving what the rows are
+                // off by, until they hold.
+                let mut trial = values.to_vec();
+                for (c, g) in comp.unknowns.iter().enumerate() {
+                    trial[*g] += x[c];
+                }
+                let landed = reproject(&mut trial, &on_the_rows, &pinned, &mut back_normal);
+                // (Brought back by no more than a share of the step: farther, the step went where
+                // the rows' tangent says nothing about them.)
+                let back: Vec<f64> = comp
+                    .unknowns
+                    .iter()
+                    .enumerate()
+                    .map(|(c, g)| trial[*g] - values[*g] - x[c])
+                    .collect();
+                let landed = landed.filter(|_| moved(&back) <= CORRECTION_SHARE * moved(&x));
+                // The region's outer bound holds for the preferences' steps together, not only each
+                // one: each is no wider than the drawing, but many of them could walk a point a
+                // shape barely feels as far as the shape keeps gaining (a direction met by sliding an
+                // end along a line it nearly parallels), and the next solve, measuring the drawing
+                // with that point in it, would let it go farther still (`flung_centre`: kilometres
+                // out on a 20 mm sketch, for one ulp of offset).
+                let from_entry: Vec<f64> = comp
+                    .unknowns
+                    .iter()
+                    .zip(&entry)
+                    .map(|(g, e)| trial[*g] - e)
+                    .collect();
+                let from_preferences: Vec<f64> = comp
+                    .unknowns
+                    .iter()
+                    .zip(
+                        preferences_entry
+                            .get_or_insert_with(|| entry.clone())
+                            .iter(),
+                    )
+                    .map(|(g, e)| trial[*g] - e)
+                    .collect();
+                let landed = landed.filter(|_| {
+                    if dragging {
+                        moved(&from_entry) <= across
+                    } else if sys.shapes_as_before {
+                        true
+                    } else {
+                        // (In an edit, from where the preferences' stage began: a preference never
+                        // carries geometry farther than the drawing is across, as a line kept
+                        // square would be, stretched along itself to meet a line it nearly
+                        // parallels.)
+                        moved(&from_preferences) <= across
+                    }
+                });
+                let kept = landed.and_then(|evaluated| {
+                    let terms: Vec<f64> = shapes
+                        .iter()
+                        .zip(&shape_weights)
+                        .filter_map(|(shape, w)| {
+                            Some(w.sqrt() * shape.offset(|p| trial[sys.group_of[p]])?.1)
+                        })
+                        .collect();
+                    // (Kept where it delivered at least a quarter of what it promised, the
+                    // region's own test: a step that gains a sliver of what its linearisation
+                    // promised went somewhere the linearisation says nothing about, and taken, it
+                    // would slide geometry along a direction the shapes hardly feel, as far as
+                    // round-off had it go.)
+                    let gain = (phi_now - phi(&terms)) / promised;
+                    (gain >= 0.25).then_some((evaluated, gain))
+                });
+                match kept {
+                    Some((((trial_res, trial_jac), trial_own), gain)) => {
+                        if gain > 0.75 && stepped >= 0.99 * radius {
+                            radius = (2.0 * radius).min(across);
+                        }
+                        let step: Vec<f64> = comp
+                            .unknowns
+                            .iter()
+                            .map(|g| trial[*g] - values[*g])
+                            .collect();
+                        let step = moved(&step);
+                        if last_step > 0.0 {
+                            most_ratio = most_ratio.max(step / last_step);
+                        }
+                        last_step = step;
                         values.copy_from_slice(&trial);
+                        leave_storage();
                         res = trial_res;
                         jac = trial_jac;
                         own = trial_own;
                     }
+                    None => radius = stepped / 4.0,
                 }
-                pointer_rank += 1;
-                pointer_radius = pointer_across;
+                if radius <= bar.get().length {
+                    stage2(4, stationary);
+                    {
+                        settled = Some((iteration + 1, converged(&res, values)));
+                        break;
+                    }
+                }
                 continue;
             }
-            // What this rank's step leaves where it is (the ranks above), and how mobile each
-            // column is in its metric (its own goals as free as any point: they are what moves).
-            let held: Vec<bool> = goals
-                .iter()
-                .map(|goal| goal.is_some_and(|(_, r)| r < rank))
-                .collect();
-            let metric: Vec<f64> = mobility
-                .iter()
-                .zip(goals)
-                .map(|(m, goal)| match goal {
-                    Some((_, r)) if *r == rank => 1.0,
-                    _ => *m,
-                })
-                .collect();
+
+            // The first stage: the relations.
             normal.clear();
-            for row in &scaled_jac {
+            let mut rhs = vec![Dd::default(); n];
+            for (row, f) in scaled_jac.iter().zip(&scaled_res) {
                 for (k, &(c1, g1)) in row.iter().enumerate() {
-                    if held[c1] {
-                        continue;
-                    }
+                    rhs[c1] = rhs[c1].add_product(-g1, *f);
                     for &(c2, g2) in &row[..=k] {
-                        if !held[c2] {
-                            normal.add_product(c1, c2, g1, g2);
+                        normal.add_product(c1, c2, g1, g2);
+                    }
+                }
+            }
+            let max_diag = max_diag_of(&normal);
+            let mu = MIN_CHANGE * max_diag;
+            // The shapes kept, as part of the change a step makes: where the rows' solutions
+            // could go either way (a concentric round's lines follow it, or the round shrinks),
+            // being off a radius, length or direction costs as much as moving its points that
+            // far, KEEP_SHAPE times over: its points' own weight, the least of them (a line of the
+            // rest of the sketch, where a relation's focus takes up the change, is kept against
+            // moving the rest, not against moving the focus: #349's chain, whose bars would
+            // otherwise turn rather than move). In the metric only: the second stage meets them.
+            for ((grad, _), &(_, rank)) in soft_terms.iter().zip(&soft_roots) {
+                let own = grad
+                    .iter()
+                    .map(|&(c, _)| 1.0 / mobility[c])
+                    .fold(f64::INFINITY, f64::min);
+                // (A shape a caller ranks lower is kept that much less: see
+                // `SolveOptions::length_ranks`.)
+                let own = rank * if own.is_finite() { own } else { 1.0 };
+                for (i, &(c1, g1)) in grad.iter().enumerate() {
+                    for &(c2, g2) in &grad[..=i] {
+                        normal.add_product(c1, c2, mu * KEEP_SHAPE * own * g1, g2);
+                    }
+                }
+            }
+            // The minimum change is weighted by mobility: it picks among the rows' solutions. The
+            // damping is the trust region, how far the rows' linearisation can be trusted, which is
+            // a distance, the same for every point, whatever rank of what stays put it is in (a
+            // step that swings the focus far and the rest a hair, where only the rest can meet the
+            // rows, is as far off its linearisation as any: #349's chain, a relation's focus among
+            // bars held at their lengths). The dragged and carried keep their weight in it too:
+            // they are where the user put them, and a damped step doesn't move them either. (Damped
+            // as a distance like the rest, a drag that can't land would let them give way, and land
+            // nowhere near where they were asked to be: `held_shapes::`' refused drags then go.)
+            let shift: Vec<f64> = mobility
+                .iter()
+                .zip(&pinned)
+                .map(|(m, pinned)| mu / m + if *pinned { lambda / m } else { lambda })
+                .collect();
+            let refuse = |lambda: &mut f64, nu: &mut f64| {
+                *lambda = lambda.max(1e-6 * max_diag) * *nu;
+                *nu *= 2.0;
+            };
+            let Some(factor) = normal.factor(&shift) else {
+                // (Not numerically positive definite at this damping: a step refused.)
+                refuse(&mut lambda, &mut nu);
+                continue;
+            };
+            let delta = factor.solve_refined(&rhs);
+            // The trust region's outer bound: a single iteration can't fling geometry onto another
+            // branch, no further than the drawing is across. (Not the spread of this component's
+            // own unknowns: a lone unknown, such as the free end of a dimension from a fixed
+            // point, has none, and would crawl a millimetre at a time.) A step that goes farther
+            // is refused like one that does worse, and the damping rises until one fits: the step
+            // the region allows is the damped step of its size, which gives up the directions the
+            // rows barely move first, not the long step cut short along its own way, which goes
+            // mostly along them, and walked a part across the drawing to another branch frame
+            // after frame (census case 2432). It is one its linearisation got badly wrong too.
+            // (And in a drag, no point farther from where the solve began than that, all its steps
+            // together: a step each no wider than the drawing could still walk a part across it to
+            // another branch, and the next solve, measuring the drawing with it there, go farther
+            // still: `flung_centre`, 21 of 39 one-ulp nudges of its offset thrown 6 to 23 m out
+            // on a 20 mm sketch. A drag's solve begins with its targets in place, so its own way
+            // to them is short; a commit's may rightly go far, a dimension typed ten times longer.)
+            let from_entry: Vec<f64> = comp
+                .unknowns
+                .iter()
+                .zip(&entry)
+                .enumerate()
+                .map(|(c, (g, e))| values[*g] + delta[c] - e)
+                .collect();
+            if moved(&delta) > across || (dragging && moved(&from_entry) > across) {
+                refuse(&mut lambda, &mut nu);
+                continue;
+            }
+            let mut trial = values.to_vec();
+            for (c, g) in comp.unknowns.iter().enumerate() {
+                trial[*g] += delta[c];
+            }
+            let ((mut trial_res, mut trial_jac), mut trial_own) =
+                evaluate_with_own(sys, &comp.rows, &trial, &col_of);
+            // (Judged in the step's own scaling of the rows.)
+            let mut after = scaled_norm2(&trial_res, &row_scale);
+            // Then onto where its linearisation promised to take the rows: the linearisation is a
+            // tangent, so a step that turns geometry (a chain of bars held at their lengths, swung
+            // about a joint) leaves every length it turns off at second order, and judged so, the
+            // damping would answer with ever smaller steps (#349). Newton's steps from there to
+            // the values the step promised take that second order out, so that the step follows
+            // the rows round and is judged by what it does to the rows that are off (a second-order
+            // correction). Where they don't close in, or the correction is more than a share of the
+            // step ([`CORRECTION_SHARE`]), the step as it was.
+            {
+                let promise: Vec<f64> = res
+                    .iter()
+                    .zip(&jac)
+                    .map(|(f, row)| f + row.iter().map(|&(c, g)| g * delta[c]).sum::<f64>())
+                    .collect();
+                let mut corrected = trial.clone();
+                let got = reproject(&mut corrected, &promise, &no_column, &mut back_normal);
+                let correction: Vec<f64> = comp
+                    .unknowns
+                    .iter()
+                    .map(|g| corrected[*g] - trial[*g])
+                    .collect();
+                if let Some(((res2, jac2), own2)) = got
+                    && moved(&correction) <= CORRECTION_SHARE * moved(&delta)
+                {
+                    let after2 = scaled_norm2(&res2, &row_scale);
+                    if after2 < after
+                        || (converged(&res2, &corrected) && !converged(&trial_res, &trial))
+                    {
+                        trial = corrected;
+                        (trial_res, trial_jac, trial_own, after) = (res2, jac2, own2, after2);
+                    }
+                }
+            }
+            let model = scaled_jac
+                .iter()
+                .zip(&scaled_res)
+                .map(|(row, f)| (f + row.iter().map(|&(c, g)| g * delta[c]).sum::<f64>()).powi(2))
+                .sum::<f64>();
+            let promised = before - model;
+            let lands = converged(&trial_res, &trial);
+            if after < before || lands {
+                // How much of the drop the linearisation promised the step delivered.
+                let gain = if promised > 0.0 {
+                    (before - after) / promised
+                } else {
+                    1.0
+                };
+                let step: Vec<f64> = comp
+                    .unknowns
+                    .iter()
+                    .map(|g| trial[*g] - values[*g])
+                    .collect();
+                let step = moved(&step);
+                if last_step > 0.0 {
+                    most_ratio = most_ratio.max(step / last_step);
+                }
+                last_step = step;
+                values.copy_from_slice(&trial);
+                leave_storage();
+                res = trial_res;
+                jac = trial_jac;
+                own = trial_own;
+                lambda *= (1.0 - (2.0 * gain - 1.0).powi(3)).max(1.0 / 3.0);
+                nu = 2.0;
+                if lambda < 1e-12 * max_diag {
+                    lambda = 0.0;
+                }
+                if lands {
+                    continue;
+                }
+            }
+            let refused = !(after < before || lands);
+            if refused {
+                refuse(&mut lambda, &mut nu);
+            }
+            let finest = res
+                .iter()
+                .zip(&comp.rows)
+                .zip(&row_scale)
+                .filter(|((f, r), s)| {
+                    **s > 0.0 && f.abs() > row_tolerance(sys, **r, bar.get(), values)
+                })
+                .map(|((_, r), s)| row_tolerance(sys, *r, bar.get(), values) * s)
+                .fold(f64::INFINITY, f64::min);
+            // A least-squares stationary point with the rows off: the step brings them no more
+            // than the finest bar of the rows still off closer, and by its linearisation they
+            // still wouldn't hold. Every further step is smaller still (λ only grows on a refused
+            // step), so the rows are as near as they get: a conflict, or the round-off floor.
+            if before.sqrt() - model.max(0.0).sqrt() <= finest && model.max(0.0).sqrt() > finest {
+                let rows_hold = converged(&res, values);
+                return finish(
+                    if rows_hold {
+                        Stop::Settled
+                    } else {
+                        Stop::Conflict
+                    },
+                    iteration + 1,
+                    rows_hold,
+                    most_ratio,
+                    false,
+                );
+            }
+        }
+        // The last rank, below the kept shapes: what the relations, the dragged and the shapes all
+        // leave open goes back as near where the solve's `anchors` are as it can (a drag's step:
+        // where the drag began, `SolveOptions::anchor`). So where a drag ends doesn't depend on the
+        // steps its path took to get there: each step's least change, measured from where the last
+        // one ended, drifts with the steps along what nothing above decides, and where the steps
+        // fell (round a turn of the shape, at one size and not another) moved the end with them
+        // (the similarity property, every seed). Each step is a projected Gauss–Newton step in
+        // the rows' null space with the dragged and carried held and every kept shape's gradient
+        // held as a row too (so a shape moves only at second order), brought back onto the rows;
+        // then the shapes' stage meets the shapes again, and the next step goes from there.
+        if let Some((iteration, conv)) = settled
+            && conv
+            && !unkept(&free_radius, values)
+            && anchors.iter().zip(&pinned).any(|(a, p)| a.is_some() && !*p)
+        {
+            let progressed = 'step: {
+                let b = bar.get().length;
+                let terms: Vec<(usize, f64)> = comp
+                    .unknowns
+                    .iter()
+                    .zip(anchors)
+                    .enumerate()
+                    .filter(|(c, _)| !pinned[*c])
+                    .filter_map(|(c, (g, a))| a.map(|a| (c, values[*g] - a)))
+                    .collect();
+                if terms.iter().all(|(_, off)| off.abs() <= b) {
+                    break 'step false;
+                }
+                let ((res_now, jac_now), own_now) =
+                    evaluate_with_own(sys, &comp.rows, values, &col_of);
+                let row_scale = row_scales(&jac_now, &own_now, |k| {
+                    res_now[k].abs() <= row_tolerance(sys, comp.rows[k], bar.get(), values)
+                });
+                let (scaled_jac, _) = scaled_rows(&jac_now, &res_now, &row_scale);
+                let value = |p: usize| values[sys.group_of[p]];
+                let shape_rows: Vec<Vec<(usize, f64)>> = shapes
+                    .iter()
+                    .filter_map(|shape| {
+                        let (gradient, _) = shape.offset(value)?;
+                        let mut grad: Vec<(usize, f64)> = Vec::with_capacity(4);
+                        for (p, g) in shape.params().iter().zip(gradient) {
+                            if let Some(&c) = col_of.get(&sys.group_of[*p]) {
+                                match grad.iter_mut().find(|(cc, _)| *cc == c) {
+                                    Some(entry) => entry.1 += g,
+                                    None => grad.push((c, g)),
+                                }
+                            }
+                        }
+                        let norm = grad.iter().map(|(_, g)| g * g).sum::<f64>().sqrt();
+                        (norm > 0.0).then(|| grad.into_iter().map(|(c, g)| (c, g / norm)).collect())
+                    })
+                    .collect();
+                normal.clear();
+                for row in scaled_jac.iter().chain(&shape_rows) {
+                    for (k, &(c1, g1)) in row.iter().enumerate() {
+                        if pinned[c1] {
+                            continue;
+                        }
+                        for &(c2, g2) in &row[..=k] {
+                            if !pinned[c2] {
+                                normal.add_product(c1, c2, g1, g2);
+                            }
                         }
                     }
                 }
-            }
-            let mu = MIN_CHANGE * max_diag_of(&normal);
-            // The kept shapes in its metric, as in the relations' stage: among the moves that
-            // bring the dragged home, the one that keeps the shapes (a round the move doesn't
-            // drag carried along, not reshaped), each as heavy as its points, KEEP_SHAPE times
-            // over. The shapes' stage meets them after.
-            let shape_metric: Vec<(Vec<(usize, f64)>, f64)> = soft_terms
-                .iter()
-                .zip(&soft_roots)
-                .filter_map(|((grad, _), &(_, rank))| {
-                    let grad: Vec<(usize, f64)> =
-                        grad.iter().copied().filter(|&(c, _)| !held[c]).collect();
-                    let own = grad
-                        .iter()
-                        .map(|&(c, _)| 1.0 / metric[c])
-                        .fold(f64::INFINITY, f64::min);
-                    own.is_finite().then_some((grad, KEEP_SHAPE * own * rank))
-                })
-                .collect();
-            for (grad, w) in &shape_metric {
-                for (i, &(c1, g1)) in grad.iter().enumerate() {
-                    for &(c2, g2) in &grad[..=i] {
-                        normal.add_product(c1, c2, mu * w * g1, g2);
-                    }
-                }
-            }
-            let shift: Vec<f64> = metric
-                .iter()
-                .zip(&held)
-                .map(|(m, held)| if *held { 1.0 } else { mu / m })
-                .collect();
-            let Some(factor) = normal.factor(&shift) else {
-                pointer_rank += 1;
-                pointer_radius = pointer_across;
-                continue;
-            };
-            let once = |r: &[f64]| {
-                let rhs: Vec<Dd> = r
+                let mu = MIN_CHANGE * max_diag_of(&normal);
+                let shift: Vec<f64> = mobility
                     .iter()
-                    .zip(&held)
-                    .map(|(r, held)| Dd::default().add(if *held { 0.0 } else { *r }))
+                    .zip(&pinned)
+                    .map(|(m, p)| if *p { 1.0 } else { mu / m })
                     .collect();
-                let mut v = factor.solve_refined(&rhs);
-                for (v, held) in v.iter_mut().zip(&held) {
-                    *v = if *held { 0.0 } else { *v * mu };
-                }
-                v
-            };
-            let project = |r: &[f64]| {
-                let v = once(r);
-                let mut weighted: Vec<f64> = v.iter().zip(&metric).map(|(v, m)| v / m).collect();
-                for (grad, w) in &shape_metric {
-                    let along: f64 = grad.iter().map(|&(c, g)| g * v[c]).sum();
-                    for &(c, g) in grad {
-                        weighted[c] += w * g * along;
+                let Some(factor) = normal.factor(&shift) else {
+                    break 'step false;
+                };
+                let once = |r: &[f64]| {
+                    let rhs: Vec<Dd> = r
+                        .iter()
+                        .zip(&pinned)
+                        .map(|(r, p)| Dd::default().add(if *p { 0.0 } else { *r }))
+                        .collect();
+                    let mut v = factor.solve_refined(&rhs);
+                    for (v, p) in v.iter_mut().zip(&pinned) {
+                        *v = if *p { 0.0 } else { *v * mu };
                     }
+                    v
+                };
+                let project = |r: &[f64]| {
+                    let v = once(r);
+                    let weighted: Vec<f64> = v.iter().zip(&mobility).map(|(v, m)| v / m).collect();
+                    once(&weighted)
+                };
+                let distance = |a: &[f64], c: &[f64]| {
+                    a.iter()
+                        .zip(c)
+                        .zip(&pinned)
+                        .filter(|(_, p)| !**p)
+                        .map(|((a, c), _)| a * c)
+                        .sum::<f64>()
+                };
+                let half_square =
+                    |offs: &mut dyn Iterator<Item = f64>| 0.5 * offs.map(|o| o * o).sum::<f64>();
+                let phi_now = half_square(&mut terms.iter().map(|(_, off)| *off));
+                let mut r = vec![0.0; n];
+                let mut is_goal = vec![false; n];
+                for &(c, off) in &terms {
+                    r[c] += off;
+                    is_goal[c] = true;
                 }
-                once(&weighted)
-            };
-            let distance = |a: &[f64], b: &[f64]| {
-                a.iter()
-                    .zip(b)
-                    .zip(&held)
-                    .filter(|(_, held)| !**held)
-                    .map(|((a, b), _)| a * b)
-                    .sum::<f64>()
-            };
-            if std::env::var_os("DRIFT_NEWTON_DEBUG").is_some() {
-                let ty: Vec<f64> = comp.unknowns.iter().map(|&g| if axis_of(sys, g) == Some(1) { 1.0 } else { 0.0 }).collect();
-                let jt: f64 = scaled_jac.iter().map(|row| row.iter().map(|&(c, g)| g * ty[c]).sum::<f64>().powi(2)).sum();
-                let mob: Vec<String> = metric.iter().map(|m| format!("{m:.0e}")).collect();
-                eprintln!("  pointer: |J ty|^2 {jt:.3e} metric {mob:?} axes {:?}", comp.unknowns.iter().map(|&g| axis_of(sys, g)).collect::<Vec<_>>());
-            }
-            let half_square = |offs: &mut dyn Iterator<Item = f64>| {
-                0.5 * offs.map(|o| o * o).sum::<f64>()
-            };
-            let phi_now = half_square(&mut terms.iter().map(|(_, off)| *off));
-            let mut r = vec![0.0; n];
-            let mut is_goal = vec![false; n];
-            for &(c, off) in &terms {
-                r[c] += off;
-                is_goal[c] = true;
-            }
-            // (Projected twice, here and in the steps: where the rows keep the dragged off their
-            // targets, what is left of the misfit lies in the rows' own directions, and once
-            // leaves μ/σ² of it, which the steps would chase as far as the region lets them:
-            // a lever's end driven into its circle. Twice leaves that share squared; the
-            // projection is idempotent, so nothing else changes.)
-            let mut v = project(&r);
-            let stationary = dot(&r, &v);
-            let mut rv = stationary;
-            let b = bar.get().length;
-            let mut done = rv <= 0.0 || stationary <= b * b;
-            if !done {
-                // Steihaug's projected conjugate gradients: the misfit's curvature is the
-                // identity over this rank's goals.
+                let mut v = project(&r);
+                let mut rv = dot(&r, &v);
+                if rv <= b * b {
+                    break 'step false;
+                }
                 let mut x = vec![0.0; n];
                 let mut p: Vec<f64> = v.iter().map(|v| -v).collect();
                 let to_edge = |x: &[f64], d: &[f64]| {
                     let (qa, qb, qc) = (
                         distance(d, d),
                         2.0 * distance(x, d),
-                        distance(x, x) - pointer_radius * pointer_radius,
+                        distance(x, x) - anchor_radius * anchor_radius,
                     );
                     if qa > 0.0 {
                         (-qb + (qb * qb - 4.0 * qa * qc).max(0.0).sqrt()) / (2.0 * qa)
@@ -2541,7 +3463,7 @@ fn newton(
                     }
                     let alpha = rv / kappa;
                     let next: Vec<f64> = x.iter().zip(&p).map(|(x, p)| x + alpha * p).collect();
-                    if distance(&next, &next) >= pointer_radius * pointer_radius {
+                    if distance(&next, &next) >= anchor_radius * anchor_radius {
                         let t = to_edge(&x, &p);
                         x.iter_mut().zip(&p).for_each(|(x, p)| *x += t * p);
                         break;
@@ -2560,910 +3482,164 @@ fn newton(
                 let promised = phi_now - half_square(&mut terms.iter().map(|&(c, off)| off + x[c]));
                 let nearer = (2.0 * phi_now).sqrt() - (2.0 * (phi_now - promised).max(0.0)).sqrt();
                 if promised <= b * b || nearer <= b {
-                    done = true;
-                } else {
-                    let stepped = distance(&x, &x).sqrt();
-                    let mut trial = values.to_vec();
-                    for (c, g) in comp.unknowns.iter().enumerate() {
-                        trial[*g] += x[c];
-                    }
-                    let landed = reproject(&mut trial, &on_the_rows, &held, &mut back_normal);
-                    let back: Vec<f64> = comp
-                        .unknowns
-                        .iter()
-                        .enumerate()
-                        .map(|(c, g)| trial[*g] - values[*g] - x[c])
-                        .collect();
-                    let from_entry: Vec<f64> = comp
-                        .unknowns
-                        .iter()
-                        .zip(&entry)
-                        .map(|(g, e)| trial[*g] - e)
-                        .collect();
-                    let why = if landed.is_none() { "reproject".to_string() } else { format!("back {:.3e} from_entry {:.3e}", moved(&back), moved(&from_entry)) };
-                    let landed = landed.filter(|_| {
-                        moved(&back) <= CORRECTION_SHARE * moved(&x) && moved(&from_entry) <= across
-                    });
-                    let kept = landed.and_then(|evaluated| {
-                        let after = half_square(&mut terms.iter().map(|&(c, _)| {
-                            let to = goals[c].map_or(0.0, |(to, _)| to);
-                            trial[comp.unknowns[c]] - to
-                        }));
-                        let gain = (phi_now - after) / promised;
-                        (gain >= 0.25).then_some((evaluated, gain))
-                    });
-                    match kept {
-                        Some((((trial_res, trial_jac), trial_own), gain)) => {
-                            if gain > 0.75 && stepped >= 0.99 * pointer_radius {
-                                pointer_radius = (2.0 * pointer_radius).min(pointer_across);
-                            }
-                            if std::env::var_os("DRIFT_NEWTON_DEBUG").is_some() {
-                                let d: Vec<f64> = comp.unknowns.iter().map(|g| trial[*g] - values[*g]).collect();
-                                let cost = |v: &[f64]| v.iter().map(|a| a * a).sum::<f64>() + shape_metric.iter().map(|(g, w)| w * g.iter().map(|&(c, gg)| gg * v[c]).sum::<f64>().powi(2)).sum::<f64>();
-                                let ty: Vec<f64> = comp.unknowns.iter().map(|&g| if axis_of(sys, g) == Some(1) { -18.0 } else { 0.0 }).collect();
-                                eprintln!("  pointer step {:.3e} x {:.3e} gain {gain:.3} cost x {:.1} cost t {:.1} shapes {:?}", moved(&d), moved(&x), cost(&x), cost(&ty), shape_metric.iter().map(|(g,w)| (g.len(), *w)).collect::<Vec<_>>());
-                            }
-                            let step: Vec<f64> = comp.unknowns.iter().map(|g| trial[*g] - values[*g]).collect();
-                            let step = moved(&step);
-                            if last_step > 0.0 {
-                                most_ratio = most_ratio.max(step / last_step);
-                            }
-                            last_step = step;
-                            values.copy_from_slice(&trial);
-                            leave_storage();
-                            res = trial_res;
-                            jac = trial_jac;
-                            own = trial_own;
-                        }
-                        None => {
-                            if std::env::var_os("DRIFT_NEWTON_DEBUG").is_some() {
-                                eprintln!("  pointer refused stepped {stepped:.3e} radius {pointer_radius:.3e} across {across:.3e} phi {phi_now:.3e} promised {promised:.3e} terms {:?} x {:?} why {}", terms, x, why);
-                            }
-                            pointer_radius = stepped / 4.0;
-                            done = pointer_radius <= b;
-                        }
-                    }
+                    break 'step false;
                 }
-            }
-            if done {
-                pointer_rank += 1;
-                pointer_radius = pointer_across;
-                continue;
-            }
-            break;
-        }
-        if rows_hold && pointer_rank < 2 {
-            continue;
-        }
-
-        if rows_hold {
-            // The second stage: the preferences, among the rows' solutions.
-            if !in_stage2 && std::env::var_os("DRIFT_NEWTON_DEBUG").is_some() {
-                let offs: Vec<String> = soft_terms.iter().zip(&is_radius).map(|((g, o), r)| format!("{}{:.2e}{:?}", if *r {"R"} else {"L"}, o, g.iter().map(|(c,_)| *c).collect::<Vec<_>>())).collect();
-                eprintln!("  stage2 enters: {}", offs.join(" "));
-            }
-            in_stage2 = true;
-            if soft_terms
-                .iter()
-                .all(|(_, off)| off.abs() <= bar.get().length)
-            {
-                stage2(0, 0.0);
-                {
-                    settled = Some((iteration, true));
-                    break;
+                let stepped = distance(&x, &x).sqrt();
+                let mut trial = values.to_vec();
+                for (c, g) in comp.unknowns.iter().enumerate() {
+                    trial[*g] += x[c];
                 }
-            }
-            if preferences_entry.is_none() {
-                preferences_entry = Some(comp.unknowns.iter().map(|g| values[*g]).collect());
-            }
-            // The shapes as this stage weighs them (see `shape_weights`).
-            let soft_terms: Vec<SoftTerm> = soft_terms
-                .iter()
-                .zip(&soft_roots)
-                .map(|((grad, off), &(root, _))| {
-                    (
-                        grad.iter().map(|&(c, g)| (c, root * g)).collect(),
-                        root * off,
-                    )
-                })
-                .collect();
-            // A = JᵀJ + μ·M⁻¹ over the columns that take part (the dragged and carried as
-            // the identity, apart from the rest).
-            normal.clear();
-            for row in &scaled_jac {
-                for (k, &(c1, g1)) in row.iter().enumerate() {
-                    if pinned[c1] {
-                        continue;
-                    }
-                    for &(c2, g2) in &row[..=k] {
-                        if !pinned[c2] {
-                            normal.add_product(c1, c2, g1, g2);
-                        }
-                    }
-                }
-            }
-            let mu = MIN_CHANGE * max_diag_of(&normal);
-            let shift: Vec<f64> = mobility
-                .iter()
-                .zip(&pinned)
-                .map(|(m, pinned)| if *pinned { 1.0 } else { mu / m })
-                .collect();
-            let Some(factor) = normal.factor(&shift) else {
-                // (Positive definite by construction; a factor that fails is round-off
-                // swamping the rows, with nothing a preference's step could rely on.)
-                stage2(5, f64::NAN);
-                {
-                    settled = Some((iteration, true));
-                    break;
-                }
-            };
-            // The weighted projection into the rows' null space of a gradient (`μ·A⁻¹`).
-            // (Refined against the matrix's exact values: `A⁻¹` amplifies round-off by 1/μ in
-            // the directions the rows leave free, and the projection takes that back by μ, so
-            // an unrefined solve would leave round-off of a millionth of the step in the
-            // directions neither the rows nor the shapes move, as much at one size or place as
-            // its round-off happened to make it.)
-            //
-            //
-            // For the stop, twice: once leaves μ/σ² of a direction the rows move with singular
-            // value σ, which where the rows rule a shape out (a hanging line's length an Equal
-            // dictates) is all the shape's gradient there is, and the solve chased it, refused
-            // trial after trial. The projection is idempotent in the weighted metric, so a
-            // second pass changes nothing else and leaves that share squared.
-            let once = |r: &[f64]| {
-                let rhs: Vec<Dd> = r
-                    .iter()
-                    .zip(&pinned)
-                    .map(|(r, pinned)| Dd::default().add(if *pinned { 0.0 } else { *r }))
-                    .collect();
-                let mut v = factor.solve_refined(&rhs);
-                for (v, pinned) in v.iter_mut().zip(&pinned) {
-                    *v = if *pinned { 0.0 } else { *v * mu };
-                }
-                v
-            };
-            let project = |r: &[f64]| {
-                let v = once(r);
-                let weighted: Vec<f64> = v.iter().zip(&mobility).map(|(v, m)| v / m).collect();
-                once(&weighted)
-            };
-            // The shapes' Gauss–Newton curvature GᵀG applied to a step.
-            let curvature = |p: &[f64]| {
-                let mut out = vec![0.0; n];
-                for (grad, _) in &soft_terms {
-                    let s: f64 = grad.iter().map(|&(c, g)| g * p[c]).sum();
-                    for &(c, g) in grad {
-                        out[c] += g * s;
-                    }
-                }
-                out
-            };
-            if free_radius.is_none() {
-                free_radius = Some(
+                // Back onto the rows, and onto each kept shape as it stood before the step (the step
+                // keeps them to first order; this takes out the second), by minimum-change Newton
+                // steps, each at least halving what is left.
+                let shape_terms = |vals: &[f64]| -> Vec<(Vec<(usize, f64)>, f64)> {
                     shapes
                         .iter()
-                        .zip(&is_radius)
-                        .map(|(shape, is_radius)| {
-                            let Some((gradient, _)) = shape.offset(|p| values[sys.group_of[p]])
-                            else {
-                                return false;
-                            };
-                            let mut g = vec![0.0; n];
-                            for (p, d) in shape.params().iter().zip(gradient) {
+                        .filter_map(|shape| {
+                            let (gradient, off) = shape.offset(|p| vals[sys.group_of[p]])?;
+                            let mut grad: Vec<(usize, f64)> = Vec::with_capacity(4);
+                            for (p, g) in shape.params().iter().zip(gradient) {
                                 if let Some(&c) = col_of.get(&sys.group_of[*p]) {
-                                    g[c] += d;
+                                    match grad.iter_mut().find(|(cc, _)| *cc == c) {
+                                        Some(entry) => entry.1 += g,
+                                        None => grad.push((c, g)),
+                                    }
                                 }
                             }
-                            let whole: f64 = g
-                                .iter()
-                                .zip(&mobility)
-                                .zip(&pinned)
-                                .filter(|(_, pinned)| !**pinned)
-                                .map(|((g, m), _)| g * g * m)
-                                .sum();
-                            *is_radius && dot(&g, &once(&g)) > MIN_CHANGE.sqrt() * whole
+                            Some((grad, off))
                         })
-                        .collect(),
-                );
-            }
-            let phi = |terms: &[f64]| 0.5 * terms.iter().map(|off| off * off).sum::<f64>();
-            let phi_now = phi(&soft_terms.iter().map(|(_, off)| *off).collect::<Vec<_>>());
-            // The shapes' gradient Gᵀ·off, and the step by projected conjugate gradients in
-            // the trust region (Steihaug): exact in as many steps as there are shapes.
-            let mut r = vec![0.0; n];
-            for (grad, off) in &soft_terms {
-                for &(c, g) in grad {
-                    r[c] += g * off;
-                }
-            }
-            let mut v = once(&r);
-            let mut rv = dot(&r, &v);
-            // (The stop reads the gradient projected twice; the steps, once.)
-            let stationary = dot(&r, &project(&r));
-            // Stationary: the shapes' projected gradient, in the weighted metric, is below the
-            // bar. (Not while a kept radius is off, nor with the fold steps, which finish only
-            // where every shape is met: at a fold a shape's gradient vanishes where it can
-            // still be met, and only what the step can still gain says so (see below). A
-            // drag's kept radii are held, not only preferred: where they can be met, they are,
-            // and a drag whose radii can't follow stops (`Editor::breaks_held_shape`).)
-            last_stationary = stationary;
-            if rv <= 0.0
-                || (radii_met && stationary <= bar.get().length * bar.get().length)
-            {
-                stage2(1, stationary);
-                {
-                    settled = Some((iteration, true));
-                    break;
-                }
-            }
-            let mut x = vec![0.0; n];
-            let mut p: Vec<f64> = v.iter().map(|v| -v).collect();
-            // How far along `d` from `x` the region's edge is.
-            let to_edge = |x: &[f64], d: &[f64]| {
-                let (a, b, c) = (
-                    distance(d, d),
-                    2.0 * distance(x, d),
-                    distance(x, x) - radius * radius,
-                );
-                if a > 0.0 {
-                    (-b + (b * b - 4.0 * a * c).max(0.0).sqrt()) / (2.0 * a)
-                } else {
-                    0.0
-                }
-            };
-            for _ in 0..=soft_terms.len() {
-                let hp = curvature(&p);
-                let kappa = dot(&p, &hp);
-                if kappa <= 0.0 {
-                    let t = to_edge(&x, &p);
-                    x.iter_mut().zip(&p).for_each(|(x, p)| *x += t * p);
-                    break;
-                }
-                let alpha = rv / kappa;
-                let next: Vec<f64> = x.iter().zip(&p).map(|(x, p)| x + alpha * p).collect();
-                if distance(&next, &next) >= radius * radius {
-                    let t = to_edge(&x, &p);
-                    x.iter_mut().zip(&p).for_each(|(x, p)| *x += t * p);
-                    break;
-                }
-                x = next;
-                r.iter_mut().zip(&hp).for_each(|(r, h)| *r += alpha * h);
-                v = once(&r);
-                let rv_next = dot(&r, &v);
-                if rv_next.max(0.0).sqrt() <= bar.get().length {
-                    break;
-                }
-                let beta = rv_next / rv;
-                p.iter_mut().zip(&v).for_each(|(p, v)| *p = -v + beta * *p);
-                rv = rv_next;
-            }
-            // What the step promises: the shapes' linearisation, half their offsets squared.
-            let promised = {
-                let terms: Vec<f64> = soft_terms
-                    .iter()
-                    .map(|(grad, off)| off + grad.iter().map(|&(c, g)| g * x[c]).sum::<f64>())
-                    .collect();
-                phi_now - phi(&terms)
-            };
-            // Settled where the most the step could gain is below the bar squared, or (but
-            // with `fold`, which meets every shape it can) where it would bring the shapes'
-            // offsets, as one length, no more than a bar nearer: at a shape the relations hold
-            // off, a step can gain a sliver of a large misfit (more than the bar squared) while
-            // moving the misfit itself by far less than the bar, and the solve would creep on.
-            let nearer = (2.0 * phi_now).sqrt() - (2.0 * (phi_now - promised).max(0.0)).sqrt();
-            if promised <= bar.get().length * bar.get().length
-                || nearer <= bar.get().length
-            {
-                stage2(
-                    if promised <= bar.get().length * bar.get().length {
-                        2
-                    } else {
-                        3
-                    },
-                    stationary,
-                );
-                {
-                    settled = Some((iteration, true));
-                    break;
-                }
-            }
-            let stepped = distance(&x, &x).sqrt();
-            // The trial, back onto the rows: minimum-change Newton steps (the weighted
-            // least-change step as μ goes to zero), each at least halving what the rows are
-            // off by, until they hold.
-            let mut trial = values.to_vec();
-            for (c, g) in comp.unknowns.iter().enumerate() {
-                trial[*g] += x[c];
-            }
-            let landed = reproject(&mut trial, &on_the_rows, &pinned, &mut back_normal);
-            // (Brought back by no more than a share of the step: farther, the step went where
-            // the rows' tangent says nothing about them.)
-            let back: Vec<f64> = comp
-                .unknowns
-                .iter()
-                .enumerate()
-                .map(|(c, g)| trial[*g] - values[*g] - x[c])
-                .collect();
-            let landed = landed.filter(|_| moved(&back) <= CORRECTION_SHARE * moved(&x));
-            // The region's outer bound holds for the preferences' steps together, not only each
-            // one: each is no wider than the drawing, but many of them could walk a point a
-            // shape barely feels as far as the shape keeps gaining (a direction met by sliding an
-            // end along a line it nearly parallels), and the next solve, measuring the drawing
-            // with that point in it, would let it go farther still (`flung_centre`: kilometres
-            // out on a 20 mm sketch, for one ulp of offset).
-            let from_entry: Vec<f64> = comp
-                .unknowns
-                .iter()
-                .zip(&entry)
-                .map(|(g, e)| trial[*g] - e)
-                .collect();
-            let from_preferences: Vec<f64> = comp
-                .unknowns
-                .iter()
-                .zip(
-                    preferences_entry
-                        .get_or_insert_with(|| entry.clone())
-                        .iter(),
-                )
-                .map(|(g, e)| trial[*g] - e)
-                .collect();
-            let landed = landed.filter(|_| {
-                if dragging {
-                    moved(&from_entry) <= across
-                } else if sys.shapes_as_before {
-                    true
-                } else {
-                    // (In an edit, from where the preferences' stage began: a preference never
-                    // carries geometry farther than the drawing is across, as a line kept
-                    // square would be, stretched along itself to meet a line it nearly
-                    // parallels.)
-                    moved(&from_preferences) <= across
-                }
-            });
-            let kept = landed.and_then(|evaluated| {
-                let terms: Vec<f64> = shapes
-                    .iter()
-                    .zip(&shape_weights)
-                    .filter_map(|(shape, w)| {
-                        Some(w.sqrt() * shape.offset(|p| trial[sys.group_of[p]])?.1)
-                    })
-                    .collect();
-                // (Kept where it delivered at least a quarter of what it promised, the
-                // region's own test: a step that gains a sliver of what its linearisation
-                // promised went somewhere the linearisation says nothing about, and taken, it
-                // would slide geometry along a direction the shapes hardly feel, as far as
-                // round-off had it go.)
-                let gain = (phi_now - phi(&terms)) / promised;
-                (gain >= 0.25).then_some((evaluated, gain))
-            });
-            match kept {
-                Some((((trial_res, trial_jac), trial_own), gain)) => {
-                    if gain > 0.75 && stepped >= 0.99 * radius {
-                        radius = (2.0 * radius).min(across);
+                        .collect()
+                };
+                let held_offs: Vec<f64> = shape_terms(values).iter().map(|(_, o)| *o).collect();
+                let landed = {
+                    let mut last = f64::INFINITY;
+                    loop {
+                        let ((tres, tjac), town) =
+                            evaluate_with_own(sys, &comp.rows, &trial, &col_of);
+                        let held_rows = |k: usize| {
+                            tres[k].abs() <= row_tolerance(sys, comp.rows[k], bar.get(), &trial)
+                        };
+                        let now = shape_terms(&trial);
+                        if (0..tres.len()).all(held_rows)
+                            && now
+                                .iter()
+                                .zip(&held_offs)
+                                .all(|((_, o), h)| (o - h).abs() <= b)
+                        {
+                            break Some(((tres, tjac), town));
+                        }
+                        let scale = row_scales(&tjac, &town, held_rows);
+                        let (bj, br) = scaled_rows(&tjac, &tres, &scale);
+                        let mut all: Vec<(Vec<(usize, f64)>, f64)> =
+                            bj.into_iter().zip(br).collect();
+                        for ((g, o), h) in now.into_iter().zip(&held_offs) {
+                            let norm = g.iter().map(|(_, v)| v * v).sum::<f64>().sqrt();
+                            if norm > 0.0 {
+                                all.push((
+                                    g.into_iter().map(|(c, v)| (c, v / norm)).collect(),
+                                    (o - h) / norm,
+                                ));
+                            }
+                        }
+                        let off: f64 = all.iter().map(|(_, f)| f * f).sum();
+                        if !(off.is_finite() && off <= 0.25 * last) {
+                            break None;
+                        }
+                        last = off;
+                        let back = back_normal.get_or_insert_with(|| Skyline::new(n, &neighbors));
+                        back.clear();
+                        let mut rhs = vec![Dd::default(); n];
+                        for (row, f) in &all {
+                            for (k, &(c1, g1)) in row.iter().enumerate() {
+                                if pinned[c1] {
+                                    continue;
+                                }
+                                rhs[c1] = rhs[c1].add_product(-g1, *f);
+                                for &(c2, g2) in &row[..=k] {
+                                    if !pinned[c2] {
+                                        back.add_product(c1, c2, g1, g2);
+                                    }
+                                }
+                            }
+                        }
+                        let mu = MIN_CHANGE * max_diag_of(back);
+                        let shift: Vec<f64> = mobility
+                            .iter()
+                            .zip(&pinned)
+                            .map(|(m, p)| if *p { 1.0 } else { mu / m })
+                            .collect();
+                        let Some(f) = back.factor(&shift) else {
+                            break None;
+                        };
+                        let d = f.solve_refined(&rhs);
+                        for (c, g) in comp.unknowns.iter().enumerate() {
+                            if !pinned[c] {
+                                trial[*g] += d[c];
+                            }
+                        }
                     }
-                    let step: Vec<f64> = comp.unknowns.iter().map(|g| trial[*g] - values[*g]).collect();
-                    let step = moved(&step);
-                    if last_step > 0.0 {
-                        most_ratio = most_ratio.max(step / last_step);
+                };
+                let back: Vec<f64> = comp
+                    .unknowns
+                    .iter()
+                    .enumerate()
+                    .map(|(c, g)| trial[*g] - values[*g] - x[c])
+                    .collect();
+                let gain = {
+                    let after = half_square(
+                        &mut terms
+                            .iter()
+                            .map(|&(c, _)| trial[comp.unknowns[c]] - anchors[c].unwrap_or(0.0)),
+                    );
+                    (phi_now - after) / promised
+                };
+                if let Some(((trial_res, trial_jac), trial_own)) = landed
+                    && moved(&back) <= CORRECTION_SHARE * moved(&x)
+                    && gain >= 0.25
+                {
+                    if gain > 0.75 && stepped >= 0.99 * anchor_radius {
+                        anchor_radius = (2.0 * anchor_radius).min(pointer_across);
                     }
-                    last_step = step;
                     values.copy_from_slice(&trial);
                     leave_storage();
                     res = trial_res;
                     jac = trial_jac;
                     own = trial_own;
+                    break 'step true;
                 }
-                None => radius = stepped / 4.0,
-            }
-            if radius <= bar.get().length {
-                stage2(4, stationary);
-                {
-                    settled = Some((iteration + 1, converged(&res, values)));
-                    break;
-                }
-            }
-            continue;
-        }
-
-        // The first stage: the relations.
-        normal.clear();
-        let mut rhs = vec![Dd::default(); n];
-        for (row, f) in scaled_jac.iter().zip(&scaled_res) {
-            for (k, &(c1, g1)) in row.iter().enumerate() {
-                rhs[c1] = rhs[c1].add_product(-g1, *f);
-                for &(c2, g2) in &row[..=k] {
-                    normal.add_product(c1, c2, g1, g2);
-                }
-            }
-        }
-        let max_diag = max_diag_of(&normal);
-        let mu = MIN_CHANGE * max_diag;
-        // The shapes kept, as part of the change a step makes: where the rows' solutions
-        // could go either way (a concentric round's lines follow it, or the round shrinks),
-        // being off a radius, length or direction costs as much as moving its points that
-        // far, KEEP_SHAPE times over: its points' own weight, the least of them (a line of the
-        // rest of the sketch, where a relation's focus takes up the change, is kept against
-        // moving the rest, not against moving the focus: #349's chain, whose bars would
-        // otherwise turn rather than move). In the metric only: the second stage meets them.
-        for ((grad, _), &(_, rank)) in soft_terms.iter().zip(&soft_roots) {
-            let own = grad
-                .iter()
-                .map(|&(c, _)| 1.0 / mobility[c])
-                .fold(f64::INFINITY, f64::min);
-            // (A shape a caller ranks lower is kept that much less: see
-            // `SolveOptions::length_ranks`.)
-            let own = rank * if own.is_finite() { own } else { 1.0 };
-            for (i, &(c1, g1)) in grad.iter().enumerate() {
-                for &(c2, g2) in &grad[..=i] {
-                    normal.add_product(c1, c2, mu * KEEP_SHAPE * own * g1, g2);
-                }
-            }
-        }
-        // The minimum change is weighted by mobility: it picks among the rows' solutions. The
-        // damping is the trust region, how far the rows' linearisation can be trusted, which is
-        // a distance, the same for every point, whatever rank of what stays put it is in (a
-        // step that swings the focus far and the rest a hair, where only the rest can meet the
-        // rows, is as far off its linearisation as any: #349's chain, a relation's focus among
-        // bars held at their lengths). The dragged and carried keep their weight in it too:
-        // they are where the user put them, and a damped step doesn't move them either. (Damped
-        // as a distance like the rest, a drag that can't land would let them give way, and land
-        // nowhere near where they were asked to be: `held_shapes::`' refused drags then go.)
-        let shift: Vec<f64> = mobility
-            .iter()
-            .zip(&pinned)
-            .map(|(m, pinned)| mu / m + if *pinned { lambda / m } else { lambda })
-            .collect();
-        let refuse = |lambda: &mut f64, nu: &mut f64| {
-            *lambda = lambda.max(1e-6 * max_diag) * *nu;
-            *nu *= 2.0;
-        };
-        let Some(factor) = normal.factor(&shift) else {
-            // (Not numerically positive definite at this damping: a step refused.)
-            refuse(&mut lambda, &mut nu);
-            continue;
-        };
-        let delta = factor.solve_refined(&rhs);
-        // The trust region's outer bound: a single iteration can't fling geometry onto another
-        // branch, no further than the drawing is across. (Not the spread of this component's
-        // own unknowns: a lone unknown, such as the free end of a dimension from a fixed
-        // point, has none, and would crawl a millimetre at a time.) A step that goes farther
-        // is refused like one that does worse, and the damping rises until one fits: the step
-        // the region allows is the damped step of its size, which gives up the directions the
-        // rows barely move first, not the long step cut short along its own way, which goes
-        // mostly along them, and walked a part across the drawing to another branch frame
-        // after frame (census case 2432). It is one its linearisation got badly wrong too.
-        // (And in a drag, no point farther from where the solve began than that, all its steps
-        // together: a step each no wider than the drawing could still walk a part across it to
-        // another branch, and the next solve, measuring the drawing with it there, go farther
-        // still: `flung_centre`, 21 of 39 one-ulp nudges of its offset thrown 6 to 23 m out
-        // on a 20 mm sketch. A drag's solve begins with its targets in place, so its own way
-        // to them is short; a commit's may rightly go far, a dimension typed ten times longer.)
-        let from_entry: Vec<f64> = comp
-            .unknowns
-            .iter()
-            .zip(&entry)
-            .enumerate()
-            .map(|(c, (g, e))| values[*g] + delta[c] - e)
-            .collect();
-        if moved(&delta) > across || (dragging && moved(&from_entry) > across) {
-            refuse(&mut lambda, &mut nu);
-            continue;
-        }
-        let mut trial = values.to_vec();
-        for (c, g) in comp.unknowns.iter().enumerate() {
-            trial[*g] += delta[c];
-        }
-        let ((mut trial_res, mut trial_jac), mut trial_own) =
-            evaluate_with_own(sys, &comp.rows, &trial, &col_of);
-        // (Judged in the step's own scaling of the rows.)
-        let mut after = scaled_norm2(&trial_res, &row_scale);
-        // Then onto where its linearisation promised to take the rows: the linearisation is a
-        // tangent, so a step that turns geometry (a chain of bars held at their lengths, swung
-        // about a joint) leaves every length it turns off at second order, and judged so, the
-        // damping would answer with ever smaller steps (#349). Newton's steps from there to
-        // the values the step promised take that second order out, so that the step follows
-        // the rows round and is judged by what it does to the rows that are off (a second-order
-        // correction). Where they don't close in, or the correction is more than a share of the
-        // step ([`CORRECTION_SHARE`]), the step as it was.
-        {
-            let promise: Vec<f64> = res
-                .iter()
-                .zip(&jac)
-                .map(|(f, row)| f + row.iter().map(|&(c, g)| g * delta[c]).sum::<f64>())
-                .collect();
-            let mut corrected = trial.clone();
-            let got = reproject(&mut corrected, &promise, &no_column, &mut back_normal);
-            let correction: Vec<f64> = comp
-                .unknowns
-                .iter()
-                .map(|g| corrected[*g] - trial[*g])
-                .collect();
-            if let Some(((res2, jac2), own2)) = got
-                && moved(&correction) <= CORRECTION_SHARE * moved(&delta)
-            {
-                let after2 = scaled_norm2(&res2, &row_scale);
-                if after2 < after
-                    || (converged(&res2, &corrected) && !converged(&trial_res, &trial))
-                {
-                    trial = corrected;
-                    (trial_res, trial_jac, trial_own, after) = (res2, jac2, own2, after2);
-                }
-            }
-        }
-        let model = scaled_jac
-            .iter()
-            .zip(&scaled_res)
-            .map(|(row, f)| (f + row.iter().map(|&(c, g)| g * delta[c]).sum::<f64>()).powi(2))
-            .sum::<f64>();
-        let promised = before - model;
-        let lands = converged(&trial_res, &trial);
-        if after < before || lands {
-            // How much of the drop the linearisation promised the step delivered.
-            let gain = if promised > 0.0 {
-                (before - after) / promised
-            } else {
-                1.0
+                anchor_radius = stepped / 4.0;
+                anchor_radius > b
             };
-            let step: Vec<f64> = comp.unknowns.iter().map(|g| trial[*g] - values[*g]).collect();
-            let step = moved(&step);
-            if last_step > 0.0 {
-                most_ratio = most_ratio.max(step / last_step);
+            // (Back to the shapes, which the step moved at second order, then again.)
+            if progressed && iteration + 1 < MAX_ITERATIONS {
+                first_iteration = iteration + 1;
+                settled = None;
+                continue 'solve;
             }
-            last_step = step;
-            values.copy_from_slice(&trial);
-            leave_storage();
-            res = trial_res;
-            jac = trial_jac;
-            own = trial_own;
-            lambda *= (1.0 - (2.0 * gain - 1.0).powi(3)).max(1.0 / 3.0);
-            nu = 2.0;
-            if lambda < 1e-12 * max_diag {
-                lambda = 0.0;
+            if finish_rows {
+                polish(values, &mut back_normal);
             }
-            if lands {
-                continue;
-            }
-        }
-        let refused = !(after < before || lands);
-        if refused {
-            refuse(&mut lambda, &mut nu);
-        }
-        let finest = res
-            .iter()
-            .zip(&comp.rows)
-            .zip(&row_scale)
-            .filter(|((f, r), s)| **s > 0.0 && f.abs() > row_tolerance(sys, **r, bar.get(), values))
-            .map(|((_, r), s)| row_tolerance(sys, *r, bar.get(), values) * s)
-            .fold(f64::INFINITY, f64::min);
-        // A least-squares stationary point with the rows off: the step brings them no more
-        // than the finest bar of the rows still off closer, and by its linearisation they
-        // still wouldn't hold. Every further step is smaller still (λ only grows on a refused
-        // step), so the rows are as near as they get: a conflict, or the round-off floor.
-        if before.sqrt() - model.max(0.0).sqrt() <= finest && model.max(0.0).sqrt() > finest {
-            let rows_hold = converged(&res, values);
             return finish(
-                if rows_hold {
-                    Stop::Settled
-                } else {
-                    Stop::Conflict
-                },
-                iteration + 1,
-                rows_hold,
+                Stop::Settled,
+                iteration,
+                converged(&res, values),
                 most_ratio,
-                false,
+                unkept(&free_radius, values),
             );
         }
-    }
-    // The last rank, below the kept shapes: what the relations, the dragged and the shapes all
-    // leave open goes back as near where the solve's `anchors` are as it can (a drag's step:
-    // where the drag began, `SolveOptions::anchor`). So where a drag ends doesn't depend on the
-    // steps its path took to get there: each step's least change, measured from where the last
-    // one ended, drifts with the steps along what nothing above decides, and where the steps
-    // fell (round a turn of the shape, at one size and not another) moved the end with them
-    // (the similarity property, every seed). Each step is a projected Gauss–Newton step in
-    // the rows' null space with the dragged and carried held and every kept shape's gradient
-    // held as a row too (so a shape moves only at second order), brought back onto the rows;
-    // then the shapes' stage meets the shapes again, and the next step goes from there.
-    if let Some((iteration, conv)) = settled
-        && conv
-        && !unkept(&free_radius, values)
-        && anchors.iter().zip(&pinned).any(|(a, p)| a.is_some() && !*p)
-    {
-        let progressed = 'step: {
-            let b = bar.get().length;
-            let terms: Vec<(usize, f64)> = comp
-                .unknowns
-                .iter()
-                .zip(anchors)
-                .enumerate()
-                .filter(|(c, _)| !pinned[*c])
-                .filter_map(|(c, (g, a))| a.map(|a| (c, values[*g] - a)))
-                .collect();
-            if terms.iter().all(|(_, off)| off.abs() <= b) {
-                break 'step false;
+        if let Some((iteration, conv)) = settled {
+            if conv && finish_rows {
+                polish(values, &mut back_normal);
             }
-            let ((res_now, jac_now), own_now) = evaluate_with_own(sys, &comp.rows, values, &col_of);
-            let row_scale = row_scales(&jac_now, &own_now, |k| {
-                res_now[k].abs() <= row_tolerance(sys, comp.rows[k], bar.get(), values)
-            });
-            let (scaled_jac, _) = scaled_rows(&jac_now, &res_now, &row_scale);
-            let value = |p: usize| values[sys.group_of[p]];
-            let shape_rows: Vec<Vec<(usize, f64)>> = shapes
-                .iter()
-                .filter_map(|shape| {
-                    let (gradient, _) = shape.offset(value)?;
-                    let mut grad: Vec<(usize, f64)> = Vec::with_capacity(4);
-                    for (p, g) in shape.params().iter().zip(gradient) {
-                        if let Some(&c) = col_of.get(&sys.group_of[*p]) {
-                            match grad.iter_mut().find(|(cc, _)| *cc == c) {
-                                Some(entry) => entry.1 += g,
-                                None => grad.push((c, g)),
-                            }
-                        }
-                    }
-                    let norm = grad.iter().map(|(_, g)| g * g).sum::<f64>().sqrt();
-                    (norm > 0.0).then(|| grad.into_iter().map(|(c, g)| (c, g / norm)).collect())
-                })
-                .collect();
-            normal.clear();
-            for row in scaled_jac.iter().chain(&shape_rows) {
-                for (k, &(c1, g1)) in row.iter().enumerate() {
-                    if pinned[c1] {
-                        continue;
-                    }
-                    for &(c2, g2) in &row[..=k] {
-                        if !pinned[c2] {
-                            normal.add_product(c1, c2, g1, g2);
-                        }
-                    }
-                }
-            }
-            let mu = MIN_CHANGE * max_diag_of(&normal);
-            let shift: Vec<f64> = mobility
-                .iter()
-                .zip(&pinned)
-                .map(|(m, p)| if *p { 1.0 } else { mu / m })
-                .collect();
-            let Some(factor) = normal.factor(&shift) else {
-                break 'step false;
-            };
-            let once = |r: &[f64]| {
-                let rhs: Vec<Dd> = r
-                    .iter()
-                    .zip(&pinned)
-                    .map(|(r, p)| Dd::default().add(if *p { 0.0 } else { *r }))
-                    .collect();
-                let mut v = factor.solve_refined(&rhs);
-                for (v, p) in v.iter_mut().zip(&pinned) {
-                    *v = if *p { 0.0 } else { *v * mu };
-                }
-                v
-            };
-            let project = |r: &[f64]| {
-                let v = once(r);
-                let weighted: Vec<f64> = v.iter().zip(&mobility).map(|(v, m)| v / m).collect();
-                once(&weighted)
-            };
-            let distance = |a: &[f64], c: &[f64]| {
-                a.iter()
-                    .zip(c)
-                    .zip(&pinned)
-                    .filter(|(_, p)| !**p)
-                    .map(|((a, c), _)| a * c)
-                    .sum::<f64>()
-            };
-            let half_square =
-                |offs: &mut dyn Iterator<Item = f64>| 0.5 * offs.map(|o| o * o).sum::<f64>();
-            let phi_now = half_square(&mut terms.iter().map(|(_, off)| *off));
-            let mut r = vec![0.0; n];
-            let mut is_goal = vec![false; n];
-            for &(c, off) in &terms {
-                r[c] += off;
-                is_goal[c] = true;
-            }
-            let mut v = project(&r);
-            let mut rv = dot(&r, &v);
-            if rv <= b * b {
-                break 'step false;
-            }
-            let mut x = vec![0.0; n];
-            let mut p: Vec<f64> = v.iter().map(|v| -v).collect();
-            let to_edge = |x: &[f64], d: &[f64]| {
-                let (qa, qb, qc) = (
-                    distance(d, d),
-                    2.0 * distance(x, d),
-                    distance(x, x) - anchor_radius * anchor_radius,
-                );
-                if qa > 0.0 {
-                    (-qb + (qb * qb - 4.0 * qa * qc).max(0.0).sqrt()) / (2.0 * qa)
-                } else {
-                    0.0
-                }
-            };
-            for _ in 0..=terms.len() {
-                let hp: Vec<f64> = p
-                    .iter()
-                    .zip(&is_goal)
-                    .map(|(p, goal)| if *goal { *p } else { 0.0 })
-                    .collect();
-                let kappa = dot(&p, &hp);
-                if kappa <= 0.0 {
-                    let t = to_edge(&x, &p);
-                    x.iter_mut().zip(&p).for_each(|(x, p)| *x += t * p);
-                    break;
-                }
-                let alpha = rv / kappa;
-                let next: Vec<f64> = x.iter().zip(&p).map(|(x, p)| x + alpha * p).collect();
-                if distance(&next, &next) >= anchor_radius * anchor_radius {
-                    let t = to_edge(&x, &p);
-                    x.iter_mut().zip(&p).for_each(|(x, p)| *x += t * p);
-                    break;
-                }
-                x = next;
-                r.iter_mut().zip(&hp).for_each(|(r, h)| *r += alpha * h);
-                v = project(&r);
-                let rv_next = dot(&r, &v);
-                if rv_next.max(0.0).sqrt() <= b {
-                    break;
-                }
-                let beta = rv_next / rv;
-                p.iter_mut().zip(&v).for_each(|(p, v)| *p = -v + beta * *p);
-                rv = rv_next;
-            }
-            let promised = phi_now - half_square(&mut terms.iter().map(|&(c, off)| off + x[c]));
-            let nearer = (2.0 * phi_now).sqrt() - (2.0 * (phi_now - promised).max(0.0)).sqrt();
-            if promised <= b * b || nearer <= b {
-                break 'step false;
-            }
-            let stepped = distance(&x, &x).sqrt();
-            let mut trial = values.to_vec();
-            for (c, g) in comp.unknowns.iter().enumerate() {
-                trial[*g] += x[c];
-            }
-            // Back onto the rows, and onto each kept shape as it stood before the step (the step
-            // keeps them to first order; this takes out the second), by minimum-change Newton
-            // steps, each at least halving what is left.
-            let shape_terms = |vals: &[f64]| -> Vec<(Vec<(usize, f64)>, f64)> {
-                shapes
-                    .iter()
-                    .filter_map(|shape| {
-                        let (gradient, off) = shape.offset(|p| vals[sys.group_of[p]])?;
-                        let mut grad: Vec<(usize, f64)> = Vec::with_capacity(4);
-                        for (p, g) in shape.params().iter().zip(gradient) {
-                            if let Some(&c) = col_of.get(&sys.group_of[*p]) {
-                                match grad.iter_mut().find(|(cc, _)| *cc == c) {
-                                    Some(entry) => entry.1 += g,
-                                    None => grad.push((c, g)),
-                                }
-                            }
-                        }
-                        Some((grad, off))
-                    })
-                    .collect()
-            };
-            let held_offs: Vec<f64> = shape_terms(values).iter().map(|(_, o)| *o).collect();
-            let landed = {
-                let mut last = f64::INFINITY;
-                loop {
-                    let ((tres, tjac), town) = evaluate_with_own(sys, &comp.rows, &trial, &col_of);
-                    let held_rows = |k: usize| {
-                        tres[k].abs() <= row_tolerance(sys, comp.rows[k], bar.get(), &trial)
-                    };
-                    let now = shape_terms(&trial);
-                    if (0..tres.len()).all(held_rows)
-                        && now.iter().zip(&held_offs).all(|((_, o), h)| (o - h).abs() <= b)
-                    {
-                        break Some(((tres, tjac), town));
-                    }
-                    let scale = row_scales(&tjac, &town, held_rows);
-                    let (bj, br) = scaled_rows(&tjac, &tres, &scale);
-                    let mut all: Vec<(Vec<(usize, f64)>, f64)> = bj.into_iter().zip(br).collect();
-                    for ((g, o), h) in now.into_iter().zip(&held_offs) {
-                        let norm = g.iter().map(|(_, v)| v * v).sum::<f64>().sqrt();
-                        if norm > 0.0 {
-                            all.push((
-                                g.into_iter().map(|(c, v)| (c, v / norm)).collect(),
-                                (o - h) / norm,
-                            ));
-                        }
-                    }
-                    let off: f64 = all.iter().map(|(_, f)| f * f).sum();
-                    if !(off.is_finite() && off <= 0.25 * last) {
-                        break None;
-                    }
-                    last = off;
-                    let back = back_normal.get_or_insert_with(|| Skyline::new(n, &neighbors));
-                    back.clear();
-                    let mut rhs = vec![Dd::default(); n];
-                    for (row, f) in &all {
-                        for (k, &(c1, g1)) in row.iter().enumerate() {
-                            if pinned[c1] {
-                                continue;
-                            }
-                            rhs[c1] = rhs[c1].add_product(-g1, *f);
-                            for &(c2, g2) in &row[..=k] {
-                                if !pinned[c2] {
-                                    back.add_product(c1, c2, g1, g2);
-                                }
-                            }
-                        }
-                    }
-                    let mu = MIN_CHANGE * max_diag_of(back);
-                    let shift: Vec<f64> = mobility
-                        .iter()
-                        .zip(&pinned)
-                        .map(|(m, p)| if *p { 1.0 } else { mu / m })
-                        .collect();
-                    let Some(f) = back.factor(&shift) else {
-                        break None;
-                    };
-                    let d = f.solve_refined(&rhs);
-                    for (c, g) in comp.unknowns.iter().enumerate() {
-                        if !pinned[c] {
-                            trial[*g] += d[c];
-                        }
-                    }
-                }
-            };
-            let back: Vec<f64> = comp
-                .unknowns
-                .iter()
-                .enumerate()
-                .map(|(c, g)| trial[*g] - values[*g] - x[c])
-                .collect();
-            let gain = {
-                let after = half_square(&mut terms.iter().map(|&(c, _)| {
-                    trial[comp.unknowns[c]] - anchors[c].unwrap_or(0.0)
-                }));
-                (phi_now - after) / promised
-            };
-            if let Some(((trial_res, trial_jac), trial_own)) = landed
-                && moved(&back) <= CORRECTION_SHARE * moved(&x)
-                && gain >= 0.25
-            {
-                if gain > 0.75 && stepped >= 0.99 * anchor_radius {
-                    anchor_radius = (2.0 * anchor_radius).min(pointer_across);
-                }
-                values.copy_from_slice(&trial);
-                leave_storage();
-                res = trial_res;
-                jac = trial_jac;
-                own = trial_own;
-                break 'step true;
-            }
-            anchor_radius = stepped / 4.0;
-            anchor_radius > b
-        };
-        // (Back to the shapes, which the step moved at second order, then again.)
-        if progressed && iteration + 1 < MAX_ITERATIONS {
-            first_iteration = iteration + 1;
-            settled = None;
-            continue 'solve;
+            return finish(
+                Stop::Settled,
+                iteration,
+                conv,
+                most_ratio,
+                unkept(&free_radius, values),
+            );
         }
-        if finish_rows {
-            polish(values, &mut back_normal);
-        }
-        return finish(
-            Stop::Settled,
-            iteration,
-            converged(&res, values),
-            most_ratio,
-            unkept(&free_radius, values),
-        );
-    }
-    if let Some((iteration, conv)) = settled {
-        if conv && finish_rows {
-            polish(values, &mut back_normal);
-        }
-        return finish(
-            Stop::Settled,
-            iteration,
-            conv,
-            most_ratio,
-            unkept(&free_radius, values),
-        );
-    }
-    break 'solve;
+        break 'solve;
     }
     if in_stage2 && converged(&res, values) {
         stage2(6, last_stationary);
@@ -3654,17 +3830,20 @@ fn run(sys: &mut System, options: &SolveOptions, iterate: bool) -> SolveReport {
                 length
             };
             // Where its groups are asked to go, per column, in its frame.
-            let shifts_of: HashMap<usize, f64> =
-                frame.moved.iter().map(|&(g, _, shift)| (g, shift)).collect();
-            let goals: Vec<Option<(f64, usize)>> = comp
-                .unknowns
+            let shifts_of: HashMap<usize, f64> = frame
+                .moved
                 .iter()
-                .map(|&g| {
-                    sys.targets.get(g).copied().flatten().map(|(to, rank)| {
-                        (to - shifts_of.get(&g).copied().unwrap_or(0.0), rank)
-                    })
-                })
+                .map(|&(g, _, shift)| (g, shift))
                 .collect();
+            let goals: Vec<Option<(f64, usize)>> =
+                comp.unknowns
+                    .iter()
+                    .map(|&g| {
+                        sys.targets.get(g).copied().flatten().map(|(to, rank)| {
+                            (to - shifts_of.get(&g).copied().unwrap_or(0.0), rank)
+                        })
+                    })
+                    .collect();
             let anchors: Vec<Option<f64>> = comp
                 .unknowns
                 .iter()

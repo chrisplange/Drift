@@ -138,4 +138,4 @@ If you delete a block, or unmark it, the Blender object stays. The Drift tab lis
 
 ## Next
 
-[Walls](14-walls.md): walls with real faces, corners and poché, drawn along a centreline.
+[Walls](14-walls.md): walls with real faces, corners and fill, drawn along a centreline.

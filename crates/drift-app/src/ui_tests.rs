@@ -3417,6 +3417,9 @@ fn a_sheet_prints_in_greyscale_or_black_and_white() {
     whole_view(&mut h);
     h.run();
     h.run();
+    // (New sheet keeps the Sheets panel in front; its paper is in the Inspector.)
+    h.state_mut().show_panel(Panel::Inspector);
+    h.run();
     let id = h.state().current_sheet().expect("a sheet");
     assert_eq!(
         h.state().drawing.editor.doc.sheet(id).unwrap().colours,
@@ -8884,24 +8887,12 @@ fn a_view_can_show_construction_geometry() {
     h.run();
     assert!(!placed(&h, sheet)[0].construction);
     assert_eq!(guides(&preview(&h)), 0);
-    // The switch is the view's: in the Views list's Inspector too.
+    // The switch is the view's, set in the Inspector only: the Sheets panel's Views list has
+    // no second copy (#425).
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
-    h.get_by_label("Construction").scroll_to_me();
-    h.get_by_label("Construction").click();
     h.run();
-    h.run();
-    assert!(
-        h.state()
-            .drawing
-            .editor
-            .doc
-            .view(view)
-            .unwrap()
-            .construction
-    );
-    assert!(guides(&preview(&h)) > 0);
-    save_png("drift_ui_model_view_construction.png", &mut h);
+    assert!(h.query_by_label("Construction").is_none());
 }
 
 #[test]

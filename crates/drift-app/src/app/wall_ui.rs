@@ -1,4 +1,4 @@
-//! The Wall tool's bar (thickness with presets, justification, straight or arc, poché) and
+//! The Wall tool's bar (thickness with presets, justification, straight or arc, fill) and
 //! the Inspector for picked walls.
 
 use drift_core::{Justify, WallId};
@@ -14,7 +14,7 @@ const JUSTIFY: [(Justify, &str); 3] = [
 
 impl DriftApp {
     /// The Wall tool's bar: `Thickness [ … ▾ ] · Left face | Centre | Right face · Straight |
-    /// Arc · ☐ Poché [Solid ▾ ■]`. What is set here is kept for the next drawing too.
+    /// Arc · ☐ Fill [Solid ▾ ■]`. What is set here is kept for the next drawing too.
     pub(crate) fn wall_tool_bar(&mut self, ui: &mut egui::Ui) {
         let units = self.drawing.editor.doc.units();
         ui.label(egui::RichText::new("Thickness").size(12.0).weak());
@@ -72,7 +72,7 @@ impl DriftApp {
         }
         ui.label(egui::RichText::new("W").size(12.0).weak());
         bar_divider(ui);
-        ui.checkbox(&mut self.drawing.editor.prefs.wall_poche.on, "Poché")
+        ui.checkbox(&mut self.drawing.editor.prefs.wall_poche.on, "Fill")
             .on_hover_text("Fill new walls: joined walls of one style on one layer are one area");
         if self.drawing.editor.prefs.wall_poche.on {
             let mut style = self.drawing.editor.prefs.wall_poche.style.clone();
@@ -156,14 +156,14 @@ impl DriftApp {
                 self.drawing.editor.set_wall_justify(&walls, j);
             }
         });
-        // Poché: on or off, and its style.
+        // Fill: on or off, and its style.
         let mut on = first.poche.is_some();
         let mut style = first
             .poche
             .clone()
             .unwrap_or_else(|| self.drawing.editor.prefs.wall_poche.style.clone());
         let was = (on, style.clone());
-        theme::row(ui, "Poché", |ui| {
+        theme::row(ui, "Fill", |ui| {
             ui.checkbox(&mut on, "");
             if on {
                 self.style_bar(ui, &mut style, "wall_inspector");
@@ -178,7 +178,7 @@ impl DriftApp {
         let mut cross = first.cross;
         if ui
             .checkbox(&mut cross, "Joins walls it crosses")
-            .on_hover_text("Crossing walls of the same poché and layer clean up as an X")
+            .on_hover_text("Crossing walls of the same fill and layer clean up as an X")
             .changed()
         {
             self.drawing

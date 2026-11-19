@@ -43,7 +43,7 @@ have no layer, and an opening follows its wall.
 | Several things, with text or annotations among them | How many of each ("4 lines · 1 dimension · 1 note · 1 text"), and **Show** for the dimensions and annotations, and **Array**. Delete, Move, Rotate, Mirror, Array and Copy act on all of it. |
 | A block copy | Laid out as a group: the block's **Name**, its **Definition** (another block to put in its place, and how many copies), **Edit in place**, **Explode** and **Explode to group**; then **Blender profile**, **Placement**, **Array**, **Set base point**, **Select all copies** and **Delete**. **Blender profile** writes the block to the drawing's profiles file on save (see [Profiles in Blender](../tutorials/13-profiles-in-blender.md)). |
 | A group | Its **Name**, **Members**, **Edit in place**, **Ungroup** and **Make block** (a block named after it, with its fills). A group is one thing; a block is a thing you reuse (see [Groups and blocks](../tutorials/07-blocks.md#groups-and-blocks)). |
-| A wall | **Wall**: **Thickness** (a value or expression, with presets), **Justify**, **Poché** (with its style). **Joins**: **Joins walls it crosses**, **Joins at its start** and **Joins at its end**, **Join** (two walls) and **Unjoin**. For one wall, **Segments** with each length and **Split after**, then **Show thickness** and **Explode**. See [Walls](../tutorials/14-walls.md). |
+| A wall | **Wall**: **Thickness** (a value or expression, with presets), **Justify**, **Fill** (with its style). **Joins**: **Joins walls it crosses**, **Joins at its start** and **Joins at its end**, **Join** (two walls) and **Unjoin**. For one wall, **Segments** with each length and **Split after**, then **Show thickness** and **Explode**. See [Walls](../tutorials/14-walls.md). |
 | A door or window | Titled by its family and type, in its wall. **Opening**: **Offset** and **Width** (typed), **Height**, **Leaf**, **Opens**; **Flip hinge**, **Flip side**, **Centre** and **Delete** (the wall closes up). Then **Size set**. See [Doors and windows](../tutorials/15-openings.md). |
 | An offset | **Offset**: **Distance** (a value or expression) and **Follows** (how many curves and pieces). **Show distance**, and **Detach** (plain curves that no longer follow the source). |
 | A closed area (with area picking on) | **Area**, **Perimeter**, **Centroid** and **Holes**, and **Fill** / **Hatch** buttons. |
@@ -138,17 +138,21 @@ geometry itself (in the **Inspector**, or the top bar's **Stroke** menus).
   **Add view** for the sheet shown.
 - **Views:** every view in the drawing and the sheets it's on. Drag one onto the sheet, or
   use **Place on sheet** (or **Place again**), **Zoom to view** or **Delete view**; double-click
-  one to zoom to it. The picked view has **Name** and **Scale** fields, and its **Show**
-  switches (**Dimensions**, **Notes**, **Construction**, **Crop**) apply wherever it's
-  placed.
+  one to zoom to it. A view's settings aren't repeated here: they're in the **Inspector**
+  once it's on a sheet, and in the top bar when its crop is picked in the model.
 - **Output:** **PDF…**, **SVG…**, **DWG / DXF…** and **Print…**. With several sheets, **PDF…** and
   **Print…** ask which sheets to include. Under **Model at 1 : 1**: **Model as SVG…**,
   **Model as PDF…** and **Dimensions and notes** (the model, or the selection, with no
   sheet).
 
-A sheet's own settings (number, name, paper, title block, revisions, **Delete sheet**) and
-a placed view's (title, scale, frame, what it shows, alignment, **Remove from sheet**) are
-in the **Inspector**: pick bare paper, or the view, on the sheet. See
+Clicking in the Sheets panel (a sheet in the list, **New sheet**) keeps the panel in front;
+a view or the paper picked on the sheet brings the **Inspector** forward.
+
+A sheet's own settings (number, name, paper, title block, revisions, **Delete sheet**) are
+in the **Inspector** when you pick bare paper on the sheet. Pick a view there and the
+**Inspector** shows its settings in two parts: **View** (its name, scale, what it shows, its
+crop and layers, the same on every sheet it's on) and **On this sheet** (frame, title,
+border, alignment, **Remove from sheet**). See
 [Sheets and output](../tutorials/10-sheets-and-output.md).
 
 ## Blocks

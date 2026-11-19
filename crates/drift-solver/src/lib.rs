@@ -671,16 +671,25 @@ const LAND_SPREAD: f64 = 100.0;
 /// arithmetic the step is met in that many.
 const CG_RESOLVED: f64 = 1e-14;
 
-/// A pointer rank whose trust region, while its steps hold the kept shapes, has shrunk to this
-/// share of how far its goals still are from their targets has stalled: the relations keep them off (a lever's end), and what its
-/// steps still promise is the projection's leak along a near-redundant relation, which the
-/// step back onto the relations takes away again. Its steps crawled on to the bar, a few
-/// millionths at a time, each kept or refused as round-off had it, and the dragged ended where
-/// the crawl stopped, at one size and not another (the similarity property's bar is 1e-6 of
-/// the drawing: a billionth leaves the crawl's say far below it). A goal that can land has no
-/// misfit left to stall against. (A millionth stopped a point dragged across its circle's
-/// centre before its radius had grown past the bar's say, and the frame went.)
-const POINTER_STALL: f64 = 1e-6;
+/// How many secant pairs the pointer rank's curvature keeps (see `newton`'s pointer stage):
+/// the latest.
+const SECANT_PAIRS: usize = 12;
+
+/// A direction of the secant pairs' curvature this weak next to the strongest is left out
+/// (see [`curvature_of`]).
+const SECANT_SKIP: f64 = 1e-8;
+
+/// A pointer step that promises no more than this many times what a row a bar off moves the
+/// misfit by has its rows finished to round-off (see `newton`'s pointer stage).
+const FINISH_UNDER: f64 = 100.0;
+
+/// A pointer step that promises less than this share of the misfit can't be judged by its
+/// gain, which is the misfit's round-off: the model's whole step is taken, the last.
+const FAITH: f64 = 1e-12;
+
+/// Rows within this share of their tolerance are finished: as near as round-off leaves them
+/// (see `newton`'s `reproject` and `polish`).
+const FINISHED: f64 = 1e-6;
 
 /// A kept shape is met once it is off by no more than this times its own size (an arc's
 /// radius, a line's length), or the solver's tolerance where that is looser: what a solve
@@ -2078,25 +2087,85 @@ fn newton(
     // quadratically however the rows curve), each at least halving what is left, until every
     // row is within its tolerance of its target. The rows and gradients where it ends, or
     // `None` where it doesn't close in.
+    //
+    // `finish`: on from where every row holds, to round-off, for as long as each step at least
+    // quarters what is left (the rows within [`FINISHED`] of their tolerance are there). The
+    // pointer stage's misfit is large where its goals are out of reach, and rows left a bar
+    // off move it by the bar times the misfit: more than a step near its stationary point
+    // promises, so that step would be judged on noise (see the pointer stage).
     let reproject = |trial: &mut Vec<f64>,
                      target: &[f64],
                      fixed: &[bool],
-                     back_normal: &mut Option<Skyline>|
+                     back_normal: &mut Option<Skyline>,
+                     finish: bool,
+                     keep: Option<&[Option<f64>]>|
      -> Option<(Evaluated, Vec<f64>)> {
         let mut last = f64::INFINITY;
+        // (The last place every row held, while finishing, and the steps taken from the first.)
+        let mut best: Option<(Vec<f64>, (Evaluated, Vec<f64>))> = None;
+        let mut extra = 0;
         loop {
             let ((trial_res, trial_jac), trial_own) =
                 evaluate_with_own(sys, &comp.rows, trial, &col_of);
             let left: Vec<f64> = trial_res.iter().zip(target).map(|(f, t)| f - t).collect();
-            let holds =
-                |k: usize| left[k].abs() <= row_tolerance(sys, comp.rows[k], bar.get(), trial);
-            if (0..left.len()).all(holds) {
+            let tolerance = |k: usize| row_tolerance(sys, comp.rows[k], bar.get(), trial);
+            let holds = |k: usize| left[k].abs() <= tolerance(k);
+            // The kept shapes held (`keep`), as rows of unit gradient over the columns that
+            // move: each at the offset it is held at, to the bar.
+            let mut kept_rows: Vec<(Vec<(usize, f64)>, f64)> = Vec::new();
+            let (mut kept_hold, mut kept_there) = (true, true);
+            for (shape, at) in shapes.iter().zip(keep.unwrap_or(&[])) {
+                let (Some(at), Some((gradient, off))) =
+                    (at, shape.offset(|p| trial[sys.group_of[p]]))
+                else {
+                    continue;
+                };
+                let mut grad: Vec<(usize, f64)> = Vec::with_capacity(4);
+                for (p, g) in shape.params().iter().zip(gradient) {
+                    if let Some(&c) = col_of.get(&sys.group_of[*p])
+                        && !fixed[c]
+                    {
+                        match grad.iter_mut().find(|(cc, _)| *cc == c) {
+                            Some(entry) => entry.1 += g,
+                            None => grad.push((c, g)),
+                        }
+                    }
+                }
+                let norm = grad.iter().map(|(_, g)| g * g).sum::<f64>().sqrt();
+                if norm <= 0.0 {
+                    continue;
+                }
+                let off = off - at;
+                kept_hold &= off.abs() <= bar.get().length;
+                kept_there &= off.abs() <= FINISHED * bar.get().length;
+                grad.iter_mut().for_each(|(_, g)| *g /= norm);
+                kept_rows.push((grad, off / norm));
+            }
+            let all_hold = (0..left.len()).all(holds) && kept_hold;
+            if all_hold && !finish {
                 return Some(((trial_res, trial_jac), trial_own));
             }
             let scale = row_scales(&trial_jac, &trial_own, holds);
-            let (back_jac, back_res) = scaled_rows(&trial_jac, &left, &scale);
+            let (mut back_jac, mut back_res) = scaled_rows(&trial_jac, &left, &scale);
+            for (grad, off) in kept_rows {
+                back_jac.push(grad);
+                back_res.push(off);
+            }
             let off: f64 = back_res.iter().map(|f| f * f).sum();
-            if !(off.is_finite() && off <= 0.25 * last) {
+            let closing = off.is_finite() && off <= 0.25 * last;
+            if all_hold && (best.is_none() || closing) {
+                let there = kept_there
+                    && (0..left.len())
+                        .all(|k| scale[k] == 0.0 || left[k].abs() <= FINISHED * tolerance(k));
+                best = Some((trial.clone(), ((trial_res, trial_jac), trial_own)));
+                if there || extra == 4 {
+                    return best.map(|(_, evaluated)| evaluated);
+                }
+                extra += 1;
+            } else if let Some((at, evaluated)) = best {
+                trial.copy_from_slice(&at);
+                return Some(evaluated);
+            } else if !closing {
                 return None;
             }
             last = off;
@@ -2122,7 +2191,12 @@ fn newton(
                 .zip(fixed)
                 .map(|(m, fixed)| if *fixed { 1.0 } else { mu / m })
                 .collect();
-            let back = back_normal.factor(&shift)?.solve_refined(&rhs);
+            let Some(factor) = back_normal.factor(&shift) else {
+                let (at, evaluated) = best?;
+                trial.copy_from_slice(&at);
+                return Some(evaluated);
+            };
+            let back = factor.solve_refined(&rhs);
             for (c, g) in comp.unknowns.iter().enumerate() {
                 if !fixed[c] {
                     trial[*g] += back[c];
@@ -2307,6 +2381,17 @@ fn newton(
     // hasn't finished (not converged, with no conflict: a drag's path takes a
     // shorter step, where the swing fits inside the bound).
     let mut pointer_clipped = false;
+    // The pointer rank's curvature beyond its goals' own, as secant pairs (a direction and its
+    // weight), which rank and stage of it they were learnt in, and where the last gradient
+    // along the rows' solutions was read (the columns there, and it): see the pointer stage.
+    let mut curved: Vec<(Vec<f64>, f64)> = Vec::new();
+    let mut secants: Vec<(Vec<f64>, Vec<f64>)> = Vec::new();
+    let mut curved_for = (usize::MAX, false);
+    // (The kept shapes' offsets where its first stage, which holds them, began.)
+    let mut keep_shapes: Option<Vec<Option<f64>>> = None;
+    let mut curved_from: Option<(Vec<f64>, Vec<f64>)> = None;
+    // (Its rows are finished to round-off where it stands: see the pointer stage.)
+    let mut pointer_finished = false;
     // (Its region is a length over every column it moves: wide enough for every point to move
     // as far as the drawing is across, as the whole part does when a move of curves carries it
     // along. Narrower, the step to the dragged targets was cut at the region's edge into one
@@ -2442,7 +2527,8 @@ fn newton(
                             .iter()
                             .map(|goal| goal.is_some_and(|(_, r)| r <= rank))
                             .collect();
-                        let landed = reproject(&mut trial, &on_the_rows, &fixed, &mut back_normal);
+                        let landed =
+                            reproject(&mut trial, &on_the_rows, &fixed, &mut back_normal, false, None);
                         let rest: Vec<f64> = comp
                             .unknowns
                             .iter()
@@ -2636,10 +2722,10 @@ fn newton(
                 let half_square =
                     |offs: &mut dyn Iterator<Item = f64>| 0.5 * offs.map(|o| o * o).sum::<f64>();
                 let phi_now = half_square(&mut terms.iter().map(|(_, off)| *off));
-                let mut r = vec![0.0; n];
+                let mut gradient = vec![0.0; n];
                 let mut is_goal = vec![false; n];
                 for &(c, off) in &terms {
-                    r[c] += off;
+                    gradient[c] += off;
                     is_goal[c] = true;
                 }
                 // (Projected twice, here and in the steps: where the rows keep the dragged off their
@@ -2647,21 +2733,41 @@ fn newton(
                 // leaves μ/σ² of it, which the steps would chase as far as the region lets them:
                 // a lever's end driven into its circle. Twice leaves that share squared; the
                 // projection is idempotent, so nothing else changes.)
-                let mut v = project(&r);
-                let stationary = dot(&r, &v);
-                let mut rv = stationary;
+                let first = project(&gradient);
+                let stationary = dot(&gradient, &first);
                 let b = bar.get().length;
-                let mut done = rv <= 0.0 || stationary <= b * b;
-                if !done {
-                    // Steihaug's projected conjugate gradients: the misfit's curvature is the
-                    // identity over this rank's goals.
+                if curved_for != (rank, pointer_soft) {
+                    curved.clear();
+                    secants.clear();
+                    curved_from = None;
+                    curved_for = (rank, pointer_soft);
+                    pointer_finished = false;
+                    keep_shapes = (!pointer_soft).then(|| {
+                        shapes
+                            .iter()
+                            .map(|shape| {
+                                shape
+                                    .offset(|p| values[sys.group_of[p]])
+                                    .map(|(_, off)| off)
+                            })
+                            .collect()
+                    });
+                }
+                // Steihaug's projected conjugate gradients on the misfit's model: its gradient,
+                // and its curvature as `pairs` have it (none: the goals' own, the identity over
+                // them), inside `radius`. The step, and whether it is the model's own (not cut
+                // at the region's edge, nor at a direction the model curves down along).
+                let steihaug = |pairs: &[(Vec<f64>, f64)], radius: f64| {
                     let mut x = vec![0.0; n];
+                    let mut r = gradient.clone();
+                    let mut v = first.clone();
+                    let mut rv = stationary;
                     let mut p: Vec<f64> = v.iter().map(|v| -v).collect();
                     let to_edge = |x: &[f64], d: &[f64]| {
                         let (qa, qb, qc) = (
                             distance(d, d),
                             2.0 * distance(x, d),
-                            distance(x, x) - pointer_radius * pointer_radius,
+                            distance(x, x) - radius * radius,
                         );
                         if qa > 0.0 {
                             (-qb + (qb * qb - 4.0 * qa * qc).max(0.0).sqrt()) / (2.0 * qa)
@@ -2670,23 +2776,21 @@ fn newton(
                         }
                     };
                     for _ in 0..terms.len() {
-                        let hp: Vec<f64> = p
-                            .iter()
-                            .zip(&is_goal)
-                            .map(|(p, goal)| if *goal { *p } else { 0.0 })
-                            .collect();
+                        let hp = curved_product(pairs, &is_goal, &p);
                         let kappa = dot(&p, &hp);
                         if kappa <= 0.0 {
-                            let t = to_edge(&x, &p);
-                            x.iter_mut().zip(&p).for_each(|(x, p)| *x += t * p);
-                            break;
+                            if radius.is_finite() {
+                                let t = to_edge(&x, &p);
+                                x.iter_mut().zip(&p).for_each(|(x, p)| *x += t * p);
+                            }
+                            return (x, false);
                         }
                         let alpha = rv / kappa;
                         let next: Vec<f64> = x.iter().zip(&p).map(|(x, p)| x + alpha * p).collect();
-                        if distance(&next, &next) >= pointer_radius * pointer_radius {
+                        if distance(&next, &next) >= radius * radius {
                             let t = to_edge(&x, &p);
                             x.iter_mut().zip(&p).for_each(|(x, p)| *x += t * p);
-                            break;
+                            return (x, false);
                         }
                         x = next;
                         r.iter_mut().zip(&hp).for_each(|(r, h)| *r += alpha * h);
@@ -2699,25 +2803,120 @@ fn newton(
                         p.iter_mut().zip(&v).for_each(|(p, v)| *p = -v + beta * *p);
                         rv = rv_next;
                     }
-                    let promised =
-                        phi_now - half_square(&mut terms.iter().map(|&(c, off)| off + x[c]));
-                    let nearer =
-                        (2.0 * phi_now).sqrt() - (2.0 * (phi_now - promised).max(0.0)).sqrt();
-                    if promised <= b * b || nearer <= b {
+                    (x, true)
+                };
+                let mut done = stationary <= b * b;
+                if !done {
+                    // The goals' misfit along the ways the rows let them move, from the step that
+                    // takes it all by the tangent: what is left of it is out of their reach.
+                    let (tangent, _) = steihaug(&[], f64::INFINITY);
+                    let along: Vec<f64> = tangent
+                        .iter()
+                        .zip(&is_goal)
+                        .map(|(x, goal)| if *goal { -x } else { 0.0 })
+                        .collect();
+                    // The misfit's curvature along those ways. Its own is the identity over the
+                    // goals; where they are out of reach, the rows' curvature times how hard they
+                    // hold the goals off adds to it (a lever's end held far off a small circle
+                    // turns away from its target far sooner than the tangent says), and a step by
+                    // the identity alone promises many times what it gets, however short: it was
+                    // refused down to the bar, a quarter at a time, and the rank stopped where the
+                    // crawl did, at one size and not another. So the curvature is learnt from the
+                    // steps, as secant pairs over the goals (see [`curvature_of`]): from each step
+                    // taken, how the misfit along the rows' ways changed over it beyond the step
+                    // itself; from each refused, how much less it gained than promised.
+                    let place: Vec<f64> = comp
+                        .unknowns
+                        .iter()
+                        .zip(&is_goal)
+                        .map(|(g, goal)| if *goal { values[*g] } else { 0.0 })
+                        .collect();
+                    if let Some((from, was)) = &curved_from {
+                        let s: Vec<f64> = place.iter().zip(from).map(|(a, b)| a - b).collect();
+                        let length = dot(&s, &s).sqrt();
+                        if length > 10.0 * b {
+                            if secants.len() == SECANT_PAIRS {
+                                secants.remove(0);
+                            }
+                            secants.push((
+                                s.iter().map(|s| s / length).collect(),
+                                along
+                                    .iter()
+                                    .zip(was)
+                                    .zip(&s)
+                                    .map(|((g, w), s)| (g - w - s) / length)
+                                    .collect(),
+                            ));
+                            curved = curvature_of(&secants);
+                        }
+                    }
+                    curved_from = Some((place, along.clone()));
+                    let (x, whole) = if curved.is_empty()
+                        && distance(&tangent, &tangent) < pointer_radius * pointer_radius
+                    {
+                        (tangent, true)
+                    } else {
+                        steihaug(&curved, pointer_radius)
+                    };
+                    let hx = curved_product(&curved, &is_goal, &x);
+                    let promised = -(dot(&gradient, &x) + 0.5 * dot(&x, &hx));
+                    // What a row a bar off moves the misfit by: where a step promises no more
+                    // than a hundred times that, the rows are finished to round-off, where it
+                    // stands first and then where each trial lands, so that the step is judged on
+                    // what it did.
+                    let finish = promised <= FINISH_UNDER * b * (2.0 * phi_now).sqrt();
+                    // Stationary: what is left of the misfit along the rows' ways is within the
+                    // bar, or the model's own step, whole, moves nothing by more than the bar (or
+                    // promises less than the bar squared). Not a test on how much nearer the
+                    // step brings the goals: where they are out of reach the misfit is flat, and
+                    // that leaves √(bar × misfit) undone, far more than the bar.
+                    if promised <= b * b || dot(&along, &along).sqrt() <= b || (whole && moved(&x) <= b)
+                    {
                         if std::env::var_os("DRIFT_NEWTON_DEBUG").is_some() {
                             eprintln!(
-                                "  pointer stops: misfit {:.3e} promised {promised:.3e} nearer {nearer:.3e} b {b:.3e}",
-                                (2.0 * phi_now).sqrt()
+                                "  pointer stops: misfit {:.3e} promised {promised:.3e} step {:.3e} along {:.3e} b {b:.3e}",
+                                (2.0 * phi_now).sqrt(),
+                                moved(&x),
+                                dot(&along, &along).sqrt()
                             );
                         }
                         done = true;
+                    } else if finish && !pointer_finished {
+                        let mut at = values.to_vec();
+                        if let Some(((at_res, at_jac), at_own)) = reproject(
+                            &mut at,
+                            &on_the_rows,
+                            &held,
+                            &mut back_normal,
+                            true,
+                            keep_shapes.as_deref(),
+                        ) {
+                            values.copy_from_slice(&at);
+                            leave_storage();
+                            res = at_res;
+                            jac = at_jac;
+                            own = at_own;
+                        }
+                        pointer_finished = true;
+                        curved_from = None;
+                        break;
                     } else {
+                        // A step that promises less than the misfit's own round-off can't be
+                        // judged by its gain: the model's whole step is taken as it is, the last.
+                        let faith = whole && promised <= FAITH * phi_now;
                         let stepped = distance(&x, &x).sqrt();
                         let mut trial = values.to_vec();
                         for (c, g) in comp.unknowns.iter().enumerate() {
                             trial[*g] += x[c];
                         }
-                        let landed = reproject(&mut trial, &on_the_rows, &held, &mut back_normal);
+                        let landed = reproject(
+                            &mut trial,
+                            &on_the_rows,
+                            &held,
+                            &mut back_normal,
+                            finish,
+                            keep_shapes.as_deref(),
+                        );
                         let back: Vec<f64> = comp
                             .unknowns
                             .iter()
@@ -2739,6 +2938,12 @@ fn newton(
                                 moved(&from_entry)
                             )
                         };
+                        let after = landed.as_ref().map(|_| {
+                            half_square(&mut terms.iter().map(|&(c, _)| {
+                                let to = goals[c].map_or(0.0, |(to, _)| to);
+                                trial[comp.unknowns[c]] - to
+                            }))
+                        });
                         // (A step the rows took back onto them whole, refused only for taking a
                         // point farther from where the solve began than the drawing is across:
                         // the pointer is held off by the bound, not by the rows (a free arc's
@@ -2754,13 +2959,9 @@ fn newton(
                             moved(&back) <= CORRECTION_SHARE * moved(&x)
                                 && moved(&from_entry) <= across
                         });
-                        let kept = landed.and_then(|evaluated| {
-                            let after = half_square(&mut terms.iter().map(|&(c, _)| {
-                                let to = goals[c].map_or(0.0, |(to, _)| to);
-                                trial[comp.unknowns[c]] - to
-                            }));
+                        let kept = landed.zip(after).and_then(|(evaluated, after)| {
                             let gain = (phi_now - after) / promised;
-                            (gain >= 0.25).then_some((evaluated, gain))
+                            (faith || gain >= 0.25).then_some((evaluated, gain))
                         });
                         match kept {
                             Some((((trial_res, trial_jac), trial_own), gain)) => {
@@ -2768,45 +2969,11 @@ fn newton(
                                     pointer_radius = (2.0 * pointer_radius).min(pointer_across);
                                 }
                                 if std::env::var_os("DRIFT_NEWTON_DEBUG").is_some() {
-                                    let d: Vec<f64> = comp
-                                        .unknowns
-                                        .iter()
-                                        .map(|g| trial[*g] - values[*g])
-                                        .collect();
-                                    let cost = |v: &[f64]| {
-                                        v.iter().map(|a| a * a).sum::<f64>()
-                                            + shape_metric
-                                                .iter()
-                                                .map(|(g, w)| {
-                                                    w * g
-                                                        .iter()
-                                                        .map(|&(c, gg)| gg * v[c])
-                                                        .sum::<f64>()
-                                                        .powi(2)
-                                                })
-                                                .sum::<f64>()
-                                    };
-                                    let ty: Vec<f64> = comp
-                                        .unknowns
-                                        .iter()
-                                        .map(|&g| {
-                                            if axis_of(sys, g) == Some(1) {
-                                                -18.0
-                                            } else {
-                                                0.0
-                                            }
-                                        })
-                                        .collect();
                                     eprintln!(
-                                        "  pointer step {:.3e} x {:.3e} gain {gain:.3} cost x {:.1} cost t {:.1} shapes {:?}",
-                                        moved(&d),
+                                        "  pointer step {:.3e} gain {gain:.3} promised {promised:.3e} along {:.3e} finish {finish} faith {faith} pairs {}",
                                         moved(&x),
-                                        cost(&x),
-                                        cost(&ty),
-                                        shape_metric
-                                            .iter()
-                                            .map(|(g, w)| (g.len(), *w))
-                                            .collect::<Vec<_>>()
+                                        dot(&along, &along).sqrt(),
+                                        curved.len()
                                     );
                                 }
                                 let step: Vec<f64> = comp
@@ -2824,23 +2991,48 @@ fn newton(
                                 res = trial_res;
                                 jac = trial_jac;
                                 own = trial_own;
+                                pointer_finished = finish;
+                                if faith {
+                                    pointer_stopped = true;
+                                    pointer_radius = pointer_across;
+                                }
                             }
                             None => {
                                 if std::env::var_os("DRIFT_NEWTON_DEBUG").is_some() {
                                     eprintln!(
-                                        "  pointer refused stepped {stepped:.3e} radius {pointer_radius:.3e} across {across:.3e} phi {phi_now:.3e} promised {promised:.3e} terms {:?} x {:?} why {}",
-                                        terms, x, why
+                                        "  pointer refused stepped {stepped:.3e} radius {pointer_radius:.3e} phi {phi_now:.3e} promised {promised:.3e} along {:.3e} after {after:?} finish {finish} pairs {} why {}",
+                                        dot(&along, &along).sqrt(),
+                                        curved.len(),
+                                        why
                                     );
                                 }
+                                // (What the trial fell short by is the curvature the model lacks
+                                // along the step.)
+                                let over: Vec<f64> = x
+                                    .iter()
+                                    .zip(&is_goal)
+                                    .map(|(x, goal)| if *goal { *x } else { 0.0 })
+                                    .collect();
+                                let xx = dot(&over, &over);
+                                if let Some(after) = after
+                                    && xx > 0.0
+                                {
+                                    let lacks = 2.0 * (after - phi_now - dot(&gradient, &x))
+                                        - dot(&x, &hx);
+                                    if lacks > 0.0 {
+                                        if secants.len() == SECANT_PAIRS {
+                                            secants.remove(0);
+                                        }
+                                        let length = xx.sqrt();
+                                        secants.push((
+                                            over.iter().map(|x| x / length).collect(),
+                                            over.iter().map(|x| lacks / xx * x / length).collect(),
+                                        ));
+                                        curved = curvature_of(&secants);
+                                    }
+                                }
                                 pointer_radius = stepped / 4.0;
-                                // (Stalled once the region is a hair of how far off the dragged
-                                // are: see [`POINTER_STALL`].)
-                                done = pointer_radius
-                                    <= if pointer_soft {
-                                        b
-                                    } else {
-                                        b.max(POINTER_STALL * (2.0 * phi_now).sqrt())
-                                    };
+                                done = pointer_radius <= b;
                             }
                         }
                     }
@@ -3105,7 +3297,8 @@ fn newton(
                 for (c, g) in comp.unknowns.iter().enumerate() {
                     trial[*g] += x[c];
                 }
-                let landed = reproject(&mut trial, &on_the_rows, &pinned, &mut back_normal);
+                let landed =
+                    reproject(&mut trial, &on_the_rows, &pinned, &mut back_normal, false, None);
                 // (Brought back by no more than a share of the step: farther, the step went where
                 // the rows' tangent says nothing about them.)
                 let back: Vec<f64> = comp
@@ -3306,7 +3499,8 @@ fn newton(
                     .map(|(f, row)| f + row.iter().map(|&(c, g)| g * delta[c]).sum::<f64>())
                     .collect();
                 let mut corrected = trial.clone();
-                let got = reproject(&mut corrected, &promise, &no_column, &mut back_normal);
+                let got =
+                    reproject(&mut corrected, &promise, &no_column, &mut back_normal, false, None);
                 let correction: Vec<f64> = comp
                     .unknowns
                     .iter()
@@ -3425,6 +3619,53 @@ fn newton(
 /// The dot product of two vectors.
 fn dot(a: &[f64], b: &[f64]) -> f64 {
     a.iter().zip(b).map(|(a, b)| a * b).sum()
+}
+
+/// The curvature a pointer rank's secant pairs say its misfit has beyond its goals' own, as
+/// directions and their weights (see `newton`'s pointer stage): the symmetric rank-one update
+/// in its compact form, `Ψ·(SᵀΨ)⁻¹·Ψᵀ` over the pairs `(s, ψ)` (a step of unit length, and how
+/// the gradient along the rows' solutions changed over it beyond the goals' own curvature),
+/// which meets every pair at once whatever order they came in. `SᵀΨ` is symmetric where the
+/// pairs agree; made so, and its directions weaker than [`SECANT_SKIP`] of its strongest left
+/// out (pairs along one direction that disagree by round-off).
+fn curvature_of(pairs: &[(Vec<f64>, Vec<f64>)]) -> Vec<(Vec<f64>, f64)> {
+    let k = pairs.len();
+    let mut m = vec![0.0; k * k];
+    for i in 0..k {
+        for j in 0..k {
+            m[i * k + j] = 0.5 * (dot(&pairs[i].0, &pairs[j].1) + dot(&pairs[j].0, &pairs[i].1));
+        }
+    }
+    let (values, vectors) = linalg::symmetric_eigen(&mut m, k);
+    let strongest = values.iter().map(|v| v.abs()).fold(0.0, f64::max);
+    let mut out = Vec::new();
+    for (j, &value) in values.iter().enumerate() {
+        if !(value.abs() > SECANT_SKIP * strongest) {
+            continue;
+        }
+        let mut u = vec![0.0; pairs[0].1.len()];
+        for (i, (_, psi)) in pairs.iter().enumerate() {
+            let w = vectors[i * k + j];
+            u.iter_mut().zip(psi).for_each(|(u, p)| *u += w * p);
+        }
+        out.push((u, 1.0 / value));
+    }
+    out
+}
+
+/// The pointer rank's model curvature applied to a step: the identity over its goals, and
+/// its secant pairs (see `newton`'s pointer stage).
+fn curved_product(pairs: &[(Vec<f64>, f64)], is_goal: &[bool], p: &[f64]) -> Vec<f64> {
+    let mut out: Vec<f64> = p
+        .iter()
+        .zip(is_goal)
+        .map(|(p, goal)| if *goal { *p } else { 0.0 })
+        .collect();
+    for (u, weight) in pairs {
+        let along = weight * dot(u, p);
+        out.iter_mut().zip(u).for_each(|(o, u)| *o += along * u);
+    }
+    out
 }
 
 /// How far the drawing is across, for the step limit in [`newton`]: twice its farthest point

@@ -2402,11 +2402,30 @@ impl DriftApp {
         else {
             return;
         };
-        // Its name, scale and what it shows are set in the Inspector once it is on a sheet,
-        // and in the model's context bar when its crop is picked: not a second copy here
-        // (#425).
-        self.referenced_by(ui, view_id);
+        // A placed view is set up in the Inspector (pick it on a sheet), so its settings
+        // aren't repeated here (#425). One on no sheet has no Inspector yet: its name and
+        // scale (what placing it starts from) are set here.
         let placed = self.drawing.editor.doc.sheets_showing(view_id);
+        if placed.is_empty()
+            && let Some(original) = self.drawing.editor.doc.view(view_id).cloned()
+        {
+            let mut view = original.clone();
+            let mut typing = false;
+            theme::row(ui, "Name", |ui| {
+                typing |= ui
+                    .add(
+                        egui::TextEdit::singleline(&mut view.name)
+                            .hint_text("Plan, Detail A…")
+                            .desired_width(ui.available_width() - 8.0),
+                    )
+                    .changed();
+            });
+            theme::row(ui, "Scale", |ui| {
+                self.scale_menu(ui, "model_view_scale", &mut view.scale);
+            });
+            self.update_view(view_id, view, typing);
+        }
+        self.referenced_by(ui, view_id);
         ui.horizontal_wrapped(|ui| {
             if let Some(sheet) = current {
                 let here = placed.contains(&sheet);

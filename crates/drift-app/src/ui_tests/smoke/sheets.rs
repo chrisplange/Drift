@@ -646,4 +646,17 @@ fn smoke_sheet_view_settings_in_one_place() {
             "no {label} in the Sheets panel"
         );
     }
+    // A view on no sheet has no Inspector yet: the list keeps its name and scale.
+    let unplaced = {
+        let ed = &mut h.state_mut().drawing.editor;
+        ed.doc.begin();
+        let copy = ed.doc.view(view).unwrap().clone();
+        let id = ed.doc.add_view(copy);
+        ed.commit("Another view");
+        id
+    };
+    h.state_mut().drawing.picked_view = Some(unplaced);
+    h.run();
+    h.run();
+    assert!(h.query_by_label("Name").is_some() && h.query_by_label("Scale").is_some());
 }

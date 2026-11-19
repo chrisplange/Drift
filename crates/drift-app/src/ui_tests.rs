@@ -8892,6 +8892,10 @@ fn a_view_can_show_construction_geometry() {
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
     h.run();
+    assert!(
+        h.query_by_label("Zoom to view").is_some(),
+        "the view, picked in the list"
+    );
     assert!(h.query_by_label("Construction").is_none());
 }
 

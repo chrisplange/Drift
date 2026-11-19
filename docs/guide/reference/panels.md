@@ -138,8 +138,9 @@ geometry itself (in the **Inspector**, or the top bar's **Stroke** menus).
   **Add view** for the sheet shown.
 - **Views:** every view in the drawing and the sheets it's on. Drag one onto the sheet, or
   use **Place on sheet** (or **Place again**), **Zoom to view** or **Delete view**; double-click
-  one to zoom to it. A view's settings aren't repeated here: they're in the **Inspector**
-  once it's on a sheet, and in the top bar when its crop is picked in the model.
+  one to zoom to it. A view on no sheet yet has **Name** and **Scale** here; once it's
+  placed, its settings are in the **Inspector** (pick it on the sheet), and in the top bar
+  when its crop is picked in the model.
 - **Output:** **PDF…**, **SVG…**, **DWG / DXF…** and **Print…**. With several sheets, **PDF…** and
   **Print…** ask which sheets to include. Under **Model at 1 : 1**: **Model as SVG…**,
   **Model as PDF…** and **Dimensions and notes** (the model, or the selection, with no

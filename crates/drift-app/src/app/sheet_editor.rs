@@ -607,45 +607,53 @@ impl DriftApp {
         }
     }
 
-    /// The rail while a sheet is shown: what can be done on paper.
-    pub(crate) fn sheet_rail(&mut self, ui: &mut egui::Ui, wide: bool) {
+    /// The rail while a sheet is shown: what can be done on paper, as icon tiles or (with
+    /// `names`) as rows with names and keys, like the model's rail. `edge` is the rail's right
+    /// edge, where the tooltips start.
+    pub(crate) fn sheet_rail(&mut self, ui: &mut egui::Ui, names: bool, edge: f32) {
+        use crate::app::rail;
         ui.spacing_mut().item_spacing.y = 0.0;
-        ui.add_space(4.0);
-        if wide {
-            theme::caps_header(ui, "Sheet");
+        if names {
+            ui.add_space(2.0);
+            let color = theme::neutrals(ui.visuals().dark_mode).secondary;
+            theme::caps_header_in(ui, "Sheet", color);
             ui.add_space(2.0);
         }
-        let row =
-            |ui: &mut egui::Ui, selected: bool, label: &str, key: &str, glyph: Option<Glyph>| {
-                let draw = |p: &egui::Painter, r: egui::Rect, c: egui::Color32| match glyph {
-                    Some(g) => icons::glyph(p, r.shrink(1.0), g, c),
-                    None => icons::tool(p, r, ToolKind::Select, c),
-                };
-                if wide {
-                    icons::tool_row(
-                        ui,
-                        selected,
-                        label,
-                        Some(key).filter(|k| !k.is_empty()),
-                        draw,
-                    )
-                } else {
-                    icons::button(ui, 38.0, selected, label, draw)
-                }
+        let place = |ui: &mut egui::Ui,
+                     selected: bool,
+                     label: &str,
+                     key: &str,
+                     hint: &str,
+                     icon: Result<Glyph, ToolKind>| {
+            let draw = |p: &egui::Painter, r: egui::Rect, c: egui::Color32| match icon {
+                Ok(g) => icons::glyph(p, r.shrink(1.0), g, c),
+                Err(tool) => icons::tool(p, r, tool, c),
             };
+            let response = if names {
+                icons::tool_row(ui, selected, label, Some(key), draw)
+            } else {
+                let size = egui::vec2(rail::TILE_WIDTH, rail::TILE);
+                icons::tool_tile(ui, size, selected, label, draw)
+            };
+            rail::tip_beside(&response, edge, |ui| {
+                theme::command_tip(ui, label, key, hint);
+            });
+            response.clicked()
+        };
         let kind = self.tool.kind();
         let on_tool = self.sheet_tool();
-        if row(ui, !on_tool, "Select", "S", None)
-            .on_hover_text(
-                "Pick a view, a note, a dimension or the paper; drag a view, a note's text \
-                 or a dimension's label to move it",
-            )
-            .clicked()
-        {
+        if place(
+            ui,
+            !on_tool,
+            "Select",
+            "S",
+            "Pick a view, a note, a dimension or the paper; drag a view, a note's text or a \
+             dimension's label to move it",
+            Err(ToolKind::Select),
+        ) {
             self.set_tool(ToolKind::Select);
         }
         // The annotation tools that work on paper: what they make is this sheet's own.
-        let mut picked_tool = None;
         for (tool, name, key, hint) in [
             (
                 ToolKind::Note,
@@ -663,43 +671,37 @@ impl DriftApp {
                  view scale and never holds the geometry",
             ),
         ] {
-            let draw = move |p: &egui::Painter, r: egui::Rect, c: egui::Color32| {
-                icons::tool(p, r, tool, c);
-            };
-            let selected = kind == tool;
-            let clicked = if wide {
-                icons::tool_row(ui, selected, name, Some(key), draw)
-            } else {
-                icons::button(ui, 38.0, selected, name, draw)
-            }
-            .on_hover_text(hint)
-            .clicked();
-            if clicked {
-                picked_tool = Some(tool);
+            if place(ui, kind == tool, name, key, hint, Err(tool)) {
+                self.set_tool(tool);
             }
         }
-        if let Some(tool) = picked_tool {
-            self.set_tool(tool);
-        }
-        if row(ui, false, "Add view", "V", Some(Glyph::AddView))
-            .on_hover_text(
-                "Drag a rectangle round what the view shows, in the model; it goes on this \
-                 sheet",
-            )
-            .clicked()
-            && let Some(id) = self.current_sheet()
+        if place(
+            ui,
+            false,
+            "Add view",
+            "V",
+            "Drag a rectangle round what the view shows, in the model; it goes on this sheet",
+            Ok(Glyph::AddView),
+        ) && let Some(id) = self.current_sheet()
         {
             self.start_add_view(id);
         }
-        ui.add_space(8.0);
-        if wide {
-            theme::caps_header(ui, "Model");
+        if names {
+            ui.add_space(7.0);
+            let color = theme::neutrals(ui.visuals().dark_mode).secondary;
+            theme::caps_header_in(ui, "Model", color);
             ui.add_space(2.0);
+        } else {
+            rail::group_line(ui);
         }
-        if row(ui, false, "Back to model", "Esc", Some(Glyph::ChevronsLeft))
-            .on_hover_text("Back to the model, to draw and edit")
-            .clicked()
-        {
+        if place(
+            ui,
+            false,
+            "Back to model",
+            "Esc",
+            "Back to the model, to draw and edit",
+            Ok(Glyph::ChevronsLeft),
+        ) {
             self.show_sheet(None);
         }
     }

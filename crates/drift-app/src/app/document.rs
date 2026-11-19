@@ -243,6 +243,8 @@ impl DriftApp {
             }
         }
         prefs.extend(self.layout.prefs());
+        // The tool rail with names (off: the slim rail of icons).
+        prefs.push(format!("railnames={}", u8::from(self.rail_names)));
         prefs.join(";")
     }
 
@@ -322,6 +324,7 @@ impl DriftApp {
                     }
                 }
                 "ai" => self.ai_link = on,
+                "railnames" => self.rail_names = on,
                 #[cfg(not(target_arch = "wasm32"))]
                 "upchk" => self.updates.auto_check = on,
                 #[cfg(not(target_arch = "wasm32"))]

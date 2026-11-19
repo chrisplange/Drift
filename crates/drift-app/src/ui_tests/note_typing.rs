@@ -241,9 +241,11 @@ fn a_note_is_typed_into_again_from_a_double_click_and_a_click_away_finishes() {
     h.event(Event::Text(" 4".into()));
     h.run();
     assert_eq!(words(&h, id), "TYP 4.");
-    // A click away finishes, keeping the text.
+    // A click away finishes, keeping the text. (On empty canvas, clear of the note: with the
+    // slim rail the canvas's middle is further left, and the point this used fell on the
+    // status bar's controls.)
     {
-        let at = screen(&h, DVec2::new(120.0, -90.0));
+        let at = screen(&h, DVec2::new(60.0, -60.0));
         clicks(&mut h, at, 1);
     }
     assert!(h.state().drawing.note_edit.is_none());

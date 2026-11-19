@@ -103,6 +103,17 @@ fn button(h: &Harness<'_, DriftApp>, pos: Pos2, pressed: bool) {
     });
 }
 
+/// The example shown with room round the plate, whatever the canvas's shape: for tests that
+/// click beside the drawing (a note above it, a crop dragged past its top), where a fit of
+/// the drawing alone would put those points off a wider canvas.
+fn example_with_room(h: &mut Harness<'_, DriftApp>) {
+    h.state_mut().drawing.view.fit_target = Some(drift_core::Bounds {
+        min: DVec2::new(-31.0, -44.5),
+        max: DVec2::new(131.0, 93.5),
+    });
+    h.run();
+}
+
 /// Move, press and release at a world position, one frame per event like a real user.
 fn click_world(h: &mut Harness<'_, DriftApp>, p: DVec2) {
     let pos = screen(h, p);
@@ -3070,6 +3081,7 @@ fn drafting_tools_annotate_the_plate() {
     h.run();
     h.get_by_label("Open example").click();
     h.run();
+    example_with_room(&mut h);
     let annotations = |h: &Harness<'_, DriftApp>| -> Vec<Annotation> {
         h.state()
             .drawing
@@ -8299,6 +8311,7 @@ fn views_are_drawn_on_the_canvas_and_placed_on_sheets() {
     h.run();
     h.get_by_label("Open example").click();
     h.run();
+    example_with_room(&mut h);
     let near = |a: DVec2, b: DVec2| a.distance(b) < 0.01;
 
     // The View tool: drag a crop round the plate's left half (Alt: free of snaps).
@@ -10228,7 +10241,9 @@ fn saved_preferences_read_back_unchanged() {
     );
     assert_eq!(prefs.fill_alone_picks, 2);
     // (Which relations show is saved since #337: a key those builds didn't write.)
-    assert_eq!(h.state().view_prefs().replace("rels=all;", ""), SAVED);
+    // (And whether the rail shows names since the Studio rail: appended, off unless set.)
+    let written = h.state().view_prefs().replace("rels=all;", "");
+    assert_eq!(written.strip_suffix(";railnames=0"), Some(SAVED));
 }
 
 #[test]

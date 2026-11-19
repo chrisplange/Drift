@@ -140,7 +140,78 @@ const SCENES: &[Scene] = &[
         h.state_mut().show_panel(Panel::Layers);
         h.run();
     }),
+    // The rail as a list, with each tool's name and key.
+    ("rail-names", |h| {
+        open_example(h);
+        h.key_press(Key::L);
+        h.run();
+        h.get_by_label("Show tool names").click();
+        h.run();
+        h.event(Event::PointerGone);
+        h.run();
+    }),
+    // A family's flyout, open beside the rail.
+    ("rail-flyout", |h| {
+        open_example(h);
+        let tile = rail_tile(h, "Rectangle");
+        h.hover_at(tile.center());
+        h.run();
+        h.event(Event::PointerButton {
+            pos: tile.center(),
+            button: PointerButton::Secondary,
+            pressed: true,
+            modifiers: EguiModifiers::NONE,
+        });
+        h.event(Event::PointerButton {
+            pos: tile.center(),
+            button: PointerButton::Secondary,
+            pressed: false,
+            modifiers: EguiModifiers::NONE,
+        });
+        h.run();
+        let polygon = h
+            .get_all_by_label("Polygon")
+            .map(|n| n.rect())
+            .find(|r| r.left() > tile.right())
+            .expect("Polygon in the flyout");
+        h.hover_at(polygon.center());
+        h.run();
+    }),
+    // A tile's tooltip, beside the rail: the pointer resting on the arcs' tile.
+    ("rail-tooltip", |h| {
+        open_example(h);
+        h.key_press(Key::R);
+        h.run();
+        let tile = rail_tile(h, "3-point arc");
+        h.hover_at(tile.center());
+        for _ in 0..6 {
+            h.step();
+        }
+    }),
 ];
+
+/// The rail's tile named `label` (below the bars, at the left).
+fn rail_tile(h: &Harness<'_, DriftApp>, label: &str) -> egui::Rect {
+    h.get_all_by_label(label)
+        .map(|n| n.rect())
+        .find(|r| r.left() < 100.0 && r.top() > crate::theme::bar::TOP + crate::theme::bar::OPTIONS)
+        .expect("on the rail")
+}
+
+/// [`shot`] as the scene stands: no extra frames (they would move a resting pointer's
+/// tooltip on), and nothing cleared.
+fn shot_now(scene: &str, name: &str, dark: bool, h: &mut Harness<'_, DriftApp>) {
+    if !scene.starts_with("rail-tooltip") {
+        return shot(scene, name, dark, h);
+    }
+    let image = h.render().expect("render");
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp/fresh");
+    std::fs::create_dir_all(&dir).expect("create target/tmp/fresh");
+    let look = if dark { "dark" } else { "light" };
+    let path = dir.join(format!("{scene}_{name}_{look}.png"));
+    image.save(&path).expect("save png");
+    eprintln!("wrote {}", path.display());
+}
 
 #[test]
 #[ignore = "writes screenshots for judging the look; run with --ignored"]
@@ -157,7 +228,13 @@ fn fresh_screenshots() {
         for dark in [true, false] {
             let mut h = sized([1280.0, 800.0], 1.0, dark);
             set_up(&mut h);
-            shot(scene, "1280x800", dark, &mut h);
+            shot_now(scene, "1280x800", dark, &mut h);
+        }
+        // A short window: the slim rail takes two columns; with names, shorter rows.
+        if matches!(*scene, "selection" | "rail-names" | "rail-flyout" | "sheet") {
+            let mut h = sized([1280.0, 700.0], 1.0, true);
+            set_up(&mut h);
+            shot_now(scene, "1280x700", true, &mut h);
         }
         // A small window: the search field is a button, the tabs take what is left.
         if matches!(*scene, "selection" | "many-sheets" | "sheet") {

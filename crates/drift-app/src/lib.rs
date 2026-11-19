@@ -645,6 +645,9 @@ pub struct DriftApp {
     rail_shown: Vec<(app::palette::Command, app::palette::Command)>,
     /// The tool rail's open flyout.
     rail_flyout: Option<app::rail::Flyout>,
+    /// The rail as a list with each tool's name and key, rather than icon tiles ("Show tool
+    /// names" at its foot; kept with the view preferences).
+    rail_names: bool,
     backend: String,
     window_title: String,
     /// Results of Help → Run solver benchmark (in development builds).
@@ -858,6 +861,7 @@ impl DriftApp {
             last_command: None,
             rail_shown: Vec::new(),
             rail_flyout: None,
+            rail_names: false,
             backend,
             window_title: String::new(),
             benchmark: None,
@@ -1292,12 +1296,16 @@ impl eframe::App for DriftApp {
             .show(ui, |ui| self.status_bar(ui, now));
         theme::pane_edge(ui, status.response.rect, egui::Align2::CENTER_TOP);
         let wide = ctx.content_rect().width() >= WIDE_LAYOUT;
+        // The rail is as wide as its layout: a slim column of tiles (two in a short window),
+        // or the list with names. Its height is what the bars leave.
+        let rail_layout =
+            self.rail_layout(status.response.rect.top() - options.response.rect.bottom());
         let rail = egui::Panel::left("tools")
             .resizable(false)
-            .frame(frame(8, 6))
-            .exact_size(if wide { 168.0 } else { 84.0 })
+            .frame(frame(rail_layout.margin(), app::rail::MARGIN_Y))
+            .exact_size(rail_layout.width())
             .show_separator_line(false)
-            .show(ui, |ui| self.toolbar(ui, wide));
+            .show(ui, |ui| self.toolbar(ui, rail_layout));
         theme::pane_edge(ui, rail.response.rect, egui::Align2::RIGHT_CENTER);
         self.begin_docks(wide);
         self.dock(ui, dock::Side::Left);

@@ -795,10 +795,10 @@ pub fn tool_row_sized(
     let dark = ui.visuals().dark_mode;
     let accent = crate::theme::accent(dark);
     let n = crate::theme::neutrals(dark);
-    // The current tool: a neutral raised fill, its icon in the accent and the accent bar
-    // (the accent marks one thing, not a whole block).
+    // The current tool: a soft accent fill, its icon in the accent and the accent bar (never
+    // a solid accent block).
     let (bg, fg, weak) = if selected {
-        (Some(n.control), n.text, n.secondary)
+        (Some(crate::theme::accent_soft(dark)), n.text, n.secondary)
     } else if response.is_pointer_button_down_on() {
         (
             Some(ui.visuals().widgets.active.bg_fill),
@@ -857,6 +857,55 @@ pub fn tool_row_sized(
     let g = painter.layout_job(job);
     let y = centred(&g);
     painter.galley(egui::pos2(left, y), g, fg);
+    response
+}
+
+/// A tile on the slim tool rail: the icon alone (18 pt), centred. The current tool's is on a
+/// soft accent fill with its icon in the accent and an accent bar at its left edge. `label`
+/// names it for accessibility (screen readers and UI tests).
+pub fn tool_tile(
+    ui: &mut egui::Ui,
+    size: Vec2,
+    selected: bool,
+    label: &str,
+    draw: impl FnOnce(&egui::Painter, Rect, Color32),
+) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, label)
+    });
+    let dark = ui.visuals().dark_mode;
+    let accent = crate::theme::accent(dark);
+    let (bg, fg) = if selected {
+        (Some(crate::theme::accent_soft(dark)), accent)
+    } else if response.is_pointer_button_down_on() {
+        (
+            Some(ui.visuals().widgets.active.bg_fill),
+            ui.visuals().strong_text_color(),
+        )
+    } else if response.hovered() {
+        (
+            Some(ui.visuals().widgets.hovered.bg_fill),
+            ui.visuals().strong_text_color(),
+        )
+    } else {
+        (None, ui.visuals().text_color())
+    };
+    let painter = ui.painter();
+    // (A pixel of air above and below, so neighbours' fills never touch.)
+    let tile = rect.shrink2(vec2(0.0, 1.0));
+    if let Some(bg) = bg {
+        painter.rect_filled(tile, crate::theme::radius::CONTROL, bg);
+    }
+    if selected {
+        let bar = Rect::from_min_max(
+            tile.left_top() + vec2(0.0, 4.0),
+            tile.left_bottom() + vec2(2.0, -4.0),
+        );
+        painter.rect_filled(bar, 1.0, accent);
+    }
+    let icon = Rect::from_center_size(rect.center(), Vec2::splat(18.0));
+    draw(painter, icon, fg);
     response
 }
 

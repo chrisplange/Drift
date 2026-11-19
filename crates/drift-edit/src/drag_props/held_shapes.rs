@@ -726,7 +726,11 @@ fn the_pins_drag_goes_with_nothing_crushed_or_flung() {
         );
         let most = 100.0 * offset.length() * scale;
         for (i, (a, b)) in start.iter().zip(built.positions()).enumerate() {
-            assert!(a.distance(b) <= most, "{what}: point {i} moved {}", a.distance(b));
+            assert!(
+                a.distance(b) <= most,
+                "{what}: point {i} moved {}",
+                a.distance(b)
+            );
         }
     }
 }

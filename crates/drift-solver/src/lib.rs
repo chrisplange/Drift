@@ -2291,6 +2291,11 @@ fn newton(
     // (Its steps hold the kept shapes as rows, first; then, where that stops short, keep them
     // only in their metric: see the pointer stage.)
     let mut pointer_soft = false;
+    // A pointer step the step bound refused where the rows would have taken it (see the
+    // pointer stage): the dragged were held off by the bound, so a settled solve after one
+    // hasn't finished (not converged, with no conflict: a drag's path takes a
+    // shorter step, where the swing fits inside the bound).
+    let mut pointer_clipped = false;
     // (Its region is a length over every column it moves: wide enough for every point to move
     // as far as the drawing is across, as the whole part does when a move of curves carries it
     // along. Narrower, the step to the dragged targets was cut at the region's edge into one
@@ -2723,6 +2728,17 @@ fn newton(
                                 moved(&from_entry)
                             )
                         };
+                        // (A step the rows took back onto them whole, refused only for taking a
+                        // point farther from where the solve began than the drawing is across:
+                        // the pointer is held off by the bound, not by the rows (a free arc's
+                        // centre swung round a fixed end it passes), and the solve hasn't
+                        // finished: see `pointer_clipped`.)
+                        if landed.is_some()
+                            && moved(&back) <= CORRECTION_SHARE * moved(&x)
+                            && moved(&from_entry) > across
+                        {
+                            pointer_clipped = true;
+                        }
                         let landed = landed.filter(|_| {
                             moved(&back) <= CORRECTION_SHARE * moved(&x)
                                 && moved(&from_entry) <= across
@@ -3364,10 +3380,13 @@ fn newton(
             if conv && finish_rows {
                 polish(values, &mut back_normal);
             }
+            // (Wherever the dragged ended: a pointer held at the bound crawls along it, and
+            // whether it then meets its target just inside the bound or just outside is
+            // round-off's to say, at one size and not another.)
             return finish(
                 Stop::Settled,
                 iteration,
-                conv,
+                conv && !pointer_clipped,
                 most_ratio,
                 unkept(&free_radius, values),
             );
@@ -3490,13 +3509,27 @@ fn run(sys: &mut System, options: &SolveOptions, iterate: bool) -> SolveReport {
     // geometry could change (see `newton`).
     let mut unkept = 0;
     let across = drawing_across(sys, &values, !options.dragged.is_empty());
-    // (And as far again as anything is asked to go: a drag's step from where its path reached
-    // takes the dragged that far, and what they carry with them.)
-    let asked = sys
-        .targets
-        .iter()
-        .zip(&sys.groups)
-        .filter_map(|(target, group)| target.map(|(to, _)| (to - group.value).abs()))
+    // (And as far again as anything is asked to go, √2 times over: a drag's step from where
+    // its path reached takes the dragged that far, and what they carry with them. How far a
+    // point is asked to go, both its coordinates together: the largest one coordinate alone
+    // changes as the drawing turns, and the bound with it, which cut a step at one turn of the
+    // drawing and not another: the similarity property.)
+    let mut asked_points: BTreeMap<EntityId, DVec2> = BTreeMap::new();
+    for (i, p) in sys.params.iter().enumerate() {
+        let g = sys.group_of[i];
+        let Some((to, _)) = sys.targets.get(g).copied().flatten() else {
+            continue;
+        };
+        let off = to - sys.groups[g].value;
+        match *p {
+            Param::X(id) => asked_points.entry(id).or_default().x = off,
+            Param::Y(id) => asked_points.entry(id).or_default().y = off,
+            _ => {}
+        }
+    }
+    let asked = asked_points
+        .values()
+        .map(|d| d.length())
         .fold(0.0, f64::max);
     let across = across + std::f64::consts::SQRT_2 * asked;
     let mut grad = Vec::new();

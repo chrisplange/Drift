@@ -671,6 +671,17 @@ const LAND_SPREAD: f64 = 100.0;
 /// arithmetic the step is met in that many.
 const CG_RESOLVED: f64 = 1e-14;
 
+/// A pointer rank whose trust region, while its steps hold the kept shapes, has shrunk to this
+/// share of how far its goals still are from their targets has stalled: the relations keep them off (a lever's end), and what its
+/// steps still promise is the projection's leak along a near-redundant relation, which the
+/// step back onto the relations takes away again. Its steps crawled on to the bar, a few
+/// millionths at a time, each kept or refused as round-off had it, and the dragged ended where
+/// the crawl stopped, at one size and not another (the similarity property's bar is 1e-6 of
+/// the drawing: a billionth leaves the crawl's say far below it). A goal that can land has no
+/// misfit left to stall against. (A millionth stopped a point dragged across its circle's
+/// centre before its radius had grown past the bar's say, and the frame went.)
+const POINTER_STALL: f64 = 1e-6;
+
 /// A kept shape is met once it is off by no more than this times its own size (an arc's
 /// radius, a line's length), or the solver's tolerance where that is looser: what a solve
 /// with [`SolveOptions::fold`] must meet every shape to, and a drag's kept radius to (see
@@ -2822,7 +2833,14 @@ fn newton(
                                     );
                                 }
                                 pointer_radius = stepped / 4.0;
-                                done = pointer_radius <= b;
+                                // (Stalled once the region is a hair of how far off the dragged
+                                // are: see [`POINTER_STALL`].)
+                                done = pointer_radius
+                                    <= if pointer_soft {
+                                        b
+                                    } else {
+                                        b.max(POINTER_STALL * (2.0 * phi_now).sqrt())
+                                    };
                             }
                         }
                     }

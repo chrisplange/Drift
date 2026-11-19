@@ -944,7 +944,7 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
     }
     // A result that isn't a number (a degenerate configuration the equations divide by) is
     // never written: the drawing stays as it was and the solve counts as failed.
-    if !report.unwritten && !write_back(doc, &sys) {
+    if !report.unwritten && !write_back(doc, &sys, !options.to.is_empty()) {
         report.converged = false;
         report.unwritten = true;
     }
@@ -4548,18 +4548,22 @@ pub fn free_directions_with(
 
 /// Write the solved values into the document, unless any of them isn't finite: then write
 /// nothing and return false.
-fn write_back(doc: &mut Document, sys: &System) -> bool {
+fn write_back(doc: &mut Document, sys: &System, drag_step: bool) -> bool {
     if (0..sys.params.len()).any(|i| !sys.value(i).is_finite()) {
         return false;
     }
-    // Nor is a circle crushed to no radius or past it: the document holds no such circle, so
-    // writing the rest would leave its points off it (a point the pointer takes exactly onto
-    // a circle's centre, F1), and the crush would go unseen.
-    if sys.params.iter().enumerate().any(|(i, param)| {
-        matches!(*param, Param::Radius(id)
+    // Nor, in a drag's step, is a circle crushed to no radius or past it: the document holds
+    // no such circle, so writing the rest would leave its points off it (a point the pointer
+    // takes exactly onto a circle's centre, F1), and the crush would go unseen. (An edit's
+    // solve writes the rest as before, and its caller reads what the relations then say: a
+    // dimension retyped past a tangency has the tangency's form chosen again.)
+    if drag_step
+        && sys.params.iter().enumerate().any(|(i, param)| {
+            matches!(*param, Param::Radius(id)
             if matches!(doc.get(id).map(|e| e.kind), Some(EntityKind::Circle { .. }))
                 && sys.value(i) <= 0.0)
-    }) {
+        })
+    {
         return false;
     }
     let mut points: HashMap<EntityId, DVec2> = HashMap::new();

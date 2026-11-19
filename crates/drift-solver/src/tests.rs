@@ -1986,7 +1986,7 @@ fn a_value_that_isnt_a_number_is_not_written() {
     let k = sys.param_index[&Param::X(s)];
     let g = sys.group_of[k];
     sys.groups[g].value = f64::NAN;
-    assert!(!write_back(&mut doc, &sys));
+    assert!(!write_back(&mut doc, &sys, false));
     assert_eq!(doc.point(s).unwrap(), v(10.0, 0.0));
 }
 

@@ -849,7 +849,6 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
                 .map(|(to, _)| (g, to))
         })
         .collect();
-    let all_placed = !placed.is_empty() && placed.len() == targets.iter().flatten().count();
     sys.targets = targets;
     // Where the solve's last rank brings back what the ranks above leave open
     // (`SolveOptions::anchor`).
@@ -866,41 +865,58 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
     let mut report = run(&mut sys, options, true);
     if std::env::var_os("DRIFT_NEWTON_DEBUG").is_some() {
         eprintln!(
-            "solve: targets {} placed {} all_placed {all_placed} conv {} it {}",
+            "solve: targets {} placed {} conv {} it {}",
             sys.targets.iter().flatten().count(),
             placed.len(),
             report.converged,
             report.iterations
         );
     }
-    // Such a solve's placed values came as near as the relations let them, but where its rows
-    // were off they first gave way a little (heavy, not pinned: the relations' stage moves
-    // what it must), and a step back toward them can stall (a double root of the rows). So
-    // they are pinned where they were placed and the part solved again from where the solve
-    // ended, kept where it meets every relation: they land exactly wherever they can. (A
-    // drag's step needs none of this: its rows hold where it starts.)
-    if all_placed && report.converged && report.iterations > 0 {
-        let solved: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
-        let bars = sys.bars.clone();
-        for &(g, to) in &placed {
-            sys.groups[g].value = to;
-            sys.groups[g].fixed = true;
-        }
-        let pinned = run(&mut sys, options, true);
-        for &(g, _) in &placed {
-            sys.groups[g].fixed = false;
-        }
-        if pinned.converged {
-            report = SolveReport {
-                iterations: pinned.iterations.max(report.iterations),
-                bar: pinned.bar.max(report.bar),
-                ..pinned
+    // A solve that isn't a drag's step (it places values and solves for them: a circle's
+    // radius dragged, an offset's side, the active element) holds what it placed heavy in the
+    // relations' stage, not pinned, so where other geometry has to follow they give a little.
+    // They are pinned where they were placed and the part solved again from where the solve
+    // ended, rank by rank (the dragged, then the carried with them), each kept where it meets
+    // every relation: they land exactly wherever they can. (A drag's step needs none of this:
+    // its rows hold where it starts, and its second rank brings the dragged home.)
+    if options.to.is_empty() && report.converged && !placed.is_empty() {
+        let mut pinned: Vec<(usize, f64)> = Vec::new();
+        for rank in 0..2 {
+            let before = pinned.len();
+            pinned.extend(
+                placed
+                    .iter()
+                    .filter(|&&(g, _)| sys.targets[g].is_some_and(|(_, r)| r == rank)),
+            );
+            let on_target = |&(g, to): &(usize, f64)| {
+                (sys.groups[g].value - to).abs() <= sys.bars.get(g).copied().unwrap_or(0.0)
             };
-        } else {
-            for (group, v) in sys.groups.iter_mut().zip(solved) {
-                group.value = v;
+            if pinned.len() == before || pinned.iter().all(on_target) {
+                continue;
             }
-            sys.bars = bars;
+            let solved: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
+            let bars = sys.bars.clone();
+            for &(g, to) in &pinned {
+                sys.groups[g].value = to;
+                sys.groups[g].fixed = true;
+            }
+            let landed = run(&mut sys, options, true);
+            for &(g, _) in &pinned {
+                sys.groups[g].fixed = false;
+            }
+            if landed.converged {
+                report = SolveReport {
+                    iterations: landed.iterations.max(report.iterations),
+                    bar: landed.bar.max(report.bar),
+                    ..landed
+                };
+            } else {
+                for (group, v) in sys.groups.iter_mut().zip(solved) {
+                    group.value = v;
+                }
+                sys.bars = bars;
+                break;
+            }
         }
     }
     // A result that isn't a number (a degenerate configuration the equations divide by) is
@@ -3952,15 +3968,20 @@ fn run(sys: &mut System, options: &SolveOptions, iterate: bool) -> SolveReport {
                 .iter()
                 .map(|&(g, _, shift)| (g, shift))
                 .collect();
-            let goals: Vec<Option<(f64, usize)>> =
-                comp.unknowns
-                    .iter()
-                    .map(|&g| {
-                        sys.targets.get(g).copied().flatten().map(|(to, rank)| {
-                            (to - shifts_of.get(&g).copied().unwrap_or(0.0), rank)
-                        })
-                    })
-                    .collect();
+            // (A drag's step only: a solve that places values and solves for them holds them
+            // heavy in the relations' stage and lands them after, see `solve`.)
+            let goals: Vec<Option<(f64, usize)>> = comp
+                .unknowns
+                .iter()
+                .map(|&g| {
+                    sys.targets
+                        .get(g)
+                        .copied()
+                        .flatten()
+                        .filter(|_| !options.to.is_empty())
+                        .map(|(to, rank)| (to - shifts_of.get(&g).copied().unwrap_or(0.0), rank))
+                })
+                .collect();
             let anchors: Vec<Option<f64>> = comp
                 .unknowns
                 .iter()

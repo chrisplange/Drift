@@ -31,6 +31,9 @@ fn hatched_shape(h: &mut Harness<'_, DriftApp>) -> (Vec<EntityId>, FillId) {
     });
     h.run();
     h.state_mut().drawing.view.fit_target = None;
+    // (Without the toast that says the colours changed: while it fades it repaints every
+    // frame, and a click that falls in the fade never settles.)
+    h.state_mut().status = None;
     h.run();
     (sides, fill)
 }

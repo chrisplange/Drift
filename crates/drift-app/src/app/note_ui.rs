@@ -116,7 +116,7 @@ fn mark_fields(
         let title = |v: drift_core::ViewId| doc.view(v).map_or("None", |v| v.title());
         egui::ComboBox::from_id_salt("mark_view")
             .selected_text(view.map_or("None", title))
-            .width(ui.available_width() - 8.0)
+            .width(ui.available_width())
             .show_ui(ui, |ui| {
                 ui.selectable_value(view, None, "None");
                 for (id, v) in doc.views() {
@@ -147,7 +147,7 @@ fn mark_fields(
                 ui.add(
                     egui::TextEdit::singleline(sheet)
                         .hint_text("e.g. A-201")
-                        .desired_width(ui.available_width() - 8.0),
+                        .desired_width(ui.available_width()),
                 )
                 .on_hover_text(
                     "The sheet the view is drawn on: written in the lower half of the flag",
@@ -1326,7 +1326,7 @@ impl DriftApp {
                 ui.add(
                     egui::TextEdit::multiline(text)
                         .desired_rows(3)
-                        .desired_width(ui.available_width() - 8.0),
+                        .desired_width(ui.available_width()),
                 );
                 theme::section(ui, "Style");
                 theme::row(ui, "Size", |ui| {
@@ -1395,10 +1395,17 @@ impl DriftApp {
                 let pos = doc.note_text_pos(*at, leaders);
                 let mut remove = None;
                 for (k, l) in leaders.iter_mut().enumerate() {
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         ui.label(egui::RichText::new(format!("{}", k + 1)).weak());
+                        // The two menus share what the shoulder's box and the delete button
+                        // leave (in a narrow pane those two go on a line of their own).
+                        let gap = ui.spacing().item_spacing.x;
+                        let tail = ui.spacing().interact_size.x + 20.0 + 3.0 * gap;
+                        let width = ((ui.available_width() - tail - gap) / 2.0)
+                            .floor()
+                            .max(88.0);
                         egui::ComboBox::from_id_salt(("leader_end", k))
-                            .width(96.0)
+                            .width(width)
                             .selected_text(l.end.label())
                             .show_ui(ui, |ui| {
                                 for e in LeaderEnd::ALL {
@@ -1406,7 +1413,7 @@ impl DriftApp {
                                 }
                             });
                         egui::ComboBox::from_id_salt(("leader_shape", k))
-                            .width(82.0)
+                            .width(width)
                             .selected_text(l.shape.label())
                             .show_ui(ui, |ui| {
                                 let tip = doc.anchor_pos(&l.to);
@@ -1429,11 +1436,8 @@ impl DriftApp {
                             });
                         ui.checkbox(&mut l.shoulder, "")
                             .on_hover_text("A short level shoulder into the text");
-                        if ui
-                            .small_button("×")
-                            .on_hover_text("Remove this leader (the text stays)")
-                            .clicked()
-                        {
+                        let tip = "Remove this leader (the text stays)";
+                        if theme::delete_button(ui, "×", tip).clicked() {
                             remove = Some(k);
                         }
                     });
@@ -1484,7 +1488,7 @@ impl DriftApp {
                     ui.add(
                         egui::TextEdit::singleline(suffix)
                             .hint_text("THRU, ↧ 10…")
-                            .desired_width(ui.available_width() - 8.0),
+                            .desired_width(ui.available_width()),
                     );
                 });
                 ui.horizontal(|ui| {

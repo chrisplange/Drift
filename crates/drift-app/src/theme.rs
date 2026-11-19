@@ -615,22 +615,7 @@ pub fn fold<R>(
     };
     let y = row.center().y;
     // The chevron: right when folded, down when open.
-    let c = egui::pos2(row.left() + 5.0, y);
-    let pts = if open {
-        vec![
-            c + vec2(-3.5, -1.8),
-            c + vec2(0.0, 1.8),
-            c + vec2(3.5, -1.8),
-        ]
-    } else {
-        vec![
-            c + vec2(-1.8, -3.5),
-            c + vec2(1.8, 0.0),
-            c + vec2(-1.8, 3.5),
-        ]
-    };
-    ui.painter()
-        .add(egui::Shape::line(pts, Stroke::new(1.4, color)));
+    chevron(ui.painter(), egui::pos2(row.left() + 5.0, y), open, color);
     let galley = title_galley(ui, title, color);
     ui.painter().galley(
         egui::pos2(row.left() + 16.0, y - galley.size().y / 2.0),
@@ -1011,23 +996,249 @@ pub fn command_tip(ui: &mut egui::Ui, name: &str, keys: &str, about: &str) {
 /// Space between a row's label column and its value.
 pub const LABEL_WIDTH: f32 = 88.0;
 
-/// A label / value row in an inspector grid.
+/// Height of a label / value row: a control's, so rows of text, fields and menus keep one
+/// rhythm down a panel.
+pub const ROW_HEIGHT: f32 = 24.0;
+
+/// Height of a row in a list (layers, sheets, blocks, relations).
+pub const LIST_ROW: f32 = 26.0;
+
+/// A label / value row in an inspector grid: the label in the secondary tone in a column of
+/// its own, the value in what is left of the width (fields and menus fill it).
 pub fn row(
     ui: &mut egui::Ui,
     label: &str,
     add: impl FnOnce(&mut egui::Ui),
 ) -> egui::InnerResponse<()> {
     ui.horizontal(|ui| {
+        ui.set_min_height(ROW_HEIGHT);
         ui.allocate_ui_with_layout(
-            Vec2::new(LABEL_WIDTH, 20.0),
+            Vec2::new(LABEL_WIDTH, ROW_HEIGHT),
             egui::Layout::left_to_right(egui::Align::Center),
             |ui| {
                 ui.set_min_width(LABEL_WIDTH);
-                ui.label(egui::RichText::new(label).color(ui.visuals().weak_text_color()));
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(label).color(ui.visuals().weak_text_color()),
+                    )
+                    .truncate(),
+                );
             },
         );
         add(ui);
     })
+}
+
+/// A [`row`] whose value needs `least` points of width (a segmented control, two controls
+/// side by side): beside its label where the pane has the room, under it where it hasn't,
+/// so a narrow pane never has to grow for it.
+pub fn wide_row(ui: &mut egui::Ui, label: &str, least: f32, add: impl FnOnce(&mut egui::Ui)) {
+    let room = ui.available_width() - LABEL_WIDTH - ui.spacing().item_spacing.x;
+    if room >= least {
+        row(ui, label, add);
+    } else {
+        ui.label(egui::RichText::new(label).color(ui.visuals().weak_text_color()));
+        ui.horizontal(|ui| {
+            ui.set_min_height(ROW_HEIGHT);
+            add(ui);
+        });
+    }
+}
+
+/// The width of a button with this text, as egui lays it out.
+pub fn button_width(ui: &egui::Ui, text: &str) -> f32 {
+    let font = TextStyle::Button.resolve(ui.style());
+    ui.painter()
+        .layout_no_wrap(text.to_owned(), font, Color32::WHITE)
+        .size()
+        .x
+        + 2.0 * ui.spacing().button_padding.x
+}
+
+/// A small button with a chevron that opens a menu of choices for the field beside it
+/// (presets). `label` is what it is called.
+pub fn menu_chevron<R>(
+    ui: &mut egui::Ui,
+    label: &str,
+    add: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(ROW_HEIGHT), egui::Sense::click());
+    let enabled = ui.is_enabled();
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+    let n = neutrals(ui.visuals().dark_mode);
+    let fill = if response.is_pointer_button_down_on() {
+        n.pressed
+    } else if response.hovered() {
+        n.hover
+    } else {
+        n.control
+    };
+    ui.painter().rect(
+        rect,
+        radius::CONTROL,
+        fill,
+        Stroke::new(1.0, n.control_border),
+        egui::StrokeKind::Inside,
+    );
+    chevron(ui.painter(), rect.center(), true, n.text);
+    egui::Popup::menu(&response).show(add);
+    response
+}
+
+/// A line of explanation under a title or a control: small, in the secondary tone, wrapped.
+pub fn hint(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    ui.label(
+        egui::RichText::new(text)
+            .size(size::CAPTION)
+            .color(ui.visuals().weak_text_color()),
+    )
+}
+
+/// A chevron: down when `open`, right when folded (a fold, a floating panel's header, a
+/// layer's row).
+pub fn chevron(painter: &egui::Painter, c: egui::Pos2, open: bool, color: Color32) {
+    let pts = if open {
+        vec![
+            c + vec2(-3.5, -1.8),
+            c + vec2(0.0, 1.8),
+            c + vec2(3.5, -1.8),
+        ]
+    } else {
+        vec![
+            c + vec2(-1.8, -3.5),
+            c + vec2(1.8, 0.0),
+            c + vec2(-1.8, 3.5),
+        ]
+    };
+    painter.add(egui::Shape::line(pts, Stroke::new(1.4, color)));
+}
+
+/// The fill behind a row of a list: the picked (or current) one on a faint accent tint, the
+/// one under the pointer on a quiet neutral. The one look of a selected row, in every panel.
+pub fn row_fill(dark: bool, selected: bool, hovered: bool) -> Option<Color32> {
+    if selected {
+        Some(accent_soft(dark))
+    } else if hovered {
+        Some(neutrals(dark).faint)
+    } else {
+        None
+    }
+}
+
+/// Paint [`row_fill`] behind `rect`.
+pub fn paint_row(ui: &egui::Ui, rect: egui::Rect, selected: bool, hovered: bool) {
+    if let Some(fill) = row_fill(ui.visuals().dark_mode, selected, hovered) {
+        ui.painter().rect_filled(rect, radius::CONTROL, fill);
+    }
+}
+
+/// A small × that removes the row it ends (a relation, a variable, an option, a revision):
+/// quiet until pointed at. `label` is what it is called, `tip` what it removes.
+pub fn delete_button(ui: &mut egui::Ui, label: &str, tip: &str) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(20.0), egui::Sense::click());
+    let enabled = ui.is_enabled();
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+    let dark = ui.visuals().dark_mode;
+    let n = neutrals(dark);
+    let color = if response.hovered() && enabled {
+        let fill = if response.is_pointer_button_down_on() {
+            n.pressed
+        } else {
+            n.hover
+        };
+        ui.painter().rect_filled(rect, radius::CONTROL, fill);
+        error_color(dark)
+    } else {
+        n.tertiary
+    };
+    let c = rect.center();
+    let d = 3.5;
+    let stroke = Stroke::new(1.3, color);
+    ui.painter()
+        .line_segment([c + vec2(-d, -d), c + vec2(d, d)], stroke);
+    ui.painter()
+        .line_segment([c + vec2(-d, d), c + vec2(d, -d)], stroke);
+    response.on_hover_text(tip)
+}
+
+/// A soft tile in the accent's tint with an icon painted in the accent: what an inspector's
+/// title starts with. Returns the icon's rect.
+pub fn icon_tile(ui: &mut egui::Ui, side: f32) -> egui::Rect {
+    let (tile, _) = ui.allocate_exact_size(Vec2::splat(side), egui::Sense::hover());
+    ui.painter()
+        .rect_filled(tile, 6.0, accent_soft(ui.visuals().dark_mode));
+    tile.shrink((side * 0.22).round())
+}
+
+/// A figure on a quiet tile: a number over what it counts.
+pub fn stat(ui: &mut egui::Ui, value: usize, caption: &str, width: f32) {
+    let n = neutrals(ui.visuals().dark_mode);
+    let (r, _) = ui.allocate_exact_size(vec2(width, 48.0), egui::Sense::hover());
+    ui.painter().rect_filled(r, radius::CONTROL + 1, n.faint);
+    ui.painter().text(
+        egui::pos2(r.left() + 10.0, r.top() + 17.0),
+        egui::Align2::LEFT_CENTER,
+        value.to_string(),
+        FontId::new(16.0, bold()),
+        n.text,
+    );
+    ui.painter().text(
+        egui::pos2(r.left() + 10.0, r.bottom() - 13.0),
+        egui::Align2::LEFT_CENTER,
+        caption,
+        FontId::new(size::CAPTION, FontFamily::Proportional),
+        n.secondary,
+    );
+}
+
+/// Buttons of one width across the pane, in one row (or in rows of `per_row` when the pane
+/// is too narrow for their names). Returns the index of the one clicked, and each one's
+/// response to `each` (for its tooltip).
+pub fn button_row(
+    ui: &mut egui::Ui,
+    labels: &[&str],
+    mut each: impl FnMut(usize, egui::Response) -> egui::Response,
+) -> Option<usize> {
+    let gap = 4.0;
+    let font = FontId::new(size::LABEL, FontFamily::Proportional);
+    let widest = labels
+        .iter()
+        .map(|l| {
+            ui.painter()
+                .layout_no_wrap((*l).to_owned(), font.clone(), Color32::WHITE)
+                .size()
+                .x
+        })
+        .fold(0.0_f32, f32::max);
+    let room = ui.available_width();
+    let fits =
+        |across: usize| (room - gap * (across as f32 - 1.0)) / across as f32 >= widest + 10.0;
+    // All in a row, or else in two rows (then one each).
+    let across = if fits(labels.len()) {
+        labels.len()
+    } else if fits(labels.len().div_ceil(2)) {
+        labels.len().div_ceil(2)
+    } else {
+        1
+    };
+    let width = ((room - gap * (across as f32 - 1.0)) / across as f32).floor();
+    let mut clicked = None;
+    for (k, line) in labels.chunks(across).enumerate() {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = gap;
+            ui.spacing_mut().button_padding.x = 2.0;
+            for (j, label) in line.iter().enumerate() {
+                let i = k * across + j;
+                let button = egui::Button::new(egui::RichText::new(*label).size(size::LABEL))
+                    .min_size(vec2(width, ROW_HEIGHT));
+                let response = each(i, ui.add_sized([width, ROW_HEIGHT], button));
+                if response.clicked() {
+                    clicked = Some(i);
+                }
+            }
+        });
+    }
+    clicked
 }
 
 /// A fade over the bottom of a scrolled list when there is more below it, so a cut-off
@@ -1059,18 +1270,13 @@ pub fn fade_bottom(
 /// accent tint with strong text.
 pub fn list_row(ui: &mut egui::Ui, selected: bool, label: &str) -> egui::Response {
     let (rect, response) =
-        ui.allocate_exact_size(vec2(ui.available_width(), 26.0), egui::Sense::click());
+        ui.allocate_exact_size(vec2(ui.available_width(), LIST_ROW), egui::Sense::click());
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, label)
     });
     let dark = ui.visuals().dark_mode;
     let n = neutrals(dark);
-    if selected {
-        ui.painter()
-            .rect_filled(rect, radius::CONTROL, accent_soft(dark));
-    } else if response.hovered() {
-        ui.painter().rect_filled(rect, radius::CONTROL, n.hover);
-    }
+    paint_row(ui, rect, selected, response.hovered());
     let font = FontId::new(
         size::BODY,
         if selected {

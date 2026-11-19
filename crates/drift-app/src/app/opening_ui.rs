@@ -198,8 +198,7 @@ impl DriftApp {
                 let mut commit = None;
                 theme::row(ui, label, |ui| {
                     let r = ui.add(
-                        egui::TextEdit::singleline(&mut text)
-                            .desired_width(ui.available_width() - 8.0),
+                        egui::TextEdit::singleline(&mut text).desired_width(ui.available_width()),
                     );
                     if r.changed() {
                         self.drawing.opening_text = Some((first, field, text.clone()));
@@ -234,6 +233,7 @@ impl DriftApp {
         let swing = (op.hand, op.facing);
         theme::row(ui, "Opens", |ui| {
             egui::ComboBox::from_id_salt("opening_swing")
+                .width(ui.available_width())
                 .selected_text(
                     SWINGS
                         .iter()

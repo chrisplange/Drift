@@ -125,7 +125,9 @@ impl DriftApp {
         theme::row(ui, "Thickness", |ui| {
             let r = ui.add(
                 egui::TextEdit::singleline(&mut text)
-                    .desired_width(ui.available_width() - 34.0)
+                    .desired_width(
+                        ui.available_width() - theme::ROW_HEIGHT - ui.spacing().item_spacing.x,
+                    )
                     .hint_text("various"),
             );
             if r.changed() {
@@ -135,7 +137,7 @@ impl DriftApp {
                 commit = Some(text.clone());
             }
             let presets = self.drawing.editor.wall_presets();
-            ui.menu_button("▾", |ui| {
+            theme::menu_chevron(ui, "Thickness presets", |ui| {
                 for p in presets {
                     let label = format!("{}  ({})", p.label, units.format_readout(p.mm));
                     if ui.button(label).clicked() {
@@ -143,7 +145,8 @@ impl DriftApp {
                         ui.close();
                     }
                 }
-            });
+            })
+            .on_hover_text("Wall thicknesses to pick from");
         });
         if let Some(t) = commit {
             self.drawing.wall_thickness_text = None;
@@ -151,24 +154,27 @@ impl DriftApp {
                 self.drawing.editor.out.notice = Some(e.to_string());
             }
         }
-        theme::row(ui, "Justify", |ui| {
-            if let Some(j) = app::context_ui::choice(ui, first.justify, &JUSTIFY) {
+        theme::wide_row(ui, "Justify", 180.0, |ui| {
+            if let Some(j) = theme::segmented(ui, first.justify, &JUSTIFY) {
                 self.drawing.editor.set_wall_justify(&walls, j);
             }
         });
-        // Poché: on or off, and its style.
+        // Its fill: on or off, and its style.
         let mut on = first.poche.is_some();
         let mut style = first
             .poche
             .clone()
             .unwrap_or_else(|| self.drawing.editor.prefs.wall_poche.style.clone());
         let was = (on, style.clone());
-        theme::row(ui, "Poché", |ui| {
+        theme::wide_row(ui, "Wall fill", 160.0, |ui| {
             ui.checkbox(&mut on, "");
             if on {
-                self.style_bar(ui, &mut style, "wall_inspector");
+                self.style_kind(ui, &mut style);
             }
         });
+        if on {
+            self.style_row(ui, &mut style, "wall_inspector");
+        }
         if (on, style.clone()) != was {
             self.drawing
                 .editor
@@ -178,7 +184,7 @@ impl DriftApp {
         let mut cross = first.cross;
         if ui
             .checkbox(&mut cross, "Joins walls it crosses")
-            .on_hover_text("Crossing walls of the same poché and layer clean up as an X")
+            .on_hover_text("Crossing walls of the same fill and layer clean up as an X")
             .changed()
         {
             self.drawing

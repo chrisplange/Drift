@@ -48,7 +48,7 @@ impl DriftApp {
                 "drawing_scale",
                 &mut style.scale,
                 imperial,
-                ui.available_width() - 6.0,
+                ui.available_width(),
             );
         })
         .response
@@ -64,7 +64,7 @@ impl DriftApp {
         theme::row(ui, "Arrows", |ui| {
             egui::ComboBox::from_id_salt("arrow_style")
                 .selected_text(style.arrow.label())
-                .width(ui.available_width() - 6.0)
+                .width(ui.available_width())
                 .show_ui(ui, |ui| {
                     for a in ArrowStyle::ALL {
                         ui.selectable_value(&mut style.arrow, a, a.label());
@@ -98,7 +98,7 @@ impl DriftApp {
             let text = style.alt_units.map_or("None", LengthFormat::label);
             egui::ComboBox::from_id_salt("alt_units")
                 .selected_text(text)
-                .width(ui.available_width() - 6.0)
+                .width(ui.available_width())
                 .show_ui(ui, |ui| {
                     ui.selectable_value(&mut style.alt_units, None, "None");
                     for f in LengthFormat::METRIC
@@ -195,14 +195,14 @@ impl DriftApp {
             ui.add(
                 egui::TextEdit::singleline(&mut note.prefix)
                     .hint_text("e.g. 4×")
-                    .desired_width(ui.available_width() - 8.0),
+                    .desired_width(ui.available_width()),
             );
         });
         theme::row(ui, "Suffix", |ui| {
             ui.add(
                 egui::TextEdit::singleline(&mut note.suffix)
                     .hint_text("e.g. THRU")
-                    .desired_width(ui.available_width() - 8.0),
+                    .desired_width(ui.available_width()),
             );
         });
         dimension_chips(ui, &mut note);
@@ -210,7 +210,7 @@ impl DriftApp {
             ui.add(
                 egui::TextEdit::singleline(&mut note.below)
                     .hint_text("e.g. TO FACE OF STUD")
-                    .desired_width(ui.available_width() - 8.0),
+                    .desired_width(ui.available_width()),
             )
             .on_hover_text("A line of text under the dimension line");
         });
@@ -218,7 +218,7 @@ impl DriftApp {
             ui.add(
                 egui::TextEdit::singleline(&mut note.text)
                     .hint_text("e.g. EQ (the value still holds)")
-                    .desired_width(ui.available_width() - 8.0),
+                    .desired_width(ui.available_width()),
             )
             .on_hover_text(
                 "Text shown in place of the value, such as EQ or VARIES. The dimension still \
@@ -255,7 +255,7 @@ impl DriftApp {
             ];
             egui::ComboBox::from_id_salt("tolerance_kind")
                 .selected_text(note.tolerance.label())
-                .width(ui.available_width() - 8.0)
+                .width(ui.available_width())
                 .show_ui(ui, |ui| {
                     for k in kinds {
                         let same =
@@ -387,6 +387,19 @@ type StyleEdit = Box<dyn Fn(&mut StyleOverride)>;
 /// A setting's row in the Drafting style section: the label (in the accent when the picked ones set it
 /// themselves), the control, and a reset arrow when overridden. Returns whether reset was
 /// clicked.
+const RESET: f32 = 22.0;
+
+/// The width a menu takes in a [`style_row`]: what is left of the row, less the reset arrow
+/// of a setting the picked ones set themselves.
+fn style_menu_width(ui: &egui::Ui, overridden: bool) -> f32 {
+    let reset = if overridden {
+        RESET + ui.spacing().item_spacing.x
+    } else {
+        0.0
+    };
+    (ui.available_width() - reset).max(60.0)
+}
+
 fn style_row(
     ui: &mut egui::Ui,
     label: &str,
@@ -395,9 +408,10 @@ fn style_row(
 ) -> bool {
     let mut reset = false;
     ui.horizontal(|ui| {
+        ui.set_min_height(theme::ROW_HEIGHT);
         let dark = ui.visuals().dark_mode;
         ui.allocate_ui_with_layout(
-            egui::vec2(theme::LABEL_WIDTH, 20.0),
+            egui::vec2(theme::LABEL_WIDTH, theme::ROW_HEIGHT),
             egui::Layout::left_to_right(egui::Align::Center),
             |ui| {
                 ui.set_min_width(theme::LABEL_WIDTH);
@@ -412,7 +426,7 @@ fn style_row(
         add(ui);
         if overridden {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                reset = icons::button(ui, 22.0, false, "Reset", |p, r, c| {
+                reset = icons::button(ui, RESET, false, "Reset", |p, r, c| {
                     icons::glyph(p, r, icons::Glyph::Reset, c)
                 })
                 .on_hover_text("Back to the drawing's setting")
@@ -474,9 +488,8 @@ impl DriftApp {
                     if overridden == 1 { "" } else { "s" }
                 )
             };
-            ui.label(egui::RichText::new(text).small().weak());
+            theme::hint(ui, &text);
         });
-        ui.add_space(2.0);
         if !notes {
             let mut v = shown.text_height;
             if style_row(ui, "Text height", set(|o| o.text_height.is_some()), |ui| {
@@ -488,10 +501,11 @@ impl DriftApp {
             }
         }
         let mut arrow = shown.arrow;
-        if style_row(ui, "Arrows", set(|o| o.arrow.is_some()), |ui| {
+        let own_arrow = set(|o| o.arrow.is_some());
+        if style_row(ui, "Arrows", own_arrow, |ui| {
             egui::ComboBox::from_id_salt("own_arrow")
                 .selected_text(arrow.label())
-                .width(110.0)
+                .width(style_menu_width(ui, own_arrow))
                 .show_ui(ui, |ui| {
                     for a in ArrowStyle::ALL {
                         if ui.selectable_value(&mut arrow, a, a.label()).clicked() {
@@ -526,11 +540,19 @@ impl DriftApp {
             let (mut trailing, mut leading) = (shown.trailing_zeros, shown.leading_zero);
             let zeros = set(|o| o.trailing_zeros.is_some() || o.leading_zero.is_some());
             if style_row(ui, "Zeros", zeros, |ui| {
-                if ui.checkbox(&mut trailing, "Trailing").changed() {
-                    edit = Some(Box::new(move |o| o.trailing_zeros = Some(trailing)));
-                }
-                if ui.checkbox(&mut leading, "Leading").changed() {
-                    edit = Some(Box::new(move |o| o.leading_zero = Some(leading)));
+                // Side by side, or one over the other in a narrow pane.
+                let mut both = |ui: &mut egui::Ui| {
+                    if ui.checkbox(&mut trailing, "Trailing").changed() {
+                        edit = Some(Box::new(move |o| o.trailing_zeros = Some(trailing)));
+                    }
+                    if ui.checkbox(&mut leading, "Leading").changed() {
+                        edit = Some(Box::new(move |o| o.leading_zero = Some(leading)));
+                    }
+                };
+                if style_menu_width(ui, zeros) >= 170.0 {
+                    both(ui);
+                } else {
+                    ui.vertical(both);
                 }
             }) {
                 edit = Some(Box::new(|o| {
@@ -539,10 +561,11 @@ impl DriftApp {
                 }));
             }
             let mut alt = shown.alt_units;
-            if style_row(ui, "Dual units", set(|o| o.alt_units.is_some()), |ui| {
+            let own_alt = set(|o| o.alt_units.is_some());
+            if style_row(ui, "Dual units", own_alt, |ui| {
                 egui::ComboBox::from_id_salt("own_alt_units")
                     .selected_text(alt.map_or("None", LengthFormat::label))
-                    .width(110.0)
+                    .width(style_menu_width(ui, own_alt))
                     .show_ui(ui, |ui| {
                         let options = std::iter::once(None).chain(
                             LengthFormat::METRIC
@@ -564,11 +587,18 @@ impl DriftApp {
         // Colour: the drawing's, or one of its own.
         let own_color = own[0].color.flatten();
         let dark = ui.visuals().dark_mode;
-        if style_row(ui, "Colour", set(|o| o.color.is_some()), |ui| {
+        let own_colour = set(|o| o.color.is_some());
+        if style_row(ui, "Colour", own_colour, |ui| {
             let custom = own_color.is_some();
+            // (Less the swatch of a colour of its own.)
+            let swatch = if custom {
+                ui.spacing().interact_size.x + ui.spacing().item_spacing.x + 16.0
+            } else {
+                0.0
+            };
             egui::ComboBox::from_id_salt("own_colour")
                 .selected_text(if custom { "Custom" } else { "Drawing's" })
-                .width(90.0)
+                .width((style_menu_width(ui, own_colour) - swatch).max(60.0))
                 .show_ui(ui, |ui| {
                     if ui.selectable_label(!custom, "Drawing's").clicked() && custom {
                         edit = Some(Box::new(|o| o.color = None));

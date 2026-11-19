@@ -161,34 +161,43 @@ pub(crate) fn shortcut(key: &str, shift: bool) -> String {
 
 /// An inspector's title: the thing's icon on a soft tile, its name, and a line of detail.
 pub(crate) fn title(ui: &mut egui::Ui, icon: Option<ToolKind>, name: &str, detail: &str) {
-    ui.add_space(8.0);
+    ui.add_space(6.0);
     ui.horizontal(|ui| {
-        let dark = ui.visuals().dark_mode;
-        let accent = theme::accent(dark);
-        let (tile, _) = ui.allocate_exact_size(egui::vec2(34.0, 34.0), egui::Sense::hover());
-        ui.painter().rect_filled(
-            tile,
-            9.0,
-            accent.gamma_multiply(if dark { 0.22 } else { 0.12 }),
-        );
-        let glyph = tile.shrink(8.0);
+        ui.spacing_mut().item_spacing.x = 10.0;
+        let accent = theme::accent(ui.visuals().dark_mode);
+        let glyph = theme::icon_tile(ui, 28.0);
         match icon {
             Some(kind) => icons::tool(ui.painter(), glyph, kind, accent),
             None => icons::glyph(ui.painter(), glyph, Glyph::Inspector, accent),
         }
-        ui.add_space(2.0);
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
+            // (One line alone sits in the middle of the tile.)
+            if detail.is_empty() {
+                ui.add_space(4.0);
+            }
             ui.add(
-                egui::Label::new(egui::RichText::new(name).family(theme::bold()).size(15.0))
-                    .truncate(),
+                egui::Label::new(
+                    egui::RichText::new(name)
+                        .family(theme::bold())
+                        .size(theme::size::TITLE)
+                        .color(ui.visuals().strong_text_color()),
+                )
+                .truncate(),
             );
             if !detail.is_empty() {
-                ui.add(egui::Label::new(egui::RichText::new(detail).small().weak()).truncate());
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(detail)
+                            .size(theme::size::CAPTION)
+                            .color(ui.visuals().weak_text_color()),
+                    )
+                    .truncate(),
+                );
             }
         });
     });
-    ui.add_space(2.0);
+    ui.add_space(4.0);
 }
 
 /// "1 line", "4 lines": a count with the kind's name, lower case and plural past one.
@@ -244,7 +253,9 @@ pub(crate) fn value_field(
         .add(
             egui::TextEdit::singleline(&mut text)
                 .id(key.with("field"))
-                .desired_width(width),
+                .desired_width(width)
+                .min_size(egui::vec2(0.0, theme::ROW_HEIGHT))
+                .vertical_align(egui::Align::Center),
         )
         .on_hover_text(tip);
     if response.has_focus() {
@@ -294,16 +305,20 @@ fn size_rows(ui: &mut egui::Ui, ed: &Editor, id: drift_core::EntityId) -> Option
                 format!("Type a value to dimension it ({UNITS})")
             };
             let key = egui::Id::new(("size", id.0, label));
-            if let Some(text) = value_field(ui, key, &shown, 118.0, &tip) {
+            let at = ui.cursor().left_top();
+            let width = ui.available_width();
+            if let Some(text) = value_field(ui, key, &shown, width, &tip) {
                 *out.borrow_mut() = Some(SizeEdit::Dimension(wanted, text));
             }
             if existing.is_some() {
-                // A small dimension glyph: the value comes from a dimension.
-                let (r, response) =
-                    ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
+                // A small dimension glyph at the field's end: the value comes from a
+                // dimension.
+                let r = egui::Rect::from_center_size(
+                    egui::pos2(at.x + width - 13.0, at.y + theme::ROW_HEIGHT / 2.0),
+                    egui::Vec2::splat(14.0),
+                );
                 let color = theme::neutrals(ui.visuals().dark_mode).tertiary;
                 icons::tool(ui.painter(), r, ToolKind::Dimension, color);
-                response.on_hover_text("Set by a dimension");
             }
         });
     };
@@ -312,10 +327,12 @@ fn size_rows(ui: &mut egui::Ui, ed: &Editor, id: drift_core::EntityId) -> Option
         let Ok(p) = ed.doc.point(point) else { return };
         theme::row(ui, label, |ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
+            // The two share the width.
+            let width = ((ui.available_width() - 4.0) / 2.0).floor();
             for (axis, name, v) in [(0, "X", p.x), (1, "Y", p.y)] {
                 let key = egui::Id::new(("coordinate", point.0, axis));
                 let tip = format!("{name}: type a coordinate to move it ({UNITS})");
-                if let Some(text) = value_field(ui, key, &units.format_length(v), 84.0, &tip) {
+                if let Some(text) = value_field(ui, key, &units.format_length(v), width, &tip) {
                     *out.borrow_mut() = Some(SizeEdit::Point(point, axis, text));
                 }
             }
@@ -336,7 +353,8 @@ fn size_rows(ui: &mut egui::Ui, ed: &Editor, id: drift_core::EntityId) -> Option
             theme::row(ui, "Angle", |ui| {
                 let key = egui::Id::new(("angle", id.0));
                 let tip = "Type an angle to turn the line about its start (anticlockwise from +X)";
-                if let Some(text) = value_field(ui, key, &shown, 118.0, tip) {
+                let width = ui.available_width();
+                if let Some(text) = value_field(ui, key, &shown, width, tip) {
                     *out.borrow_mut() = Some(SizeEdit::Angle(id, text));
                 }
             });
@@ -367,27 +385,6 @@ fn size_rows(ui: &mut egui::Ui, ed: &Editor, id: drift_core::EntityId) -> Option
         }
     }
     out.into_inner()
-}
-
-/// A figure for the empty inspector: a number over a caption.
-fn stat(ui: &mut egui::Ui, value: usize, caption: &str, width: f32) {
-    let (r, _) = ui.allocate_exact_size(egui::vec2(width, 52.0), egui::Sense::hover());
-    ui.painter()
-        .rect_filled(r, 8.0, ui.visuals().faint_bg_color);
-    ui.painter().text(
-        egui::pos2(r.center().x, r.top() + 20.0),
-        egui::Align2::CENTER_CENTER,
-        value.to_string(),
-        egui::FontId::new(17.0, theme::bold()),
-        ui.visuals().strong_text_color(),
-    );
-    ui.painter().text(
-        egui::pos2(r.center().x, r.bottom() - 13.0),
-        egui::Align2::CENTER_CENTER,
-        caption.to_uppercase(),
-        egui::FontId::new(9.5, theme::bold()),
-        ui.visuals().weak_text_color(),
-    );
 }
 
 /// The window width from which the top bar has a search field; under it, a search button
@@ -1175,7 +1172,8 @@ impl DriftApp {
         theme::row(ui, "Layer", |ui| {
             egui::ComboBox::from_id_salt("inspector_layer")
                 .selected_text(text)
-                .width(ui.available_width() - 8.0)
+                .width(ui.available_width())
+                .truncate()
                 .show_ui(ui, |ui| {
                     for (id, name) in layers {
                         if ui.selectable_label(!mixed && id == first, name).clicked() {
@@ -1241,14 +1239,10 @@ impl DriftApp {
             &summary.join(" · "),
         );
         self.inspector_layer_row(ui);
-        ui.add_space(4.0);
-        ui.label(
-            egui::RichText::new(
-                "Delete, Move (G), Rotate (R), Mirror, Array and Copy act on all of it. \
-                 Dimensions follow their geometry.",
-            )
-            .small()
-            .weak(),
+        theme::hint(
+            ui,
+            "Delete, Move (G), Rotate (R), Mirror, Array and Copy act on all of it. \
+             Dimensions follow their geometry.",
         );
         self.visibility_section(ui);
         self.array_panel(ui, ui.input(|i| i.time));
@@ -1329,25 +1323,14 @@ impl DriftApp {
             [] if !ed.selected_midpoints.is_empty() => {}
             [] if ed.selected_region.is_some() => {}
             [] => {
-                // A line saying so, a hint, and the sketch's totals.
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    let (r, _) =
-                        ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
-                    icons::tool(
-                        ui.painter(),
-                        r,
-                        ToolKind::Select,
-                        ui.visuals().weak_text_color(),
-                    );
-                    ui.label(egui::RichText::new("Nothing selected").weak());
-                });
+                // A title saying so, a hint, and the sketch's totals.
+                title(ui, Some(ToolKind::Select), "Nothing selected", "");
                 let hint = if self.drawing.editor.regions_need_fill() {
                     "Click geometry, or a fill or hatch, to inspect it."
                 } else {
                     "Click geometry to inspect it, or inside a closed area to measure it."
                 };
-                ui.label(egui::RichText::new(hint).small().weak());
+                theme::hint(ui, hint);
                 theme::section(ui, "Sketch");
                 self.drawing.layer_counts.update(&self.drawing.editor.doc);
                 let curves = self.drawing.layer_counts.total;
@@ -1355,10 +1338,10 @@ impl DriftApp {
                 let layers = ed.doc.layers().count();
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
-                    let w = ((ui.available_width() - 12.0) / 3.0).max(40.0);
-                    stat(ui, curves, "Curves", w);
-                    stat(ui, relations, "Relations", w);
-                    stat(ui, layers, "Layers", w);
+                    let w = ((ui.available_width() - 12.0) / 3.0).floor().max(40.0);
+                    theme::stat(ui, curves, "Curves", w);
+                    theme::stat(ui, relations, "Relations", w);
+                    theme::stat(ui, layers, "Layers", w);
                 });
             }
             [id] => {
@@ -1487,7 +1470,7 @@ impl DriftApp {
         self.constraint_list(ui);
 
         if !self.drawing.editor.selection.is_empty() {
-            ui.add_space(16.0);
+            ui.add_space(12.0);
             if theme::danger_button(ui, "Delete selection").clicked() {
                 self.drawing.editor.delete_selection();
             }
@@ -1565,7 +1548,7 @@ impl DriftApp {
                 .then(|| self.drawing.editor.active_hint())
                 .flatten();
             if let Some(hint) = hint {
-                ui.label(egui::RichText::new(hint).small().weak());
+                theme::hint(ui, hint);
             }
             let mut chosen = None;
             let ed = &self.drawing.editor;
@@ -1599,12 +1582,9 @@ impl DriftApp {
         if !pins.is_empty() {
             let mut chosen = None;
             theme::fold(ui, "pin_measurement", "Pin measurement", false, |ui| {
-                ui.label(
-                    egui::RichText::new("Keep a live measurement in the Parameters tab")
-                        .small()
-                        .weak(),
-                );
+                theme::hint(ui, "Keep a live measurement in the Parameters tab");
                 ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
                     for option in &pins {
                         if theme::chip(ui, option.label).clicked() {
                             chosen = option.constraints.first().copied();
@@ -1648,7 +1628,7 @@ impl DriftApp {
             let key = ui.make_persistent_id("all_constraints_open");
             let mut open = ui.data(|d| d.get_temp::<bool>(key)).unwrap_or(false);
             if ui
-                .add(egui::Button::new(if open { "Hide list" } else { "Show all" }).small())
+                .button(if open { "Hide list" } else { "Show all" })
                 .clicked()
             {
                 open = !open;
@@ -1667,10 +1647,31 @@ impl DriftApp {
         // Laying out thousands of rows every frame stalls the UI; the rest are summarised.
         const MAX_ROWS: usize = 100;
         let hidden_rows = constraints.len().saturating_sub(MAX_ROWS);
+        // One grid for every row: the name takes what the value, the reference toggle and the
+        // delete button leave, so the values and the buttons line up down the list.
+        const REF_WIDTH: f32 = 32.0;
+        const DELETE_WIDTH: f32 = 20.0;
+        const GAP: f32 = 4.0;
+        const INSET: f32 = 6.0;
+        let room = ui.available_width();
+        let value_width = (room * 0.32).clamp(64.0, 96.0).floor();
+        let dark = ui.visuals().dark_mode;
+        let gap_y = ui.spacing().item_spacing.y;
+        ui.spacing_mut().item_spacing.y = 2.0;
         for (id, c) in constraints.iter().take(MAX_ROWS) {
-            // (Filled in under a picked row once its size is known.)
+            // (Filled in under the row once its size is known.)
             let backdrop = ui.painter().add(egui::Shape::Noop);
             let row = ui.horizontal(|ui| {
+                ui.set_min_height(theme::ROW_HEIGHT);
+                ui.spacing_mut().item_spacing.x = GAP;
+                let has_value = c.value().is_some();
+                let tail = if has_value {
+                    value_width + REF_WIDTH + DELETE_WIDTH + 3.0 * GAP
+                } else {
+                    DELETE_WIDTH + GAP
+                };
+                let name_width = (ui.available_width() - INSET - tail).max(24.0);
+                ui.add_space(INSET - GAP);
                 let mut name = egui::RichText::new(constraint_label(&ed.doc, c));
                 if conflicts.contains(id) {
                     name = name.color(ui.visuals().error_fg_color);
@@ -1678,16 +1679,20 @@ impl DriftApp {
                 let is_redundant = redundant.contains(id);
                 let label = ui
                     .allocate_ui_with_layout(
-                        egui::vec2(100.0, 22.0),
+                        egui::vec2(name_width, theme::ROW_HEIGHT),
                         egui::Layout::left_to_right(egui::Align::Center),
                         |ui| {
-                            ui.set_min_width(100.0);
-                            ui.spacing_mut().item_spacing.x = 4.0;
+                            ui.set_min_width(name_width);
+                            ui.spacing_mut().item_spacing.x = GAP;
                             // A redundant one's marker follows its name, inside the name's
                             // column, so the values stay in line.
-                            let width = if is_redundant { 82.0 } else { 100.0 };
+                            let width = if is_redundant {
+                                name_width - 18.0
+                            } else {
+                                name_width
+                            };
                             let label = ui
-                                .allocate_ui(egui::vec2(width, 22.0), |ui| {
+                                .allocate_ui(egui::vec2(width, theme::ROW_HEIGHT), |ui| {
                                     ui.add(
                                         egui::Label::new(name)
                                             .sense(egui::Sense::click())
@@ -1706,26 +1711,41 @@ impl DriftApp {
                 if label.clicked() {
                     select = Some(*c);
                 }
+                let reference = |ui: &mut egui::Ui, driven: bool| {
+                    let text = egui::RichText::new("Ref").size(theme::size::CAPTION);
+                    ui.add_sized([REF_WIDTH, 20.0], egui::Button::selectable(driven, text))
+                        .on_hover_text(if driven {
+                            "Make it drive the geometry"
+                        } else {
+                            "Make it a reference that follows the geometry"
+                        })
+                        .clicked()
+                };
                 match c.value() {
                     Some(_) if ed.doc.is_driven(*id) => {
                         let value = ed.dimension_value(*id).unwrap_or_default();
-                        ui.add_sized(
-                            [86.0, 22.0],
-                            egui::Label::new(
-                                egui::RichText::new(format!(
-                                    "({})",
-                                    ed.doc.units().format(drift_core::dimension_kind(c), value)
-                                ))
-                                .color(weak),
-                            ),
-                        )
-                        .on_hover_text("Reference (driven): follows the geometry");
-                        let mut driven = true;
-                        if ui
-                            .toggle_value(&mut driven, egui::RichText::new("Ref").small())
-                            .on_hover_text("Make it drive the geometry")
-                            .changed()
-                        {
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(value_width, theme::ROW_HEIGHT),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.set_min_width(value_width);
+                                ui.add_space(4.0);
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(format!(
+                                            "({})",
+                                            ed.doc
+                                                .units()
+                                                .format(drift_core::dimension_kind(c), value)
+                                        ))
+                                        .color(weak),
+                                    )
+                                    .truncate(),
+                                )
+                                .on_hover_text("Reference (driven): follows the geometry");
+                            },
+                        );
+                        if reference(ui, true) {
                             toggle_driven = Some((*id, false));
                         }
                     }
@@ -1741,7 +1761,7 @@ impl DriftApp {
                         let response = ui.add(
                             egui::TextEdit::singleline(&mut text)
                                 .id(field)
-                                .desired_width(86.0)
+                                .desired_width(value_width)
                                 .hint_text(c.unit()),
                         );
                         if self.drawing.focus_dimension == Some(*id) {
@@ -1757,52 +1777,34 @@ impl DriftApp {
                             }
                             self.drawing.dimension_text.remove(id);
                         }
-                        let mut driven = false;
-                        if ui
-                            .toggle_value(&mut driven, egui::RichText::new("Ref").small())
-                            .on_hover_text("Make it a reference that follows the geometry")
-                            .changed()
-                        {
+                        if reference(ui, false) {
                             toggle_driven = Some((*id, true));
                         }
                     }
                     None => {}
                 }
-                // The delete button sits at the row's end, clear of the scroll bar; it is
-                // faint until the row is hovered.
-                ui.add_space((ui.available_width() - 30.0).max(0.0));
-                let hovered = ui.ui_contains_pointer();
-                let x = egui::Button::new(egui::RichText::new("×").size(16.0).color(if hovered {
-                    ui.visuals().text_color()
-                } else {
-                    weak.gamma_multiply(0.5)
-                }))
-                .frame(false)
-                .small();
-                if ui.add(x).on_hover_text("Delete").clicked() {
+                // The delete button ends every row, clear of the scroll bar.
+                ui.add_space((ui.available_width() - DELETE_WIDTH - GAP).max(0.0));
+                if theme::delete_button(ui, "×", "Delete").clicked() {
                     remove = Some(*id);
                 }
             });
-            // A hairline between rows.
+            // The picked relation's row, and the one under the pointer.
             let r = row.response.rect;
-            if picked.contains(id) {
+            if let Some(fill) =
+                theme::row_fill(dark, picked.contains(id), ui.rect_contains_pointer(r))
+            {
                 ui.painter().set(
                     backdrop,
                     egui::epaint::RectShape::filled(
-                        r.expand2(egui::vec2(3.0, 1.0)),
-                        3.0,
-                        ui.visuals().selection.bg_fill.gamma_multiply(0.35),
+                        r.expand2(egui::vec2(0.0, 1.0)),
+                        theme::radius::CONTROL,
+                        fill,
                     ),
                 );
             }
-            ui.painter().line_segment(
-                [
-                    r.left_bottom() + egui::vec2(0.0, 3.0),
-                    r.right_bottom() + egui::vec2(0.0, 3.0),
-                ],
-                egui::Stroke::new(0.5, ui.visuals().widgets.noninteractive.bg_stroke.color),
-            );
         }
+        ui.spacing_mut().item_spacing.y = gap_y;
         if hidden_rows > 0 {
             ui.label(
                 egui::RichText::new(format!("… and {hidden_rows} more (pick less to see them)"))

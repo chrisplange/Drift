@@ -2449,6 +2449,12 @@ pub fn paint_glyph(
     } else {
         painter.rect_stroke(rect, 4.0, Stroke::new(1.0, color), StrokeKind::Inside);
     }
+    paint_glyph_icon(painter, rect, kind, color);
+}
+
+/// A relation's symbol alone, in `color`, sized for the tile `rect`: what [`paint_glyph`]
+/// draws on its tile, for a button that adds the relation.
+pub fn paint_glyph_icon(painter: &egui::Painter, rect: Rect, kind: GlyphKind, color: Color32) {
     // The icons were drawn for a 15 pt tile; they scale with it.
     let k = rect.width() / GLYPH_ICON_BASE;
     let c = rect.center();

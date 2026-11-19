@@ -243,6 +243,7 @@ impl DriftApp {
             }
         }
         prefs.extend(self.layout.prefs());
+        prefs.push(format!("quickbar={}", u8::from(self.show_quick_bar)));
         // The tool rail with names (off: the slim rail of icons).
         prefs.push(format!("railnames={}", u8::from(self.rail_names)));
         prefs.join(";")
@@ -318,6 +319,7 @@ impl DriftApp {
                     }
                 }
                 "tdims" => self.show_temp_dims = on,
+                "quickbar" => self.show_quick_bar = on,
                 "fillalone" => {
                     if let Ok(n) = value.parse() {
                         self.drawing.editor.prefs.fill_alone_picks = n;

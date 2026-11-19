@@ -39,6 +39,93 @@ pub(crate) const VERSION: &str = drift_platform::VERSION;
 /// scripts/notices.py. They also ship as a file beside the program.
 const NOTICES: &str = include_str!("../../../../THIRD-PARTY-NOTICES.txt");
 
+/// A hairline across the start panel.
+fn rule(ui: &mut egui::Ui) {
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
+    ui.painter().hline(
+        rect.x_range(),
+        rect.center().y,
+        egui::Stroke::new(1.0, theme::hairline(ui)),
+    );
+}
+
+/// A recent sketch on the start panel: a small file tile, its name and the folder it is in
+/// (both cut short to fit). It is called by the file's name.
+fn recent_row(ui: &mut egui::Ui, path: &std::path::Path) -> egui::Response {
+    let dark = ui.visuals().dark_mode;
+    let n = theme::neutrals(dark);
+    let name = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let folder = path
+        .parent()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let (r, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 40.0), egui::Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &name));
+    let hot = response.hovered();
+    if response.is_pointer_button_down_on() {
+        ui.painter()
+            .rect_filled(r, theme::radius::CONTROL, n.pressed);
+    } else if hot {
+        ui.painter().rect_filled(r, theme::radius::CONTROL, n.hover);
+    }
+    // The tile: a sheet with a folded corner.
+    let tile = egui::Rect::from_center_size(
+        egui::pos2(r.left() + 20.0, r.center().y),
+        egui::Vec2::splat(28.0),
+    );
+    ui.painter().rect_filled(
+        tile,
+        theme::radius::CONTROL,
+        if hot { n.pressed } else { n.control },
+    );
+    let ink = if hot {
+        theme::accent(dark)
+    } else {
+        n.secondary
+    };
+    let c = tile.center();
+    let (w, h, fold) = (5.0, 6.5, 4.0);
+    let stroke = egui::Stroke::new(1.3, ink);
+    ui.painter().add(egui::Shape::closed_line(
+        vec![
+            c + egui::vec2(-w, -h),
+            c + egui::vec2(w - fold, -h),
+            c + egui::vec2(w, -h + fold),
+            c + egui::vec2(w, h),
+            c + egui::vec2(-w, h),
+        ],
+        stroke,
+    ));
+    ui.painter().add(egui::Shape::line(
+        vec![
+            c + egui::vec2(w - fold, -h),
+            c + egui::vec2(w - fold, -h + fold),
+            c + egui::vec2(w, -h + fold),
+        ],
+        stroke,
+    ));
+    let painter = ui.painter_at(r);
+    let left = tile.right() + 10.0;
+    let width = r.right() - 8.0 - left;
+    let line = |text: String, size: f32, color| {
+        let mut job =
+            egui::text::LayoutJob::simple_singleline(text, egui::FontId::proportional(size), color);
+        job.wrap.max_width = width;
+        job.wrap.max_rows = 1;
+        painter.layout_job(job)
+    };
+    let g = line(name.clone(), theme::size::BODY, n.text);
+    painter.galley(egui::pos2(left, r.top() + 5.0), g, n.text);
+    let g = line(folder, theme::size::CAPTION, n.tertiary);
+    painter.galley(egui::pos2(left, r.top() + 22.0), g, n.tertiary);
+    response.on_hover_text(path.to_string_lossy())
+}
+
 impl DriftApp {
     /// Whether the start panel should show: nothing drawn, nothing opened, nothing under way.
     fn start_wanted(&self) -> bool {
@@ -74,33 +161,42 @@ impl DriftApp {
         let mut action = None;
         let mut close = false;
         let style = ctx.style_of(ctx.theme());
+        let dark = ctx.theme() == egui::Theme::Dark;
+        let n = theme::neutrals(dark);
+        // A card 640 wide (less on a canvas that hasn't the room): the name, what to start
+        // from beside what was open lately, and a line of keys at the foot.
+        const MARGIN: f32 = 24.0;
+        const LEFT: f32 = 216.0;
+        const GAP: f32 = 28.0;
+        let width = 640.0_f32.min(canvas.width() - 32.0) - 2.0 * MARGIN;
         let shown = egui::Area::new(egui::Id::new("start_panel"))
             .order(egui::Order::Middle)
             .pivot(egui::Align2::CENTER_CENTER)
             .fixed_pos(canvas.center())
             .show(ctx, |ui| {
                 theme::dialog_frame(&style)
-                    .inner_margin(egui::Margin::same(20))
+                    .inner_margin(egui::Margin::same(MARGIN as i8))
                     .show(ui, |ui| {
-                        ui.set_width(560.0);
+                        ui.set_width(width);
                         ui.horizontal(|ui| {
                             let (logo, _) = ui
-                                .allocate_exact_size(egui::vec2(44.0, 44.0), egui::Sense::hover());
+                                .allocate_exact_size(egui::vec2(40.0, 40.0), egui::Sense::hover());
                             icons::logo(ui.painter(), logo);
-                            ui.add_space(4.0);
+                            ui.add_space(6.0);
                             ui.vertical(|ui| {
-                                ui.spacing_mut().item_spacing.y = 1.0;
+                                ui.spacing_mut().item_spacing.y = 0.0;
                                 ui.label(
                                     egui::RichText::new("Drift")
                                         .family(theme::bold())
-                                        .size(theme::size::DISPLAY),
+                                        .size(theme::size::DISPLAY)
+                                        .color(n.text),
                                 );
                                 ui.label(
                                     egui::RichText::new(format!(
                                         "Parametric 2D sketching · {VERSION}"
                                     ))
-                                    .small()
-                                    .weak(),
+                                    .size(theme::size::LABEL)
+                                    .color(n.secondary),
                                 );
                             });
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
@@ -109,19 +205,22 @@ impl DriftApp {
                                 }
                             });
                         });
-                        ui.add_space(6.0);
+                        ui.add_space(14.0);
+                        rule(ui);
+                        ui.add_space(12.0);
                         ui.horizontal_top(|ui| {
+                            ui.spacing_mut().item_spacing.x = 0.0;
                             // Create: a new sketch (in metric or imperial), or open one.
                             ui.allocate_ui_with_layout(
-                                egui::vec2(200.0, 0.0),
+                                egui::vec2(LEFT, 0.0),
                                 egui::Layout::top_down(egui::Align::Min),
                                 |ui| {
-                                    ui.set_width(200.0);
+                                    ui.set_width(LEFT);
                                     theme::section(ui, "Create");
-                                    let dark = ui.visuals().dark_mode;
+                                    ui.add_space(2.0);
                                     if ui
                                         .add_sized(
-                                            [200.0, 28.0],
+                                            [LEFT, 30.0],
                                             theme::primary_button("New sketch", dark),
                                         )
                                         .on_hover_text(
@@ -131,7 +230,7 @@ impl DriftApp {
                                     {
                                         close = true;
                                     }
-                                    ui.add_space(2.0);
+                                    ui.add_space(4.0);
                                     let units = self.drawing.editor.doc.units();
                                     let options = [(true, "Metric"), (false, "Imperial")];
                                     if let Some(metric) =
@@ -156,19 +255,20 @@ impl DriftApp {
                                         } else {
                                             "Feet and inches; more in File → Drawing settings."
                                         })
-                                        .small()
-                                        .weak(),
+                                        .size(theme::size::CAPTION)
+                                        .color(n.tertiary),
                                     );
-                                    ui.add_space(6.0);
+                                    ui.add_space(10.0);
                                     if ui
-                                        .add_sized([200.0, 26.0], egui::Button::new("Open…"))
+                                        .add_sized([LEFT, 28.0], egui::Button::new("Open…"))
                                         .clicked()
                                     {
                                         action = Some(Pending::Open);
                                     }
+                                    ui.add_space(1.0);
                                     if ui
                                         .add_sized(
-                                            [200.0, 26.0],
+                                            [LEFT, 28.0],
                                             egui::Button::new("Open the example"),
                                         )
                                         .on_hover_text("A dimensioned mounting plate to explore")
@@ -178,89 +278,33 @@ impl DriftApp {
                                     }
                                 },
                             );
-                            ui.add_space(20.0);
-                            // Recent sketches.
+                            ui.add_space(GAP);
+                            // Recent sketches: a row each, with a small file tile.
                             ui.vertical(|ui| {
+                                ui.set_width(ui.available_width());
                                 theme::section(ui, "Recent");
+                                ui.add_space(2.0);
+                                ui.spacing_mut().item_spacing.y = 2.0;
                                 if self.recent.is_empty() {
                                     ui.label(
                                         egui::RichText::new(
                                             "Sketches you open or save will be listed here.",
                                         )
-                                        .weak(),
+                                        .color(n.secondary),
                                     );
                                 }
                                 for (i, path) in self.recent.iter().take(7).enumerate() {
-                                    let name = path
-                                        .file_stem()
-                                        .map(|s| s.to_string_lossy().into_owned())
-                                        .unwrap_or_default();
-                                    let folder = path
-                                        .parent()
-                                        .map(|p| p.to_string_lossy().into_owned())
-                                        .unwrap_or_default();
-                                    let (r, response) = ui.allocate_exact_size(
-                                        egui::vec2(ui.available_width(), 36.0),
-                                        egui::Sense::click(),
-                                    );
-                                    response.widget_info(|| {
-                                        egui::WidgetInfo::labeled(
-                                            egui::WidgetType::Button,
-                                            true,
-                                            &name,
-                                        )
-                                    });
-                                    if response.hovered() {
-                                        ui.painter().rect_filled(
-                                            r,
-                                            theme::radius::CONTROL,
-                                            ui.visuals().widgets.hovered.bg_fill,
-                                        );
-                                    }
-                                    // The name over its folder, both cut short to fit.
-                                    let painter = ui.painter_at(r);
-                                    let width = r.width() - 16.0;
-                                    let line = |text: String, size: f32, color| {
-                                        let mut job = egui::text::LayoutJob::simple_singleline(
-                                            text,
-                                            egui::FontId::proportional(size),
-                                            color,
-                                        );
-                                        job.wrap.max_width = width;
-                                        job.wrap.max_rows = 1;
-                                        painter.layout_job(job)
-                                    };
-                                    let g = line(
-                                        name.clone(),
-                                        theme::size::BODY,
-                                        ui.visuals().text_color(),
-                                    );
-                                    painter.galley(
-                                        r.left_top() + egui::vec2(8.0, 3.0),
-                                        g,
-                                        ui.visuals().text_color(),
-                                    );
-                                    let g = line(
-                                        folder,
-                                        theme::size::CAPTION,
-                                        ui.visuals().weak_text_color(),
-                                    );
-                                    painter.galley(
-                                        r.left_top() + egui::vec2(8.0, 20.0),
-                                        g,
-                                        ui.visuals().weak_text_color(),
-                                    );
-                                    if response.on_hover_text(path.to_string_lossy()).clicked() {
+                                    if recent_row(ui, path).clicked() {
                                         action = Some(Pending::Recent(i));
                                     }
                                 }
                             });
                         });
                         // A few things worth knowing, on one quiet line at the foot.
-                        ui.add_space(16.0);
-                        ui.separator();
-                        ui.add_space(4.0);
-                        ui.horizontal_wrapped(|ui| {
+                        ui.add_space(18.0);
+                        rule(ui);
+                        ui.add_space(10.0);
+                        ui.horizontal(|ui| {
                             for (k, (keys, what)) in [
                                 (app::panels::shortcut("K", false), "finds any command"),
                                 ("?".to_owned(), "lists every shortcut"),
@@ -270,10 +314,15 @@ impl DriftApp {
                             .enumerate()
                             {
                                 if k > 0 {
-                                    ui.add_space(10.0);
+                                    ui.add_space(14.0);
                                 }
-                                theme::keycaps(ui, &keys);
-                                ui.label(egui::RichText::new(what).small().weak());
+                                ui.spacing_mut().item_spacing.x = 6.0;
+                                theme::keycap(ui, &keys);
+                                ui.label(
+                                    egui::RichText::new(what)
+                                        .size(theme::size::CAPTION)
+                                        .color(n.tertiary),
+                                );
                             }
                         });
                     });
@@ -709,6 +758,14 @@ impl DriftApp {
              neighbours. Click a value to type a new one (the picked geometry moves), the lock \
              to keep it as a dimension, and drag the square at its far end onto other geometry \
              to measure to that",
+        );
+        ui.checkbox(
+            &mut self.show_quick_bar,
+            "Show the quick-constrain bar for the picked geometry",
+        )
+        .on_hover_text(
+            "With the Select tool, the relations and dimensions that fit what is picked are \
+             offered on a bar at the foot of the canvas, as they are in the Inspector",
         );
         ui.label(
             egui::RichText::new(

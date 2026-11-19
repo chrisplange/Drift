@@ -44,6 +44,9 @@ mod link;
 mod note_typing;
 /// Selection filters you can combine.
 mod pick_filters;
+/// The quick-constrain bar on the canvas, the message above it, and the empty canvas's hint.
+#[cfg(not(feature = "demo"))]
+mod quick_bar;
 /// Which relations show their symbols: Off, Picked only, All (#337).
 mod relations_shown;
 /// Picking and moving: G with a midpoint, axis locks in a drag, hidden areas.
@@ -10227,7 +10230,7 @@ fn saved_preferences_read_back_unchanged() {
         "fillalone=2;xsize=16;xfull=0;xweight=1;upchk=1;dock_left=;",
         "dock_right=inspector,parameters,layers,sheets,blocks;dock_stacks=;dock_front_left=;",
         "dock_front_right=inspector;dock_collapsed=00;dock_last=;dock_home_left=;",
-        "dock_weights=;dock_folded="
+        "dock_weights=;dock_folded=;quickbar=1"
     );
     let Some(mut h) = harness() else { return };
     h.state_mut().apply_view_prefs(SAVED);

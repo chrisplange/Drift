@@ -29,7 +29,10 @@ fn sized(points: [f32; 2], scale: f32, dark: bool) -> Harness<'static, DriftApp>
 /// Save the window as `{scene}_{name}_{dark|light}.png`, without a status message over the
 /// canvas.
 fn shot(scene: &str, name: &str, dark: bool, h: &mut Harness<'_, DriftApp>) {
-    h.state_mut().status = None;
+    // (A scene about the message keeps it.)
+    if !scene.starts_with("toast") {
+        h.state_mut().status = None;
+    }
     h.run();
     h.run();
     let image = h.render().expect("render");
@@ -187,6 +190,91 @@ const SCENES: &[Scene] = &[
         for _ in 0..6 {
             h.step();
         }
+    }),
+    // The quick-constrain bar: relations and a dimension for two lines, a dimension alone
+    // for a circle, and a message keeping clear of it.
+    ("quick-bar-lines", |h| {
+        open_example(h);
+        let lines = first(h, |k| matches!(k, EntityKind::Line { .. }));
+        h.state_mut().drawing.editor.selection = lines.into_iter().take(2).collect();
+        h.run();
+    }),
+    ("quick-bar-circle", |h| {
+        open_example(h);
+        let round = first(h, |k| matches!(k, EntityKind::Circle { .. }));
+        h.state_mut().drawing.editor.selection = round.into_iter().take(1).collect();
+        h.run();
+    }),
+    ("quick-bar-hover", |h| {
+        open_example(h);
+        let lines = first(h, |k| matches!(k, EntityKind::Line { .. }));
+        h.state_mut().drawing.editor.selection = lines.into_iter().take(2).collect();
+        h.run();
+        h.get_by_label("Constrain: Parallel").hover();
+        // (Long enough for its tip.)
+        for _ in 0..8 {
+            h.step();
+        }
+    }),
+    ("toast-quick-bar", |h| {
+        open_example(h);
+        let lines = first(h, |k| matches!(k, EntityKind::Line { .. }));
+        h.state_mut().drawing.editor.selection = lines.into_iter().take(2).collect();
+        h.run();
+        let now = h.ctx.input(|i| i.time);
+        h.state_mut()
+            .set_status("Parallel: the lines already are".into(), true, now);
+    }),
+    ("toast", |h| {
+        open_example(h);
+        let now = h.ctx.input(|i| i.time);
+        h.state_mut()
+            .set_status("Saved as Mounting plate.drift".into(), false, now);
+    }),
+    ("start-recents", |h| {
+        h.state_mut().recent = [
+            "C:/Projects/Mill Lane/Ground floor plan.drift",
+            "C:/Projects/Mill Lane/Details/Stair section with a long name that is cut short.drift",
+            "C:/Projects/Brackets/Mounting plate.drift",
+            "D:/Archive/2025/Workshop bench.drift",
+        ]
+        .iter()
+        .map(std::path::PathBuf::from)
+        .collect();
+        h.state_mut().show_start = true;
+    }),
+    ("empty-hint", |h| {
+        h.event(Event::PointerGone);
+        h.run();
+    }),
+    ("pie", |h| {
+        open_example(h);
+        let lines = first(h, |k| matches!(k, EntityKind::Line { .. }));
+        h.state_mut().drawing.editor.selection = lines.into_iter().take(2).collect();
+        h.run();
+        let at = h.state().drawing.view.canvas_rect.center();
+        h.hover_at(at);
+        h.run();
+        h.key_press(Key::Q);
+        h.run();
+        h.hover_at(at + egui::vec2(60.0, -60.0));
+        h.run();
+    }),
+    ("hud-length", |h| {
+        h.key_press(Key::L);
+        h.run();
+        let at = h.state().drawing.view.canvas_rect.center();
+        h.hover_at(at + egui::vec2(-180.0, 40.0));
+        h.run();
+        button(h, at + egui::vec2(-180.0, 40.0), true);
+        h.run();
+        button(h, at + egui::vec2(-180.0, 40.0), false);
+        h.run();
+        h.hover_at(at + egui::vec2(-20.0, -30.0));
+        h.run();
+        type_text(h, "120");
+        h.hover_at(at + egui::vec2(-20.0, -30.0));
+        h.run();
     }),
 ];
 

@@ -1450,18 +1450,29 @@ impl DriftApp {
         self.paint_note_grips(&painter, &notes, ui.visuals().dark_mode);
         self.paint_groups(&painter, &map, ui.visuals().dark_mode);
         self.paint_free_directions(&painter, &map);
+        self.empty_canvas_hint(ui, rect);
+        // The quick-constrain bar, and a message above it.
+        let quick_bar = self.quick_bar_wanted(&response, &map);
+        let toast_id = overlay::toast_rect_id();
+        ui.ctx().data_mut(|d| d.remove::<egui::Rect>(toast_id));
+        if quick_bar.is_none() {
+            let bar_id = app::quick_bar::rect_id();
+            ui.ctx().data_mut(|d| d.remove::<egui::Rect>(bar_id));
+        }
         if let Some(status) = &self.status {
             let now = ui.input(|i| i.time);
             if now < status.until {
                 let fade = ((status.until - now) / 0.4).clamp(0.0, 1.0) as f32;
-                overlay::toast(
+                let shown = overlay::toast(
                     &painter,
                     rect,
+                    Self::toast_bottom(rect, quick_bar.as_ref()),
                     &status.text,
                     status.error,
                     ui.visuals().dark_mode,
                     fade,
                 );
+                ui.ctx().data_mut(|d| d.insert_temp(toast_id, shown));
                 // Sleep until the fade starts, then animate it.
                 let remaining = status.until - now;
                 let wait = if remaining > 0.4 {
@@ -1482,6 +1493,9 @@ impl DriftApp {
         let notes = self.layout_notes(&annotation_painter, &map);
         self.note_editor(&ctx, &notes);
         self.scale_hint(&ctx, rect);
+        if let Some(bar) = quick_bar {
+            self.quick_bar(&ctx, rect, bar);
+        }
         self.text_editor(ui, &map, &painter);
         self.paint_add_view_prompt(&painter, &map);
         if let (Some(p), Some(pos)) = (self.drawing.view.pointer, pos) {

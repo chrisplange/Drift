@@ -125,6 +125,16 @@ const SCENES: &[Scene] = &[
         h.event(Event::PointerGone);
         h.run();
     }),
+    // More sheets than the top bar has room for: the rest go under "More sheets".
+    ("many-sheets", |h| {
+        open_example(h);
+        for _ in 0..9 {
+            h.state_mut().new_sheet();
+        }
+        h.run();
+        h.event(Event::PointerGone);
+        h.run();
+    }),
     ("layers", |h| {
         open_example(h);
         h.state_mut().show_panel(Panel::Layers);
@@ -148,6 +158,12 @@ fn fresh_screenshots() {
             let mut h = sized([1280.0, 800.0], 1.0, dark);
             set_up(&mut h);
             shot(scene, "1280x800", dark, &mut h);
+        }
+        // A small window: the search field is a button, the tabs take what is left.
+        if matches!(*scene, "selection" | "many-sheets" | "sheet") {
+            let mut h = sized([900.0, 700.0], 1.0, true);
+            set_up(&mut h);
+            shot(scene, "900x700", true, &mut h);
         }
         if *scene != "selection" {
             continue;

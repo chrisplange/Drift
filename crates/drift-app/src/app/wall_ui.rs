@@ -17,7 +17,7 @@ impl DriftApp {
     /// Arc · ☐ Poché [Solid ▾ ■]`. What is set here is kept for the next drawing too.
     pub(crate) fn wall_tool_bar(&mut self, ui: &mut egui::Ui) {
         let units = self.drawing.editor.doc.units();
-        ui.label(egui::RichText::new("Thickness").size(12.0).weak());
+        theme::bar_caption(ui, "Thickness");
         let unit = units.length.mm_per_unit();
         let mut shown = self.drawing.editor.wall_thickness_now() / unit;
         if ui
@@ -47,14 +47,14 @@ impl DriftApp {
         })
         .response
         .on_hover_text("Common walls, at their actual finished thickness");
-        bar_divider(ui);
+        theme::bar_divider(ui);
         if let Some(j) =
             app::context_ui::choice(ui, self.drawing.editor.prefs.wall_justify, &JUSTIFY)
         {
             self.drawing.editor.prefs.wall_justify = j;
         }
-        ui.label(egui::RichText::new("Space flips").size(12.0).weak());
-        bar_divider(ui);
+        theme::bar_caption(ui, "Space flips");
+        theme::bar_divider(ui);
         if let Some(arc) = app::context_ui::choice(
             ui,
             self.drawing.editor.prefs.wall_arc,
@@ -70,8 +70,8 @@ impl DriftApp {
                 None,
             );
         }
-        ui.label(egui::RichText::new("W").size(12.0).weak());
-        bar_divider(ui);
+        theme::bar_caption(ui, "W");
+        theme::bar_divider(ui);
         ui.checkbox(&mut self.drawing.editor.prefs.wall_poche.on, "Poché")
             .on_hover_text("Fill new walls: joined walls of one style on one layer are one area");
         if self.drawing.editor.prefs.wall_poche.on {
@@ -281,12 +281,4 @@ impl DriftApp {
         }
         true
     }
-}
-
-/// A thin vertical divider on the bar.
-fn bar_divider(ui: &mut egui::Ui) {
-    ui.add_space(2.0);
-    let (r, _) = ui.allocate_exact_size(egui::vec2(1.0, 18.0), egui::Sense::hover());
-    ui.painter().rect_filled(r, 0.0, theme::hairline(ui));
-    ui.add_space(2.0);
 }

@@ -1,4 +1,4 @@
-//! Working on sheets: the tabs over the canvas (the model and each sheet), the sheet tools
+//! Working on sheets: the tabs in the top bar (the model and each sheet), the sheet tools
 //! in the rail, adding a view from a sheet (drawn with the View tool in the model, then put
 //! on the sheet), and the Inspector for what is picked on a sheet (a view, or the sheet
 //! itself).
@@ -256,22 +256,19 @@ impl DriftApp {
         self.show_panel(crate::dock::Panel::Inspector);
     }
 
-    /// The tabs over the canvas: the model, each sheet, and + for a new one.
-    pub(crate) fn canvas_tabs(&mut self, ui: &mut egui::Ui) {
+    /// The model and each sheet as tabs in the top bar, and + for a new sheet: a track of
+    /// tabs centred on `middle` when the room (`ui`'s, between the bar's two ends) allows,
+    /// with the sheets that don't fit under a "More sheets" button.
+    pub(crate) fn sheet_tabs(&mut self, ui: &mut egui::Ui, middle: f32) {
+        /// A tab's height, the track's padding round the tabs, a button's width, and the
+        /// widest a tab gets.
+        const TAB: f32 = 24.0;
+        const PAD: f32 = 2.0;
+        const BUTTON: f32 = 24.0;
+        const WIDEST: f32 = 180.0;
+        let zone = ui.max_rect();
         let dark = ui.visuals().dark_mode;
         let n = theme::neutrals(dark);
-        let height = 30.0;
-        let (bar, _) = ui.allocate_exact_size(
-            egui::vec2(ui.available_width(), height),
-            egui::Sense::hover(),
-        );
-        ui.painter().rect_filled(bar, 0.0, n.panel);
-        // (Between the strip and the canvas: a pane's edge, not a hairline inside one.)
-        ui.painter().hline(
-            bar.x_range(),
-            bar.bottom() - 0.5,
-            egui::Stroke::new(1.0, theme::divider(dark)),
-        );
         let sheets: Vec<(SheetId, String)> = self
             .drawing
             .editor
@@ -283,41 +280,96 @@ impl DriftApp {
         let current = self.current_sheet();
         let mut tabs: Vec<(Option<SheetId>, String)> = vec![(None, "Model".to_owned())];
         tabs.extend(sheets.into_iter().map(|(id, l)| (Some(id), l)));
-        let font = egui::FontId::proportional(theme::size::BODY);
-        let mut x = bar.left() + 8.0;
+        let is_active = |id: &Option<SheetId>| match id {
+            None => !on_sheet,
+            Some(id) => on_sheet && current == Some(*id),
+        };
+        let font = |active: bool| {
+            egui::FontId::new(
+                theme::size::BODY,
+                if active {
+                    theme::bold()
+                } else {
+                    egui::FontFamily::Proportional
+                },
+            )
+        };
+        let mut widths: Vec<f32> = tabs
+            .iter()
+            .map(|(id, label)| {
+                let text = ui
+                    .painter()
+                    .layout_no_wrap(label.clone(), font(is_active(id)), n.text);
+                (text.size().x + 24.0).min(WIDEST)
+            })
+            .collect();
+        // Which tabs show: all of them when they fit; else the model and the sheets from the
+        // first for as long as they fit beside the "More sheets" button, and always the one
+        // shown on the canvas.
+        let ends = 2.0 * PAD + BUTTON;
+        let mut shown: Vec<usize> = (0..tabs.len()).collect();
+        if widths.iter().sum::<f32>() + ends > zone.width() {
+            shown.clear();
+            let mut used = ends + BUTTON;
+            for (k, w) in widths.iter().enumerate() {
+                if k > 0 && used + w > zone.width() {
+                    break;
+                }
+                shown.push(k);
+                used += w;
+            }
+            if let Some(active) = tabs.iter().position(|(id, _)| is_active(id))
+                && !shown.contains(&active)
+            {
+                while shown.len() > 1 && used + widths[active] > zone.width() {
+                    if let Some(k) = shown.pop() {
+                        used -= widths[k];
+                    }
+                }
+                shown.push(active);
+            }
+        }
+        let hidden: Vec<usize> = (0..tabs.len()).filter(|k| !shown.contains(k)).collect();
+        let more = if hidden.is_empty() { 0.0 } else { BUTTON };
+        let total = |widths: &[f32]| shown.iter().map(|k| widths[*k]).sum::<f32>() + ends + more;
+        // Still too wide (a long name in a narrow window): the last tab's name is cut short.
+        let over = total(&widths) - zone.width();
+        if let Some(last) = shown.last().copied().filter(|k| *k > 0 && over > 0.0) {
+            widths[last] = (widths[last] - over).max(56.0);
+        }
+        let width = total(&widths);
+        let left = (middle - width / 2.0)
+            .min(zone.right() - width)
+            .max(zone.left())
+            .round();
+        let track = egui::Rect::from_min_size(
+            egui::pos2(left, (zone.center().y - TAB / 2.0 - PAD).round()),
+            egui::vec2(width, TAB + 2.0 * PAD),
+        );
+        // A well, as a segmented control's: the tab shown stands in it as a control.
+        ui.painter().rect(
+            track,
+            theme::radius::CONTROL + 2,
+            n.field,
+            egui::Stroke::new(1.0, n.border),
+            egui::StrokeKind::Inside,
+        );
+        let mut x = track.left() + PAD;
         let mut choose = None;
         let mut delete = None;
         let mut duplicate = None;
         let mut moved = None;
-        // Sheet tabs (their middles across), and a tab being dragged to a new place.
+        // Sheet tabs (where each starts and ends), and a tab being dragged to a new place.
         let mut spots: Vec<(SheetId, f32, f32)> = Vec::new();
         let mut dragging = None;
         let mut dropped = None;
         let count = tabs.len() - 1;
-        for (k, (id, label)) in tabs.iter().enumerate() {
-            let active = match id {
-                None => !on_sheet,
-                Some(id) => on_sheet && current == Some(*id),
-            };
-            let family = if active {
-                theme::bold()
-            } else {
-                egui::FontFamily::Proportional
-            };
-            let galley = ui.painter().layout_no_wrap(
-                label.clone(),
-                egui::FontId::new(font.size, family.clone()),
-                n.text,
-            );
-            let w = (galley.size().x + 28.0).min(220.0);
-            if x + w > bar.right() - 40.0 {
-                break;
-            }
-            let r = egui::Rect::from_min_size(
-                egui::pos2(x, bar.top() + 4.0),
-                egui::vec2(w, height - 4.0),
-            );
-            x += w + 2.0;
+        for k in shown {
+            let (id, label) = &tabs[k];
+            let active = is_active(id);
+            let w = widths[k];
+            let r = egui::Rect::from_min_size(egui::pos2(x, track.top() + PAD), egui::vec2(w, TAB));
+            x += w;
             let sense = if id.is_some() {
                 egui::Sense::click_and_drag()
             } else {
@@ -336,50 +388,32 @@ impl DriftApp {
             response.widget_info(|| {
                 egui::WidgetInfo::selected(egui::WidgetType::Button, true, active, label)
             });
-            // The active tab joins the canvas below it.
-            // (The sheet's pasteboard, or the model's canvas.)
-            let canvas = if on_sheet {
-                theme::desk(dark)
-            } else {
-                theme::canvas(dark)
-            };
             if active {
-                let shape = egui::epaint::RectShape::filled(
-                    r.expand2(egui::vec2(0.0, 0.5)),
-                    egui::CornerRadius {
-                        nw: theme::radius::MENU,
-                        ne: theme::radius::MENU,
-                        sw: 0,
-                        se: 0,
-                    },
-                    canvas,
-                );
-                ui.painter().add(shape);
-                ui.painter().line_segment(
-                    [
-                        r.left_top() + egui::vec2(6.0, 0.0),
-                        r.right_top() - egui::vec2(6.0, 0.0),
-                    ],
-                    egui::Stroke::new(2.0, theme::accent(dark)),
+                ui.painter().rect(
+                    r,
+                    theme::radius::CONTROL,
+                    n.control,
+                    egui::Stroke::new(1.0, n.control_border),
+                    egui::StrokeKind::Inside,
                 );
             } else if response.hovered() {
-                ui.painter().rect_filled(
-                    r.shrink2(egui::vec2(0.0, 2.0)),
-                    theme::radius::CONTROL,
-                    n.hover,
-                );
+                ui.painter().rect_filled(r, theme::radius::CONTROL, n.faint);
             }
-            let color = if active { n.text } else { n.secondary };
-            let mut job = egui::text::LayoutJob::simple_singleline(
-                label.clone(),
-                egui::FontId::new(font.size, family),
-                color,
-            );
-            job.wrap.max_width = w - 24.0;
+            let color = if active || response.hovered() {
+                n.text
+            } else {
+                n.secondary
+            };
+            let mut job =
+                egui::text::LayoutJob::simple_singleline(label.clone(), font(active), color);
+            job.wrap.max_width = w - 16.0;
             job.wrap.max_rows = 1;
             let galley = ui.painter().layout_job(job);
             ui.painter().galley(
-                egui::pos2(r.left() + 14.0, r.center().y - galley.size().y / 2.0),
+                egui::pos2(
+                    r.center().x - galley.size().x / 2.0,
+                    r.center().y - galley.size().y / 2.0,
+                ),
                 galley,
                 color,
             );
@@ -403,23 +437,51 @@ impl DriftApp {
                 let _ = response.on_hover_text("The drawing at full size");
             }
         }
-        // + : a new sheet.
-        let r =
-            egui::Rect::from_min_size(egui::pos2(x + 2.0, bar.top() + 5.0), egui::vec2(24.0, 22.0));
-        let plus = ui.interact(r, ui.id().with("canvas_tab_new"), egui::Sense::click());
-        plus.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Add a sheet")
-        });
-        if plus.hovered() {
-            ui.painter().rect_filled(r, theme::radius::CONTROL, n.hover);
+        // A button at the track's end: its glyph brightens under the pointer.
+        let mut button = |ui: &mut egui::Ui, id: &str, name: &str, glyph: Glyph| {
+            let r = egui::Rect::from_min_size(
+                egui::pos2(x, track.top() + PAD),
+                egui::vec2(BUTTON, TAB),
+            );
+            x += BUTTON;
+            let response = ui.interact(r, ui.id().with(id), egui::Sense::click());
+            response
+                .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, name));
+            if response.hovered() {
+                ui.painter().rect_filled(r, theme::radius::CONTROL, n.faint);
+            }
+            let color = if response.hovered() {
+                n.text
+            } else {
+                n.secondary
+            };
+            icons::glyph(
+                ui.painter(),
+                egui::Rect::from_center_size(r.center(), egui::Vec2::splat(13.0)),
+                glyph,
+                color,
+            );
+            response
+        };
+        // The sheets that found no room, in a menu.
+        if !hidden.is_empty() {
+            let response = button(ui, "canvas_tab_more", "More sheets", Glyph::ChevronDown)
+                .on_hover_text("The sheets there is no room for here");
+            egui::Popup::menu(&response).show(|ui| {
+                for k in &hidden {
+                    let (id, label) = &tabs[*k];
+                    if ui.button(label).clicked() {
+                        choose = Some(*id);
+                        ui.close();
+                    }
+                }
+            });
         }
-        let c = r.center();
-        let stroke = egui::Stroke::new(1.4, if plus.hovered() { n.text } else { n.secondary });
-        ui.painter()
-            .line_segment([c - egui::vec2(5.0, 0.0), c + egui::vec2(5.0, 0.0)], stroke);
-        ui.painter()
-            .line_segment([c - egui::vec2(0.0, 5.0), c + egui::vec2(0.0, 5.0)], stroke);
-        if plus.on_hover_text("New sheet").clicked() {
+        // + : a new sheet.
+        if button(ui, "canvas_tab_new", "Add a sheet", Glyph::Plus)
+            .on_hover_text("New sheet")
+            .clicked()
+        {
             self.new_sheet();
         }
         // Where a dragged tab would go: a bar in the gap.
@@ -430,11 +492,26 @@ impl DriftApp {
                 let x = gap_at(&spots, sheet, to);
                 ui.painter().vline(
                     x,
-                    bar.top() + 6.0..=bar.bottom() - 2.0,
+                    track.top() + 3.0..=track.bottom() - 3.0,
                     egui::Stroke::new(2.0, theme::accent(dark)),
                 );
             }
             if dropped.is_some() {
+                // (Its place among every sheet: some may have no tab.)
+                let every: Vec<SheetId> = tabs
+                    .iter()
+                    .filter_map(|(id, _)| *id)
+                    .filter(|s| *s != sheet)
+                    .collect();
+                let showing: Vec<SheetId> = spots
+                    .iter()
+                    .map(|(s, _, _)| *s)
+                    .filter(|s| *s != sheet)
+                    .collect();
+                let to = match to.checked_sub(1).and_then(|k| showing.get(k)) {
+                    Some(before) => every.iter().position(|s| s == before).map_or(to, |p| p + 1),
+                    None => 0,
+                };
                 moved = Some((sheet, to));
             }
         }

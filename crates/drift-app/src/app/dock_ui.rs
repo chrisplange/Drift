@@ -146,6 +146,7 @@ impl DriftApp {
         };
         let response = if self.layout.collapsed[i] {
             make("dock_rail")
+                .show_separator_line(false)
                 .resizable(false)
                 .exact_size(RAIL)
                 .frame(
@@ -155,6 +156,7 @@ impl DriftApp {
                 .response
         } else {
             make("dock")
+                .show_separator_line(false)
                 .resizable(true)
                 .default_size(310.0)
                 .min_size(240.0)
@@ -170,6 +172,12 @@ impl DriftApp {
                 })
                 .response
         };
+        // The line between the dock and the canvas: a pane's edge.
+        let edge = match side {
+            Side::Left => egui::Align2::RIGHT_CENTER,
+            Side::Right => egui::Align2::LEFT_CENTER,
+        };
+        theme::pane_edge(ui, response.rect, edge);
         self.dock_view.docks[i] = Some(response.rect);
     }
 

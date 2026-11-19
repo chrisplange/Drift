@@ -17,12 +17,12 @@ fn harness_at(w: f32, h: f32) -> Option<Harness<'static, DriftApp>> {
     Some(harness)
 }
 
-/// The rail's widget named `label` (the menu bar and the context bar have some of the same
-/// names: the rail's is below them, at the left).
+/// The rail's widget named `label` (the top bar and the options bar have some of the same
+/// names: the rail's is below them both, at the left).
 fn on_rail(h: &Harness<'_, DriftApp>, label: &str) -> Option<egui::Rect> {
     h.query_all_by(|n| n.label().is_some_and(|l| l == label))
         .map(|n| n.rect())
-        .find(|r| r.left() < 100.0 && r.top() > 66.0)
+        .find(|r| r.left() < 100.0 && r.top() > crate::theme::bar::TOP + crate::theme::bar::OPTIONS)
 }
 
 /// Every place on the rail is there, by the name of what it shows, and above the status bar

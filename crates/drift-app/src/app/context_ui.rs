@@ -7,18 +7,7 @@ use crate::icons::{self, Glyph};
 use crate::*;
 use drift_edit::tools::SlotMode;
 
-/// A thin vertical divider.
-fn divider(ui: &mut egui::Ui) {
-    ui.add_space(2.0);
-    let (r, _) = ui.allocate_exact_size(egui::vec2(1.0, 18.0), egui::Sense::hover());
-    ui.painter().rect_filled(r, 0.0, theme::hairline(ui));
-    ui.add_space(2.0);
-}
-
-/// A small caption before a control.
-fn caption(ui: &mut egui::Ui, text: &str) {
-    ui.label(egui::RichText::new(text).size(12.0).weak());
-}
+use crate::theme::{bar_caption as caption, bar_divider as divider};
 
 /// A segmented choice sized to its labels (for the bar, where the full width isn't ours).
 pub(super) fn choice<T: Copy + PartialEq>(
@@ -520,105 +509,63 @@ impl DriftApp {
         }
     }
 
-    /// The context bar: the tool's icon and name, then its options (or, with the select tool,
-    /// actions for the selection), and a search field for the command palette at the right.
+    /// The options bar: the tool's icon and name, then its options (or, with the select tool,
+    /// actions for the selection). Always there, so the canvas never jumps when the tool
+    /// changes.
     pub(crate) fn context_bar(&mut self, ui: &mut egui::Ui) {
         let kind = self.tool.kind();
-        ui.horizontal(|ui| {
-            ui.set_height(28.0);
-            ui.spacing_mut().item_spacing.x = 6.0;
-            // The palette's search field, from the right.
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if self.search_field(ui) {
-                    self.open_palette();
+        let row = ui.max_rect();
+        ui.scope_builder(
+            egui::UiBuilder::new()
+                .max_rect(row)
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+            |ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                // Whatever doesn't fit is cut off rather than drawn over the window's edge.
+                ui.set_clip_rect(row.intersect(ui.clip_rect()));
+                let accent = theme::accent(ui.visuals().dark_mode);
+                let (r, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
+                icons::tool(ui.painter(), r, kind, accent);
+                // Painted rather than a label, so the toolbar keeps the only "Select"
+                // (etc.) button for assistive tech.
+                let name = ui.painter().layout_no_wrap(
+                    kind.label().to_owned(),
+                    egui::FontId::new(theme::size::BODY, theme::bold()),
+                    ui.visuals().strong_text_color(),
+                );
+                let (r, _) = ui.allocate_exact_size(name.size(), egui::Sense::hover());
+                ui.painter().galley(r.min, name, egui::Color32::WHITE);
+                // A hairline before the options, when the tool or the selection has any.
+                ui.add_space(2.0);
+                let line = theme::bar_divider_slot(ui);
+                ui.add_space(2.0);
+                let before = ui.min_rect().right();
+                self.tool_options(ui, kind);
+                if ui.min_rect().right() > before {
+                    theme::paint_bar_divider(ui, line);
                 }
-                divider(ui);
-                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    // Whatever doesn't fit is cut off rather than drawn over the right side.
-                    ui.set_clip_rect(ui.max_rect().intersect(ui.clip_rect()));
-                    let accent = theme::accent(ui.visuals().dark_mode);
-                    let (r, _) =
-                        ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
-                    icons::tool(ui.painter(), r.shrink(1.0), kind, accent);
-                    // Painted rather than a label, so the toolbar keeps the only "Select"
-                    // (etc.) button for assistive tech.
-                    let name = ui.painter().layout_no_wrap(
-                        kind.label().to_owned(),
-                        egui::FontId::new(13.0, theme::bold()),
-                        ui.visuals().strong_text_color(),
-                    );
-                    let (r, _) = ui.allocate_exact_size(name.size(), egui::Sense::hover());
-                    ui.painter().galley(r.min, name, egui::Color32::WHITE);
-                    divider(ui);
-                    self.tool_options(ui, kind);
-                });
-            });
-        });
-    }
-
-    /// A field-like button that opens the command palette.
-    fn search_field(&mut self, ui: &mut egui::Ui) -> bool {
-        let (r, response) = ui.allocate_exact_size(egui::vec2(180.0, 24.0), egui::Sense::click());
-        response.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Search commands")
-        });
-        let visuals = ui.visuals();
-        let fill = if response.hovered() {
-            visuals.widgets.hovered.bg_fill
-        } else {
-            visuals.extreme_bg_color
-        };
-        ui.painter().rect(
-            r,
-            7.0,
-            fill,
-            egui::Stroke::new(1.0, theme::hairline(ui)),
-            egui::StrokeKind::Inside,
+            },
         );
-        let weak = ui.visuals().weak_text_color();
-        icons::glyph(
-            ui.painter(),
-            egui::Rect::from_center_size(
-                egui::pos2(r.left() + 14.0, r.center().y),
-                egui::Vec2::splat(13.0),
-            ),
-            Glyph::Search,
-            weak,
-        );
-        ui.painter().text(
-            egui::pos2(r.left() + 26.0, r.center().y),
-            egui::Align2::LEFT_CENTER,
-            "Search commands",
-            egui::FontId::proportional(12.5),
-            weak,
-        );
-        ui.painter().text(
-            egui::pos2(r.right() - 8.0, r.center().y),
-            egui::Align2::RIGHT_CENTER,
-            app::panels::shortcut("K", false),
-            egui::FontId::proportional(theme::size::CAPTION),
-            weak.gamma_multiply(0.8),
-        );
-        response
-            .on_hover_text("Find any tool, setting, panel or command")
-            .clicked()
     }
 
     /// Options for the active tool.
     fn tool_options(&mut self, ui: &mut egui::Ui, kind: ToolKind) {
         let units = self.drawing.editor.doc.units();
         // What a drawing tool draws: geometry, or construction guides.
-        if kind.draws_curves() {
-            if let Some(c) = keyed_choice(
+        if kind.draws_curves()
+            && let Some(c) = keyed_choice(
                 ui,
                 self.drawing.editor.prefs.draw_construction,
                 &[(false, "Geometry"), (true, "Construction")],
                 "Draw geometry, or construction guides that don't print (Alt+C)",
-            ) {
-                self.drawing.editor.prefs.draw_construction = c;
-            }
-            divider(ui);
+            )
+        {
+            self.drawing.editor.prefs.draw_construction = c;
         }
+        // (A hairline after it, when the tool has options of its own.)
+        let lead = kind
+            .draws_curves()
+            .then(|| (theme::bar_divider_slot(ui), ui.min_rect().right()));
         match kind {
             // On a sheet the model's selection isn't what is being worked on.
             ToolKind::Select if self.drawing.view.sheet_preview => {}
@@ -805,8 +752,16 @@ impl DriftApp {
                 | ToolKind::Slot
                 | ToolKind::Pen
         ) {
-            divider(ui);
+            // (Its own hairline, unless the one after Geometry | Construction is right there.)
+            if lead.is_none_or(|(_, before)| ui.min_rect().right() > before) {
+                divider(ui);
+            }
             self.new_shape_fill_bar(ui);
+        }
+        if let Some((line, before)) = lead
+            && ui.min_rect().right() > before
+        {
+            theme::paint_bar_divider(ui, line);
         }
     }
 

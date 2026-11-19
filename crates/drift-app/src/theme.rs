@@ -844,8 +844,32 @@ fn key_names(keys: &str) -> Vec<&str> {
 /// A shortcut as key caps, one small rounded chip per key: "Ctrl+K" is a Ctrl cap and a K
 /// cap. The one way keys are shown, wherever they are.
 pub fn keycap(ui: &mut egui::Ui, keys: &str) -> egui::Response {
-    let dark = ui.visuals().dark_mode;
-    let n = neutrals(dark);
+    let (caps, width) = keycap_galleys(ui, keys);
+    let (rect, response) = ui.allocate_exact_size(vec2(width, KEYCAP), egui::Sense::hover());
+    paint_keycaps(ui, rect.left_top(), caps);
+    response
+}
+
+/// [`keycap`], painted only (nothing to hover or click), ending at `right_center`: the keys
+/// shown inside a control.
+pub fn keycap_at(ui: &egui::Ui, right_center: egui::Pos2, keys: &str) {
+    let (caps, width) = keycap_galleys(ui, keys);
+    paint_keycaps(ui, right_center - vec2(width, KEYCAP / 2.0), caps);
+}
+
+/// A key cap's height, the padding either side of its key, and the gap between two caps.
+const KEYCAP: f32 = 18.0;
+const KEYCAP_PAD: f32 = 5.0;
+const KEYCAP_GAP: f32 = 3.0;
+
+/// A key's cap is as wide as its name, a single letter's is square.
+fn keycap_width(galley: &egui::Galley) -> f32 {
+    (galley.size().x + 2.0 * KEYCAP_PAD).max(KEYCAP)
+}
+
+/// The keys of a shortcut laid out, and the width of their caps in a row.
+fn keycap_galleys(ui: &egui::Ui, keys: &str) -> (Vec<std::sync::Arc<egui::Galley>>, f32) {
+    let n = neutrals(ui.visuals().dark_mode);
     let font = FontId::new(size::CAPTION, FontFamily::Proportional);
     let caps: Vec<_> = key_names(keys)
         .into_iter()
@@ -854,16 +878,21 @@ pub fn keycap(ui: &mut egui::Ui, keys: &str) -> egui::Response {
                 .layout_no_wrap(key.to_owned(), font.clone(), n.text)
         })
         .collect();
-    let (height, pad, gap) = (18.0_f32, 5.0, 3.0);
-    // (A single letter sits in a square cap.)
-    let cap_width = |g: &std::sync::Arc<egui::Galley>| (g.size().x + 2.0 * pad).max(height);
-    let width = caps.iter().map(cap_width).sum::<f32>() + gap * caps.len().saturating_sub(1) as f32;
-    let (rect, response) = ui.allocate_exact_size(vec2(width, height), egui::Sense::hover());
-    let mut x = rect.left();
+    let width = caps.iter().map(|g| keycap_width(g)).sum::<f32>()
+        + KEYCAP_GAP * caps.len().saturating_sub(1) as f32;
+    (caps, width)
+}
+
+fn paint_keycaps(ui: &egui::Ui, left_top: egui::Pos2, caps: Vec<std::sync::Arc<egui::Galley>>) {
+    let dark = ui.visuals().dark_mode;
+    let n = neutrals(dark);
+    let mut x = left_top.x;
     for galley in caps {
-        let r =
-            egui::Rect::from_min_size(egui::pos2(x, rect.top()), vec2(cap_width(&galley), height));
-        x = r.right() + gap;
+        let r = egui::Rect::from_min_size(
+            egui::pos2(x, left_top.y),
+            vec2(keycap_width(&galley), KEYCAP),
+        );
+        x = r.right() + KEYCAP_GAP;
         ui.painter().rect(
             r,
             radius::CONTROL - 1,
@@ -886,7 +915,6 @@ pub fn keycap(ui: &mut egui::Ui, keys: &str) -> egui::Response {
             n.text,
         );
     }
-    response
 }
 
 /// Keys as key caps ("Ctrl+Z / Ctrl+Y" is one shortcut or the other); a description in
@@ -903,6 +931,75 @@ pub fn keycaps(ui: &mut egui::Ui, keys: &str) {
         } else {
             ui.label(egui::RichText::new(piece).weak());
         }
+    }
+}
+
+/// The heights of the frame's bars: the top bar (menus, sheet tabs, search), the options bar
+/// under it and the status bar.
+pub mod bar {
+    pub const TOP: f32 = 40.0;
+    pub const OPTIONS: f32 = 34.0;
+    pub const STATUS: f32 = 28.0;
+}
+
+/// A hairline between groups of controls on a bar.
+pub fn bar_divider(ui: &mut egui::Ui) {
+    let slot = bar_divider_slot(ui);
+    paint_bar_divider(ui, slot);
+}
+
+/// Room for a [`bar_divider`], to be painted (with [`paint_bar_divider`]) once it is known
+/// that something follows it.
+pub fn bar_divider_slot(ui: &mut egui::Ui) -> egui::Rect {
+    ui.allocate_exact_size(vec2(9.0, 16.0), egui::Sense::hover())
+        .0
+}
+
+pub fn paint_bar_divider(ui: &egui::Ui, slot: egui::Rect) {
+    ui.painter().vline(
+        slot.center().x,
+        slot.y_range(),
+        Stroke::new(1.0, hairline(ui)),
+    );
+}
+
+/// A small caption before a control on a bar.
+pub fn bar_caption(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    ui.label(
+        egui::RichText::new(text)
+            .size(size::LABEL)
+            .color(ui.visuals().weak_text_color()),
+    )
+}
+
+/// The line between two panes, along one edge of `pane` (painted by the frame: egui's own
+/// separator can't be told apart from a hairline inside a pane).
+pub fn pane_edge(ui: &egui::Ui, pane: egui::Rect, edge: egui::Align2) {
+    let stroke = Stroke::new(1.0, divider(ui.visuals().dark_mode));
+    let p = ui.painter();
+    match edge {
+        egui::Align2::CENTER_TOP => p.hline(pane.x_range(), pane.top() + 0.5, stroke),
+        egui::Align2::CENTER_BOTTOM => p.hline(pane.x_range(), pane.bottom() - 0.5, stroke),
+        egui::Align2::LEFT_CENTER => p.vline(pane.left() + 0.5, pane.y_range(), stroke),
+        _ => p.vline(pane.right() - 0.5, pane.y_range(), stroke),
+    };
+}
+
+/// What a button on a bar does, as its tooltip: its name and keys, then a line about it.
+pub fn command_tip(ui: &mut egui::Ui, name: &str, keys: &str, about: &str) {
+    ui.set_max_width(280.0);
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new(name)
+                .family(bold())
+                .color(ui.visuals().strong_text_color()),
+        );
+        if !keys.is_empty() {
+            keycap(ui, keys);
+        }
+    });
+    if !about.is_empty() {
+        ui.label(egui::RichText::new(about).color(ui.visuals().weak_text_color()));
     }
 }
 

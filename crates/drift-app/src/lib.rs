@@ -1270,28 +1270,40 @@ impl eframe::App for DriftApp {
         };
         #[cfg(feature = "demo")]
         self.demo_banner(ui);
-        egui::Panel::top("menu")
-            .frame(frame(8, 3))
-            .show(ui, |ui| self.menu_bar(ui));
-        egui::Panel::top("context")
-            .frame(frame(10, 3))
+        // The frame: three bars of a fixed height and the rail, each pane edged by a line the
+        // frame paints itself (darker than the hairlines inside a pane, which egui's own
+        // separator can't be).
+        let top = egui::Panel::top("menu")
+            .frame(frame(0, 0))
+            .exact_size(theme::bar::TOP)
+            .show_separator_line(false)
+            .show(ui, |ui| self.top_bar(ui));
+        theme::pane_edge(ui, top.response.rect, egui::Align2::CENTER_BOTTOM);
+        let options = egui::Panel::top("context")
+            .frame(frame(12, 0))
+            .exact_size(theme::bar::OPTIONS)
+            .show_separator_line(false)
             .show(ui, |ui| self.context_bar(ui));
-        egui::Panel::bottom("status")
-            .frame(frame(12, 4))
+        theme::pane_edge(ui, options.response.rect, egui::Align2::CENTER_BOTTOM);
+        let status = egui::Panel::bottom("status")
+            .frame(frame(12, 0))
+            .exact_size(theme::bar::STATUS)
+            .show_separator_line(false)
             .show(ui, |ui| self.status_bar(ui, now));
+        theme::pane_edge(ui, status.response.rect, egui::Align2::CENTER_TOP);
         let wide = ctx.content_rect().width() >= WIDE_LAYOUT;
-        egui::Panel::left("tools")
+        let rail = egui::Panel::left("tools")
             .resizable(false)
             .frame(frame(8, 6))
             .exact_size(if wide { 168.0 } else { 84.0 })
+            .show_separator_line(false)
             .show(ui, |ui| self.toolbar(ui, wide));
+        theme::pane_edge(ui, rail.response.rect, egui::Align2::RIGHT_CENTER);
         self.begin_docks(wide);
         self.dock(ui, dock::Side::Left);
         self.dock(ui, dock::Side::Right);
         egui::CentralPanel::no_frame().show(ui, |ui| {
-            // The model and each sheet, as tabs over the canvas, right on top of it.
             ui.spacing_mut().item_spacing.y = 0.0;
-            self.canvas_tabs(ui);
             // Between the model and a sheet a tool starts afresh: a pick made in one means
             // nothing in the other. And nothing made in the model is ever the sheet's.
             let on_sheet = self.drawing.view.sheet_preview;

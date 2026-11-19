@@ -390,15 +390,14 @@ fn stat(ui: &mut egui::Ui, value: usize, caption: &str, width: f32) {
     );
 }
 
-/// A hairline between groups of status-bar controls.
-fn status_divider(ui: &mut egui::Ui) {
-    let (r, _) = ui.allocate_exact_size(egui::vec2(9.0, 16.0), egui::Sense::hover());
-    ui.painter().vline(
-        r.center().x,
-        r.y_range(),
-        egui::Stroke::new(1.0, theme::hairline(ui)),
-    );
-}
+/// The window width from which the top bar has a search field; under it, a search button
+/// (so the sheet tabs keep some room).
+const SEARCH_FIELD_FROM: f32 = 960.0;
+
+/// The menus' names, in their order.
+const MENUS: [&str; 8] = [
+    "File", "Edit", "View", "Draw", "Build", "Modify", "Annotate", "Help",
+];
 
 impl DriftApp {
     /// A menu item for a command of the registry: its label, keys and description; greyed
@@ -517,196 +516,407 @@ impl DriftApp {
         }
     }
 
-    pub(crate) fn menu_bar(&mut self, ui: &mut egui::Ui) {
+    /// The top bar, one row: Drift's mark, the menus and undo / redo at the left; the model
+    /// and the sheets as tabs in the middle; the palette's search field and the panels'
+    /// switch at the right. In a narrow window the tabs take what is left between the two
+    /// ends, the search field becomes a button, and the mark and undo / redo (which the Edit
+    /// menu has too) give their room to the menus.
+    pub(crate) fn top_bar(&mut self, ui: &mut egui::Ui) {
+        let bar = ui.max_rect();
+        let roomy = bar.width() >= 640.0;
+        let pad = if roomy { 7.0 } else { 4.0 };
+        // The menus take the room of their names, so what follows them sits right after.
+        let font = egui::TextStyle::Button.resolve(ui.style());
+        let menus_width: f32 = MENUS
+            .iter()
+            .map(|name| {
+                let text = ui.painter().layout_no_wrap(
+                    (*name).to_owned(),
+                    font.clone(),
+                    egui::Color32::WHITE,
+                );
+                text.size().x + 2.0 * pad
+            })
+            .sum();
+        let side = if roomy { 10.0 } else { 4.0 };
+        let leading = ui
+            .scope_builder(
+                egui::UiBuilder::new()
+                    .max_rect(bar.shrink2(egui::vec2(side, 0.0)))
+                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                |ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    if roomy {
+                        let (r, _) =
+                            ui.allocate_exact_size(egui::Vec2::splat(20.0), egui::Sense::hover());
+                        icons::logo(ui.painter(), r);
+                        ui.add_space(6.0);
+                    }
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(menus_width, 24.0),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            egui::MenuBar::new()
+                                .style(move |s: &mut egui::Style| {
+                                    egui::containers::menu::menu_style(s);
+                                    s.spacing.button_padding = egui::vec2(pad, 3.0);
+                                    s.spacing.item_spacing.x = 0.0;
+                                })
+                                .ui(ui, |ui| self.menus(ui));
+                        },
+                    );
+                    if roomy {
+                        ui.add_space(3.0);
+                        theme::bar_divider(ui);
+                        ui.add_space(3.0);
+                        self.history_button(ui, Command::Undo);
+                        ui.add_space(2.0);
+                        self.history_button(ui, Command::Redo);
+                    }
+                    ui.min_rect().right()
+                },
+            )
+            .inner;
+        let trailing = ui
+            .scope_builder(
+                egui::UiBuilder::new()
+                    .max_rect(egui::Rect::from_min_max(
+                        egui::pos2(leading.min(bar.right() - side), bar.top()),
+                        egui::pos2(bar.right() - side, bar.bottom()),
+                    ))
+                    .layout(egui::Layout::right_to_left(egui::Align::Center)),
+                |ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    self.panels_button(ui);
+                    if self.search_field(ui, bar.width() >= SEARCH_FIELD_FROM) {
+                        self.open_palette();
+                    }
+                    ui.min_rect().left()
+                },
+            )
+            .inner;
+        let gap = if roomy { 14.0 } else { 6.0 };
+        let zone = egui::Rect::from_min_max(
+            egui::pos2(leading + gap, bar.top()),
+            egui::pos2(trailing - gap, bar.bottom()),
+        );
+        if zone.width() > 30.0 {
+            ui.scope_builder(egui::UiBuilder::new().max_rect(zone), |ui| {
+                // (Whatever still doesn't fit is cut off, not drawn over the bar's ends.)
+                ui.set_clip_rect(zone.intersect(ui.clip_rect()));
+                self.sheet_tabs(ui, bar.center().x);
+            });
+        }
+    }
+
+    /// Undo or redo, as a button in the top bar: greyed out when there is nothing to take
+    /// back (or to bring back).
+    fn history_button(&mut self, ui: &mut egui::Ui, command: Command) {
+        let Some(spec) = commands::spec(command) else {
+            return;
+        };
+        // (Not "Undo" and "Redo": those are the Edit menu's.)
+        let (label, glyph) = if command == Command::Undo {
+            ("Undo last change", Glyph::Undo)
+        } else {
+            ("Redo last change", Glyph::Redo)
+        };
+        let enabled = spec.when.holds(self);
+        let name = self.menu_label(spec);
+        let keys = spec.key_text(cfg!(target_os = "macos"));
+        let response = ui
+            .add_enabled_ui(enabled, |ui| {
+                icons::button(ui, 26.0, false, label, |p, r, c| {
+                    icons::glyph(p, r, glyph, c)
+                })
+            })
+            .inner
+            .on_hover_ui(|ui| theme::command_tip(ui, &name, &keys, spec.description))
+            .on_disabled_hover_ui(|ui| {
+                theme::command_tip(ui, spec.title, &keys, spec.when.reason());
+            });
+        if response.clicked() {
+            let ctx = ui.ctx().clone();
+            self.run_command(&ctx, command);
+        }
+    }
+
+    /// The top bar's switch for the panels: hides them all for a clear view, and brings them
+    /// back.
+    fn panels_button(&mut self, ui: &mut egui::Ui) {
+        let Some(spec) = commands::spec(Command::HideAllPanels) else {
+            return;
+        };
+        let shown = !self.dock_view.hide_all;
+        let response = icons::button(ui, 26.0, false, "Show or hide panels", |p, r, c| {
+            if shown {
+                // The side pane filled in while the panels show (on the icon's 20-unit grid).
+                let s = r.width().min(r.height()) / 20.0;
+                let o = r.center() - egui::Vec2::splat(10.0 * s);
+                let pane = egui::Rect::from_min_max(
+                    o + egui::vec2(12.0, 4.5) * s,
+                    o + egui::vec2(17.0, 15.5) * s,
+                );
+                p.rect_filled(pane, 1.0, c.gamma_multiply(0.3));
+            }
+            icons::glyph(p, r, Glyph::Panels, c);
+        });
+        let keys = spec.key_text(cfg!(target_os = "macos"));
+        let name = if shown { spec.title } else { "Show the panels" };
+        if response
+            .on_hover_ui(|ui| theme::command_tip(ui, name, &keys, spec.description))
+            .clicked()
+        {
+            let ctx = ui.ctx().clone();
+            self.run_command(&ctx, Command::HideAllPanels);
+        }
+    }
+
+    /// What opens the command palette: a field-like button showing its keys, or just a
+    /// button where there is no room for a field.
+    fn search_field(&mut self, ui: &mut egui::Ui, field: bool) -> bool {
+        let keys = shortcut("K", false);
+        let tip = |ui: &mut egui::Ui| {
+            theme::command_tip(
+                ui,
+                "Search commands",
+                &keys,
+                "Find any tool, setting, panel or command",
+            );
+        };
+        if !field {
+            return icons::button(ui, 26.0, false, "Search commands", |p, r, c| {
+                icons::glyph(p, r, Glyph::Search, c)
+            })
+            .on_hover_ui(tip)
+            .clicked();
+        }
+        let (r, response) = ui.allocate_exact_size(egui::vec2(200.0, 26.0), egui::Sense::click());
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Search commands")
+        });
+        let n = theme::neutrals(ui.visuals().dark_mode);
+        let (fill, edge) = if response.hovered() {
+            (n.faint, n.control_border)
+        } else {
+            (n.field, n.border)
+        };
+        ui.painter().rect(
+            r,
+            theme::radius::CONTROL + 1,
+            fill,
+            egui::Stroke::new(1.0, edge),
+            egui::StrokeKind::Inside,
+        );
+        icons::glyph(
+            ui.painter(),
+            egui::Rect::from_center_size(
+                egui::pos2(r.left() + 15.0, r.center().y),
+                egui::Vec2::splat(13.0),
+            ),
+            Glyph::Search,
+            n.secondary,
+        );
+        ui.painter().text(
+            egui::pos2(r.left() + 28.0, r.center().y),
+            egui::Align2::LEFT_CENTER,
+            "Search commands",
+            egui::FontId::proportional(theme::size::LABEL),
+            n.tertiary,
+        );
+        theme::keycap_at(ui, r.right_center() - egui::vec2(5.0, 0.0), &keys);
+        response.on_hover_ui(tip).clicked()
+    }
+
+    /// The eight menus, in the top bar.
+    fn menus(&mut self, ui: &mut egui::Ui) {
         use Command as C;
-        egui::MenuBar::new().ui(ui, |ui| {
-            ui.menu_button("File", |ui| {
-                self.command_items(ui, &[Some(C::New), Some(C::Open)]);
-                ui.menu_button("Open recent", |ui| {
-                    if self.recent.is_empty() {
-                        ui.label(egui::RichText::new("No recent sketches").weak());
+        ui.menu_button("File", |ui| {
+            self.command_items(ui, &[Some(C::New), Some(C::Open)]);
+            ui.menu_button("Open recent", |ui| {
+                if self.recent.is_empty() {
+                    ui.label(egui::RichText::new("No recent sketches").weak());
+                }
+                let mut chosen = None;
+                for (i, path) in self.recent.iter().enumerate() {
+                    let name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    if ui
+                        .button(name)
+                        .on_hover_text(path.to_string_lossy())
+                        .clicked()
+                    {
+                        chosen = Some(i);
                     }
-                    let mut chosen = None;
-                    for (i, path) in self.recent.iter().enumerate() {
-                        let name = path
-                            .file_name()
-                            .map(|n| n.to_string_lossy().into_owned())
-                            .unwrap_or_default();
-                        if ui
-                            .button(name)
-                            .on_hover_text(path.to_string_lossy())
-                            .clicked()
-                        {
-                            chosen = Some(i);
-                        }
+                }
+                if !self.recent.is_empty() {
+                    ui.separator();
+                    if ui.button("Clear the list").clicked() {
+                        self.recent.clear();
                     }
-                    if !self.recent.is_empty() {
-                        ui.separator();
-                        if ui.button("Clear the list").clicked() {
-                            self.recent.clear();
-                        }
-                    }
-                    if let Some(i) = chosen {
-                        self.request(Pending::Recent(i));
+                }
+                if let Some(i) = chosen {
+                    self.request(Pending::Recent(i));
+                    ui.close();
+                }
+            });
+            self.command_items(
+                ui,
+                &[
+                    Some(C::OpenExample),
+                    Some(C::ShowStart),
+                    None,
+                    Some(C::Save),
+                    Some(C::SaveAs),
+                    None,
+                    Some(C::DrawingSettings),
+                    None,
+                    Some(C::Import),
+                ],
+            );
+            ui.menu_button("Export", |ui| {
+                self.command_items(
+                    ui,
+                    &[
+                        Some(C::ExportPdf),
+                        Some(C::ExportSvg),
+                        Some(C::ExportDxf),
+                        None,
+                        Some(C::ExportModelSvg),
+                        Some(C::ExportModelPdf),
+                    ],
+                );
+                ui.checkbox(&mut self.model_annotations, "Dimensions and notes")
+                    .on_hover_text("Model exports include dimensions and notes");
+                ui.separator();
+                self.command_item(ui, C::ExportProfiles);
+            });
+            self.command_item(ui, C::Print);
+        });
+        ui.menu_button("Edit", |ui| {
+            self.command_items(
+                ui,
+                &[
+                    Some(C::Undo),
+                    Some(C::Redo),
+                    None,
+                    Some(C::Cut),
+                    Some(C::Copy),
+                    Some(C::Paste),
+                    Some(C::PasteInPlace),
+                    Some(C::Duplicate),
+                    None,
+                    Some(C::Delete),
+                    None,
+                    Some(C::SelectAll),
+                    None,
+                    Some(C::Preferences),
+                ],
+            );
+        });
+        ui.menu_button("View", |ui| {
+            // Every row set in by a check mark's room, switch or not, so the menu has
+            // one left edge.
+            self.checked_menu_item(ui, C::Palette);
+            let room = egui::Atom::custom(egui::Id::new("menu_check"), egui::vec2(14.0, 14.0));
+            ui.menu_button((room, "Panels"), |ui| self.panels_menu(ui));
+            ui.separator();
+            for command in [C::SheetPreview, C::ZoomToFit, C::ZoomToSelection] {
+                self.checked_menu_item(ui, command);
+            }
+            self.command_items(
+                ui,
+                &[
+                    None,
+                    Some(C::Toggle(ViewFlag::Grid)),
+                    Some(C::Toggle(ViewFlag::Axes)),
+                    Some(C::Toggle(ViewFlag::Snap)),
+                    None,
+                    Some(C::Toggle(ViewFlag::Thin)),
+                    Some(C::Toggle(ViewFlag::Status)),
+                    Some(C::Toggle(ViewFlag::Endpoints)),
+                    None,
+                    Some(C::Toggle(ViewFlag::Dimensions)),
+                    Some(C::Toggle(ViewFlag::PrintSize)),
+                    Some(C::Toggle(ViewFlag::Hidden)),
+                ],
+            );
+            self.relations_menu(ui);
+            self.command_items(
+                ui,
+                &[
+                    Some(C::Toggle(ViewFlag::Free)),
+                    Some(C::Toggle(ViewFlag::Combs)),
+                    Some(C::Toggle(ViewFlag::Crops)),
+                ],
+            );
+            ui.separator();
+            let room = egui::Atom::custom(egui::Id::new("menu_check"), egui::vec2(14.0, 14.0));
+            ui.menu_button((room, "Appearance"), |ui| {
+                let current = theme::Look::current(ui.ctx());
+                for look in theme::Look::ALL {
+                    if theme::menu_check(ui, look == current, look.label(), "").clicked() {
+                        theme::set_look(ui.ctx(), look);
                         ui.close();
                     }
-                });
-                self.command_items(
-                    ui,
-                    &[
-                        Some(C::OpenExample),
-                        Some(C::ShowStart),
-                        None,
-                        Some(C::Save),
-                        Some(C::SaveAs),
-                        None,
-                        Some(C::DrawingSettings),
-                        None,
-                        Some(C::Import),
-                    ],
-                );
-                ui.menu_button("Export", |ui| {
-                    self.command_items(
-                        ui,
-                        &[
-                            Some(C::ExportPdf),
-                            Some(C::ExportSvg),
-                            Some(C::ExportDxf),
-                            None,
-                            Some(C::ExportModelSvg),
-                            Some(C::ExportModelPdf),
-                        ],
-                    );
-                    ui.checkbox(&mut self.model_annotations, "Dimensions and notes")
-                        .on_hover_text("Model exports include dimensions and notes");
-                    ui.separator();
-                    self.command_item(ui, C::ExportProfiles);
-                });
-                self.command_item(ui, C::Print);
-            });
-            ui.menu_button("Edit", |ui| {
-                self.command_items(
-                    ui,
-                    &[
-                        Some(C::Undo),
-                        Some(C::Redo),
-                        None,
-                        Some(C::Cut),
-                        Some(C::Copy),
-                        Some(C::Paste),
-                        Some(C::PasteInPlace),
-                        Some(C::Duplicate),
-                        None,
-                        Some(C::Delete),
-                        None,
-                        Some(C::SelectAll),
-                        None,
-                        Some(C::Preferences),
-                    ],
-                );
-            });
-            ui.menu_button("View", |ui| {
-                // Every row set in by a check mark's room, switch or not, so the menu has
-                // one left edge.
-                self.checked_menu_item(ui, C::Palette);
-                let room = egui::Atom::custom(egui::Id::new("menu_check"), egui::vec2(14.0, 14.0));
-                ui.menu_button((room, "Panels"), |ui| self.panels_menu(ui));
-                ui.separator();
-                for command in [C::SheetPreview, C::ZoomToFit, C::ZoomToSelection] {
-                    self.checked_menu_item(ui, command);
                 }
-                self.command_items(
-                    ui,
-                    &[
-                        None,
-                        Some(C::Toggle(ViewFlag::Grid)),
-                        Some(C::Toggle(ViewFlag::Axes)),
-                        Some(C::Toggle(ViewFlag::Snap)),
-                        None,
-                        Some(C::Toggle(ViewFlag::Thin)),
-                        Some(C::Toggle(ViewFlag::Status)),
-                        Some(C::Toggle(ViewFlag::Endpoints)),
-                        None,
-                        Some(C::Toggle(ViewFlag::Dimensions)),
-                        Some(C::Toggle(ViewFlag::PrintSize)),
-                        Some(C::Toggle(ViewFlag::Hidden)),
-                    ],
-                );
-                self.relations_menu(ui);
-                self.command_items(
-                    ui,
-                    &[
-                        Some(C::Toggle(ViewFlag::Free)),
-                        Some(C::Toggle(ViewFlag::Combs)),
-                        Some(C::Toggle(ViewFlag::Crops)),
-                    ],
-                );
-                ui.separator();
-                let room = egui::Atom::custom(egui::Id::new("menu_check"), egui::vec2(14.0, 14.0));
-                ui.menu_button((room, "Appearance"), |ui| {
-                    let current = theme::Look::current(ui.ctx());
-                    for look in theme::Look::ALL {
-                        if theme::menu_check(ui, look == current, look.label(), "").clicked() {
-                            theme::set_look(ui.ctx(), look);
-                            ui.close();
-                        }
-                    }
-                });
             });
-            for category in [Category::Draw, Category::Build] {
-                ui.menu_button(category.label(), |ui| self.category_menu(ui, category));
-            }
-            ui.menu_button("Modify", |ui| {
-                self.category_menu(ui, Category::Modify);
-                // Drift's object menu: grouping, blocks and construction belong with the
-                // other commands that change what is picked (Illustrator's Object menu).
-                self.command_items(
-                    ui,
-                    &[
-                        None,
-                        Some(C::Group),
-                        Some(C::Ungroup),
-                        Some(C::MakeBlock),
-                        Some(C::BlockFromGroup),
-                        Some(C::Explode),
-                        Some(C::ExplodeToGroup),
-                        None,
-                        Some(C::Construction),
-                        None,
-                    ],
-                );
-                ui.menu_button("Arrange", |ui| self.category_menu(ui, Category::Arrange));
-                ui.separator();
-                self.command_item(ui, C::CheckSketch);
-            });
-            ui.menu_button("Annotate", |ui| self.category_menu(ui, Category::Annotate));
-            ui.menu_button("Help", |ui| {
-                self.command_items(
-                    ui,
-                    &[
-                        Some(C::UserGuide),
-                        Some(C::ReportProblem),
-                        Some(C::ShowLogs),
-                        None,
-                        Some(C::Shortcuts),
-                        // For development: it tells users nothing (hidden in release builds).
-                        Some(C::Benchmark),
-                        None,
-                    ],
-                );
-                #[cfg(not(target_arch = "wasm32"))]
-                self.updates_menu(ui);
-                self.command_item(ui, C::About);
-                ui.label(
-                    egui::RichText::new(format!(
-                        "Drift {} · {}",
-                        drift_platform::VERSION,
-                        self.backend
-                    ))
-                    .small()
-                    .weak(),
-                );
-            });
+        });
+        for category in [Category::Draw, Category::Build] {
+            ui.menu_button(category.label(), |ui| self.category_menu(ui, category));
+        }
+        ui.menu_button("Modify", |ui| {
+            self.category_menu(ui, Category::Modify);
+            // Drift's object menu: grouping, blocks and construction belong with the
+            // other commands that change what is picked (Illustrator's Object menu).
+            self.command_items(
+                ui,
+                &[
+                    None,
+                    Some(C::Group),
+                    Some(C::Ungroup),
+                    Some(C::MakeBlock),
+                    Some(C::BlockFromGroup),
+                    Some(C::Explode),
+                    Some(C::ExplodeToGroup),
+                    None,
+                    Some(C::Construction),
+                    None,
+                ],
+            );
+            ui.menu_button("Arrange", |ui| self.category_menu(ui, Category::Arrange));
+            ui.separator();
+            self.command_item(ui, C::CheckSketch);
+        });
+        ui.menu_button("Annotate", |ui| self.category_menu(ui, Category::Annotate));
+        ui.menu_button("Help", |ui| {
+            self.command_items(
+                ui,
+                &[
+                    Some(C::UserGuide),
+                    Some(C::ReportProblem),
+                    Some(C::ShowLogs),
+                    None,
+                    Some(C::Shortcuts),
+                    // For development: it tells users nothing (hidden in release builds).
+                    Some(C::Benchmark),
+                    None,
+                ],
+            );
+            #[cfg(not(target_arch = "wasm32"))]
+            self.updates_menu(ui);
+            self.command_item(ui, C::About);
+            ui.label(
+                egui::RichText::new(format!(
+                    "Drift {} · {}",
+                    drift_platform::VERSION,
+                    self.backend
+                ))
+                .small()
+                .weak(),
+            );
         });
     }
 
@@ -817,6 +1027,11 @@ impl DriftApp {
     /// Zoom so that 100% is life size on a 96 dpi screen, about the middle of the canvas.
     pub(crate) fn zoom_to_percent(&mut self, percent: f64) {
         let target = percent / 100.0 * 96.0 / drift_core::units::MM_PER_INCH;
+        // (On a sheet it is the sheet that is zoomed, about the middle of what shows.)
+        if self.drawing.view.sheet_preview {
+            self.drawing.view.preview.zoom = (target as f32).clamp(0.05, 200.0);
+            return;
+        }
         self.drawing.view.fit_target = None;
         // The view's origin is the canvas centre.
         self.drawing
@@ -1649,58 +1864,125 @@ impl DriftApp {
         }
     }
 
-    /// The status bar: cursor position, the tool's hint, then view toggles, units, the
-    /// sketch's definition status and zoom. Messages appear as toasts over the canvas.
-    pub(crate) fn status_bar(&mut self, ui: &mut egui::Ui, _now: f64) {
-        let cluster_left = ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 10.0;
-            let units = self.drawing.editor.doc.units();
-            let (x, y) = match self.drawing.view.pointer {
-                Some(p) => {
-                    let at = p.pos();
-                    (units.format_readout(at.x), units.format_readout(at.y))
-                }
-                None => (String::new(), String::new()),
+    /// Zoom by a factor about the middle of the canvas (the sheet's, on a sheet).
+    fn zoom_by(&mut self, factor: f64) {
+        if self.drawing.view.sheet_preview {
+            let zoom = &mut self.drawing.view.preview.zoom;
+            *zoom = (*zoom * factor as f32).clamp(0.05, 200.0);
+        } else {
+            self.drawing.view.fit_target = None;
+            self.drawing.view.camera.zoom_at(DVec2::ZERO, factor);
+        }
+    }
+
+    /// The status bar's zoom: out, the percentage (which opens the zoom menu) and in. Laid
+    /// out from the right.
+    fn zoom_control(&mut self, ui: &mut egui::Ui) {
+        ui.scope(|ui| {
+            ui.spacing_mut().item_spacing.x = 1.0;
+            let step = 1.25;
+            if icons::button(ui, 22.0, false, "Zoom in", |p, r, c| {
+                icons::glyph(p, r, Glyph::Plus, c)
+            })
+            .on_hover_text("Zoom in")
+            .clicked()
+            {
+                self.zoom_by(step);
+            }
+            // Zoom as a percentage of real size on a 96 dpi screen.
+            let scale = if self.drawing.view.sheet_preview {
+                f64::from(self.drawing.view.preview.zoom)
+            } else {
+                self.drawing.view.camera.scale
             };
-            ui.allocate_ui_with_layout(
-                egui::vec2(250.0, 20.0),
-                egui::Layout::left_to_right(egui::Align::Center),
-                |ui| {
-                    ui.set_min_width(250.0);
-                    // Each value right-aligned in its own cell, so the digits don't jump.
-                    for (axis, value) in [("X", x), ("Y", y)] {
-                        ui.label(egui::RichText::new(axis).weak());
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(96.0, 20.0),
-                            egui::Layout::right_to_left(egui::Align::Center),
-                            |ui| {
-                                ui.set_min_width(96.0);
-                                let shown = if value.is_empty() { "–" } else { &value };
-                                ui.label(egui::RichText::new(shown).weak());
-                            },
-                        );
-                        ui.add_space(10.0);
-                    }
-                },
+            let zoom = scale * drift_core::units::MM_PER_INCH / 96.0 * 100.0;
+            let button = ui
+                .add(
+                    egui::Button::new(
+                        egui::RichText::new(format!("{zoom:.0}%"))
+                            .size(theme::size::LABEL)
+                            .color(ui.visuals().weak_text_color()),
+                    )
+                    .frame_when_inactive(false)
+                    .min_size(egui::vec2(48.0, 22.0)),
+                )
+                .on_hover_text("Zoom: click for fit, selection and fixed sizes");
+            egui::Popup::menu(&button).show(|ui| self.zoom_menu(ui));
+            if icons::button(ui, 22.0, false, "Zoom out", |p, r, c| {
+                icons::glyph(p, r, Glyph::Minus, c)
+            })
+            .on_hover_text("Zoom out")
+            .clicked()
+            {
+                self.zoom_by(1.0 / step);
+            }
+        });
+    }
+
+    /// Where the pointer is on the drawing: X and Y, each value right-aligned in a cell of
+    /// its own so the digits don't jump.
+    fn pointer_readout(&self, ui: &mut egui::Ui) {
+        const AXIS: f32 = 13.0;
+        const CELL: f32 = 82.0;
+        const GAP: f32 = 12.0;
+        let units = self.drawing.editor.doc.units();
+        let values = self.drawing.view.pointer.map(|p| {
+            let at = p.pos();
+            [units.format_readout(at.x), units.format_readout(at.y)]
+        });
+        let (rect, response) = ui.allocate_exact_size(
+            egui::vec2(2.0 * (AXIS + CELL) + GAP, 20.0),
+            egui::Sense::hover(),
+        );
+        let n = theme::neutrals(ui.visuals().dark_mode);
+        let font = egui::FontId::proportional(theme::size::LABEL);
+        let painter = ui.painter_at(rect);
+        let mut left = rect.left();
+        for (k, axis) in ["X", "Y"].into_iter().enumerate() {
+            painter.text(
+                egui::pos2(left, rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                axis,
+                font.clone(),
+                n.tertiary,
             );
-            // Right-hand cluster first, so the hint takes what is left.
-            let right =
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.spacing_mut().item_spacing.x = 6.0;
+            let shown = values.as_ref().map_or("–", |v| v[k].as_str());
+            painter.text(
+                egui::pos2(left + AXIS + CELL, rect.center().y),
+                egui::Align2::RIGHT_CENTER,
+                shown,
+                font.clone(),
+                n.secondary,
+            );
+            left += AXIS + CELL + GAP;
+        }
+        response.widget_info(|| {
+            let text = match &values {
+                Some([x, y]) => format!("Pointer at X {x}, Y {y}"),
+                None => "Pointer off the drawing".to_owned(),
+            };
+            egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text)
+        });
+    }
+
+    /// The status bar: the tool's hint at the left; then, right-aligned, the pointer's
+    /// position, what snaps, what the drawing shows, the units, what is worth knowing about
+    /// the sketch (and its definition status), and zoom. Messages appear as toasts over the
+    /// canvas.
+    pub(crate) fn status_bar(&mut self, ui: &mut egui::Ui, _now: f64) {
+        let bar = ui.max_rect();
+        // The right-hand cluster first (laid out from the right), so the hint takes what is
+        // left.
+        let cluster_left = ui
+            .scope_builder(
+                egui::UiBuilder::new()
+                    .max_rect(bar)
+                    .layout(egui::Layout::right_to_left(egui::Align::Center)),
+                |ui| {
+                    ui.spacing_mut().item_spacing.x = 5.0;
                     // One control height across the bar.
                     ui.spacing_mut().interact_size.y = 22.0;
-                    // Zoom as a percentage of real size on a 96 dpi screen.
-                    let zoom = self.drawing.view.camera.scale * drift_core::units::MM_PER_INCH / 96.0 * 100.0;
-                    let button = ui
-                        .add(
-                            egui::Button::new(
-                                egui::RichText::new(format!("{zoom:.0}%"))
-                                    .color(ui.visuals().weak_text_color()),
-                            )
-                            .frame_when_inactive(false),
-                        )
-                        .on_hover_text("Zoom: click for fit, selection and fixed sizes");
-                    egui::Popup::menu(&button).show(|ui| self.zoom_menu(ui));
+                    self.zoom_control(ui);
                     #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
                     self.link_pill(ui);
                     if !self.drawing.editor.doc.is_empty() {
@@ -1855,7 +2137,7 @@ impl DriftApp {
                     if units != self.drawing.editor.doc.units() {
                         self.drawing.editor.set_units(units);
                     }
-                    status_divider(ui);
+                    theme::bar_divider(ui);
                     let minor = grid_info(&self.drawing.view.camera, self.imperial()).minor;
                     let grid = if units.length.is_metric() {
                         format!("{} mm", format_length(minor))
@@ -1918,7 +2200,7 @@ impl DriftApp {
                         &mut self.show_grid,
                         &format!("Grid: {grid} spacing · {}", shortcut("'", false)),
                     );
-                    status_divider(ui);
+                    theme::bar_divider(ui);
                     toggle(
                         ui,
                         Glyph::AutoRelations,
@@ -1967,13 +2249,17 @@ impl DriftApp {
                         &mut self.grid_snap,
                         &format!("Snap to grid ({grid}) · Shift+G"),
                     );
+                    // The pointer's position, leftmost of the cluster: the first to go when
+                    // the window is narrow, so the hint keeps its room.
+                    if bar.width() >= 1000.0 {
+                        theme::bar_divider(ui);
+                        self.pointer_readout(ui);
+                    }
                     // Where the cluster's leftmost control starts.
                     ui.min_rect().left()
-                });
-            right.inner
-        });
-        // The hint, in whatever space is left between the readout and the right cluster (as
-        // wide as it actually is, so the hint never lies over its controls).
+                },
+            )
+            .inner;
         let selecting = self.tool.kind() == ToolKind::Select && !self.tool.is_busy();
         // How to get at a picked shape's fill on its own, until it has been done a few times
         // (#223).
@@ -2022,18 +2308,16 @@ impl DriftApp {
         } else {
             tool_hint
         };
-        let rect = ui.min_rect();
-        let left = rect.left() + 256.0;
-        let right = cluster_left.inner - 12.0;
-        if right - left > 40.0 {
-            let area = egui::Rect::from_min_max(
-                egui::pos2(left, rect.top()),
-                egui::pos2(right, rect.bottom()),
-            );
-            ui.scope_builder(egui::UiBuilder::new().max_rect(area), |ui| {
-                // The prompt, left-aligned after the readout (as AutoCAD's command line).
-                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    status_divider(ui);
+        // The prompt, leftmost (as AutoCAD's command line), in whatever room is left before
+        // the cluster (as wide as it actually is, so the hint never lies over its controls).
+        let right = cluster_left - 14.0;
+        if right - bar.left() > 40.0 {
+            let area = egui::Rect::from_min_max(bar.left_top(), egui::pos2(right, bar.bottom()));
+            ui.scope_builder(
+                egui::UiBuilder::new()
+                    .max_rect(area)
+                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                |ui| {
                     ui.add(
                         egui::Label::new(
                             egui::RichText::new(&hint)
@@ -2043,8 +2327,8 @@ impl DriftApp {
                         .truncate(),
                     )
                     .on_hover_text(&hint);
-                });
-            });
+                },
+            );
         }
     }
 }

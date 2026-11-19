@@ -54,6 +54,9 @@ mod shapes;
 /// A sheet's own notes and dimensions: placed, picked, moved, edited and deleted (#432).
 #[cfg(not(feature = "demo"))]
 mod sheet_annotations;
+/// The frame: the top bar, the options bar and the status bar.
+#[cfg(not(feature = "demo"))]
+mod shell;
 /// The regression smoke suite (`cargo test -p drift-app smoke_`): docs/regression-checklist.md.
 #[cfg(not(feature = "demo"))]
 mod smoke;
@@ -5213,11 +5216,15 @@ fn control_bar_overlap_warning_and_corner_angles() {
         h.get_by_role_and_label(Role::Button, "Stroke");
         h.get_by_role_and_label(Role::Button, "Fill");
     }
-    // The tool's hint, in the middle of the status bar, stops short of every switch, however
+    // The tool's hint, at the left of the status bar, stops short of every switch, however
     // wide the right-hand group is (with this warning showing, and wider fonts, it used to lie
     // over the leftmost ones and take their clicks).
     let hint = h.get_by_label(&h.state().tool.hint()).rect();
+    assert!(hint.left() < 20.0, "the hint starts the bar: {hint:?}");
     for name in [
+        "Snap to grid",
+        "Perpendicular & tangent",
+        "Angle snap",
         "Grid",
         "Origin axes",
         "End points",
@@ -5417,7 +5424,12 @@ fn control_bar_sets_stroke_weight_and_line_type() {
     let menu = |h: &mut Harness<'static, DriftApp>, index: usize, item: &str| {
         let mut combos: Vec<_> = h
             .get_all_by_role(egui::accesskit::Role::ComboBox)
-            .filter(|c| c.rect().top() < 64.0)
+            // (The options bar's: under the top bar, over the canvas.)
+            .filter(|c| {
+                let bar =
+                    crate::theme::bar::TOP..crate::theme::bar::TOP + crate::theme::bar::OPTIONS;
+                bar.contains(&c.rect().top()) && bar.contains(&c.rect().bottom())
+            })
             .collect();
         combos.sort_by(|a, b| a.rect().left().total_cmp(&b.rect().left()));
         combos[index].click();
@@ -8989,8 +9001,9 @@ fn sheets_reorder_duplicate_and_choose_for_pdf() {
     let tab = |h: &Harness<'_, DriftApp>, label: &str| {
         h.get_all_by_label(label)
             .map(|n| n.rect())
-            .find(|r| r.bottom() <= canvas.top() + 1.0 && r.left() < canvas.right())
-            .expect("a canvas tab")
+            // (The tabs are in the top bar; the Sheets list names the sheets too.)
+            .find(|r| r.bottom() <= crate::theme::bar::TOP)
+            .expect("a sheet's tab in the top bar")
     };
     let at = tab(&h, "A-102  Sheet 2").center();
     h.hover_at(at);

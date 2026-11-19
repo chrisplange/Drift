@@ -53,6 +53,14 @@ pub enum Glyph {
     Move,
     Rotate,
     Array,
+    // The top bar's and the status bar's buttons.
+    Undo,
+    Redo,
+    /// Show or hide the panels: a window with a pane down its side.
+    Panels,
+    Minus,
+    Plus,
+    ChevronDown,
 }
 
 /// Maps a 20 × 20 design grid into `rect`.
@@ -728,6 +736,27 @@ pub fn glyph(painter: &egui::Painter, rect: Rect, glyph: Glyph, color: Color32) 
             p.arc(10.0, 10.5, 5.5, -2.4, 4.3);
             p.poly(&[(3.2, 4.2), (4.6, 7.2), (7.8, 6.6)], false);
         }
+        Glyph::Undo | Glyph::Redo => {
+            // An arrow back along a line that hooks round underneath (mirrored for redo).
+            let m = |x: f32| if glyph == Glyph::Undo { x } else { 20.0 - x };
+            p.poly(&[(m(7.5), 3.8), (m(3.8), 7.5), (m(7.5), 11.2)], false);
+            p.line((m(4.2), 7.5), (m(11.5), 7.5));
+            let sweep = if glyph == Glyph::Undo { PI } else { -PI };
+            p.arc(m(11.5), 11.5, 4.0, -PI / 2.0, sweep);
+            p.line((m(11.5), 15.5), (m(8.0), 15.5));
+        }
+        Glyph::Panels => {
+            p.poly(&[(3.0, 4.5), (17.0, 4.5), (17.0, 15.5), (3.0, 15.5)], true);
+            p.line((12.0, 4.5), (12.0, 15.5));
+            p.line((14.0, 8.0), (15.2, 8.0));
+            p.line((14.0, 10.5), (15.2, 10.5));
+        }
+        Glyph::Minus => p.line((5.0, 10.0), (15.0, 10.0)),
+        Glyph::Plus => {
+            p.line((5.0, 10.0), (15.0, 10.0));
+            p.line((10.0, 5.0), (10.0, 15.0));
+        }
+        Glyph::ChevronDown => p.poly(&[(5.5, 8.0), (10.0, 12.5), (14.5, 8.0)], false),
         Glyph::Delete => {
             p.line((3.5, 5.5), (16.5, 5.5));
             p.poly(&[(7.5, 5.5), (7.5, 3.5), (12.5, 3.5), (12.5, 5.5)], false);

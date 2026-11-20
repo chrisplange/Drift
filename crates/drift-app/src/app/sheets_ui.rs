@@ -2652,32 +2652,7 @@ impl DriftApp {
             self.update_view(view_id, view, typing);
         }
         self.referenced_by(ui, view_id);
-        ui.horizontal_wrapped(|ui| {
-            if let Some(sheet) = current {
-                let here = placed.contains(&sheet);
-                if ui
-                    .button(if here {
-                        "Place again"
-                    } else {
-                        "Place on sheet"
-                    })
-                    .clicked()
-                {
-                    self.place_view(sheet, view_id, None);
-                    self.drawing.view.sheet_preview = true;
-                }
-            }
-            if ui.button("Zoom to view").clicked() {
-                self.zoom_to_view(view_id);
-            }
-            if ui.button("Delete view").clicked() {
-                if placed.is_empty() {
-                    self.delete_view(view_id);
-                } else {
-                    self.drawing.confirm_delete_view = Some(view_id);
-                }
-            }
-        });
+        // (Placing, zooming to and deleting it are on its right-click menu.)
         if self.drawing.confirm_delete_view == Some(view_id) {
             let n = placed.len();
             ui.label(

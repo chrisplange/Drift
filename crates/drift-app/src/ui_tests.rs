@@ -111,6 +111,47 @@ fn button(h: &Harness<'_, DriftApp>, pos: Pos2, pressed: bool) {
     });
 }
 
+/// Choose `item` on a view's right-click menu, from its row in the Sheets panel's Views list
+/// (the last row with its name: rows under the sheets come first).
+fn view_menu_item(h: &mut Harness<'_, DriftApp>, view: drift_core::ViewId, item: &str) {
+    let title = h
+        .state()
+        .drawing
+        .editor
+        .doc
+        .view(view)
+        .unwrap()
+        .title()
+        .to_owned();
+    h.get_all_by_label(&title).last().unwrap().scroll_to_me();
+    h.run();
+    let at = h.get_all_by_label(&title).last().unwrap().rect().center();
+    h.hover_at(at);
+    h.run();
+    for pressed in [true, false] {
+        h.event(Event::PointerButton {
+            pos: at,
+            button: PointerButton::Secondary,
+            pressed,
+            modifiers: EguiModifiers::NONE,
+        });
+        h.run();
+    }
+    // (The menu opens at the pointer.)
+    let to = h
+        .get_all_by_label(item)
+        .map(|n| n.rect())
+        .find(|r| r.left() >= at.x - 1.0 && r.top() < at.y + 80.0)
+        .unwrap_or_else(|| panic!("{item} on the view's menu"))
+        .center();
+    h.hover_at(to);
+    h.run();
+    button(h, to, true);
+    h.run();
+    button(h, to, false);
+    h.run();
+}
+
 /// The example shown with room round the plate, whatever the canvas's shape: for tests that
 /// click beside the drawing (a note above it, a crop dragged past its top), where a fit of
 /// the drawing alone would put those points off a wider canvas.
@@ -8493,9 +8534,7 @@ fn views_are_drawn_on_the_canvas_and_placed_on_sheets() {
     // (New sheet shows the sheet in the Inspector; the Views list is in the Sheets panel.)
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
-    h.get_by_label("Place on sheet").scroll_to_me();
-    h.run();
-    h.get_by_label("Place on sheet").click();
+    view_menu_item(&mut h, id, "Place on sheet");
     h.run();
     let on = placed(&h, sheet);
     assert_eq!(on.len(), 2);
@@ -8601,9 +8640,7 @@ fn views_are_drawn_on_the_canvas_and_placed_on_sheets() {
     // Deleting a view on sheets asks first, then takes it off them all; undo brings it back.
     h.state_mut().drawing.picked_view = Some(id);
     h.run();
-    h.get_by_label("Delete view").scroll_to_me();
-    h.run();
-    h.get_by_label("Delete view").click();
+    view_menu_item(&mut h, id, "Delete view");
     h.run();
     assert!(h.state().drawing.editor.doc.view(id).is_some(), "not yet");
     assert_eq!(h.state().drawing.confirm_delete_view, Some(id));
@@ -8885,9 +8922,7 @@ fn place_on_sheet_finds_free_paper() {
     h.state_mut().drawing.picked_view = Some(id);
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
-    h.get_by_label("Place again").scroll_to_me();
-    h.run();
-    h.get_by_label("Place again").click();
+    view_menu_item(&mut h, id, "Place again");
     h.run();
     let on = placed(&h, sheet);
     assert_eq!(on.len(), 3);
@@ -9069,7 +9104,7 @@ fn a_view_can_show_construction_geometry() {
     h.run();
     h.run();
     assert!(
-        h.query_by_label("Zoom to view").is_some(),
+        h.query_by_label_contains("Referenced by").is_some(),
         "the view, picked in the list"
     );
     assert!(h.query_by_label("Construction").is_none());
@@ -9313,7 +9348,7 @@ fn a_section_mark_makes_its_view_and_reads_its_number() {
         assert!(doc.sheets_showing(view).is_empty());
     }
     assert_eq!(h.state().drawing.picked_view, Some(view));
-    assert!(h.query_by_label("Zoom to view").is_some());
+    assert!(h.query_by_label_contains("Referenced by").is_some());
     assert_eq!(reads(&h), ("–".to_owned(), "–".to_owned()));
     // One undo step.
     h.state_mut().undo();
@@ -9333,9 +9368,7 @@ fn a_section_mark_makes_its_view_and_reads_its_number() {
     h.state_mut().drawing.picked_view = Some(view);
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
-    h.get_by_label("Place on sheet").scroll_to_me();
-    h.run();
-    h.get_by_label("Place on sheet").click();
+    view_menu_item(&mut h, view, "Place on sheet");
     h.run();
     assert_eq!(reads(&h), ("2".to_owned(), "A-101".to_owned()));
     // The view's Inspector on the sheet lists the mark.

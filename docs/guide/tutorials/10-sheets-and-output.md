@@ -131,12 +131,12 @@ and the sheets it's on (or **not placed**). Each sheet in the list above also sh
 views on it, under its name.
 
 - **Click** a view to pick it. Its crop shows on the canvas with its grips.
-- **Double-click** it, or click **Zoom to view**, to see its crop in the model.
+- **Double-click** it, or right-click it for **Zoom to view**, to see its crop in the model.
 - **Right-click** it (in the Views list or under its sheet) for **Place on sheet** (or
   **Place again**), **Zoom to view** and **Delete view**.
 - **Referenced by** lists the section and elevation marks that point at the view. Click
   one to pick it in the model.
-- **Delete view** deletes it. If it's on sheets, Drift asks first, and deleting takes it
+- **Delete view** (on its right-click menu) deletes it. If it's on sheets, Drift asks first, and deleting takes it
   off them all. Marks that pointed at it are unlinked in the same step. Undo brings it all
   back. With a view's crop picked on the canvas, the Delete key, the right-click menu's
   **Delete view…** and **Delete view…** in the command palette do the same.
@@ -147,7 +147,7 @@ views on it, under its name.
 
 1. Click the sheet's tab, **A-101**.
 2. Drag **Detail A** from the **Views** list onto the sheet, and let go where it should go.
-   You can also click **Place on sheet**: Drift puts it beside the views already there.
+   You can also right-click it for **Place on sheet**: Drift puts it beside the views already there.
 
 **Add view** in the rail (or V on a sheet) does both steps from the sheet: the canvas
 shows the model with the **View** tool, you drag the crop, and the new view goes on the

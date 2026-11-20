@@ -139,7 +139,7 @@ geometry itself (in the **Inspector**, or the top bar's **Stroke** menus).
   sheet, and the chevron at the sheet's left to show or hide them.
 - **Views:** every view in the drawing and the sheets it's on, and **Add view** for the
   sheet shown. Drag one onto the sheet, or use **Place on sheet** (or **Place again**),
-  **Zoom to view** or **Delete view**, under the picked view or on any view's right-click
+  **Zoom to view** or **Delete view** on its right-click
   menu (here or under its sheet); double-click one to zoom to it. A view on no sheet yet has
   **Name** and **Scale** here; once it's placed, its settings are in the **Inspector** (pick
   it on the sheet), and in the top bar when its crop is picked in the model.

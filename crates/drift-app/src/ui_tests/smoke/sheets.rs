@@ -635,11 +635,11 @@ fn smoke_sheet_view_settings_in_one_place() {
     h.state_mut().undo();
     h.run();
     assert_eq!(crop(&h), was);
-    // The Sheets panel's Views list: the view picked, its actions, and no second set of fields.
+    // The Sheets panel's Views list: the view picked, and no second set of fields.
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
     h.run();
-    assert!(h.query_by_label("Zoom to view").is_some());
+    assert!(h.query_by_label_contains("Referenced by").is_some());
     for label in ["Name", "Scale", "Crop"] {
         assert!(
             h.query_by_label(label).is_none(),

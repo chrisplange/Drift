@@ -55,7 +55,7 @@ pub use items::contrast;
 pub use layers::PickedShapes;
 pub use layers::{LayerFlag, LayerMove};
 pub use options::ConstraintOption;
-pub use outbox::Outbox;
+pub use outbox::{FilteredOut, Outbox};
 pub use pointer::{Anchor, Guide, GuideKind, Pointer};
 pub(crate) use regions::RegionsKey;
 pub(crate) use regions::interior_point;

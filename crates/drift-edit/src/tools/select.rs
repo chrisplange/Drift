@@ -878,6 +878,9 @@ impl Tool for SelectTool {
                 }
                 let target = click_target(ed, &p, mods);
                 click_pick(ed, &p, mods, target);
+                if target.is_none() && ed.selected_region.is_none() {
+                    filtered_out_click(ed, &p);
+                }
             }
             // Double-click a group's member to edit inside the group.
             Input::DoubleClick(p) => {
@@ -1231,6 +1234,7 @@ impl Tool for SelectTool {
                         ed.selected_annotation = None;
                         ed.annotation_picks.clear();
                     }
+                    let mut any = !found.is_empty();
                     ed.selection.extend(found);
                     ed.expand_groups();
                     // (Inside a group or block open for editing, only what's in it: no copies
@@ -1238,17 +1242,23 @@ impl Tool for SelectTool {
                     let scoped = ed.edit_scope().is_some();
                     if filter.blocks() && !scoped {
                         let copies = ed.instances_in(&rect, crossing);
+                        any |= !copies.is_empty();
                         ed.selected_instances.extend(copies);
                     }
                     if filter.fills() {
                         let fills = ed.fills_in(&rect, crossing);
                         let fills: Vec<_> =
                             fills.into_iter().filter(|f| ed.fill_in_scope(*f)).collect();
+                        any |= !fills.is_empty();
                         ed.selected_fills.extend(fills);
                     }
                     if filter.texts() && !scoped {
                         let texts = ed.texts_in(&rect, crossing);
+                        any |= !texts.is_empty();
                         ed.selected_texts.extend(texts);
+                    }
+                    if !any && !filter.is_all() {
+                        filtered_out_box(ed, rect, crossing);
                     }
                     // Dimensions and annotations are laid out on screen: the app picks them.
                     ed.out.box_pick = Some(crate::picks::BoxPick {
@@ -1435,6 +1445,87 @@ impl Tool for SelectTool {
 fn active_pick(ed: &Editor, id: EntityId) -> Option<EntityId> {
     let set = ed.pick_set(id);
     (set.len() == 1 && set.contains(&id)).then_some(id)
+}
+
+/// A click that picked nothing with the Pick filter narrowed: what it would have picked
+/// without the filter, for the app to say (#496).
+fn filtered_out_click(ed: &mut Editor, p: &Pointer) {
+    use crate::editor::PickKind;
+    let filter = ed.prefs.pick_filter;
+    if filter.is_all() {
+        return;
+    }
+    ed.prefs.pick_filter = crate::editor::PickFilter::ALL;
+    let hit = target_at(ed, p, Purpose::Click);
+    let area = hit.is_none() && !ed.regions_need_fill() && ed.visible_region_at(p.raw).is_some();
+    ed.prefs.pick_filter = filter;
+    let kind = match hit {
+        Some(Pick::Geometry(Target::Midpoint(_))) if filter.has(PickKind::Points) => {
+            Some(PickKind::Edges)
+        }
+        Some(Pick::Geometry(Target::Midpoint(_))) => Some(PickKind::Points),
+        Some(Pick::Geometry(Target::Entity(id))) => {
+            if ed.doc.get(id).is_some_and(|e| e.kind.is_point()) {
+                Some(PickKind::Points)
+            } else {
+                Some(PickKind::Edges)
+            }
+        }
+        Some(Pick::Text(_)) => Some(PickKind::Text),
+        Some(Pick::Copy(_)) => Some(PickKind::Blocks),
+        Some(Pick::Fill(_) | Pick::Wall(..)) => Some(PickKind::Fills),
+        None if area => Some(PickKind::Areas),
+        None => None,
+    };
+    ed.out.filtered_out = Some(crate::editor::FilteredOut {
+        kinds: kind.filter(|k| !filter.has(*k)).into_iter().collect(),
+        rect: Bounds::from_point(p.raw),
+        boxed: false,
+        crossing: false,
+    });
+}
+
+/// A box that picked nothing with the Pick filter narrowed: the kinds it would have picked
+/// without the filter, for the app to say (#496).
+fn filtered_out_box(ed: &mut Editor, rect: Bounds, crossing: bool) {
+    use crate::editor::PickKind;
+    let filter = ed.prefs.pick_filter;
+    let hidden = ed.hidden_handles();
+    let scoped = ed.edit_scope().is_some();
+    let mut kinds = Vec::new();
+    let mut add = |k: PickKind| {
+        if !filter.has(k) && !kinds.contains(&k) {
+            kinds.push(k);
+        }
+    };
+    for id in ed.index.select_in_rect(&rect, crossing) {
+        if ed.is_locked(id) || hidden.contains(&id) || !ed.in_scope(id) {
+            continue;
+        }
+        let point = ed.doc.get(id).is_some_and(|e| e.kind.is_point());
+        add(if point {
+            PickKind::Points
+        } else {
+            PickKind::Edges
+        });
+    }
+    if !scoped && !ed.instances_in(&rect, crossing).is_empty() {
+        add(PickKind::Blocks);
+    }
+    let fills = ed.fills_in(&rect, crossing);
+    if fills.into_iter().any(|f| ed.fill_in_scope(f)) {
+        add(PickKind::Fills);
+    }
+    if !scoped && !ed.texts_in(&rect, crossing).is_empty() {
+        add(PickKind::Text);
+    }
+    kinds.sort_by_key(|k| PickKind::ALL.iter().position(|a| a == k));
+    ed.out.filtered_out = Some(crate::editor::FilteredOut {
+        kinds,
+        rect,
+        boxed: true,
+        crossing,
+    });
 }
 
 /// What a click takes: with Shift or Ctrl what a single click picks; a plain click on the

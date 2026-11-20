@@ -1,4 +1,4 @@
-//! Picking and moving: the selection filters, G from a picked midpoint, X and Y locks in a
+//! Picking and moving: the Pick filter, G from a picked midpoint, X and Y locks in a
 //! mouse drag, an area on a hidden layer, and Alt-click on a layer's lock or snap.
 
 use crate::ui_tests::layer_toggles::{LOCK, SNAP, alt_toggle};
@@ -39,10 +39,7 @@ fn smoke_selection_filters_one_kind_or_several() {
             PickFilter::only(kind),
             "{kind:?}"
         );
-        assert!(
-            h.query_by_label("Selection filter on").is_some(),
-            "the badge"
-        );
+        assert!(h.query_by_label("Pick filter on").is_some(), "the badge");
     }
     // Fills alone: a click in the shape picks its fill, not its outline; the line isn't picked.
     pick_only(&mut h, "Fills");
@@ -55,8 +52,7 @@ fn smoke_selection_filters_one_kind_or_several() {
         "edges are off"
     );
     // Edges as well: the line picks too.
-    h.get_by_label("Pick Edges").click();
-    h.run();
+    pick_toggle(&mut h, "Pick Edges");
     assert_eq!(
         h.state().drawing.editor.prefs.pick_filter,
         PickFilter::only(PickKind::Fills).with(PickKind::Edges, true)
@@ -64,10 +60,9 @@ fn smoke_selection_filters_one_kind_or_several() {
     click_world(&mut h, DVec2::new(80.0, 10.0));
     assert_eq!(h.state().drawing.editor.selection, [loose].into());
     // All: everything again, and a click in the shape picks it whole.
-    h.get_by_label("All").click();
-    h.run();
+    pick_toggle(&mut h, "Pick everything");
     assert!(h.state().drawing.editor.prefs.pick_filter.is_all());
-    assert!(h.query_by_label("Selection filter on").is_none());
+    assert!(h.query_by_label("Pick filter on").is_none());
     click_world(&mut h, DVec2::new(20.0, 15.0));
     assert_eq!(
         h.state().drawing.editor.selection,

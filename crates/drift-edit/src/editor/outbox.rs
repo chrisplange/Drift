@@ -36,8 +36,26 @@ pub struct Outbox {
     /// What edits did to fills beyond following their outlines, until taken (by the
     /// assistant's results; the app clears it).
     pub fill_changes: Vec<crate::fills::FillChange>,
+    /// A click or box of the select tool that picked nothing while the Pick filter was
+    /// narrowed, with the kinds it would have picked without the filter (the app adds the
+    /// annotations, which it lays out, and says so).
+    pub filtered_out: Option<FilteredOut>,
     /// What Walls from lines did last.
     pub from_lines: Option<crate::walls_from_lines::FromLinesReport>,
+}
+
+/// What a select click or box would have picked but for the Pick filter (see
+/// [`Outbox::filtered_out`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct FilteredOut {
+    /// The kinds it hit that the filter leaves out (empty when it hit no geometry, text,
+    /// copy, fill or area: the app may still find annotations there).
+    pub kinds: Vec<crate::editor::PickKind>,
+    /// Where: the box, or for a click the point (a box of no size).
+    pub rect: drift_core::Bounds,
+    /// A box (dragged right to left: crossing), not a click.
+    pub boxed: bool,
+    pub crossing: bool,
 }
 
 impl Outbox {

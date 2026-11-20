@@ -164,7 +164,23 @@ fn set_placed(
 }
 
 /// Alt-click the select tool's filter toggle for `kind`: only that kind is picked.
+/// The Pick filter's list of kinds (#480), opened from the bar's control if it isn't open.
+fn open_pick_filter(h: &mut Harness<'_, DriftApp>) {
+    if h.query_by_label("Pick Points").is_none() {
+        h.get_by_label("Pick filter").click();
+        h.run();
+    }
+}
+
+/// A click on a row of the Pick filter's list ("Pick Edges", "Pick everything").
+fn pick_toggle(h: &mut Harness<'_, DriftApp>, label: &str) {
+    open_pick_filter(h);
+    h.get_by_label(label).click();
+    h.run();
+}
+
 fn pick_only(h: &mut Harness<'_, DriftApp>, kind: &str) {
+    open_pick_filter(h);
     h.event(Event::ModifiersChanged(EguiModifiers::ALT));
     h.run();
     h.get_by_label(&format!("Pick {kind}")).click();
@@ -5431,6 +5447,7 @@ fn hatch_handles_move_and_turn_the_pattern() {
 
 #[test]
 fn control_bar_sets_stroke_weight_and_line_type() {
+    use egui_kittest::kittest::NodeT as _;
     use egui_kittest::kittest::Queryable as _;
     let Some(mut h) = harness() else { return };
     h.get_by_label("Line").click();
@@ -5460,6 +5477,8 @@ fn control_bar_sets_stroke_weight_and_line_type() {
                     crate::theme::bar::TOP..crate::theme::bar::TOP + crate::theme::bar::OPTIONS;
                 bar.contains(&c.rect().top()) && bar.contains(&c.rect().bottom())
             })
+            // (Not the Pick filter, before them.)
+            .filter(|c| c.accesskit_node().label().as_deref() != Some("Pick filter"))
             .collect();
         combos.sort_by(|a, b| a.rect().left().total_cmp(&b.rect().left()));
         combos[index].click();
@@ -7485,8 +7504,7 @@ fn top_bar_switches_for_dimensions_selection_and_sheet_scales() {
         h.state().drawing.editor.prefs.pick_filter,
         drift_edit::editor::PickFilter::only(drift_edit::editor::PickKind::Edges)
     );
-    h.get_by_label("All").click();
-    h.run();
+    pick_toggle(&mut h, "Pick everything");
     assert_eq!(
         h.state().drawing.editor.prefs.pick_filter,
         drift_edit::editor::PickFilter::ALL
@@ -9896,8 +9914,7 @@ fn boxes_pick_annotations_and_text_with_the_filter() {
     assert_eq!(picked(&h), vec![AnnotationRef::Annotation(note)]);
 
     // All: the same window takes everything, and the Inspector says what.
-    h.get_by_label("All").click();
-    h.run();
+    pick_toggle(&mut h, "Pick everything");
     everything(&mut h);
     let ed = &h.state().drawing.editor;
     assert!(lines.iter().all(|l| ed.selection.contains(l)));

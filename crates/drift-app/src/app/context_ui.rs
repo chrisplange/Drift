@@ -33,147 +33,6 @@ pub(super) fn choice<T: Copy + PartialEq>(
     out
 }
 
-/// One chip of the pick filter, painted at `rect`: on, the accent's tint and the text's
-/// tone; off, the secondary tone and no fill.
-fn pick_chip(ui: &egui::Ui, rect: egui::Rect, response: &egui::Response, on: bool, label: &str) {
-    let dark = ui.visuals().dark_mode;
-    let n = theme::neutrals(dark);
-    let radius = theme::radius::CONTROL - 1;
-    if on {
-        // (On Light's grey track the tint alone is too faint: it sits on the picked white.)
-        if !dark {
-            ui.painter()
-                .rect_filled(rect, radius, theme::segment_picked(dark));
-        }
-        ui.painter()
-            .rect_filled(rect, radius, theme::accent_soft(dark));
-    } else if response.hovered() {
-        ui.painter()
-            .rect_filled(rect, radius, if dark { n.faint } else { n.hover });
-    }
-    let color = if on || response.hovered() {
-        n.text
-    } else {
-        n.secondary
-    };
-    ui.painter().text(
-        rect.center(),
-        egui::Align2::CENTER_CENTER,
-        label,
-        egui::FontId::proportional(theme::size::LABEL),
-        color,
-    );
-}
-
-/// The select tool's filter: a track with a chip for each kind it picks, and All beside it.
-/// Alt-click or double-click a chip for that kind alone. Returns the filter clicked to.
-fn pick_filter_toggles(
-    ui: &mut egui::Ui,
-    filter: drift_edit::editor::PickFilter,
-) -> Option<drift_edit::editor::PickFilter> {
-    use drift_edit::editor::{PickFilter, PickKind};
-    let mut out = None;
-    let dark = ui.visuals().dark_mode;
-    let n = theme::neutrals(dark);
-    let gap = ui.spacing().item_spacing.x;
-    caption(ui, "Pick");
-    // (8 points from the caption to the track, and from the track to All.)
-    ui.add_space(8.0 - gap);
-    let font = egui::FontId::proportional(theme::size::LABEL);
-    let width = |text: &str| {
-        ui.painter()
-            .layout_no_wrap(text.to_owned(), font.clone(), egui::Color32::WHITE)
-            .size()
-            .x
-            + 16.0
-    };
-    let labels = PickKind::ALL.map(|kind| match kind {
-        // (Short, so the bar fits; the tooltip has the whole name.)
-        PickKind::Blocks => "Blocks",
-        k => k.label(),
-    });
-    let widths = labels.map(width);
-    let all_width = width("All");
-    let (track, track_response) = ui.allocate_exact_size(
-        egui::vec2(widths.iter().sum::<f32>() + 4.0, 24.0),
-        egui::Sense::hover(),
-    );
-    ui.painter().rect(
-        track,
-        theme::radius::CONTROL + 1,
-        theme::segment_track(dark),
-        egui::Stroke::new(1.0, n.border),
-        egui::StrokeKind::Inside,
-    );
-    let mut x = track.left() + 2.0;
-    for (i, kind) in PickKind::ALL.into_iter().enumerate() {
-        let on = filter.has(kind);
-        let rect = egui::Rect::from_min_size(
-            egui::pos2(x, track.top() + 2.0),
-            egui::vec2(widths[i], track.height() - 4.0),
-        );
-        x += widths[i];
-        let response = ui.interact(
-            rect,
-            track_response.id.with(("pick", i)),
-            egui::Sense::click(),
-        );
-        response.widget_info(|| {
-            egui::WidgetInfo::selected(
-                egui::WidgetType::Checkbox,
-                true,
-                on,
-                format!("Pick {}", kind.label()),
-            )
-        });
-        pick_chip(ui, rect, &response, on, labels[i]);
-        let alone =
-            response.double_clicked() || (response.clicked() && ui.input(|i| i.modifiers.alt));
-        if alone {
-            out = Some(PickFilter::only(kind));
-        } else if response.clicked() {
-            out = Some(filter.with(kind, !on));
-        }
-        response.on_hover_text(format!(
-            "{}: picks {} · Alt-click or double-click: pick only {}",
-            kind.label(),
-            kind.picks(),
-            kind.label().to_lowercase()
-        ));
-    }
-    ui.add_space(8.0 - gap);
-    // All: on while everything is picked; a click puts everything back otherwise.
-    let all = filter.is_all();
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(all_width, 24.0), egui::Sense::click());
-    response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, all, "All"));
-    ui.painter().rect(
-        rect,
-        theme::radius::CONTROL,
-        if all {
-            egui::Color32::TRANSPARENT
-        } else if response.is_pointer_button_down_on() {
-            n.pressed
-        } else if response.hovered() {
-            n.hover
-        } else {
-            n.control
-        },
-        egui::Stroke::new(1.0, n.control_border),
-        egui::StrokeKind::Inside,
-    );
-    pick_chip(ui, rect.shrink(1.0), &response, all, "All");
-    if response.clicked() && !all {
-        out = Some(PickFilter::ALL);
-    }
-    response.on_hover_text(if all {
-        "Everything is picked"
-    } else {
-        "Pick everything again"
-    });
-    out
-}
-
 /// [`choice`], with a tooltip on the whole control (for the key that switches it).
 fn keyed_choice<T: Copy + PartialEq>(
     ui: &mut egui::Ui,
@@ -593,6 +452,23 @@ impl DriftApp {
                 );
                 let (r, _) = ui.allocate_exact_size(name.size(), egui::Sense::hover());
                 ui.painter().galley(r.min, name, egui::Color32::WHITE);
+                // The Pick filter, with every tool (on a sheet the model isn't picked from):
+                // with its caption for Select with nothing picked, else the button alone.
+                if !self.drawing.view.sheet_preview {
+                    let slot = theme::group_divider_slot(ui);
+                    theme::paint_bar_divider(ui, slot);
+                    let picked = !self.drawing.editor.selection.is_empty()
+                        || !self.drawing.editor.selected_instances.is_empty()
+                        || !self.drawing.editor.selected_fills.is_empty();
+                    let compact = kind != ToolKind::Select || picked;
+                    if let Some(f) = crate::app::pick_filter_ui::pick_filter_control(
+                        ui,
+                        self.drawing.editor.prefs.pick_filter,
+                        compact,
+                    ) {
+                        self.set_pick_filter(f);
+                    }
+                }
                 // A hairline before the options, when the tool or the selection has any.
                 let line = theme::group_divider_slot(ui);
                 let before = ui.min_rect().right();
@@ -874,17 +750,6 @@ impl DriftApp {
 
     /// Quick actions for the selection (the select tool's options).
     fn selection_actions(&mut self, ui: &mut egui::Ui) {
-        // What a click or a box picks: always offered with nothing picked; with something
-        // picked (the bar is full), only while a filter is on.
-        let picked = !self.drawing.editor.selection.is_empty()
-            || !self.drawing.editor.selected_instances.is_empty()
-            || !self.drawing.editor.selected_fills.is_empty();
-        if !picked || !self.drawing.editor.prefs.pick_filter.is_all() {
-            if let Some(f) = pick_filter_toggles(ui, self.drawing.editor.prefs.pick_filter) {
-                self.set_pick_filter(f);
-            }
-            divider(ui);
-        }
         let ed = &self.drawing.editor;
         let n = ed.selection.len() + ed.selected_instances.len();
         if n == 0 && !ed.selected_fills.is_empty() {

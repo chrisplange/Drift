@@ -46,6 +46,20 @@ impl PickKind {
         }
     }
 
+    /// Its name where room is short (the bar's Pick filter button): Blocks & groups is
+    /// Blocks there.
+    pub fn short_label(self) -> &'static str {
+        match self {
+            PickKind::Blocks => "Blocks",
+            k => k.label(),
+        }
+    }
+
+    /// Whether its name is a plural ("Fills are…", "Text is…").
+    pub fn is_plural(self) -> bool {
+        self != PickKind::Text
+    }
+
     /// What it picks, in a few words.
     pub fn picks(self) -> &'static str {
         match self {
@@ -105,6 +119,19 @@ impl PickFilter {
     /// The kinds that are on.
     pub fn kinds(self) -> impl Iterator<Item = PickKind> {
         PickKind::ALL.into_iter().filter(move |k| self.has(*k))
+    }
+
+    /// What it picks, as the Pick filter names it: "All", the one kind ("Edges"), two kinds
+    /// ("Points & Edges"), "3 kinds", or "Nothing".
+    pub fn summary(self) -> String {
+        let kinds: Vec<PickKind> = self.kinds().collect();
+        match kinds.as_slice() {
+            _ if self.is_all() => "All".to_owned(),
+            [] => "Nothing".to_owned(),
+            [k] => k.label().to_owned(),
+            [a, b] => format!("{} & {}", a.short_label(), b.short_label()),
+            more => format!("{} kinds", more.len()),
+        }
     }
 
     /// Whether an entity may be picked: a point with Points, a curve with Edges (or, in a

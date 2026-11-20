@@ -408,9 +408,12 @@ impl DriftApp {
                 Place::Tile(size) => icons::tool_tile(ui, size, selected, label, draw),
             })
             .inner;
-        if command == Command::Tool(ToolKind::Select) {
-            self.pick_filter_badge(ui, &response);
-        }
+        // (A click on the Pick filter's mark is a click on the tool.)
+        let badge = (command == Command::Tool(ToolKind::Select))
+            .then(|| self.pick_filter_badge(ui, &response, edge))
+            .flatten();
+        let badge_hovered = badge.as_ref().is_some_and(|b| b.hovered());
+        let clicked = response.clicked() || badge.as_ref().is_some_and(|b| b.clicked());
         // A family's flyout: right-click, or hold the button down.
         let frame = ui.ctx().cumulative_frame_nr();
         if family {
@@ -439,12 +442,13 @@ impl DriftApp {
             }
         }
         // No place's tooltip while a flyout is open: it would draw over the flyout's rows.
-        if self.rail_flyout.is_none() {
+        // (Nor over the Pick filter mark's own.)
+        if self.rail_flyout.is_none() && !badge_hovered {
             tip_beside(&response, edge, |ui| {
                 self.rail_tooltip(ui, Some(slot), command, enabled);
             });
         }
-        if !response.clicked() || !enabled {
+        if !clicked || !enabled {
             return None;
         }
         // Letting go after holding it open isn't a click.
@@ -510,6 +514,15 @@ impl DriftApp {
                 others.join(", ")
             )));
         }
+        // The Select tool's Pick filter, while it is narrowed (#496).
+        let filter = self.drawing.editor.prefs.pick_filter;
+        if command == Command::Tool(ToolKind::Select) && !filter.is_all() {
+            ui.label(
+                egui::RichText::new(crate::app::pick_filter_ui::describe(filter))
+                    .small()
+                    .color(theme::amber(ui.visuals().dark_mode)),
+            );
+        }
         if !enabled {
             ui.label(
                 egui::RichText::new(spec.when.reason())
@@ -519,33 +532,60 @@ impl DriftApp {
         }
     }
 
-    /// A filter on: a badge on the Select tool, so it isn't forgotten.
-    fn pick_filter_badge(&self, ui: &mut egui::Ui, response: &egui::Response) {
+    /// The Pick filter narrowed: a funnel on the Select tool, so it isn't forgotten (#496).
+    /// It sits on a disc cut out of the tile, in amber, so it reads apart from the accent of
+    /// the current tool in every look (Obsidian's accent is orange too). Its tooltip names the
+    /// filter; it takes a 16-point square, clear of the tool's own tooltip.
+    fn pick_filter_badge(
+        &self,
+        ui: &mut egui::Ui,
+        response: &egui::Response,
+        edge: f32,
+    ) -> Option<egui::Response> {
         let filter = self.drawing.editor.prefs.pick_filter;
         if filter.is_all() {
-            return;
+            return None;
         }
         let r = response.rect;
-        let at = egui::pos2(r.right() - 7.0, r.top() + 7.0);
+        let at = egui::pos2(r.right() - 6.0, r.top() + 6.0);
         let dark = ui.visuals().dark_mode;
-        ui.painter()
-            .circle_filled(at, 4.0, theme::warning_color(dark));
-        let kinds: Vec<&str> = filter.kinds().map(|k| k.label()).collect();
-        let tip = if kinds.is_empty() {
-            "Selection filter on: nothing can be picked".to_owned()
-        } else {
-            format!("Selection filter on: picks {}", kinds.join(", "))
-        };
-        let badge = ui
-            .interact(
-                egui::Rect::from_center_size(at, egui::vec2(10.0, 10.0)),
-                ui.id().with("pick_filter_badge"),
-                egui::Sense::hover(),
-            )
-            .on_hover_text(tip);
+        let n = theme::neutrals(dark);
+        let amber = theme::amber(dark);
+        ui.painter().circle(
+            at,
+            6.5,
+            n.panel,
+            egui::Stroke::new(1.0, amber.gamma_multiply(0.8)),
+        );
+        icons::glyph(
+            ui.painter(),
+            egui::Rect::from_center_size(at + egui::vec2(0.0, 0.5), egui::vec2(8.0, 8.0)),
+            icons::Glyph::Filter,
+            amber,
+        );
+        let badge = ui.interact(
+            egui::Rect::from_center_size(at, egui::vec2(16.0, 16.0)),
+            ui.id().with("pick_filter_badge"),
+            egui::Sense::click(),
+        );
         badge.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "Selection filter on")
+            egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "Pick filter on")
         });
+        tip_beside(&badge, edge, |ui| {
+            ui.set_max_width(TIP_WIDTH);
+            ui.label(
+                egui::RichText::new(crate::app::pick_filter_ui::describe(filter))
+                    .family(theme::bold())
+                    .color(ui.visuals().strong_text_color()),
+            );
+            ui.label(
+                egui::RichText::new(
+                    "Clicks and boxes pick only these. Set it with the bar's Pick filter",
+                )
+                .color(n.secondary),
+            );
+        });
+        Some(badge)
     }
 
     /// The open flyout: the family's commands with their keys. Returns the one picked.

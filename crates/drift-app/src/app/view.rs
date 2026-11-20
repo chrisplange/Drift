@@ -1001,6 +1001,7 @@ impl DriftApp {
             }
         }
         self.take_box_pick(&map, &pick_dims, &pick_notes);
+        self.take_filtered_out(&map, &pick_dims, &pick_notes);
         // A click that didn't step click-again-to-pick-the-next went elsewhere: the next
         // starts again.
         self.drawing.editor.pick_cycle.end_frame(
@@ -1469,6 +1470,7 @@ impl DriftApp {
             let bar_id = app::quick_bar::rect_id();
             ui.ctx().data_mut(|d| d.remove::<egui::Rect>(bar_id));
         }
+        let mut offer = None;
         if let Some(status) = &self.status {
             let now = ui.input(|i| i.time);
             if now < status.until {
@@ -1483,6 +1485,9 @@ impl DriftApp {
                     fade,
                 );
                 ui.ctx().data_mut(|d| d.insert_temp(toast_id, shown));
+                if self.drawing.pick_all_offer.as_deref() == Some(status.text.as_str()) {
+                    offer = Some(shown);
+                }
                 // Sleep until the fade starts, then animate it.
                 let remaining = status.until - now;
                 let wait = if remaining > 0.4 {
@@ -1492,6 +1497,23 @@ impl DriftApp {
                 };
                 ui.ctx()
                     .request_repaint_after(std::time::Duration::from_secs_f64(wait));
+            }
+        }
+        // The Pick filter's message (#496): a click on it picks everything again.
+        if let Some(shown) = offer {
+            let response = ui
+                .interact(shown, ui.id().with("pick_all_offer"), egui::Sense::click())
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(
+                    egui::WidgetType::Button,
+                    true,
+                    "Pick everything (Pick filter message)",
+                )
+            });
+            if response.clicked() {
+                self.set_pick_filter(drift_edit::editor::PickFilter::ALL);
+                self.status_next = Some("Pick filter off: everything can be picked".into());
             }
         }
         let ctx = ui.ctx().clone();

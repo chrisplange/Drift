@@ -291,11 +291,11 @@ impl Editor {
                     .copied()
                     .flat_map(Param::point)
                     .collect();
-                if !self.drag(&[curve], dir * delta, &dragged) {
+                if !self.drag_to(&[curve], dir * delta, &dragged) {
                     // Too far for one solve: go in steps.
                     const STEPS: u32 = 16;
                     for _ in 0..STEPS {
-                        self.drag(&[curve], dir * delta / f64::from(STEPS), &dragged);
+                        self.drag_to(&[curve], dir * delta / f64::from(STEPS), &dragged);
                     }
                 }
                 // A drag follows closely rather than exactly: close what's left.
@@ -306,7 +306,7 @@ impl Editor {
                     if (value - now).abs() < 1e-10 {
                         break;
                     }
-                    self.drag(&[curve], dir * (value - now), &dragged);
+                    self.drag_to(&[curve], dir * (value - now), &dragged);
                 }
                 let reached = drift_solver::measure(&self.doc, &t.constraint)
                     .is_some_and(|now| (now - value).abs() <= 1e-6 * (1.0 + value));

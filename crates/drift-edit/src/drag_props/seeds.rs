@@ -2611,9 +2611,9 @@ fn e_result_depends_on_size_patience_cut_at_one_size() {
 /// No solve of a drag frame is held looser than the frame's first, however its retakes and
 /// steps fling the geometry (`DragFrame::first_bar`, passed as `SolveOptions::bar_cap`; the
 /// guard of #280's `every_solve_of_a_frame_reads_the_frames_size`, restored for PR 2's bars):
-/// `tangent_and_parallel`'s drag, whose one frame takes dozens of solves with its arc flung
-/// to hundreds of metres mid-try. (Read from each solve's own start, its bars ran from 1e-8 to
-/// 1.9e-4, a part 770 m across.)
+/// `tangent_and_parallel`'s drag, whose one frame takes several solves. (In one solve first,
+/// before #362, it took dozens, with its arc flung to hundreds of metres mid-try: read from
+/// each solve's own start, its bars ran from 1e-8 to 1.9e-4, a part 770 m across.)
 #[test]
 fn no_solve_of_a_frame_is_held_looser_than_its_first() {
     let sketch = tangent_and_parallel_plan().sketch().unwrap();
@@ -2634,7 +2634,7 @@ fn no_solve_of_a_frame_is_held_looser_than_its_first() {
         &dragged,
     );
     let bars = built.ed.drag_bars.take().unwrap();
-    assert!(bars.len() >= 10, "only {} solves", bars.len());
+    assert!(bars.len() > 1, "only {} solves", bars.len());
     assert!(
         bars.iter().all(|&b| b <= bars[0]),
         "first {:e}, coarsest {:e}",

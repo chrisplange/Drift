@@ -72,8 +72,14 @@ struct Geometry {
     radii: std::collections::HashMap<EntityId, f64>,
     /// Lines' lengths to keep where they can (when a move of curves carries them along).
     lengths: std::collections::HashMap<EntityId, f64>,
-    /// Lines a move of curves keeps from turning round (all but those with a dragged end).
-    lines: Vec<EntityId>,
+    /// Lines a move of curves keeps from turning round (all but those with a dragged end,
+    /// and those too short to see as the drag begins), each with its length as the drag began.
+    lines: Vec<(EntityId, f64)>,
+    /// Where the dragged points are asked to be as a step of a drag begins, where that isn't
+    /// where they are: the drag's start plus the whole offset, for the solve that settles a
+    /// frame by the pointer (see `Editor::settle_by_the_pointer`). Empty for any other step,
+    /// which is aimed from where the points are.
+    asked: std::collections::HashMap<EntityId, DVec2>,
 }
 
 /// Why an edit was refused.
@@ -148,9 +154,17 @@ pub struct Editor {
     /// How many times the last drag call tried a frame again with the solver's fold steps
     /// (see `Editor::drag_frame`; for the tests).
     pub(crate) drag_folds: u32,
+    /// Of those tries, the ones kept (they landed).
+    pub(crate) drag_folds_kept: u32,
+    /// The drag call in hand moves to a place that was typed or worked out, not one the
+    /// pointer went to (see `Editor::drag_to`).
+    pub(crate) drag_to_a_place: bool,
     /// Whether a drag never tries a frame with the fold steps (for the tests: a drag as it
     /// was without).
     pub(crate) drag_no_fold: bool,
+    /// Whether a drag undoes every try with the fold steps, landed or not (for the tests: a
+    /// try that isn't kept must leave its step exactly as it was).
+    pub(crate) drag_undo_folds: bool,
     /// How many times the last drag call tried a frame again to keep a hanging line's length,
     /// how many of those it kept, and the solves the tries ran (see `Editor::keep_lengths`;
     /// for the tests).

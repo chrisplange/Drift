@@ -8,6 +8,10 @@ traced and accepted (see docs/solver-audit.md, section 5). Exit status 1 if:
   can't break it again unseen);
 - a run doesn't finish within --timeout seconds (a drag that loops).
 
+It also lists the similarity seeds that pass only because a singular drag is judged by its
+outcome (#362's decision 2): each passing seed is run once more with every drag held to 1e-6
+(`DRIFT_SIMILARITY_STRICT=1`). That list never fails the run.
+
     python scripts/solver-bar/heavy.py [--jobs N] [--out DIR] [--seeds 1-20] [--exe PATH]
 
 Without --exe it builds the drift-edit test binary in release first; a failed build prints
@@ -90,10 +94,19 @@ def expected():
     return pairs
 
 
-def run(exe, out, prop, seed, timeout):
-    """Run one property at one seed; (property, seed, passed, note)."""
+SIMILARITY = "drag_is_invariant_under_similarity_heavy"
+
+
+def run(exe, out, prop, seed, timeout, strict=False):
+    """Run one property at one seed; (property, seed, passed, note). `strict`: with the
+    similarity property's singular drags held to 1e-6 like any other (see below)."""
     env = dict(os.environ, PROPTEST_RNG_SEED=str(seed), PROPTEST_DISABLE_FAILURE_PERSISTENCE="1")
     log_path = out / f"{prop}-{seed}.log"
+    if strict:
+        env["DRIFT_SIMILARITY_STRICT"] = "1"
+        log_path = out / f"{prop}-{seed}-strict.log"
+    else:
+        env.pop("DRIFT_SIMILARITY_STRICT", None)
     try:
         proc = subprocess.run(
             [exe, f"drag_props::{prop}", "--exact", "--ignored", "--test-threads=1"],
@@ -136,6 +149,20 @@ def main():
             if note:
                 notes[(prop, seed)] = note
 
+    # The similarity seeds that pass, once more with a singular drag held to 1e-6 like any
+    # other: those that then fail pass only by being judged by their outcome (#362's
+    # decision 2). Listed, never a failure: so what that rule excuses stays in sight, on each
+    # platform.
+    excused = []
+    with concurrent.futures.ThreadPoolExecutor(args.jobs) as pool:
+        jobs = [pool.submit(run, exe, out, SIMILARITY, s, args.timeout, True)
+                for s in seeds if results.get((SIMILARITY, s))]
+        for job in concurrent.futures.as_completed(jobs):
+            _, seed, ok, note = job.result()
+            if not ok and not note:
+                excused.append(seed)
+    excused.sort()
+
     fails = sorted(k for k, ok in results.items() if not ok)
     new = [k for k in fails if k not in want]
     fixed = sorted(k for k in want if k[1] in seeds and results.get(k))
@@ -152,6 +179,8 @@ def main():
     if fixed:
         lines += ["", "**Expected to fail but passed** (remove its line from expected.txt): "
                   + ", ".join(f"`{p}` {s}" for p, s in fixed)]
+    lines += ["", "Similarity seeds that pass only as singular drags judged by outcome (they fail "
+              "held to 1e-6): " + (", ".join(map(str, excused)) or "none")]
     if notes:
         lines += ["", "Runs that didn't finish: " + ", ".join(f"`{p}` {s} ({n})" for (p, s), n in sorted(notes.items()))]
     summary = "\n".join(lines) + "\n"

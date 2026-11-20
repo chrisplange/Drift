@@ -341,7 +341,11 @@ impl DriftApp {
                         } else {
                             "Page"
                         });
-                        ui.add(egui::DragValue::new(&mut pending.page).range(1..=pending.pages));
+                        theme::drag_sized(
+                            ui,
+                            56.0,
+                            egui::DragValue::new(&mut pending.page).range(1..=pending.pages),
+                        );
                         ui.label(format!("of {}", pending.pages));
                     });
                 }
@@ -423,7 +427,8 @@ impl DriftApp {
                         );
                     }
                 }
-                ui.checkbox(
+                theme::checkbox(
+                    ui,
                     &mut pending.calibrate,
                     "Then calibrate: pick two points on it and type their real distance",
                 )
@@ -436,7 +441,7 @@ impl DriftApp {
                 // A PDF's pictures come in with it either way; an SVG's only as geometry.
                 let pdf = matches!(pending.source, ImportSource::Pdf(_));
                 if pictures && (pdf || !pending.underlay()) {
-                    ui.checkbox(&mut pending.images, "Bring in images as pictures")
+                    theme::checkbox(ui, &mut pending.images, "Bring in images as pictures")
                         .on_hover_text(
                             "Photos and scans in the file come in as pictures on an underlay \
                              beneath the drawing",
@@ -445,12 +450,14 @@ impl DriftApp {
                 if !pending.underlay() {
                     ui.add_space(6.0);
                     ui.label("Edges of shapes that are filled but not outlined:");
-                    ui.radio_value(
+                    theme::radio_value(
+                        ui,
                         &mut pending.construction_edges,
                         true,
                         "Construction: they shape the fill, and don't print",
                     );
-                    ui.radio_value(
+                    theme::radio_value(
+                        ui,
                         &mut pending.construction_edges,
                         false,
                         "Lines: they print, in the layer's style",

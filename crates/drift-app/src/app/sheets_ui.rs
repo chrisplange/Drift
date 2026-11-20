@@ -1744,30 +1744,6 @@ impl DriftApp {
         }
         self.paint_sheet_tool_hint(&painter, rect);
         self.paint_drop_ghost(ui, &response, rect, &views);
-        // What this is, and how to leave.
-        // The paper and scale (the tab above names the sheet).
-        let info = format!(
-            "{} {} · {}",
-            sheet.paper.label(),
-            if sheet.portrait {
-                "portrait"
-            } else {
-                "landscape"
-            },
-            self.drawing.editor.doc.sheet_scale_text(&sheet)
-        );
-        let galley = painter.layout_no_wrap(
-            info,
-            egui::FontId::proportional(12.0),
-            ui.visuals().text_color(),
-        );
-        let at = rect.left_top() + egui::vec2(12.0, 10.0);
-        painter.rect_filled(
-            egui::Rect::from_min_size(at, galley.size()).expand2(egui::vec2(8.0, 4.0)),
-            8.0,
-            ui.visuals().window_fill.gamma_multiply(0.92),
-        );
-        painter.galley(at, galley, ui.visuals().text_color());
     }
 
     /// The view of `sheet` picked in the sheet editor and the Sheets panel.

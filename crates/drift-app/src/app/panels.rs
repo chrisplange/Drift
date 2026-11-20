@@ -786,7 +786,7 @@ impl DriftApp {
                         Some(C::ExportModelPdf),
                     ],
                 );
-                ui.checkbox(&mut self.model_annotations, "Dimensions and notes")
+                theme::checkbox(ui, &mut self.model_annotations, "Dimensions and notes")
                     .on_hover_text("Model exports include dimensions and notes");
                 ui.separator();
                 self.command_item(ui, C::ExportProfiles);
@@ -1880,6 +1880,32 @@ impl DriftApp {
         }
     }
 
+    /// On a sheet, its paper and scale (`A3 landscape · 1:50`) in the status bar, beside the
+    /// zoom: the tab above names the sheet, and nothing sits over the paper.
+    fn sheet_readout(&self, ui: &mut egui::Ui) {
+        if !self.drawing.view.sheet_preview {
+            return;
+        }
+        let doc = &self.drawing.editor.doc;
+        let Some(sheet) = self.current_sheet().and_then(|id| doc.sheet(id)) else {
+            return;
+        };
+        let info = format!(
+            "{} {} · {}",
+            sheet.paper.label(),
+            if sheet.portrait {
+                "portrait"
+            } else {
+                "landscape"
+            },
+            doc.sheet_scale_text(sheet)
+        );
+        theme::bar_divider(ui);
+        theme::bar_caption(ui, &info)
+            .on_hover_text("This sheet's paper and the scale of its views");
+        theme::bar_divider(ui);
+    }
+
     /// The status bar's zoom: out, the percentage (which opens the zoom menu) and in. Laid
     /// out from the right.
     fn zoom_control(&mut self, ui: &mut egui::Ui) {
@@ -1997,6 +2023,7 @@ impl DriftApp {
                     // One control height across the bar.
                     ui.spacing_mut().interact_size.y = 22.0;
                     self.zoom_control(ui);
+                    self.sheet_readout(ui);
                     #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
                     self.link_pill(ui);
                     if !self.drawing.editor.doc.is_empty() {
@@ -2136,6 +2163,7 @@ impl DriftApp {
                         f => f.symbol(),
                     };
                     egui::ComboBox::from_id_salt("status_units")
+                        .icon(theme::combo_icon)
                         .selected_text(short(units.length))
                         .width(56.0)
                         .show_ui(ui, |ui| {
@@ -2237,12 +2265,12 @@ impl DriftApp {
                     .on_hover_text(tip);
                     egui::Popup::menu(&button).show(|ui| {
                         ui.set_min_width(130.0);
-                        if ui.radio(angle_snap.is_none(), "Off").clicked() {
+                        if theme::menu_check(ui, angle_snap.is_none(), "Off", "").clicked() {
                             *angle_snap = None;
                         }
                         for step in crate::ANGLE_STEPS {
                             let picked = *angle_snap == Some(step);
-                            if ui.radio(picked, format!("Every {step}°")).clicked() {
+                            if theme::menu_check(ui, picked, &format!("Every {step}°"), "").clicked() {
                                 *angle_snap = Some(step);
                             }
                         }

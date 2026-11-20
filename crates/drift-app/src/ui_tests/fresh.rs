@@ -290,6 +290,24 @@ const SCENES: &[Scene] = &[
         h.hover_at(at + egui::vec2(-90.0, 60.0));
         h.run();
     }),
+    // The import dialog: its checkboxes and radio buttons.
+    ("import", |h| {
+        open_example(h);
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="60mm" viewBox="0 0 100 60"><rect x="10" y="10" width="60" height="30" fill="#888"/><line x1="0" y1="0" x2="100" y2="60" stroke="black"/></svg>"##;
+        h.state_mut().begin_import(
+            "plan.svg",
+            svg.as_bytes().to_vec(),
+            Some(crate::app::import_ui::ImportAs::Geometry),
+            0.0,
+        );
+        h.run_steps(3);
+    }),
+    // The angle-snap menu of the status bar.
+    ("angle-snap", |h| {
+        open_example(h);
+        h.get_by_label("Angle snap").click();
+        h.run();
+    }),
     // The Wall tool's options, and the pointer over the canvas (its position in the status
     // bar).
     ("wall-tool", |h| {

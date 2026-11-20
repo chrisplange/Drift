@@ -280,13 +280,13 @@ impl DriftApp {
                 .show(ui, |ui| match a.mode {
                     ArrayMode::Linear => {
                         let label = ui.label("Count");
-                        changed |= ui
-                            .add_sized(
-                                [70.0, ui.spacing().interact_size.y],
-                                egui::DragValue::new(&mut a.linear_count).range(2..=500),
-                            )
-                            .labelled_by(label.id)
-                            .changed();
+                        changed |= theme::drag_sized(
+                            ui,
+                            70.0,
+                            egui::DragValue::new(&mut a.linear_count).range(2..=500),
+                        )
+                        .labelled_by(label.id)
+                        .changed();
                         ui.end_row();
                         changed |= field(ui, "Spacing X", &mut a.dx, Kind::Length);
                         changed |= field(ui, "Y", &mut a.dy, Kind::Length);
@@ -294,13 +294,13 @@ impl DriftApp {
                     }
                     ArrayMode::Circular => {
                         let label = ui.label("Count");
-                        changed |= ui
-                            .add_sized(
-                                [70.0, ui.spacing().interact_size.y],
-                                egui::DragValue::new(&mut a.circular_count).range(2..=500),
-                            )
-                            .labelled_by(label.id)
-                            .changed();
+                        changed |= theme::drag_sized(
+                            ui,
+                            70.0,
+                            egui::DragValue::new(&mut a.circular_count).range(2..=500),
+                        )
+                        .labelled_by(label.id)
+                        .changed();
                         changed |= field(ui, "Angle", &mut a.angle, Kind::Angle);
                         ui.end_row();
                         changed |= field(ui, "Center X", &mut a.cx, Kind::Length);

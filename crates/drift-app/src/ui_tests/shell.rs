@@ -373,3 +373,24 @@ fn undo_and_redo_with_nothing_to_undo_read_as_disabled() {
             .is_disabled()
     );
 }
+
+/// On a sheet, its paper and scale are said in the status bar, under the canvas: nothing
+/// sits over the paper (a chip there covered its corner). In the model it isn't shown.
+#[test]
+fn a_sheets_paper_and_scale_are_in_the_status_bar() {
+    let Some(mut h) = harness_at(1280.0, 700.0) else {
+        return;
+    };
+    h.run();
+    assert!(h.query_by_label("A3 landscape · No views").is_none());
+    h.state_mut().new_sheet();
+    h.run();
+    h.run();
+    let canvas = h.state().drawing.view.canvas_rect;
+    let said = h
+        .query_all_by_label_contains("A3 landscape · ")
+        .map(|n| n.rect())
+        .find(|r| r.top() >= canvas.bottom())
+        .expect("the paper and scale in the status bar");
+    assert!(said.right() < rect(&h, "Zoom out").left());
+}

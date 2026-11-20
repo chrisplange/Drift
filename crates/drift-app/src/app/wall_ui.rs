@@ -72,7 +72,7 @@ impl DriftApp {
         }
         theme::bar_caption(ui, "W");
         theme::bar_divider(ui);
-        ui.checkbox(&mut self.drawing.editor.prefs.wall_poche.on, "Fill")
+        theme::checkbox(ui, &mut self.drawing.editor.prefs.wall_poche.on, "Fill")
             .on_hover_text("Fill new walls: joined walls of one style on one layer are one area");
         if self.drawing.editor.prefs.wall_poche.on {
             let mut style = self.drawing.editor.prefs.wall_poche.style.clone();
@@ -167,7 +167,7 @@ impl DriftApp {
             .unwrap_or_else(|| self.drawing.editor.prefs.wall_poche.style.clone());
         let was = (on, style.clone());
         theme::row(ui, "Fill", |ui| {
-            ui.checkbox(&mut on, "");
+            theme::checkbox(ui, &mut on, "");
             if on {
                 self.style_kind(ui, &mut style);
             }
@@ -182,8 +182,7 @@ impl DriftApp {
         }
         theme::section(ui, "Joins");
         let mut cross = first.cross;
-        if ui
-            .checkbox(&mut cross, "Joins walls it crosses")
+        if theme::checkbox(ui, &mut cross, "Joins walls it crosses")
             .on_hover_text("Crossing walls of the same fill and layer clean up as an X")
             .changed()
         {
@@ -200,8 +199,7 @@ impl DriftApp {
         if walls.len() == 1 && !closed {
             for (which, label) in [(0, "Joins at its start"), (1, "Joins at its end")] {
                 let mut join = first.ends[which].join;
-                if ui
-                    .checkbox(&mut join, label)
+                if theme::checkbox(ui, &mut join, label)
                     .on_hover_text("Off: this end stays capped and overlaps what it meets")
                     .changed()
                 {

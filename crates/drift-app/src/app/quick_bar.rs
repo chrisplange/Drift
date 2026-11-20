@@ -188,13 +188,17 @@ pub(crate) fn place(
             }
         }
     }
+    // At the foot, else at the top: whichever is clear of the picks and of what is clicked;
+    // failing both, the one clear of the picks.
     let x = left(canvas.center().x);
     let foot = at(x, canvas.bottom() - MARGIN - size.y);
-    if picks.iter().any(|pick| pick.intersects(foot.expand(8.0))) {
-        at(x, canvas.top() + MARGIN)
-    } else {
-        foot
-    }
+    let top = at(x, canvas.top() + MARGIN);
+    let on_pick = |bar: egui::Rect| picks.iter().any(|pick| pick.intersects(bar.expand(8.0)));
+    let covers = |bar: egui::Rect| keep_clear.iter().any(|r| r.intersects(bar));
+    [foot, top]
+        .into_iter()
+        .find(|bar| !on_pick(*bar) && !covers(*bar))
+        .unwrap_or(if on_pick(foot) { top } else { foot })
 }
 
 /// What a relation does, in a sentence, for its tooltip.

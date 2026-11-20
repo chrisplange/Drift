@@ -1452,11 +1452,13 @@ impl DriftApp {
         self.paint_free_directions(&painter, &map);
         self.empty_canvas_hint(ui, &map);
         // The quick-constrain bar, and a message clear of it.
-        // (It keeps off the dimensions' labels and the relations' symbols, which are clicked.)
+        // (It keeps off the dimensions' labels, the temporary dimensions and the relations'
+        // symbols, which are read and clicked.)
         let clicked_on: Vec<egui::Rect> = dims
             .iter()
             .map(|d| d.text_rect)
             .chain(shown_glyphs.iter().map(|g| g.rect))
+            .chain(temps.iter().flat_map(|t| t.keep_clear()))
             .collect();
         let quick_bar = self.quick_bar_wanted(&response, &map, &painter, &clicked_on);
         let toast_id = overlay::toast_rect_id();

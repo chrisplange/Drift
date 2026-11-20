@@ -721,3 +721,35 @@ fn the_empty_canvas_hint_is_only_for_a_drawing_with_nothing_in_it() {
         "a block copy is something"
     );
 }
+
+#[test]
+fn the_bar_keeps_off_a_picked_curves_temporary_dimensions() {
+    let Some(mut h) = harness() else { return };
+    // One level line: its length shows as a temporary dimension beside it, where the bar
+    // would otherwise go.
+    for offset in [0.0, 30.0, -30.0] {
+        let v = DVec2::new;
+        let ed = &mut h.state_mut().drawing.editor;
+        ed.doc.begin();
+        let (a, b) = (
+            ed.doc.add_point(v(-30.0, offset)),
+            ed.doc.add_point(v(30.0, offset)),
+        );
+        let line = ed.doc.add_line(a, b).expect("a line");
+        ed.commit("a line");
+        ed.selection = [line].into_iter().collect();
+        h.run();
+        h.run();
+        let at = bar(&h).expect("the bar shows");
+        let values = h.state().drawing.temp_dims.values.clone();
+        assert!(
+            !values.is_empty(),
+            "the line shows its temporary dimensions"
+        );
+        for (_, value) in values {
+            // (The value's text, roughly: the bar is clear of all of it.)
+            let text = egui::Rect::from_center_size(value, egui::vec2(36.0, 16.0));
+            assert!(!at.intersects(text), "{at:?} is on the value at {value:?}");
+        }
+    }
+}

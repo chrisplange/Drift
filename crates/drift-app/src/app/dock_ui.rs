@@ -581,7 +581,10 @@ impl DriftApp {
             // the right edge out would grow the window to the left.
             if let Some(r) = self.dock_view.last_windows.get(&top) {
                 let wide = (canvas.right() - r.left()).floor().max(240.0);
-                let high = (canvas.bottom() - r.top()).floor().min(most).max(least.min(most));
+                let high = (canvas.bottom() - r.top())
+                    .floor()
+                    .min(most)
+                    .max(least.min(most));
                 window = window.max_width(wide).max_height(high);
             }
             if shut {

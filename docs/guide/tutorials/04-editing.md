@@ -34,8 +34,8 @@ A picked area shows its area, perimeter and centroid in the **Inspector**.)
 
 ### Pick filter
 
-The top bar always shows the **Pick filter**, whatever the tool: what the Select tool
-picks, **All** by default. Click it for the kinds of thing, each with its glyph and name, and
+The **Pick filter** sits at the right end of the top bar, whatever the tool, after a funnel:
+what the Select tool picks, **All** by default. Click it for the kinds of thing, each with its glyph and name, and
 turn any off, in any mix, as with the selection filters in AutoCAD, Rhino or Vectorworks:
 
 | Kind | Picks |

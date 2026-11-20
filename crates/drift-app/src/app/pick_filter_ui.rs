@@ -66,8 +66,53 @@ fn check(painter: &egui::Painter, c: egui::Pos2, color: egui::Color32) {
     ));
 }
 
-/// The Pick filter on the bar: its caption (left out when `compact`, with something picked)
-/// and a button naming what it picks, which opens the kinds. Returns the filter set.
+/// What the button shows: the one kind's glyph and short name, or the summary ("All",
+/// "Edges & Fills", "3 kinds").
+fn button_text(filter: PickFilter) -> (Option<PickKind>, String) {
+    let mut kinds = filter.kinds();
+    match (kinds.next(), kinds.next()) {
+        (Some(k), None) if !filter.is_all() => (Some(k), k.short_label().to_owned()),
+        _ => (None, filter.summary()),
+    }
+}
+
+/// The caption's width: the funnel, a gap, "Pick filter".
+fn caption_width(ui: &egui::Ui) -> f32 {
+    let font = egui::FontId::proportional(theme::size::LABEL);
+    12.0 + 4.0
+        + ui.painter()
+            .layout_no_wrap("Pick filter".to_owned(), font, egui::Color32::WHITE)
+            .size()
+            .x
+}
+
+/// The button's width.
+fn button_width(ui: &egui::Ui, filter: PickFilter) -> f32 {
+    let font = egui::FontId::proportional(theme::size::LABEL);
+    let (single, text) = button_text(filter);
+    let text = ui
+        .painter()
+        .layout_no_wrap(text, font, egui::Color32::WHITE)
+        .size()
+        .x;
+    8.0 + if single.is_some() { 14.0 + 5.0 } else { 0.0 } + text + 8.0 + 8.0 + 8.0
+}
+
+/// How wide [`pick_filter_control`] is, so the bar can set it at its right end.
+pub(super) fn pick_filter_width(ui: &egui::Ui, filter: PickFilter, compact: bool) -> f32 {
+    let gap = ui.spacing().item_spacing.x;
+    let caption = if compact {
+        0.0
+    } else {
+        caption_width(ui) + gap
+    };
+    caption + button_width(ui, filter)
+}
+
+/// The Pick filter on the bar (its right end, a group of its own, so it reads as what the
+/// select tool picks rather than as an option of the tool): a funnel and the caption "Pick
+/// filter" (left out when `compact`), and a button naming what it picks, which opens the
+/// kinds. Returns the filter set.
 pub(super) fn pick_filter_control(
     ui: &mut egui::Ui,
     filter: PickFilter,
@@ -80,32 +125,33 @@ pub(super) fn pick_filter_control(
     let font = egui::FontId::proportional(theme::size::LABEL);
     if !compact {
         // (Painted, so the button stays the one "Pick filter" for assistive tech.)
-        let caption = ui.painter().layout_no_wrap(
-            "Pick filter".to_owned(),
-            font.clone(),
-            ui.visuals().weak_text_color(),
+        let weak = ui.visuals().weak_text_color();
+        let (r, _) =
+            ui.allocate_exact_size(egui::vec2(caption_width(ui), 16.0), egui::Sense::hover());
+        icons::glyph(
+            ui.painter(),
+            egui::Rect::from_min_size(
+                egui::pos2(r.left(), r.center().y - 6.0),
+                egui::vec2(12.0, 12.0),
+            ),
+            icons::Glyph::Filter,
+            weak,
         );
-        let (r, _) = ui.allocate_exact_size(caption.size(), egui::Sense::hover());
-        ui.painter().galley(r.min, caption, egui::Color32::WHITE);
+        ui.painter().text(
+            egui::pos2(r.left() + 16.0, r.center().y),
+            egui::Align2::LEFT_CENTER,
+            "Pick filter",
+            font.clone(),
+            weak,
+        );
     }
-    // One kind: its glyph and its short name. More: how many. All: "All".
-    let single = {
-        let mut kinds = filter.kinds();
-        match (kinds.next(), kinds.next()) {
-            (Some(k), None) if narrowed => Some(k),
-            _ => None,
-        }
-    };
-    let text = match single {
-        Some(k) => k.short_label().to_owned(),
-        None => filter.summary(),
-    };
+    let (single, text) = button_text(filter);
     let tone = if narrowed { accent } else { n.text };
     let galley = ui
         .painter()
         .layout_no_wrap(text.clone(), font.clone(), tone);
     let glyph = if single.is_some() { 14.0 + 5.0 } else { 0.0 };
-    let width = 8.0 + glyph + galley.size().x + 8.0 + 8.0 + 8.0;
+    let width = button_width(ui, filter);
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 24.0), egui::Sense::click());
     response.widget_info(|| {
         let mut info = egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, "Pick filter");

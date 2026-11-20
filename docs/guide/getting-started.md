@@ -130,8 +130,8 @@ The window has six parts:
    icon's corner marks a family: **Circle** holds the ellipses, **3-point arc** the tangent
    and centre arcs, **Trim** Extend and Split, and so on. Right-click it, or hold the button
    down, for the others; the place then shows the one you used last.
-3. **The top bar.** On the left, the active tool and its options. With every tool it
-   shows the **Pick filter** (**All**; click it to choose among
+3. **The top bar.** On the left, the active tool and its options. At its right end, with
+   every tool, is the **Pick filter** (**All**; click it to choose among
    **Points**, **Edges**, **Fills**, **Areas**, **Blocks & groups**, **Text** and
    **Annotations**; see [Pick filter](tutorials/04-editing.md#pick-filter)).
    With **Select** and something picked, it shows how many, then the selection's **Layer**, **Stroke**

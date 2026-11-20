@@ -432,6 +432,44 @@ impl DriftApp {
     pub(crate) fn context_bar(&mut self, ui: &mut egui::Ui) {
         let kind = self.tool.kind();
         let row = ui.max_rect();
+        // The Pick filter, with every tool, at the bar's right end, a group of its own (on a
+        // sheet the model isn't picked from). Its caption goes in a narrow window with
+        // something picked, where the selection's controls need the room.
+        let row = if self.drawing.view.sheet_preview {
+            row
+        } else {
+            let picked = !self.drawing.editor.selection.is_empty()
+                || !self.drawing.editor.selected_instances.is_empty()
+                || !self.drawing.editor.selected_fills.is_empty();
+            let compact = picked && row.width() < 1400.0;
+            let filter = self.drawing.editor.prefs.pick_filter;
+            let width = crate::app::pick_filter_ui::pick_filter_width(ui, filter, compact);
+            let right = row.right() - 10.0;
+            let area = egui::Rect::from_min_max(
+                egui::pos2(right - width, row.top()),
+                egui::pos2(right, row.bottom()),
+            );
+            let mut set = None;
+            ui.scope_builder(
+                egui::UiBuilder::new()
+                    .max_rect(area)
+                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                |ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    set = crate::app::pick_filter_ui::pick_filter_control(ui, filter, compact);
+                },
+            );
+            if let Some(f) = set {
+                self.set_pick_filter(f);
+            }
+            // A hairline before it; the tool's options stop short of it.
+            let x = area.left() - 9.0;
+            theme::paint_bar_divider(
+                ui,
+                egui::Rect::from_center_size(egui::pos2(x, row.center().y), egui::vec2(1.0, 16.0)),
+            );
+            egui::Rect::from_min_max(row.min, egui::pos2(x - 6.0, row.bottom()))
+        };
         ui.scope_builder(
             egui::UiBuilder::new()
                 .max_rect(row)
@@ -452,23 +490,6 @@ impl DriftApp {
                 );
                 let (r, _) = ui.allocate_exact_size(name.size(), egui::Sense::hover());
                 ui.painter().galley(r.min, name, egui::Color32::WHITE);
-                // The Pick filter, with every tool (on a sheet the model isn't picked from):
-                // with its caption for Select with nothing picked, else the button alone.
-                if !self.drawing.view.sheet_preview {
-                    let slot = theme::group_divider_slot(ui);
-                    theme::paint_bar_divider(ui, slot);
-                    let picked = !self.drawing.editor.selection.is_empty()
-                        || !self.drawing.editor.selected_instances.is_empty()
-                        || !self.drawing.editor.selected_fills.is_empty();
-                    let compact = kind != ToolKind::Select || picked;
-                    if let Some(f) = crate::app::pick_filter_ui::pick_filter_control(
-                        ui,
-                        self.drawing.editor.prefs.pick_filter,
-                        compact,
-                    ) {
-                        self.set_pick_filter(f);
-                    }
-                }
                 // A hairline before the options, when the tool or the selection has any.
                 let line = theme::group_divider_slot(ui);
                 let before = ui.min_rect().right();

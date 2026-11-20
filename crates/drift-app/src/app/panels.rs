@@ -1368,10 +1368,14 @@ impl DriftApp {
                 let (Some(entity), Some(shape)) = (ed.doc.get(*id), ed.index.shape(*id)) else {
                     return;
                 };
-                let layer = ed
+                let mut layer = ed
                     .doc
                     .layer(entity.layer)
                     .map_or(String::new(), |l| format!("On layer {}", l.name));
+                // A kept corner or a fillet's centre says what it is (#501).
+                if let Some(kind) = ed.muted_kind(*id) {
+                    layer = format!("{} · {layer}", kind.label());
+                }
                 title(
                     ui,
                     Some(kind_icon(&entity.kind)),

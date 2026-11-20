@@ -532,6 +532,9 @@ pub struct SketchItem {
     pub emphasis: Emphasis,
     /// For points: drawn as a small endpoint marker of a curve rather than a sketch point.
     pub vertex: bool,
+    /// For points: drawn as a small muted construction cross (a corner a fillet kept for a
+    /// dimension, a fillet's centre: #501), unless lit up.
+    pub marker: bool,
     pub dof: DofState,
     /// Colour override (sRGB); `None` uses the state / theme colour.
     pub color: Option<[u8; 3]>,
@@ -547,6 +550,7 @@ impl SketchItem {
             kind: LineKind::Solid,
             emphasis: Emphasis::Normal,
             vertex: false,
+            marker: false,
             dof: DofState::Unknown,
             color: None,
             weight: 0,
@@ -579,6 +583,12 @@ impl SketchItem {
 
     pub fn with_dof(mut self, dof: DofState) -> Self {
         self.dof = dof;
+        self
+    }
+
+    /// Draw a point as a muted construction cross (see [`marker`](Self::marker)).
+    pub fn as_marker(mut self) -> Self {
+        self.marker = true;
         self
     }
 

@@ -39,6 +39,8 @@ mod layer_toggles;
 /// The live link: assistants editing the open drawing.
 #[cfg(not(target_arch = "wasm32"))]
 mod link;
+/// Kept corners and fillet centres drawn as muted crosses (#501).
+mod muted_points;
 /// Notes typed live on the canvas, as in a design app (#431).
 #[cfg(not(feature = "demo"))]
 mod note_typing;

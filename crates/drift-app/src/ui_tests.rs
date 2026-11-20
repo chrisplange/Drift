@@ -2963,6 +2963,40 @@ fn a_layer_is_isolated_and_the_isolate_ended_in_one_undo_step_each() {
     assert_eq!(visible(&h), [other]);
 }
 
+/// #497: with the Fill tool on, H switches between the hatch it had and Solid; the first H
+/// only takes the tool. The hint says which is set.
+#[test]
+fn fill_tool_h_switches_hatch_and_solid() {
+    let Some(mut h) = harness() else { return };
+    let hatch = |p: &str| drift_core::FillKind::Hatch(drift_core::Hatch::new(p));
+    h.state_mut().drawing.editor.prefs.fill_style.kind = hatch("ANSI37");
+    h.key_press(Key::H);
+    h.run();
+    assert_eq!(h.state().tool.kind(), ToolKind::Fill);
+    assert_eq!(
+        h.state().drawing.editor.prefs.fill_style.kind,
+        hatch("ANSI37")
+    );
+    assert!(
+        h.query_by_label_contains("Hatch ANSI37 · H: solid")
+            .is_some()
+    );
+    h.key_press(Key::H);
+    h.run();
+    assert_eq!(h.state().tool.kind(), ToolKind::Fill);
+    assert_eq!(
+        h.state().drawing.editor.prefs.fill_style.kind,
+        drift_core::FillKind::Solid
+    );
+    assert!(h.query_by_label_contains("Solid · H: hatch").is_some());
+    h.key_press(Key::H);
+    h.run();
+    assert_eq!(
+        h.state().drawing.editor.prefs.fill_style.kind,
+        hatch("ANSI37")
+    );
+}
+
 #[test]
 fn fill_tool_hatches_and_fills_regions() {
     let Some(mut h) = harness() else { return };

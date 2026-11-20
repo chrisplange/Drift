@@ -493,7 +493,46 @@ impl DriftApp {
         let mut style = self.drawing.editor.prefs.fill_style.clone();
         self.style_bar(ui, &mut style, "bar");
         if style != self.drawing.editor.prefs.fill_style {
-            self.drawing.editor.prefs.fill_style = style;
+            // Hatch after Solid brings back the pattern it had, not the default.
+            if let (FillKind::Solid, FillKind::Hatch(_)) =
+                (&self.drawing.editor.prefs.fill_style.kind, &style.kind)
+                && let Some(h) = self.last_hatch.clone()
+            {
+                style.kind = FillKind::Hatch(h);
+            }
+            self.set_fill_style(style);
+        }
+    }
+
+    /// Make `style` the Fill tool's, remembering the hatch it replaces.
+    fn set_fill_style(&mut self, style: FillStyle) {
+        if let FillKind::Hatch(h) = &self.drawing.editor.prefs.fill_style.kind {
+            self.last_hatch = Some(h.clone());
+        }
+        self.drawing.editor.prefs.fill_style = style;
+    }
+
+    /// Switch the Fill tool between Solid and the hatch it last had (H with the tool on,
+    /// #497); returns what it is now, for the status line.
+    pub(crate) fn toggle_fill_solid(&mut self) -> String {
+        let mut style = self.drawing.editor.prefs.fill_style.clone();
+        style.kind = match style.kind {
+            FillKind::Hatch(_) => FillKind::Solid,
+            FillKind::Solid => FillKind::Hatch(
+                self.last_hatch
+                    .clone()
+                    .unwrap_or_else(|| Hatch::new("ANSI31")),
+            ),
+        };
+        self.set_fill_style(style);
+        format!("Fill: {}", self.fill_tool_mode())
+    }
+
+    /// What the Fill tool fills with: "Solid" or "Hatch ANSI31" (for its hint).
+    pub(crate) fn fill_tool_mode(&self) -> String {
+        match &self.drawing.editor.prefs.fill_style.kind {
+            FillKind::Solid => "Solid".to_owned(),
+            FillKind::Hatch(h) => format!("Hatch {}", h.pattern),
         }
     }
 

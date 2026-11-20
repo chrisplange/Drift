@@ -2340,6 +2340,17 @@ impl DriftApp {
                 "Double-click inside to edit its fill on its own · {}",
                 self.tool.hint()
             )
+        } else if self.tool.kind() == ToolKind::Fill {
+            // Which fill the next click makes, and that H switches it (#497).
+            let other = match self.drawing.editor.prefs.fill_style.kind {
+                drift_core::FillKind::Solid => "hatch",
+                drift_core::FillKind::Hatch(_) => "solid",
+            };
+            format!(
+                "{} · H: {other} · {}",
+                self.fill_tool_mode(),
+                self.tool.hint()
+            )
         } else {
             self.tool.hint()
         };

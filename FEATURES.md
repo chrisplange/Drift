@@ -79,6 +79,7 @@ Seeded 2026-11-09 from the command registry, importers/exporters, agent schema a
 ## Fills and hatches
 - Solid fills of closed areas. `crates/drift-edit/src/tools/fill.rs`
 - Hatch patterns. `crates/drift-draft/src/hatch.rs`
+- H with the Fill tool on switches between the last hatch and Solid. `crates/drift-app/src/app/fill_ui.rs`
 - Edit fill. `crates/drift-app/src/app/fill_ui.rs`
 - Closed-area detection. `crates/drift-geom/src/regions.rs`
 

@@ -27,6 +27,8 @@ mod items;
 #[cfg(test)]
 mod kept_shapes_tests;
 mod layers;
+mod muted_points;
+pub use muted_points::MutedKind;
 mod options;
 mod outbox;
 #[cfg(test)]
@@ -345,6 +347,10 @@ pub struct Editor {
     /// The maps the drawing's regions are looked up by, for the regions and curves they were
     /// made from (see `Editor::areas_of`).
     pub(crate) area_maps: std::cell::RefCell<Option<KeptAreaMaps>>,
+    /// The points drawn as muted construction crosses (kept corners, fillet centres: #501),
+    /// as of a document structure.
+    pub(crate) muted_points:
+        std::cell::RefCell<Option<(u64, std::rc::Rc<muted_points::MutedPoints>)>>,
     /// Each crossed fill's area as last found among the curves near it, with what it was
     /// found from: found again only when those change (an edit elsewhere leaves it).
     pub(crate) uncrossed_memo: std::cell::RefCell<

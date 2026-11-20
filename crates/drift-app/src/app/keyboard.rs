@@ -189,7 +189,8 @@ impl DriftApp {
         claimed(Key::B, ToolKey::B);
         // R rotates a selection (with the select tool); otherwise it's the rectangle tool.
         let r_claimed = claimed(Key::R, ToolKey::R);
-        // Drawing walls: Space steps the orientation, Backspace takes a segment back.
+        // Drawing walls: Space steps the orientation, Backspace takes a segment back. A
+        // chained arc: Space steps tangent, reverse tangent, free (#500).
         claimed(Key::Space, ToolKey::Space);
         claimed(Key::Backspace, ToolKey::Backspace);
         // G with another tool in hand moves what is picked: the select tool takes over.
@@ -359,7 +360,7 @@ impl DriftApp {
     }
 
     /// A tool's key: picks the tool, or steps through its cycle (C: circle, ellipse, partial
-    /// ellipse; A: the arcs; F: fillet, chamfer; U: the kinds of slot).
+    /// ellipse; A: the arcs; F: fillet, chamfer; U: the kinds of slot; H: hatch or solid).
     fn tool_key(&mut self, ctx: &egui::Context, mut kind: ToolKind) {
         let current = self.tool.kind();
         if current == ToolKind::Wall {
@@ -393,6 +394,13 @@ impl DriftApp {
                 false,
                 now,
             );
+        }
+        if kind == ToolKind::Fill && current == ToolKind::Fill {
+            // H again: Solid, and again, the hatch it had (#497).
+            let what = self.toggle_fill_solid();
+            let now = ctx.input(|i| i.time);
+            self.set_status(what, false, now);
+            return;
         }
         if kind == ToolKind::Fillet && current == ToolKind::Fillet {
             // F again: chamfer (and again, fillet).

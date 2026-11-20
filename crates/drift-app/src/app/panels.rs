@@ -1368,10 +1368,14 @@ impl DriftApp {
                 let (Some(entity), Some(shape)) = (ed.doc.get(*id), ed.index.shape(*id)) else {
                     return;
                 };
-                let layer = ed
+                let mut layer = ed
                     .doc
                     .layer(entity.layer)
                     .map_or(String::new(), |l| format!("On layer {}", l.name));
+                // A kept corner or a fillet's centre says what it is (#501).
+                if let Some(kind) = ed.muted_kind(*id) {
+                    layer = format!("{} · {layer}", kind.label());
+                }
                 title(
                     ui,
                     Some(kind_icon(&entity.kind)),
@@ -2338,6 +2342,17 @@ impl DriftApp {
         {
             format!(
                 "Double-click inside to edit its fill on its own · {}",
+                self.tool.hint()
+            )
+        } else if self.tool.kind() == ToolKind::Fill {
+            // Which fill the next click makes, and that H switches it (#497).
+            let other = match self.drawing.editor.prefs.fill_style.kind {
+                drift_core::FillKind::Solid => "hatch",
+                drift_core::FillKind::Hatch(_) => "solid",
+            };
+            format!(
+                "{} · H: {other} · {}",
+                self.fill_tool_mode(),
                 self.tool.hint()
             )
         } else {

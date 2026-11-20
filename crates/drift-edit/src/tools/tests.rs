@@ -534,6 +534,81 @@ fn tangent_arc_takes_a_typed_radius_and_sweep() {
         }));
 }
 
+/// #500: Space cycles a chained arc tangent, reverse tangent, free and back to tangent,
+/// and the hint names the mode. Space does nothing before the arc has a start.
+#[test]
+fn tangent_arc_space_cycles_its_mode() {
+    let (mut ed, _) = line_end_fixture();
+    let mut tool = TangentArcTool::default();
+    assert!(!tool.key(ToolKey::Space, None, &mut ed));
+    click(&mut ed, &mut tool, v(10.0, 0.0));
+    assert_eq!(tool.mode, ArcMode::Tangent);
+    assert!(tool.hint().starts_with("Tangent arc"));
+    for (mode, hint) in [
+        (ArcMode::Reverse, "Reverse tangent arc"),
+        (ArcMode::Free, "Free arc"),
+        (ArcMode::Tangent, "Tangent arc"),
+    ] {
+        assert!(tool.key(ToolKey::Space, None, &mut ed));
+        assert_eq!(tool.mode, mode);
+        assert!(tool.hint().starts_with(hint), "{}", tool.hint());
+    }
+}
+
+/// #500: reverse tangent leaves back along the line, so the arc to the same point bulges
+/// the other way round the same circle; it is still tangent, and the next arc in the chain
+/// is reverse tangent too.
+#[test]
+fn reverse_tangent_arc_bulges_the_other_way_and_is_remembered() {
+    let (mut ed, _) = line_end_fixture();
+    ed.prefs.auto_relations = true;
+    let mut tool = TangentArcTool::default();
+    click(&mut ed, &mut tool, v(10.0, 0.0));
+    tool.key(ToolKey::Space, None, &mut ed);
+    // The preview is the reverse arc at once: a quarter turn from the line's end.
+    let p = ptr(&ed, &tool, v(0.0, 10.0));
+    assert!(tool.preview(Some(&p)).len() == 3);
+    click(&mut ed, &mut tool, v(0.0, 10.0));
+    let (_, [c, s, e]) = the_arc(&ed);
+    // Clockwise from (10, 0) about (10, 10): stored counter-clockwise from (0, 10). The
+    // tangent arc to the same point would go three quarters of the way round.
+    assert!(close(c, v(10.0, 10.0)), "{c}");
+    assert!(close(s, v(0.0, 10.0)) && close(e, v(10.0, 0.0)), "{s} {e}");
+    assert_eq!(tangents(&ed), 1);
+    assert!(ed.analysis().conflicts.is_empty());
+    assert_eq!(tool.mode, ArcMode::Reverse);
+    assert!(tool.is_busy());
+}
+
+/// #500: a free arc takes its end, then a point it passes through, and makes no tangent
+/// relation; the chain goes on, still free.
+#[test]
+fn free_arc_takes_an_end_and_a_through_point_without_tangency() {
+    let (mut ed, end) = line_end_fixture();
+    ed.prefs.auto_relations = true;
+    let mut tool = TangentArcTool::default();
+    click(&mut ed, &mut tool, v(10.0, 0.0));
+    tool.key(ToolKey::Space, None, &mut ed);
+    tool.key(ToolKey::Space, None, &mut ed);
+    assert_eq!(tool.mode, ArcMode::Free);
+    assert!(tool.fields().is_empty());
+    click(&mut ed, &mut tool, v(30.0, 0.0));
+    assert_eq!(count(&ed.doc, |k| matches!(k, EntityKind::Arc { .. })), 0);
+    assert!(tool.hint().contains("passes through"));
+    // Through (20, 10): a half circle about (20, 0) over the top, from (10, 0) to (30, 0).
+    click(&mut ed, &mut tool, v(20.0, 10.0));
+    let (arc, [c, s, e]) = the_arc(&ed);
+    assert!(close(c, v(20.0, 0.0)), "{c}");
+    assert!(close(s, v(30.0, 0.0)) && close(e, v(10.0, 0.0)), "{s} {e}");
+    assert_eq!(tangents(&ed), 0);
+    let EntityKind::Arc { end: joined, .. } = ed.doc.get(arc).unwrap().kind else {
+        unreachable!()
+    };
+    assert_eq!(joined, end, "the arc starts on the line's end");
+    assert_eq!(tool.mode, ArcMode::Free);
+    assert!(tool.chain_end().is_some_and(|p| p != end));
+}
+
 #[test]
 fn tangent_arc_needs_a_curve_end_to_start_from() {
     let mut ed = Editor::default();

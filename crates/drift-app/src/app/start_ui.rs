@@ -675,6 +675,13 @@ impl DriftApp {
             "Horizontal, vertical, coincident, tangent and so on, as you snap · Shift+Alt+R",
         );
         ui.checkbox(
+            &mut self.drawing.editor.prefs.auto_merge,
+            "Join points dropped on points",
+        )
+        .on_hover_text(
+            "Auto merge: a dragged point dropped on another, or a line or arc drawn on another shape's point, shares it. Ctrl flips it for one drop · Shift+Alt+M",
+        );
+        ui.checkbox(
             &mut self.perp_tangent_snap,
             "Snap perpendicular and tangent",
         )

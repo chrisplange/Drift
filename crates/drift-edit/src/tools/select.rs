@@ -419,8 +419,8 @@ impl SelectTool {
     }
 
     /// The mouse button let go of a drag of the selection: it stays where the drag took it.
-    /// A lone point dropped on another point joins it; on a midpoint or a curve, it keeps to
-    /// it.
+    /// A lone point dropped on another point joins it with Auto merge (else it is only placed
+    /// there); on a midpoint or a curve, it keeps to it with Auto relations.
     fn finish_mouse_move(&mut self, p: &Pointer, ed: &mut Editor) {
         let Some(grab) = self.grab.take() else { return };
         // Moved by a typed distance, the point doesn't land on what is under the pointer:
@@ -439,7 +439,7 @@ impl SelectTool {
         if let Some(seed) = &mut ed.selected_region {
             *seed += grab.applied;
         }
-        if let (Some(from), Some(into)) = (point, p.snapped_point())
+        if let (Some(from), Some(into)) = (point, p.merge_point())
             && from != into
             && ed.doc.merge_points(from, into).is_ok()
         {
@@ -505,6 +505,12 @@ impl SelectTool {
 impl Tool for SelectTool {
     fn is_busy(&self) -> bool {
         self.drag.is_some() || self.grab.is_some() || self.spin.is_some()
+    }
+
+    fn joins_points(&self) -> bool {
+        self.grab
+            .as_ref()
+            .is_some_and(|g| g.by_mouse.is_some_and(|m| m.point.is_some()))
     }
 
     fn kind(&self) -> ToolKind {

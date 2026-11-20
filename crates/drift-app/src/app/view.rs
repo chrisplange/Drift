@@ -29,6 +29,8 @@ impl DriftApp {
         pointer.units = self.drawing.editor.doc.units();
         pointer.alt = !snap;
         (pointer.shift, pointer.command) = self.drawing.view.keys_held;
+        // Ctrl flips Auto merge for this drop or click.
+        pointer.merge = self.drawing.editor.prefs.auto_merge != pointer.command;
         pointer.round_scale = self.round_scale;
         pointer.angle_step = self.angle_snap.filter(|_| snap);
         pointer.perp_tangent = self.perp_tangent_snap;
@@ -1491,6 +1493,11 @@ impl DriftApp {
             if let Some(snap) = p.snap {
                 overlay::snap_marker(&painter, &map, &snap, colors.snap);
                 let mut label = snap.kind.label().to_owned();
+                // A click or drop here joins the point: say so, and fill the marker.
+                if p.merge_point().is_some() && self.tool.joins_points() {
+                    overlay::join_marker(&painter, &map, &snap, colors.snap);
+                    label = format!("{label} · Join");
+                }
                 // The relation the segment ending here gets too (#204).
                 if let Some(relation) = p
                     .exact_snap()

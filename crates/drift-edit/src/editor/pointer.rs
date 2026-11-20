@@ -42,6 +42,9 @@ pub struct Pointer {
     /// Whether snapping onto a midpoint or a curve should add a Midpoint / On curve relation
     /// (automatic relations).
     pub relations: bool,
+    /// Whether a snapped point is joined (Auto merge, flipped by Ctrl), rather than only
+    /// placed on.
+    pub merge: bool,
     /// How to show lengths in readouts.
     pub units: Units,
     /// Alt is held (places freely, without snapping; the pen breaks a handle with it).
@@ -69,6 +72,7 @@ impl Pointer {
             tolerance,
             guide: None,
             relations: true,
+            merge: true,
             units: Units::default(),
             alt: false,
             shift: false,
@@ -144,10 +148,16 @@ impl Pointer {
             .and_then(|s| s.entity)
     }
 
+    /// The existing point under the pointer, if it should be joined (Auto merge): otherwise
+    /// a point is only placed on it.
+    pub fn merge_point(&self) -> Option<EntityId> {
+        self.snapped_point().filter(|_| self.merge)
+    }
+
     pub fn anchor(&self) -> Anchor {
         Anchor {
             pos: self.pos(),
-            existing: self.snapped_point(),
+            existing: self.merge_point(),
             midpoint_of: self.midpoint_of(),
             on_curve: self.on_curve(),
         }

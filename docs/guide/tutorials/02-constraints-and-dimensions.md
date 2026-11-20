@@ -149,6 +149,20 @@ modify tools (trim, fillet, offset, mirror…) add theirs too.
 Turn it off to draw plain geometry with nothing attached. Relations and dimensions you add
 yourself are never affected.
 
+## Auto merge
+
+**Auto merge** (its switch in the status bar, or Shift+Alt+M) decides whether points join.
+With it off, the default, a point you drag onto another point is only placed there: the two
+stay separate points, and nothing ties them together. A line or arc drawn from or to another
+shape's point gets a point of its own there too. A line still closes its own loop when you
+click back on its first point.
+
+With it on, a point dropped on a point becomes one shared point with it, and lines and arcs
+drawn on a point share it, so the shapes move together. The snap marker fills in and says
+**Join** before you let go.
+
+Hold **Ctrl** as you drop or click to do the opposite of the switch for that one time.
+
 ## Edit a dimension
 
 - **Change its value:** double-click the label and type. Any expression works: `60 + 15`,

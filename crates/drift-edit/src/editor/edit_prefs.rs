@@ -9,6 +9,10 @@ use super::{DimMode, PickFilter};
 pub struct EditPrefs {
     /// Whether drawing tools add relations they infer (horizontal / vertical lines, rectangles).
     pub auto_relations: bool,
+    /// Whether a point dropped on another point, or a line or arc drawn from or to another
+    /// shape's point, joins it (one shared point). Off by default: the point is only placed
+    /// there. Ctrl held flips it for one drop or click.
+    pub auto_merge: bool,
     /// What the select tool picks: everything, or only edges (curves) or only points.
     pub pick_filter: PickFilter,
     /// Drawing tools draw construction geometry (Alt+C with a drawing tool in hand).

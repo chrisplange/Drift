@@ -59,6 +59,7 @@ impl DriftApp {
             ViewFlag::Crops => &mut self.show_view_crops,
             ViewFlag::Centrelines => &mut self.show_wall_centrelines,
             ViewFlag::AutoRelations => &mut self.drawing.editor.prefs.auto_relations,
+            ViewFlag::AutoMerge => &mut self.drawing.editor.prefs.auto_merge,
         }
     }
 
@@ -226,6 +227,14 @@ impl DriftApp {
                         "Auto relations on"
                     } else {
                         "Auto relations off: plain geometry, nothing added for you"
+                    };
+                    self.set_status(text.into(), false, now);
+                }
+                if f == ViewFlag::AutoMerge {
+                    let text = if self.drawing.editor.prefs.auto_merge {
+                        "Auto merge on: a point dropped on a point joins it (Ctrl: just place it)"
+                    } else {
+                        "Auto merge off: a point dropped on a point is only placed there (Ctrl: join)"
                     };
                     self.set_status(text.into(), false, now);
                 }

@@ -511,6 +511,12 @@ pub trait Tool {
         true
     }
 
+    /// Whether a click or drop now on an existing point would join it (with Auto merge):
+    /// the snap marker then shows a join.
+    fn joins_points(&self) -> bool {
+        false
+    }
+
     /// Entities that must not be snapped to (e.g. the geometry being dragged).
     fn snap_excludes(&self, _ed: &Editor, _id: EntityId) -> bool {
         false

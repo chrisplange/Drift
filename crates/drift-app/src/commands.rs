@@ -144,6 +144,7 @@ pub(crate) enum ViewFlag {
     Combs,
     Crops,
     AutoRelations,
+    AutoMerge,
     /// Walls' centrelines shown.
     Centrelines,
 }
@@ -1484,6 +1485,14 @@ fn table() -> Vec<Spec> {
             "Add relations automatically while drawing, or not",
         )
         .keys(const { &[shift_alt(Key::R)] }),
+        Spec::new(
+            "view.auto_merge",
+            C::View,
+            K::Toggle(ViewFlag::AutoMerge),
+            "Auto merge",
+            "Join a point dropped on another point, and lines or arcs drawn on another shape's point, or only place them there",
+        )
+        .keys(const { &[shift_alt(Key::M)] }),
         Spec::new(
             "view.theme_midnight",
             C::View,

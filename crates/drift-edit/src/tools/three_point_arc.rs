@@ -119,6 +119,11 @@ impl Tool for ThreePointArcTool {
         self.start.is_some()
     }
 
+    fn joins_points(&self) -> bool {
+        // The third click only keeps the arc through a point (a relation), never joins it.
+        self.end.is_none()
+    }
+
     fn kind(&self) -> ToolKind {
         ToolKind::ThreePointArc
     }

@@ -189,7 +189,8 @@ impl DriftApp {
         claimed(Key::B, ToolKey::B);
         // R rotates a selection (with the select tool); otherwise it's the rectangle tool.
         let r_claimed = claimed(Key::R, ToolKey::R);
-        // Drawing walls: Space steps the orientation, Backspace takes a segment back.
+        // Drawing walls: Space steps the orientation, Backspace takes a segment back. A
+        // chained arc: Space steps tangent, reverse tangent, free (#500).
         claimed(Key::Space, ToolKey::Space);
         claimed(Key::Backspace, ToolKey::Backspace);
         // G with another tool in hand moves what is picked: the select tool takes over.

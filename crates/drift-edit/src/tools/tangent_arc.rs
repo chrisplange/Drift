@@ -66,8 +66,40 @@ pub(super) fn tangent_arc(
     (end != from).then_some((center, end, left))
 }
 
-/// An arc tangent to the line or arc it starts from. Chains: each arc starts where the last
-/// ended. Pressing L continues with lines.
+/// How an arc continuing a chain leaves the curve before it (Space cycles, #500).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ArcMode {
+    /// Tangent, bulging along the last segment's direction.
+    #[default]
+    Tangent,
+    /// Still tangent, but leaving back along the last segment: it bulges to the other side.
+    Reverse,
+    /// No tangency: placed by its end, then a point it passes through.
+    Free,
+}
+
+impl ArcMode {
+    /// The next mode Space steps to.
+    pub fn next(self) -> Self {
+        match self {
+            ArcMode::Tangent => ArcMode::Reverse,
+            ArcMode::Reverse => ArcMode::Free,
+            ArcMode::Free => ArcMode::Tangent,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ArcMode::Tangent => "Tangent",
+            ArcMode::Reverse => "Reverse tangent",
+            ArcMode::Free => "Free",
+        }
+    }
+}
+
+/// An arc tangent to the line or arc it starts from (or, with Space, reverse tangent or
+/// free). Chains: each arc starts where the last ended, in the same mode. Pressing L
+/// continues with lines.
 #[derive(Default)]
 pub struct TangentArcTool {
     /// The existing point the arc starts at, and where it is.
@@ -75,6 +107,10 @@ pub struct TangentArcTool {
     /// Curves ending at the start, with the direction each leaves it in.
     pub(super) tangents: Vec<(EntityId, DVec2)>,
     pub(super) typed: [Option<f64>; 2],
+    /// Tangent, reverse tangent or free: kept for the next arc in the chain.
+    pub(super) mode: ArcMode,
+    /// A free arc's end, once clicked: the next click is a point the arc passes through.
+    pub(super) free_end: Option<Anchor>,
 }
 
 impl TangentArcTool {
@@ -91,14 +127,83 @@ impl TangentArcTool {
         true
     }
 
-    /// The curve to be tangent to and its direction: the one best aligned with the pointer.
+    /// The curve to be tangent to and the direction the arc leaves in: the one best aligned
+    /// with the pointer (back along the curve in reverse tangent mode).
     pub(super) fn tangent_for(&self, target: DVec2) -> Option<(EntityId, DVec2)> {
         let (_, from) = self.start?;
         let towards = (target - from).normalize_or_zero();
+        let flip = if self.mode == ArcMode::Reverse {
+            -1.0
+        } else {
+            1.0
+        };
         self.tangents
             .iter()
-            .copied()
+            .map(|&(id, dir)| (id, dir * flip))
             .max_by(|a, b| a.1.dot(towards).total_cmp(&b.1.dot(towards)))
+    }
+
+    /// A free arc from the start through the pointer to the clicked end: (centre, first,
+    /// last, swapped) as [`order_through`](super::three_point_arc::order_through) gives.
+    pub(super) fn free_geometry(&self, p: &Pointer) -> Option<(DVec2, DVec2, DVec2, bool)> {
+        let (_, from) = self.start?;
+        let end = self.free_end?.pos;
+        let m = p.pos();
+        let (center, _) = drift_core::shape::circle_through(from, end, m)?;
+        Some(super::three_point_arc::order_through(center, from, end, m))
+    }
+
+    /// Space: the next mode; the arc being placed starts over in it.
+    pub(super) fn cycle_mode(&mut self) {
+        self.mode = self.mode.next();
+        self.free_end = None;
+        self.typed = [None; 2];
+    }
+
+    /// The free arc: its end first, then a point it passes through. No tangent relation.
+    fn create_free(&mut self, p: &Pointer, ed: &mut Editor) {
+        let Some((point, from)) = self.start else {
+            return;
+        };
+        let Some(end) = self.free_end else {
+            // First click: the end.
+            let a = p.anchor();
+            if a.pos.distance(from) > 1e-9 {
+                self.free_end = Some(a);
+            }
+            return;
+        };
+        let Some((center, _, _, swapped)) = self.free_geometry(p) else {
+            ed.out.notice = Some("The three points are in line: move off the line".into());
+            return;
+        };
+        let through = p.snapped_point();
+        ed.doc.begin();
+        let c = ed.doc.add_point(center);
+        let e = end.resolve(&mut ed.doc);
+        let (first, last) = if swapped { (e, point) } else { (point, e) };
+        let Ok(arc) = ed.doc.add_arc(c, first, last) else {
+            ed.doc.rollback();
+            ed.sync();
+            return;
+        };
+        if let Some(t) = through
+            && t != point
+            && t != e
+        {
+            ed.relate(Constraint::PointOnCurve {
+                point: t,
+                curve: arc,
+            });
+        }
+        if !ed.commit("Arc") {
+            return;
+        }
+        self.free_end = None;
+        if !self.begin_at(e, ed) {
+            self.start = None;
+        }
+        self.tangents.retain(|(id, _)| *id == arc);
     }
 
     /// (curve, centre, end, left) for the pointer and typed values.
@@ -110,6 +215,9 @@ impl TangentArcTool {
     }
 
     pub(super) fn create(&mut self, p: &Pointer, ed: &mut Editor) {
+        if self.mode == ArcMode::Free {
+            return self.create_free(p, ed);
+        }
         let Some((point, _)) = self.start else {
             return;
         };
@@ -171,8 +279,31 @@ impl Tool for TangentArcTool {
     fn hint(&self) -> String {
         match self.start {
             None => "Click the end of a line, arc or curve to start a tangent arc".into(),
-            Some(_) => "Click the arc's end, or type radius (Tab: sweep) · L: lines · Enter / right-click to finish"
-                .into(),
+            Some(_) => {
+                let next = self.mode.next().label().to_lowercase();
+                match (self.mode, self.free_end) {
+                    (ArcMode::Free, None) => format!(
+                        "Free arc: click its end · Space: {next} · L: lines · Enter / right-click to finish"
+                    ),
+                    (ArcMode::Free, Some(_)) => format!(
+                        "Free arc: click a point it passes through · Space: {next} · L: lines"
+                    ),
+                    (mode, _) => format!(
+                        "{} arc: click its end, or type radius (Tab: sweep) · Space: {next} · L: lines · Enter / right-click to finish",
+                        mode.label()
+                    ),
+                }
+            }
+        }
+    }
+
+    fn key(&mut self, key: ToolKey, _pointer: Option<&Pointer>, _ed: &mut Editor) -> bool {
+        match key {
+            ToolKey::Space if self.start.is_some() => {
+                self.cycle_mode();
+                true
+            }
+            _ => false,
         }
     }
 
@@ -213,7 +344,7 @@ impl Tool for TangentArcTool {
     }
 
     fn fields(&self) -> &'static [&'static str] {
-        if self.start.is_some() {
+        if self.start.is_some() && self.mode != ArcMode::Free {
             &["Radius", "Sweep"]
         } else {
             &[]
@@ -234,6 +365,24 @@ impl Tool for TangentArcTool {
             return Vec::new();
         };
         let mut items = vec![preview_vertex(from)];
+        if self.mode == ArcMode::Free {
+            match self.free_end {
+                None => {
+                    items.push(preview(Shape::Line {
+                        a: from,
+                        b: p.pos(),
+                    }));
+                    items.push(preview_vertex(p.pos()));
+                }
+                Some(end) => {
+                    if let Some((center, s, e, _)) = self.free_geometry(p) {
+                        items.push(preview(arc_shape(center, s, e)));
+                    }
+                    items.push(preview_vertex(end.pos));
+                }
+            }
+            return items;
+        }
         if let Some((_, center, end, left)) = self.geometry(p) {
             let (s, e) = if left { (from, end) } else { (end, from) };
             items.push(preview(arc_shape(center, s, e)));
@@ -244,6 +393,13 @@ impl Tool for TangentArcTool {
 
     fn measurement(&self, p: &Pointer) -> Option<String> {
         let (_, from) = self.start?;
+        if self.mode == ArcMode::Free {
+            let (center, _, _, _) = self.free_geometry(p)?;
+            return Some(format!(
+                "R {}",
+                p.units.format_readout(center.distance(from))
+            ));
+        }
         let (_, center, end, left) = self.geometry(p)?;
         let (s, e) = if left { (from, end) } else { (end, from) };
         let Shape::Arc { sweep, .. } = arc_shape(center, s, e) else {

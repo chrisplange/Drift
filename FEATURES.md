@@ -28,6 +28,7 @@ Seeded 2026-11-09 from the command registry, importers/exporters, agent schema a
 - Regular polygon. `crates/drift-edit/src/tools/polygon.rs`
 - Circle. `crates/drift-edit/src/tools/circle.rs`
 - Arcs: centre, three-point and tangent. `crates/drift-edit/src/tools/arc.rs`
+- An arc continuing a line or arc: Space cycles tangent, reverse tangent and free. `crates/drift-edit/src/tools/tangent_arc.rs`
 - Ellipse. `crates/drift-edit/src/tools/ellipse.rs`
 - Pen (smooth curves, Illustrator-style). `crates/drift-edit/src/tools/pen.rs`
 - Slot. `crates/drift-edit/src/tools/slot.rs`

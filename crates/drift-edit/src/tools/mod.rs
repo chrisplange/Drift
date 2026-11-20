@@ -76,9 +76,16 @@ pub use self::{
     wall::WallTool,
 };
 pub use self::{
-    arc::ArcTool, circle::CircleTool, dimension::DimensionTool, ellipse::EllipseTool,
-    line::LineTool, point::PointTool, rectangle::RectangleTool, select::SelectTool,
-    tangent_arc::TangentArcTool, three_point_arc::ThreePointArcTool,
+    arc::ArcTool,
+    circle::CircleTool,
+    dimension::DimensionTool,
+    ellipse::EllipseTool,
+    line::LineTool,
+    point::PointTool,
+    rectangle::RectangleTool,
+    select::SelectTool,
+    tangent_arc::{ArcMode, TangentArcTool},
+    three_point_arc::ThreePointArcTool,
 };
 
 pub(crate) use self::picking::Pick;

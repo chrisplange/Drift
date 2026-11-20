@@ -96,7 +96,7 @@ impl ArcTool {
         let free = Anchor {
             pos: if clockwise { s } else { e },
             existing: p
-                .snapped_point()
+                .merge_point()
                 .filter(|_| self.typed[0].is_none())
                 .filter(|_| {
                     (p.pos().distance(center.pos) - radius).abs() <= 1e-9 * radius.max(1.0)
@@ -144,6 +144,10 @@ impl ArcTool {
 impl Tool for ArcTool {
     fn is_busy(&self) -> bool {
         self.center.is_some()
+    }
+
+    fn joins_points(&self) -> bool {
+        true
     }
 
     fn kind(&self) -> ToolKind {

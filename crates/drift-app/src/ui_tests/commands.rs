@@ -78,6 +78,7 @@ fn every_menu_item_comes_from_the_registry() {
         "Export",
         "Panels",
         "Arrange",
+        "Join",
         "Appearance",
         "Dimensions and notes",
         "System",
@@ -93,7 +94,7 @@ fn every_menu_item_comes_from_the_registry() {
         h.run();
         h.run();
         // Open the submenus too.
-        for sub in ["Export", "Panels", "Arrange", "Appearance"] {
+        for sub in ["Export", "Panels", "Arrange", "Join", "Appearance"] {
             // (A submenu's name ends in its arrow: "Export ⏵".)
             let named = |l: String| l.trim_end_matches('⏵').trim() == sub;
             if let Some(node) = h.query_by(|n| n.label().is_some_and(named)) {

@@ -47,3 +47,4 @@ pub mod walls;
 pub mod walls_from_lines;
 #[cfg(test)]
 mod walls_props;
+pub mod weld;

@@ -679,6 +679,74 @@ fn dragging_an_end_point_onto_another_joins_them() {
     assert_eq!(points(&ed.doc), 4);
 }
 
+/// A pointer as the app makes it with Auto merge off (and Ctrl not held).
+fn ptr_no_merge(ed: &Editor, tool: &dyn Tool, at: DVec2) -> Pointer {
+    let mut p = ptr(ed, tool, at);
+    p.merge = false;
+    p
+}
+
+fn click_no_merge(ed: &mut Editor, tool: &mut dyn Tool, at: DVec2) {
+    let p = ptr_no_merge(ed, tool, at);
+    tool.handle(Input::Click(p, Modifiers::default()), ed);
+}
+
+#[test]
+fn without_auto_merge_an_open_path_end_dropped_on_a_rectangle_corner_stays_its_own() {
+    let mut ed = Editor::default();
+    let mut rect = RectangleTool::default();
+    click(&mut ed, &mut rect, v(0.0, 0.0));
+    click(&mut ed, &mut rect, v(10.0, 10.0));
+    let mut line = LineTool::default();
+    click(&mut ed, &mut line, v(20.0, 0.0));
+    click(&mut ed, &mut line, v(30.0, 0.0));
+    line.handle(Input::Finish, &mut ed);
+    let before = points(&ed.doc);
+    let constraints = ed.doc.constraints().count();
+
+    let mut sel = SelectTool::default();
+    let m = Modifiers::default();
+    let grab = ptr_no_merge(&ed, &sel, v(20.0, 0.0));
+    sel.handle(Input::DragStart(grab, m), &mut ed);
+    let to = ptr_no_merge(&ed, &sel, v(10.2, 10.1)); // snaps onto the corner
+    assert!(to.snapped_point().is_some());
+    assert!(sel.joins_points());
+    assert_eq!(to.merge_point(), None);
+    sel.handle(Input::Drag(to), &mut ed);
+    sel.handle(Input::DragEnd(to, m), &mut ed);
+    assert_eq!(points(&ed.doc), before, "nothing merged");
+    assert_eq!(
+        ed.doc.constraints().count(),
+        constraints,
+        "nothing attached"
+    );
+    // It landed on the corner all the same.
+    let ends: Vec<DVec2> = ed
+        .doc
+        .iter()
+        .filter_map(|(id, _)| ed.doc.point(id).ok())
+        .filter(|at| at.distance(v(10.0, 10.0)) < 1e-6)
+        .collect();
+    assert_eq!(ends.len(), 2, "the corner and the dropped end, apart");
+}
+
+#[test]
+fn without_auto_merge_a_line_drawn_from_a_corner_is_its_own_but_still_closes_its_loop() {
+    let mut ed = Editor::default();
+    let mut rect = RectangleTool::default();
+    click(&mut ed, &mut rect, v(0.0, 0.0));
+    click(&mut ed, &mut rect, v(10.0, 10.0));
+    let rect_points = points(&ed.doc);
+    let mut line = LineTool::default();
+    for at in [v(10.0, 10.0), v(20.0, 10.0), v(20.0, 20.0), v(10.1, 10.1)] {
+        click_no_merge(&mut ed, &mut line, at);
+    }
+    // Three new points: the chain's start is its own (not the corner), and the last
+    // click closed the loop on that start.
+    assert_eq!(points(&ed.doc), rect_points + 3);
+    assert!(line.last.is_none(), "chain closed");
+}
+
 #[test]
 fn escape_during_move_restores_geometry() {
     let mut ed = Editor::default();

@@ -576,6 +576,17 @@ impl DriftApp {
                 .last_windows
                 .get(&top)
                 .map_or(300.0, |r| r.width());
+            // Never wider or taller than the room right of and below where it stands: a resize
+            // past the canvas edge would otherwise be pushed back by `constrain_to`, so dragging
+            // the right edge out would grow the window to the left.
+            if let Some(r) = self.dock_view.last_windows.get(&top) {
+                let wide = (canvas.right() - r.left()).floor().max(240.0);
+                let high = (canvas.bottom() - r.top())
+                    .floor()
+                    .min(most)
+                    .max(least.min(most));
+                window = window.max_width(wide).max_height(high);
+            }
             if shut {
                 window = window
                     .resizable(false)

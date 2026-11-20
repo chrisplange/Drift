@@ -397,6 +397,13 @@ const MENUS: [&str; 8] = [
     "File", "Edit", "View", "Draw", "Build", "Modify", "Annotate", "Help",
 ];
 
+/// Modify's Join submenu: the commands that make points one.
+const JOIN_MENU: [Command; 3] = [
+    Command::JoinCorners,
+    Command::Weld(drift_edit::weld::WeldAt::Active),
+    Command::Weld(drift_edit::weld::WeldAt::Centre),
+];
+
 impl DriftApp {
     /// A menu item for a command of the registry: its label, keys and description; greyed
     /// out (saying why) when it can't run; a check mark for a setting. Returns true if it
@@ -509,6 +516,17 @@ impl DriftApp {
         {
             if breaks.contains(&spec.command) {
                 ui.separator();
+            }
+            // Joining points is one submenu in Modify, so the menu fits a laptop's height.
+            if JOIN_MENU.contains(&spec.command) {
+                if spec.command == JOIN_MENU[0] {
+                    ui.menu_button("Join", |ui| {
+                        for c in JOIN_MENU {
+                            self.command_item(ui, c);
+                        }
+                    });
+                }
+                continue;
             }
             self.command_item(ui, spec.command);
         }
@@ -2249,6 +2267,13 @@ impl DriftApp {
                         "Auto relations",
                         &mut self.drawing.editor.prefs.auto_relations,
                         "Auto relations: add relations as you draw and modify (horizontal, coincident, tangent...). Off: plain geometry · Shift+Alt+R",
+                    );
+                    toggle(
+                        ui,
+                        Glyph::AutoMerge,
+                        "Auto merge",
+                        &mut self.drawing.editor.prefs.auto_merge,
+                        "Auto merge: a point dropped on another point joins it, and lines and arcs drawn on a point share it. Off: only placed there. Ctrl flips it for one drop · Shift+Alt+M",
                     );
                     // Angle snapping sits with grid snapping: a click opens its steps.
                     let angle_snap = &mut self.angle_snap;

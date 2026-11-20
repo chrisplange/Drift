@@ -27,6 +27,8 @@ pub enum Glyph {
     Endpoints,
     /// Automatic relations: two lines meeting square, with the perpendicular mark.
     AutoRelations,
+    /// Auto merge: two lines whose ends meet in one shared point.
+    AutoMerge,
     /// Perpendicular and tangent snaps: a circle touched by a line, with a line square to it.
     PerpTangent,
     // Panels.
@@ -585,6 +587,13 @@ pub fn glyph(painter: &egui::Painter, rect: Rect, glyph: Glyph, color: Color32) 
             p.line((4.0, 16.0), (16.0, 16.0));
             p.poly(&[(4.0, 10.5), (9.5, 10.5), (9.5, 16.0)], false);
             p.dot(4.0, 16.0, 1.8);
+        }
+        Glyph::AutoMerge => {
+            p.line((3.0, 15.0), (10.0, 8.0));
+            p.line((10.0, 8.0), (17.0, 15.0));
+            p.dot(10.0, 8.0, 2.4);
+            p.line((6.5, 4.0), (8.5, 6.0));
+            p.line((13.5, 4.0), (11.5, 6.0));
         }
         Glyph::PerpTangent => {
             p.circle(8.0, 12.5, 5.0);

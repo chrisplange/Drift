@@ -132,6 +132,10 @@ impl Tool for LineTool {
         self.last.is_some()
     }
 
+    fn joins_points(&self) -> bool {
+        true
+    }
+
     fn kind(&self) -> ToolKind {
         ToolKind::Line
     }
@@ -153,7 +157,19 @@ impl Tool for LineTool {
     fn handle(&mut self, input: Input, ed: &mut Editor) {
         match input {
             Input::Click(p, _) | Input::DragEnd(p, _) => {
-                self.place(p.anchor(), p.auto_relation(), None, ed)
+                let mut anchor = p.anchor();
+                // The chain's own start closes the loop, with or without Auto merge (even
+                // when another shape's point lies on it and won the snap).
+                if let Some(start) = self.chain_start
+                    && p.snapped_point().is_some()
+                    && ed
+                        .doc
+                        .point(start)
+                        .is_ok_and(|at| at.distance(p.pos()) <= p.tolerance)
+                {
+                    anchor.existing = Some(start);
+                }
+                self.place(anchor, p.auto_relation(), None, ed)
             }
             Input::DragStart(p, _) if self.last.is_none() => self.place(p.anchor(), None, None, ed),
             Input::DoubleClick(_) | Input::Finish => self.finish(),

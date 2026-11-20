@@ -1651,6 +1651,49 @@ fn a_floating_stack_stays_inside_a_short_canvas() {
     assert!(window.top() >= canvas.top() - 0.5 && window.bottom() <= canvas.bottom() + 0.5);
 }
 
+/// #505: dragging a floating panel's right edge on past the canvas edge (into the side bar)
+/// stops the edge there; the left edge stays put instead of walking out to the left.
+#[test]
+fn a_floating_panel_resized_past_the_canvas_edge_keeps_its_left_edge() {
+    let Some(mut h) = harness() else { return };
+    h.state_mut()
+        .layout
+        .move_to(Panel::Layers, Place::Float, None);
+    h.run_steps(6);
+    let canvas = h.state().drawing.view.canvas_rect;
+    let (_, before) = h.state().floating_rects(Panel::Layers).unwrap();
+    // Grab the right edge a little below the header and drag well past the canvas, in steps.
+    let grab = egui::pos2(before.right() - 1.0, before.top() + 120.0);
+    h.hover_at(grab);
+    h.run_steps(2);
+    button(&h, grab, true);
+    h.run_steps(2);
+    let end = canvas.right() + 300.0;
+    let steps = 30;
+    for i in 1..=steps {
+        let x = grab.x + (end - grab.x) * i as f32 / steps as f32;
+        h.hover_at(egui::pos2(x, grab.y));
+        h.run_steps(1);
+    }
+    // Hold it there for a while: nothing may keep creeping.
+    for _ in 0..20 {
+        h.hover_at(egui::pos2(end, grab.y));
+        h.run_steps(1);
+    }
+    button(&h, egui::pos2(end, grab.y), false);
+    h.run_steps(4);
+    save_png("drift_ui_floating_resize_past_edge.png", &mut h);
+    let (_, after) = h.state().floating_rects(Panel::Layers).unwrap();
+    assert!(
+        (after.left() - before.left()).abs() < 1.0,
+        "the left edge moved: {before:?} → {after:?} (canvas {canvas:?})"
+    );
+    assert!(
+        after.right() <= canvas.right() + 0.5 && after.right() >= canvas.right() - 2.0,
+        "the right edge should stop at the canvas edge: {after:?} in {canvas:?}"
+    );
+}
+
 #[test]
 fn a_floating_stack_shares_its_height_by_content_and_keeps_dragged_sizes() {
     let Some(mut h) = harness() else { return };

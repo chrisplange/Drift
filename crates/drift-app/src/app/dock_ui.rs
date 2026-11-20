@@ -60,6 +60,10 @@ pub(crate) struct DockView {
     windows: HashMap<Panel, egui::Rect>,
     /// The floating windows as drawn the frame before (`windows` fills as they are drawn).
     last_windows: HashMap<Panel, egui::Rect>,
+    /// Each floating window's top left when the pointer went down, held until it comes up:
+    /// what a resize measures its room from (#505).
+    /// And whether the press was on its right or bottom edge (a resize that keeps its top left).
+    pressed_at: HashMap<Panel, (egui::Pos2, bool)>,
     /// How tall each panel's contents were when last drawn (nothing cut off).
     content: HashMap<Panel, f32>,
     /// The header of each floating panel as last drawn (the part that docks it when dragged).
@@ -546,6 +550,10 @@ impl DriftApp {
         // Never taller than the canvas: egui lets a window taller than the area it is kept in
         // slide up past its top, where the header would be cut off under the bar above.
         let most = canvas.height().floor();
+        let down = ctx.input(|i| i.pointer.primary_down());
+        if !down {
+            self.dock_view.pressed_at.clear();
+        }
         for (k, stack) in self.layout.floating.clone().into_iter().enumerate() {
             let top = stack[0];
             let n = stack.len();
@@ -578,10 +586,35 @@ impl DriftApp {
                 .map_or(300.0, |r| r.width());
             // Never wider or taller than the room right of and below where it stands: a resize
             // past the canvas edge would otherwise be pushed back by `constrain_to`, so dragging
-            // the right edge out would grow the window to the left.
+            // the right edge out would grow the window to the left. The room is measured from
+            // where it stood when the pointer went down, not from last frame (#505). And while
+            // its right or bottom edge is dragged, the area it is kept in reaches past those
+            // edges: egui sizes the window to the pointer and then fits that rect into the
+            // area by moving it, so with the canvas as the area it slid left (or up) by however
+            // far the pointer went past the edge, and kept the pointer's size on release. The
+            // cap below keeps what is drawn inside the canvas.
             if let Some(r) = self.dock_view.last_windows.get(&top) {
-                let wide = (canvas.right() - r.left()).floor().max(240.0);
-                let high = (canvas.bottom() - r.top())
+                let (from, edge) = if down {
+                    *self.dock_view.pressed_at.entry(top).or_insert_with(|| {
+                        let origin = ctx.input(|i| i.pointer.press_origin());
+                        let grip = 8.0;
+                        let edge = origin.is_some_and(|o| {
+                            r.expand(grip).contains(o)
+                                && ((o.x - r.right()).abs() <= grip
+                                    || (o.y - r.bottom()).abs() <= grip)
+                        });
+                        (r.left_top(), edge)
+                    })
+                } else {
+                    (r.left_top(), false)
+                };
+                if edge {
+                    let mut room = canvas;
+                    room.max += egui::vec2(1.0e5, 1.0e5);
+                    window = window.constrain_to(room);
+                }
+                let wide = (canvas.right() - from.x).floor().max(240.0);
+                let high = (canvas.bottom() - from.y)
                     .floor()
                     .min(most)
                     .max(least.min(most));

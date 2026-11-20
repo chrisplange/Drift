@@ -155,6 +155,12 @@ impl OverlayColors {
     }
 }
 
+/// A join on a snapped point: the point's square, filled.
+pub fn join_marker(painter: &egui::Painter, map: &ScreenMap, snap: &Snap, color: Color32) {
+    let c = map.to_screen(snap.at);
+    painter.rect_filled(Rect::from_center_size(c, vec2(10.0, 10.0)), 0.0, color);
+}
+
 /// Draw the glyph for a snap target: square for points, circle for centres, triangle for
 /// midpoints, diamond for quadrants, cross for on-curve, plus for grid, ⊥ for perpendicular and
 /// a circle on a line for tangent.

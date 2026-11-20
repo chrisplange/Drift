@@ -72,6 +72,7 @@ mod updates;
 /// The Wall tool: keys, joins, bends, Backspace and undo.
 #[cfg(not(feature = "demo"))]
 mod walls;
+mod weld;
 
 /// The app at 1280 × 800, or `None` (the test skips) without a graphics adapter; with
 /// `DRIFT_REQUIRE_GPU=1` that fails instead ([`crate::test_gpu`]).
@@ -10005,6 +10006,8 @@ fn tangent_arcs_and_lines_start_on_a_partial_ellipse_and_a_pen_curve() {
     use drift_core::Constraint;
     let Some(mut h) = harness() else { return };
     h.state_mut().drawing.editor.prefs.auto_relations = true;
+    // The line goes on from the pen curve's end (joined to it), so Auto merge is on.
+    h.state_mut().drawing.editor.prefs.auto_merge = true;
     // A partial ellipse (semi-axes 40 and 20) from -30° to 135°, and a pen curve below it.
     let ellipse_at = |degrees: f64| {
         let t = degrees.to_radians();
@@ -10323,9 +10326,14 @@ fn saved_preferences_read_back_unchanged() {
         drift_edit::walls_from_lines::UsedLines::Layer
     );
     assert_eq!(prefs.fill_alone_picks, 2);
-    // (Which relations show is saved since #337: a key those builds didn't write.)
+    // (Which relations show is saved since #337, and Auto merge since: keys those builds
+    // didn't write. Auto merge reads back off, its default.)
     // (And whether the rail shows names since the Studio rail: appended, off unless set.)
-    let written = h.state().view_prefs().replace("rels=all;", "");
+    let written = h
+        .state()
+        .view_prefs()
+        .replace("rels=all;", "")
+        .replace("merge=0;", "");
     assert_eq!(written.strip_suffix(";railnames=0"), Some(SAVED));
 }
 

@@ -727,6 +727,14 @@ impl DriftApp {
         );
         crate::theme::checkbox(
             ui,
+            &mut self.drawing.editor.prefs.auto_merge,
+            "Join points dropped on points",
+        )
+        .on_hover_text(
+            "Auto merge: a dragged point dropped on another, or a line or arc drawn on another shape's point, shares it. Ctrl flips it for one drop · Shift+Alt+M",
+        );
+        crate::theme::checkbox(
+            ui,
             &mut self.perp_tangent_snap,
             "Snap perpendicular and tangent",
         )

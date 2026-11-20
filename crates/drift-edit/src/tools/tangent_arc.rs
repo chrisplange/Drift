@@ -159,6 +159,11 @@ impl Tool for TangentArcTool {
         self.start.is_some()
     }
 
+    fn joins_points(&self) -> bool {
+        // The start always continues from the curve's end; the end joins with Auto merge.
+        true
+    }
+
     fn kind(&self) -> ToolKind {
         ToolKind::TangentArc
     }

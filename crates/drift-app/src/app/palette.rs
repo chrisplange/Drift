@@ -59,6 +59,7 @@ impl DriftApp {
             ViewFlag::Crops => &mut self.show_view_crops,
             ViewFlag::Centrelines => &mut self.show_wall_centrelines,
             ViewFlag::AutoRelations => &mut self.drawing.editor.prefs.auto_relations,
+            ViewFlag::AutoMerge => &mut self.drawing.editor.prefs.auto_merge,
         }
     }
 
@@ -229,6 +230,14 @@ impl DriftApp {
                     };
                     self.set_status(text.into(), false, now);
                 }
+                if f == ViewFlag::AutoMerge {
+                    let text = if self.drawing.editor.prefs.auto_merge {
+                        "Auto merge on: a point dropped on a point joins it (Ctrl: just place it)"
+                    } else {
+                        "Auto merge off: a point dropped on a point is only placed there (Ctrl: join)"
+                    };
+                    self.set_status(text.into(), false, now);
+                }
             }
             Command::Relations => self.show_relations = self.show_relations.next(),
             Command::Panel(p) => self.toggle_panel(p),
@@ -344,6 +353,11 @@ impl DriftApp {
             Command::EditFill => {
                 if let Some(f) = self.drawing.editor.picked_shape_fill() {
                     self.drawing.editor.pick_fill_alone(f);
+                }
+            }
+            Command::Weld(at) => {
+                if let Err(why) = self.drawing.editor.weld_points(at) {
+                    self.drawing.editor.out.notice = Some(why);
                 }
             }
             Command::JoinCorners => {

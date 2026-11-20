@@ -2,6 +2,16 @@
 
 The next release's notes, as they land (Beta 1.6's are below).
 
+## Points join only when you want them to
+
+- **Auto merge, off by default.** Dragging a point onto another shape's point no longer fuses
+  the two: it lands there and stays its own. Lines and arcs drawn on another shape's point
+  get their own point too. Turn **Auto merge** on in the status bar (Shift+Alt+M) to join
+  them, or hold Ctrl as you drop to join just once. The snap marker shows **Join** when a
+  drop would join.
+- **Weld points.** Pick points and press **1** to weld them onto the one you picked last, or
+  **Shift+1** to weld them at their centre.
+
 ## Notes and dimensions on sheets
 
 - **Annotate a sheet, not just the model.** With a sheet's tab open, **Note** and

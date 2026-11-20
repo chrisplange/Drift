@@ -273,7 +273,9 @@ impl DriftApp {
                         && !(skip_tools && matches!(spec.command, Command::Tool(_)))
                 }
             };
-            if !ours || !Self::key_down(ctx, key, spec) {
+            // While the tool takes typed values, digits are numbers, never shortcuts.
+            let typing_digits = is_digit(key.key) && !self.tool.fields().is_empty();
+            if !ours || typing_digits || !Self::key_down(ctx, key, spec) {
                 continue;
             }
             let busy = self.tool.is_busy();
@@ -346,7 +348,13 @@ impl DriftApp {
                 && !m.command
                 && !m.ctrl
                 && !m.mac_cmd
-                && i.key_pressed(key.key)
+                && if is_digit(key.key) {
+                    // Once per press (holding the key doesn't repeat it), and by where it
+                    // is on the keyboard too.
+                    digit_pressed(i, key.key)
+                } else {
+                    i.key_pressed(key.key)
+                }
         })
     }
 
@@ -672,4 +680,37 @@ impl DriftApp {
             self.show_sheet(tabs[next]);
         }
     }
+}
+
+/// A digit key: matched by where it is on the keyboard too, since Shift+1 types "!" (and on
+/// some layouts the digit row types other characters without Shift).
+fn is_digit(key: Key) -> bool {
+    matches!(
+        key,
+        Key::Num0
+            | Key::Num1
+            | Key::Num2
+            | Key::Num3
+            | Key::Num4
+            | Key::Num5
+            | Key::Num6
+            | Key::Num7
+            | Key::Num8
+            | Key::Num9
+    )
+}
+
+/// Whether digit `key` went down this frame (not a repeat while held), by the key it typed
+/// or by where it is on the keyboard.
+fn digit_pressed(i: &egui::InputState, key: Key) -> bool {
+    i.events.iter().any(|e| match e {
+        egui::Event::Key {
+            key: k,
+            physical_key,
+            pressed: true,
+            repeat: false,
+            ..
+        } => *k == key || *physical_key == Some(key),
+        _ => false,
+    })
 }

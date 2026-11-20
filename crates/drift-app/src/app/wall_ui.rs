@@ -1,4 +1,4 @@
-//! The Wall tool's bar (thickness with presets, justification, straight or arc, poché) and
+//! The Wall tool's bar (thickness with presets, justification, straight or arc, fill) and
 //! the Inspector for picked walls.
 
 use drift_core::{Justify, WallId};
@@ -14,7 +14,7 @@ const JUSTIFY: [(Justify, &str); 3] = [
 
 impl DriftApp {
     /// The Wall tool's bar: `Thickness [ … ▾ ] · Left face | Centre | Right face · Straight |
-    /// Arc · ☐ Fill walls [Solid ▾ ■]`. What is set here is kept for the next drawing too.
+    /// Arc · ☐ Fill [Solid ▾ ■]`. What is set here is kept for the next drawing too.
     pub(crate) fn wall_tool_bar(&mut self, ui: &mut egui::Ui) {
         let units = self.drawing.editor.doc.units();
         theme::bar_caption(ui, "Thickness");
@@ -72,7 +72,7 @@ impl DriftApp {
         }
         theme::bar_caption(ui, "W");
         theme::bar_divider(ui);
-        ui.checkbox(&mut self.drawing.editor.prefs.wall_poche.on, "Fill walls")
+        ui.checkbox(&mut self.drawing.editor.prefs.wall_poche.on, "Fill")
             .on_hover_text("Fill new walls: joined walls of one style on one layer are one area");
         if self.drawing.editor.prefs.wall_poche.on {
             let mut style = self.drawing.editor.prefs.wall_poche.style.clone();
@@ -159,14 +159,14 @@ impl DriftApp {
                 self.drawing.editor.set_wall_justify(&walls, j);
             }
         });
-        // Its fill: on or off, and its style.
+        // Fill: on or off, and its style.
         let mut on = first.poche.is_some();
         let mut style = first
             .poche
             .clone()
             .unwrap_or_else(|| self.drawing.editor.prefs.wall_poche.style.clone());
         let was = (on, style.clone());
-        theme::wide_row(ui, "Wall fill", 160.0, |ui| {
+        theme::row(ui, "Fill", |ui| {
             ui.checkbox(&mut on, "");
             if on {
                 self.style_kind(ui, &mut style);

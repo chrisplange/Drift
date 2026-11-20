@@ -10,7 +10,7 @@ Time: about 10 minutes. Start from the room in [Walls](14-walls.md), or draw fou
 ## How openings work
 
 An **opening** (a door, a window, or a cased opening with no leaf) belongs to a wall. It
-cuts the wall: the faces stop at its two **jambs**, and the wall's fill (poché) goes round it.
+cuts the wall: the faces stop at its two **jambs**, and the wall's fill goes round it.
 Its **symbol** (a door's leaf and swing, a window's frame, glass and sill) is drawn at the
 wall's thickness, so a door in a 6″ wall and one in a 4½″ wall each fit their wall.
 

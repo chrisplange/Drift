@@ -31,8 +31,8 @@ hit the exact spot:
   square on it, with no cap.
 - A run that comes back to its own start, or into its own side, joins itself (a room, a P).
 
-Joined walls of the same **poché** (fill) on the same layer are one area, with no line between
-them. Walls of another poché or layer butt against the thickest wall there instead.
+Joined walls of the same **fill** on the same layer are one area, with no line between
+them. Walls of another fill or layer butt against the thickest wall there instead.
 
 Centrelines are construction geometry: they never print. They show while the **Wall** or
 **Dimension** tool is in hand, on a picked or hovered wall, or everywhere with **View → Wall
@@ -45,7 +45,7 @@ centrelines**.
 2. In the top bar, set **Thickness**: the **▾** list has US walls at their actual finished
    thickness (a 2×4 stud wall with ½″ gypsum both sides is 4½″) or, in a metric drawing,
    100 mm to 365 mm. You can type any value too.
-3. Leave the justification at **Centre** and **Poché** on.
+3. Leave the justification at **Centre** and **Fill** on.
 4. Click four corners of a room, then click the first corner again (anywhere in its corner
    will do). The room closes and the tool is ready for the next wall.
 
@@ -61,7 +61,7 @@ back, typing a number gives a length (Tab: an angle), and X / Y lock the segment
 2. Click a point inside the room, then press Enter.
 
 The new wall runs into the room's wall, and the room's face opens where it meets it. Both are
-one poché. Move the room's wall later and the T follows.
+one fill. Move the room's wall later and the T follows.
 
 ## 3. Arcs and bends
 
@@ -132,7 +132,7 @@ Click a wall (a face, its fill or its centreline). The **Inspector** shows:
 - **Thickness:** type a value, pick a preset, or type a variable's name (for example
   `t_ext`). A thickness from a variable follows it: change the variable in the **Parameters**
   tab and every wall that uses it is re-thickened.
-- **Justify** and **Poché** (on or off, solid or a hatch).
+- **Justify** and **Fill** (on or off, solid or a hatch).
 - **Joins:** whether it joins walls it crosses, and at each end whether it joins at all.
   With two walls picked, **Join** meets their nearest ends (an L where their centrelines
   cross, or a T where one points at the other); **Unjoin** caps the ends where the picked
@@ -143,7 +143,7 @@ Click a wall (a face, its fill or its centreline). The **Inspector** shows:
   to type a new thickness (or a variable's name); it prints like any other dimension.
 - **Explode** turns the wall into plain lines, arcs and a fill.
 
-![A room of walls picked by its poché, with a wall teed onto it and a door: the wall's Inspector](../images/walls.png)
+![A room of walls picked by its fill, with a wall teed onto it and a door: the wall's Inspector](../images/walls.png)
 
 Dragging a picked wall's centreline points moves its corners (and the walls joined there).
 Drag a free end into another wall and it joins as you go; drag it out and it lets go.

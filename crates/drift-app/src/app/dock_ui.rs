@@ -69,6 +69,9 @@ pub(crate) struct DockView {
     was_wide: Option<bool>,
     /// Every panel hidden for a clear view (Ctrl+\).
     pub hide_all: bool,
+    /// The panel whose contents are being drawn, while they are: what a click in a panel
+    /// asks for never sends its own dock to another panel (see [`DriftApp::show_panel`]).
+    in_panel: Option<Panel>,
 }
 
 pub(crate) fn glyph(p: Panel) -> Glyph {
@@ -123,7 +126,20 @@ fn icon_at(
 
 impl DriftApp {
     /// Open a panel and bring it to the front (also undoes "hide all panels").
+    ///
+    /// Asked for by a click inside another panel, it never takes that panel's place: a
+    /// panel the user is working in stays in front, and one in another dock or floating
+    /// comes forward as usual (#425).
     pub(crate) fn show_panel(&mut self, p: Panel) {
+        if let Some(from) = self.dock_view.in_panel
+            && from != p
+            && let Place::Dock(side) = self.layout.place(from)
+        {
+            let to = self.layout.place(p);
+            if to == Place::Hidden || to == Place::Dock(side) {
+                return;
+            }
+        }
         self.dock_view.hide_all = false;
         self.layout.show(p);
     }
@@ -207,6 +223,7 @@ impl DriftApp {
     /// A panel's contents.
     pub(crate) fn panel_body(&mut self, ui: &mut egui::Ui, p: Panel) {
         let now = ui.input(|i| i.time);
+        let outer = self.dock_view.in_panel.replace(p);
         match p {
             Panel::Inspector => {
                 let area = egui::ScrollArea::vertical()
@@ -220,6 +237,7 @@ impl DriftApp {
             Panel::Sheets => self.sheets_panel(ui),
             Panel::Blocks => self.blocks_panel(ui),
         }
+        self.dock_view.in_panel = outer;
     }
 
     /// The tabs across the top of a dock: icon and name (just the icon when they don't fit),

@@ -1,6 +1,126 @@
-# What's new since Beta 1.6 (draft)
+# What's new in Beta 1.7
 
-The next release's notes, as they land (Beta 1.6's are below).
+Beta 1.7's notes (Beta 1.6's are below). Drawings saved by this version are file format 45.
+Older drawings open as before, but **Beta 1.6 and earlier can't open a drawing saved by this
+version**: they ask you to update Drift. Keep a copy saved from Beta 1.6 if you need to go back.
+
+## A new look
+
+- **One top bar** holds the menus, undo and redo, the Model and sheet tabs (centred, with
+  **More sheets** for the ones that don't fit), search, and the switches that show and hide
+  the panels. It replaces the menu row and the tab strip.
+- **A slim tool rail** with rich tooltips. A toggle at its foot brings the tool names back,
+  and it takes two columns when the window is short.
+- **Quick-constrain bar.** With Select, the relations and dimensions that fit what you've
+  picked are one click away on the canvas. Turn it off in **Preferences → Drawing aids**.
+- **Panels on one grid:** the Inspector, Layers, Parameters, Sheets and Blocks share one
+  layout, with fields that fill the column and themed sliders, checkboxes and menus. A
+  sheet's paper and scale are in the status bar.
+- **The status bar** leads with the tool's hint, zooms with − / % / +, and shows X and Y
+  while the pointer is on the canvas.
+- **Looks: System, Midnight, Obsidian and Light**, under **View → Appearance**. Text contrast
+  meets 4.5:1 in all of them.
+- The start panel, command palette, messages and menus are restyled to match. In the menus,
+  only the first tool of a key cycle shows its key; its tooltip says what pressing it again
+  does.
+
+<!-- PRs: Studio redesign (#490), menu bar and rail polish (#479), looks (#374) -->
+
+## A view's settings in one place
+
+- **A placed view's Inspector has two sections.** **View** is the view itself, the same on
+  every sheet it's on: name, scale and Fit, what it shows, and its layers. **On this sheet**
+  is how this sheet shows it: frame, title, border and alignment. The Sheets panel's Views
+  list no longer edits the same things under other names.
+- Panels stay in front of the canvas, and **Poché** is now called **Fill**.
+
+<!-- PRs: right panels (#488) -->
+
+## Smoother drags
+
+- **Dragging no longer jumps.** A small move of the pointer could make geometry leap, or run
+  one way and snap back. A long move is now taken in steps from where the drag began, so
+  each frame follows on from the last.
+- **A point dragged across its circle's centre goes straight through**, and a line hanging
+  from what you move keeps its length instead of being stretched.
+- **Edits keep shapes.** Adding a relation or a dimension keeps arcs' radii and lines'
+  directions where it can: Parallel no longer stretches the lines it turns.
+- **The same drag gives the same result** at any drawing size and distance from the origin.
+- Whole-move drags, and what happens when you let go, are faster on big drawings.
+
+<!-- PRs: smooth drag (#489), circle centre (#365), solver redesign (#391, #394, #399), same at any size (#377), big-drawing drags (#363) -->
+
+## Type notes and texts on the canvas
+
+- **Notes and texts are typed where they are**, with no popup, as in a design app. Placing a
+  note or double-clicking one starts typing at once. Click places the caret, drag selects,
+  double-click picks a word, triple-click a line, and Ctrl+A everything. Up, Down, Home and End
+  follow the lines as they are set on the canvas.
+- Return adds a line. Esc, or a click away, finishes and keeps the text; a new note left empty
+  goes. Ctrl+Z undoes the whole edit. Ctrl+B and Ctrl+I switch the note's bold and italic.
+- The frame and leaders follow the text as you type. Model notes, sheet notes and texts all
+  work the same.
+- **A leader's tip stays put** when you split, trim, extend, fillet or chamfer the curve it
+  points at, and through undo and redo.
+- **Zoomed-in text stays sharp:** text taller than the screen's text cache is drawn as outlines.
+- **Liberation Sans is the standard font**, on screen, in PDFs and in SVGs. It is the same
+  width as Arial and Helvetica, so labels don't move. Arrowheads are slimmer (22.5°).
+
+<!-- PRs: live text (#478), leader tips (#474), vector text (#375), font and arrows (#374) -->
+
+## Picking, chaining and relations
+
+- **Tab chains only within one shape.** Each curve remembers the shape it was drawn in, so Tab
+  no longer runs on into a shape that only shares a corner with it. A new path joins a shape
+  only where it continues from that shape's open end. Older drawings chain as before.
+- **Click again to pick the next thing underneath.** With Select, a second click on the same
+  spot picks the next overlapping item, and wraps round.
+- **Show relations: Off, Picked only or All.** **View → Relations**, or Alt+R to step through.
+  **Picked only** shows the relations on what you've picked, on both curves of a pair. Relation
+  symbols are larger and keep clear of the transform handles.
+- **The red "N conflicting" pill picks the conflicting relations** when clicked, ready to
+  delete or change one. Redundant relations are marked in the Relations list.
+- **Automatic relations** leave out ones the drawing already implies, for every snap. Sketched
+  lines within 3° of level or plumb get Horizontal or Vertical.
+
+<!-- PRs: figures (#475, #477), pick cycling (#419, #449), show relations (#457, #382), conflicts pill (#469), automatic relations (#437, #380) -->
+
+## Tools
+
+- **Mirror without drawing a line first:** click two points for a temporary axis. Clicking a
+  line still mirrors about it.
+- **Trim across walls** trims them whole.
+- **Space while drawing a wall** steps Left → Right → Centre.
+- **PDF export or Print with no sheets** asks how to place the drawing: at 1:1, or fitted to
+  the page and labelled with its scale.
+- **Shift+D** leaves no stray copy when the pointer is off the canvas or the layer is locked.
+- **A new drawing starts with "Layer 1".** Layer 0 shows only in drawings that have one, such
+  as DWG and DXF imports.
+- The Custom scale field starts empty after Esc or a click outside.
+- **Esc no longer leaves a sheet.** Go back with **Back to model**, or step through the Model
+  and sheet tabs with Ctrl+PgDn and Ctrl+PgUp.
+- **No stray `~` on dimensions** whose value only differs by rounding noise.
+
+<!-- PRs: mirror axis (#418), trim walls (#413), papercuts (#416, #412, #447, #492), PDF with no sheets (#417), Layer 1 (#454) -->
+
+## Drift script and the AI link
+
+- **Blocks from a script:** `block`, `place` and `explode`. The AI link has a `blocks` tool
+  to make, place, list and explode blocks.
+- Each `add_geometry` item is its own shape, so Tab doesn't chain across shapes that share
+  corners.
+
+<!-- PRs: script blocks (#470), blocks tool (#458), figures (#477) -->
+
+## Steadier
+
+- **Undo keeps to 64 MB** as well as 500 steps, so a long session on a big drawing doesn't run
+  out of memory.
+- **Guards against crashes** in tool input, commands and opening files. A double-click on a
+  locked layer no longer crashes, and a PDF with an odd character code imports.
+- Fills, walls and openings stay right when a drawing is far from the origin or very small.
+
+<!-- PRs: undo budget (#471), never-crash (#443, #444, #449), PDF import (#402), regions (#472), openings (#473) -->
 
 ## Notes and dimensions on sheets
 

@@ -809,10 +809,8 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
     // exactly where it was asked (`land` pins them so), and every kept shape. Otherwise
     // the solve is unfinished, and changes nothing.
     if options.fold {
-        let landed = targets
-            .iter()
-            .flatten()
-            .all(|&(g, v)| on_target(&sys, g, v));
+        let all: Vec<(usize, f64)> = targets.iter().flatten().copied().collect();
+        let landed = on_targets(&sys, &all);
         if !(report.converged && landed && kept_met(&sys)) {
             for (group, v) in sys.groups.iter_mut().zip(entry) {
                 group.value = v;
@@ -860,11 +858,48 @@ fn kept_met(sys: &System) -> bool {
     })
 }
 
-/// Whether group `g` is where it was asked to be, `v`, to the bar it was solved to
+/// Whether every group of `targets` is where it was asked to be, to the bar it was solved to
 /// ([`System::bars`]): a dragged point an ulp off its target (at one size, and on it to the bit
 /// at another) has landed as surely as one on it, and gets no landing pass (#280).
-fn on_target(sys: &System, g: usize, v: f64) -> bool {
-    (sys.groups[g].value - v).abs() <= sys.bars.get(g).copied().unwrap_or(0.0)
+///
+/// A point is judged by how far it is from its target, its two coordinates together, as the
+/// editor judges whether a drag landed ([`landed_within`]); a radius by its own value. Each
+/// coordinate against the bar by itself said a point 0.8 and 0.7 of a bar off was on target,
+/// and the same point with the drawing turned, 1.06 of a bar off along x, was not: one got a
+/// landing pass and the other didn't, and the editor, measuring the distance, read the first
+/// as a drag that hadn't landed (#362: a move in steps then carried a line at one size and
+/// turn and not at another).
+fn on_targets(sys: &System, targets: &[(usize, f64)]) -> bool {
+    // How far off each point is, squared, and the coarsest bar of its coordinates.
+    let mut points: BTreeMap<(EntityId, bool), (f64, f64)> = BTreeMap::new();
+    // (A group once: a carried point joined to a dragged one is in both ranks, and counted
+    // twice its offset was squared twice, the point judged at 0.71 of its bar.)
+    let mut seen: HashSet<usize> = HashSet::new();
+    for &(g, v) in targets {
+        if !seen.insert(g) {
+            continue;
+        }
+        let off = sys.groups[g].value - v;
+        let bar = sys.bars.get(g).copied().unwrap_or(0.0);
+        let mut of_a_point = false;
+        for &i in &sys.groups[g].members {
+            let key = match sys.params[i] {
+                Param::X(id) | Param::Y(id) => (id, false),
+                Param::MidX(id) | Param::MidY(id) => (id, true),
+                Param::Radius(_) => continue,
+            };
+            of_a_point = true;
+            let at = points.entry(key).or_insert((0.0, 0.0));
+            at.0 += off * off;
+            at.1 = at.1.max(bar);
+        }
+        // (An offset that isn't a number is off.)
+        let within = off.abs() <= bar;
+        if !of_a_point && !within {
+            return false;
+        }
+    }
+    points.values().all(|&(off2, bar)| off2.sqrt() <= bar)
 }
 
 /// After a drag's solve: the dragged and carried parameters are only heavy, not pinned, so
@@ -884,7 +919,7 @@ fn land(
     let mut pinned: Vec<(usize, f64)> = Vec::new();
     for rank in targets {
         pinned.extend(rank);
-        if rank.is_empty() || pinned.iter().all(|&(g, v)| on_target(sys, g, v)) {
+        if rank.is_empty() || on_targets(sys, &pinned) {
             continue;
         }
         let solved: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();

@@ -310,12 +310,17 @@ say how it tells row 1 from row 4. The note has no proven way to do that.
 ### 3.3 Start from the drag's start
 
 planegcs saves a reference solution when a drag begins and starts every solve of the drag
-from it, as Drift does. It also has an option, off by default, to take a new reference once
-the pointer is 20 times the first move's length from the last one; its comment says the solve
-is "getting too far away from the original solution". That is weak evidence its authors met
-trouble with always starting from the beginning over a long drag. It is the same trouble the
-audit's continuation is meant to answer by other means (following the path instead of leaping
-to its end). Nothing read argues for solving from the last frame.
+from it, as Drift does. It also has an option to take a new reference once the pointer is 20
+times the first move's length from the last one; its comment says the solve is "getting too
+far away from the original solution". The option is off in `Sketch`'s constructor and on by
+default in the GUI (the preference `RecalculateInitialSolutionWhileDragging`, read in
+`ViewProviderSketch.cpp`; corrected 2026-11-19, this note first said off by default). The
+commit that added it (2017) says the drag flips and jumps far from the reference. So its
+authors met the trouble with always starting from the beginning over a long drag, the trouble
+the audit's continuation answers by other means (following the path instead of leaping to its
+end). SolveSpace, by a behaviour-only reading of its source made for #362, starts each frame
+from what the last frame left and keeps no copy of the drag's start: smooth, and dependent on
+the way the pointer went. Drift measured both and kept the start, in steps (#362).
 
 ## 4. #400: the leaking projection
 

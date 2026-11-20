@@ -53,7 +53,7 @@ fn shift(s: &mut Session, ids: &[EntityId], delta: DVec2) -> Result<(), String> 
         .copied()
         .flat_map(Param::point)
         .collect();
-    if !ed.drag(ids, delta, &dragged) {
+    if !ed.drag_to(ids, delta, &dragged) {
         ed.doc.rollback();
         ed.sync();
         return Err(

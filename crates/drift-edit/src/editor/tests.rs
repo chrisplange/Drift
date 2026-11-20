@@ -745,7 +745,13 @@ mod drag_parts {
         let dragged = dragged(&ed, &ids);
         for k in 1..=4 {
             assert!(ed.drag(&ids, v(2.0, 1.0), &dragged));
-            assert_eq!(ed.drag_solves, 1, "step {k}: the sliver split the step");
+            // (A solve for each step of the move, two at most here; a split step takes
+            // three, the one that turned and its two halves.)
+            assert!(
+                ed.drag_solves <= 2,
+                "step {k}: the sliver split the step ({} solves)",
+                ed.drag_solves
+            );
         }
         let EntityKind::Line { a, b } = ed.doc.get(sliver).unwrap().kind else {
             unreachable!()

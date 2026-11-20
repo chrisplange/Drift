@@ -28,7 +28,7 @@ use proptest::test_runner::{Config, RngAlgorithm, TestRng, TestRunner};
 use super::*;
 
 /// A number from the environment, or `default`.
-fn env_or<T: std::str::FromStr>(key: &str, default: T) -> T {
+pub(super) fn env_or<T: std::str::FromStr>(key: &str, default: T) -> T {
     std::env::var(key)
         .ok()
         .and_then(|v| v.parse().ok())
@@ -37,7 +37,7 @@ fn env_or<T: std::str::FromStr>(key: &str, default: T) -> T {
 
 /// The census's random drags, in order: a sketch's plan, what is dragged, by how far and in
 /// how many frames.
-fn cases() -> impl FnMut() -> (Plan, Pick, DVec2, u32) {
+pub(super) fn cases() -> impl FnMut() -> (Plan, Pick, DVec2, u32) {
     let mut runner = TestRunner::new_with_rng(
         Config::default(),
         TestRng::from_seed(RngAlgorithm::ChaCha, &[7u8; 32]),

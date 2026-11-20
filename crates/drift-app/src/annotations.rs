@@ -67,7 +67,7 @@ impl AnnotationColors {
                 conflict: Color32::from_rgb(0xff, 0x5d, 0x5d),
                 preview: Color32::from_rgb(0x5e, 0xd3, 0xa3),
                 driven: Color32::from_rgb(0x8a, 0x90, 0x99),
-                text_background: Color32::from_rgb(0x1b, 0x1d, 0x21),
+                text_background: crate::theme::canvas(true),
                 glyph_background: Color32::from_rgb(0x2a, 0x2e, 0x35),
             }
         } else {
@@ -78,7 +78,7 @@ impl AnnotationColors {
                 conflict: Color32::from_rgb(0xd3, 0x2f, 0x2f),
                 preview: Color32::from_rgb(0x13, 0x9a, 0x6a),
                 driven: Color32::from_rgb(0x7a, 0x80, 0x88),
-                text_background: Color32::from_rgb(0xfb, 0xfb, 0xfa),
+                text_background: crate::theme::canvas(false),
                 glyph_background: Color32::from_rgb(0xe8, 0xea, 0xee),
             }
         }
@@ -2449,6 +2449,12 @@ pub fn paint_glyph(
     } else {
         painter.rect_stroke(rect, 4.0, Stroke::new(1.0, color), StrokeKind::Inside);
     }
+    paint_glyph_icon(painter, rect, kind, color);
+}
+
+/// A relation's symbol alone, in `color`, sized for the tile `rect`: what [`paint_glyph`]
+/// draws on its tile, for a button that adds the relation.
+pub fn paint_glyph_icon(painter: &egui::Painter, rect: Rect, kind: GlyphKind, color: Color32) {
     // The icons were drawn for a 15 pt tile; they scale with it.
     let k = rect.width() / GLYPH_ICON_BASE;
     let c = rect.center();

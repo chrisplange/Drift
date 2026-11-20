@@ -1,7 +1,11 @@
 /// Canvas colours, as sRGB bytes (unmultiplied alpha).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Palette {
+    /// The drawing's background: the one place it is set. The app's theme reads it from
+    /// here for whatever it paints to match the canvas.
     pub background: [u8; 4],
+    /// The desk a sheet's paper lies on (painted by the app, not by this crate).
+    pub desk: [u8; 4],
     pub grid_minor: [u8; 4],
     pub grid_major: [u8; 4],
     pub axis_x: [u8; 4],
@@ -24,11 +28,17 @@ pub struct Palette {
 }
 
 impl Palette {
+    /// The canvas's colours in the dark or the light appearance.
+    pub fn themed(dark: bool) -> Self {
+        if dark { Self::dark() } else { Self::light() }
+    }
+
     pub fn dark() -> Self {
         Self {
-            background: [0x1b, 0x1d, 0x21, 0xff],
-            grid_minor: [0x26, 0x29, 0x2e, 0xff],
-            grid_major: [0x31, 0x35, 0x3b, 0xff],
+            background: [0x18, 0x18, 0x1a, 0xff],
+            desk: [0x1e, 0x1e, 0x21, 0xff],
+            grid_minor: [0x20, 0x20, 0x23, 0xff],
+            grid_major: [0x2a, 0x2a, 0x2e, 0xff],
             axis_x: [0xc2, 0x4a, 0x4a, 0xb0],
             axis_y: [0x4a, 0xa8, 0x5c, 0xb0],
             solid: [0xe6, 0xe8, 0xeb, 0xff],
@@ -48,8 +58,9 @@ impl Palette {
     pub fn light() -> Self {
         Self {
             background: [0xfb, 0xfb, 0xfa, 0xff],
-            grid_minor: [0xee, 0xef, 0xf0, 0xff],
-            grid_major: [0xdc, 0xde, 0xe1, 0xff],
+            desk: [0xd4, 0xd4, 0xd9, 0xff],
+            grid_minor: [0xf0, 0xf0, 0xf1, 0xff],
+            grid_major: [0xe0, 0xe0, 0xe3, 0xff],
             axis_x: [0xd0, 0x3a, 0x3a, 0x90],
             axis_y: [0x2e, 0x9a, 0x48, 0x90],
             solid: [0x1d, 0x21, 0x26, 0xff],

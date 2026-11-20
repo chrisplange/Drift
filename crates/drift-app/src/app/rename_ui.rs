@@ -48,7 +48,8 @@ impl DriftApp {
             .show(ctx, |ui| {
                 ui.set_width(320.0);
                 theme::dialog_title(ui, &format!("Rename {what}"), false);
-                let field = ui.add(
+                let field = crate::theme::field(
+                    ui,
                     egui::TextEdit::singleline(&mut r.name)
                         .id(field_id)
                         .desired_width(f32::INFINITY),
@@ -69,7 +70,7 @@ impl DriftApp {
                     r.error = None;
                 }
                 if let Some(e) = &r.error {
-                    ui.colored_label(egui::Color32::from_rgb(0xff, 0x5d, 0x5d), e);
+                    ui.colored_label(crate::theme::error_color(ui.visuals().dark_mode), e);
                 }
                 if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     apply = true;

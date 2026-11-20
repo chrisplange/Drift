@@ -46,7 +46,8 @@ impl DriftApp {
         let mut response = None;
         theme::row(ui, "Gaps up to", |ui| {
             response = Some(
-                ui.add(
+                crate::theme::drag(
+                    ui,
                     egui::DragValue::new(&mut shown)
                         .speed(0.01)
                         .range(0.0001..=1000.0)
@@ -247,7 +248,7 @@ impl DriftApp {
         if self.drawing.sketch_check.is_none() {
             return;
         }
-        let amber = egui::Color32::from_rgb(0xff, 0x9f, 0x0a);
+        let amber = crate::theme::amber(painter.ctx().theme() == egui::Theme::Dark);
         for issue in self.sketch_issues().iter().take(LISTED * 5) {
             if let Some(at) = issue_at(&self.drawing.editor.doc, issue) {
                 let at = map.to_screen(at);

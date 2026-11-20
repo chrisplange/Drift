@@ -31,6 +31,9 @@ fn hatched_shape(h: &mut Harness<'_, DriftApp>) -> (Vec<EntityId>, FillId) {
     });
     h.run();
     h.state_mut().drawing.view.fit_target = None;
+    // (Without the toast that says the colours changed: while it fades it repaints every
+    // frame, and a click that falls in the fade never settles.)
+    h.state_mut().status = None;
     h.run();
     (sides, fill)
 }
@@ -150,7 +153,7 @@ fn the_inspector_aligns_the_pattern_to_corners_an_edge_and_back() {
     h.run();
     assert!(h.query_by_label("Pattern alignment").is_some());
     // The centre of the area, then a corner.
-    h.get_by_label("Origin Centre").click();
+    h.get_by_label("Origin Center").click();
     h.run();
     assert!(close(hatch(&h, fill).origin, DVec2::new(25.0, 15.0)));
     h.get_by_label("Origin Top right").click();

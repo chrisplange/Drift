@@ -53,6 +53,16 @@ pub enum Glyph {
     Move,
     Rotate,
     Array,
+    // The top bar's and the status bar's buttons.
+    Undo,
+    Redo,
+    /// Show or hide the panels: a window with a pane down its side.
+    Panels,
+    Minus,
+    Plus,
+    ChevronDown,
+    /// Back (from a sheet to the model): an arrow to the left.
+    Back,
 }
 
 /// Maps a 20 × 20 design grid into `rect`.
@@ -728,6 +738,31 @@ pub fn glyph(painter: &egui::Painter, rect: Rect, glyph: Glyph, color: Color32) 
             p.arc(10.0, 10.5, 5.5, -2.4, 4.3);
             p.poly(&[(3.2, 4.2), (4.6, 7.2), (7.8, 6.6)], false);
         }
+        Glyph::Undo | Glyph::Redo => {
+            // An arrow back along a line that hooks round underneath (mirrored for redo).
+            let m = |x: f32| if glyph == Glyph::Undo { x } else { 20.0 - x };
+            p.poly(&[(m(7.5), 3.8), (m(3.8), 7.5), (m(7.5), 11.2)], false);
+            p.line((m(4.2), 7.5), (m(11.5), 7.5));
+            let sweep = if glyph == Glyph::Undo { PI } else { -PI };
+            p.arc(m(11.5), 11.5, 4.0, -PI / 2.0, sweep);
+            p.line((m(11.5), 15.5), (m(8.0), 15.5));
+        }
+        Glyph::Panels => {
+            p.poly(&[(3.0, 4.5), (17.0, 4.5), (17.0, 15.5), (3.0, 15.5)], true);
+            p.line((12.0, 4.5), (12.0, 15.5));
+            p.line((14.0, 8.0), (15.2, 8.0));
+            p.line((14.0, 10.5), (15.2, 10.5));
+        }
+        Glyph::Minus => p.line((5.0, 10.0), (15.0, 10.0)),
+        Glyph::Plus => {
+            p.line((5.0, 10.0), (15.0, 10.0));
+            p.line((10.0, 5.0), (10.0, 15.0));
+        }
+        Glyph::ChevronDown => p.poly(&[(5.5, 8.0), (10.0, 12.5), (14.5, 8.0)], false),
+        Glyph::Back => {
+            p.line((4.0, 10.0), (16.0, 10.0));
+            p.poly(&[(8.5, 5.5), (4.0, 10.0), (8.5, 14.5)], false);
+        }
         Glyph::Delete => {
             p.line((3.5, 5.5), (16.5, 5.5));
             p.poly(&[(7.5, 5.5), (7.5, 3.5), (12.5, 3.5), (12.5, 5.5)], false);
@@ -760,16 +795,17 @@ pub fn tool_row_sized(
 ) -> egui::Response {
     let size = vec2(ui.available_width(), height);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    let enabled = ui.is_enabled();
     response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, label)
+        egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, selected, label)
     });
     let dark = ui.visuals().dark_mode;
     let accent = crate::theme::accent(dark);
     let n = crate::theme::neutrals(dark);
-    // The current tool: a neutral raised fill, its icon in the accent and the accent bar
-    // (the accent marks one thing, not a whole block).
+    // The current tool: a soft accent fill, its icon in the accent and the accent bar (never
+    // a solid accent block).
     let (bg, fg, weak) = if selected {
-        (Some(n.control), n.text, n.secondary)
+        (Some(crate::theme::accent_soft(dark)), n.text, n.secondary)
     } else if response.is_pointer_button_down_on() {
         (
             Some(ui.visuals().widgets.active.bg_fill),
@@ -831,6 +867,56 @@ pub fn tool_row_sized(
     response
 }
 
+/// A tile on the slim tool rail: the icon alone (18 pt), centred. The current tool's is on a
+/// soft accent fill with its icon in the accent and an accent bar at its left edge. `label`
+/// names it for accessibility (screen readers and UI tests).
+pub fn tool_tile(
+    ui: &mut egui::Ui,
+    size: Vec2,
+    selected: bool,
+    label: &str,
+    draw: impl FnOnce(&egui::Painter, Rect, Color32),
+) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    let enabled = ui.is_enabled();
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, selected, label)
+    });
+    let dark = ui.visuals().dark_mode;
+    let accent = crate::theme::accent(dark);
+    let (bg, fg) = if selected {
+        (Some(crate::theme::accent_soft(dark)), accent)
+    } else if response.is_pointer_button_down_on() {
+        (
+            Some(ui.visuals().widgets.active.bg_fill),
+            ui.visuals().strong_text_color(),
+        )
+    } else if response.hovered() {
+        (
+            Some(ui.visuals().widgets.hovered.bg_fill),
+            ui.visuals().strong_text_color(),
+        )
+    } else {
+        (None, ui.visuals().text_color())
+    };
+    let painter = ui.painter();
+    // (A pixel of air above and below, so neighbours' fills never touch.)
+    let tile = rect.shrink2(vec2(0.0, 1.0));
+    if let Some(bg) = bg {
+        painter.rect_filled(tile, crate::theme::radius::CONTROL, bg);
+    }
+    if selected {
+        let bar = Rect::from_min_max(
+            tile.left_top() + vec2(0.0, 4.0),
+            tile.left_bottom() + vec2(2.0, -4.0),
+        );
+        painter.rect_filled(bar, 1.0, accent);
+    }
+    let icon = Rect::from_center_size(rect.center(), Vec2::splat(18.0));
+    draw(painter, icon, fg);
+    response
+}
+
 pub fn button(
     ui: &mut egui::Ui,
     size: f32,
@@ -841,8 +927,9 @@ pub fn button(
     // A square icon button: a neutral tile with an accent icon when `selected`, a soft hover
     // otherwise. `label` names it for accessibility (screen readers and UI tests).
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), egui::Sense::click());
+    let enabled = ui.is_enabled();
     response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, label)
+        egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, selected, label)
     });
     let dark = ui.visuals().dark_mode;
     let accent = crate::theme::accent(dark);

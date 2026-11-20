@@ -198,6 +198,9 @@ impl LayerCounts {
     }
 }
 
+/// Side of an [`icon_toggle`]: with a row's margins, a list row's height.
+const ICON_TOGGLE: f32 = 22.0;
+
 /// A small icon toggle: full colour when on, faint (and struck through for `strike`) when off.
 /// True when it was clicked.
 pub(crate) fn icon_toggle(
@@ -207,11 +210,11 @@ pub(crate) fn icon_toggle(
     strike: bool,
     tip: &str,
 ) -> bool {
-    let r = icons::button(ui, 24.0, false, tip, |painter, rect, color| {
+    let r = icons::button(ui, ICON_TOGGLE, false, tip, |painter, rect, color| {
         let color = if *on {
-            color
+            color.gamma_multiply(0.85)
         } else {
-            color.gamma_multiply(0.4)
+            color.gamma_multiply(0.35)
         };
         icons::glyph(painter, rect, glyph, color);
         if strike && !*on {
@@ -271,20 +274,37 @@ pub(crate) fn to_color32(c: Option<Rgb>, dark: bool) -> egui::Color32 {
     }
 }
 
-/// A colour button: "Auto" (theme foreground / by layer) or a picked colour.
+/// A colour button: "Auto" (theme foreground / by layer) or a picked colour. It takes the
+/// width it is given: a row's value column.
 pub(crate) fn color_choice(
     ui: &mut egui::Ui,
     value: Option<Rgb>,
     auto_label: &str,
     dark: bool,
 ) -> Option<Option<Rgb>> {
+    let width = ui.available_width();
+    color_choice_of(ui, value, auto_label, dark, width)
+}
+
+/// [`color_choice`] at a set width (on a bar, among other controls).
+pub(crate) fn color_choice_of(
+    ui: &mut egui::Ui,
+    value: Option<Rgb>,
+    auto_label: &str,
+    dark: bool,
+    width: f32,
+) -> Option<Option<Rgb>> {
     let mut out = None;
     ui.horizontal(|ui| {
         let auto = value.is_none();
         let id = ui.id().with(("colour", auto_label));
+        // The menu takes the width, less the swatch of a colour of its own.
+        let swatch = ui.spacing().interact_size.x + ui.spacing().item_spacing.x;
+        let width = width - if auto { 0.0 } else { swatch + 16.0 };
         egui::ComboBox::from_id_salt(id)
+            .icon(crate::theme::combo_icon)
             .selected_text(if auto { auto_label } else { "Custom" })
-            .width(90.0)
+            .width(width.max(60.0))
             .show_ui(ui, |ui| {
                 if ui.selectable_label(auto, auto_label).clicked() && !auto {
                     out = Some(None);
@@ -304,6 +324,7 @@ pub(crate) fn color_choice(
     out
 }
 
+/// A line weight's menu, as wide as the room it is given (a row's value column).
 pub(crate) fn weight_combo(
     ui: &mut egui::Ui,
     id: impl std::hash::Hash + std::fmt::Debug,
@@ -313,8 +334,9 @@ pub(crate) fn weight_combo(
     let text = value.map_or("By layer".into(), LineWeight::label);
     let mut changed = false;
     egui::ComboBox::from_id_salt(id)
+        .icon(crate::theme::combo_icon)
         .selected_text(text)
-        .width(90.0)
+        .width(ui.available_width())
         .show_ui(ui, |ui| {
             if by_layer {
                 changed |= ui.selectable_value(value, None, "By layer").changed();
@@ -331,18 +353,22 @@ fn line_type_combo(
     id: impl std::hash::Hash + std::fmt::Debug,
     value: &mut Option<LineType>,
     by_layer: bool,
+    width: f32,
 ) -> bool {
     let text = value.map_or("By layer", LineType::label);
     let mut changed = false;
     egui::ComboBox::from_id_salt(id)
+        .icon(crate::theme::combo_icon)
         .selected_text(text)
-        .width(90.0)
+        .width(width)
         .show_ui(ui, |ui| {
             if by_layer {
                 changed |= ui.selectable_value(value, None, "By layer").changed();
             }
             for t in LineType::ALL {
-                changed |= ui.selectable_value(value, Some(t), t.label()).changed();
+                changed |= ui
+                    .selectable_value(value, Some(t), crate::theme::us(t.label()))
+                    .changed();
             }
             // A curve's own (never a layer's): no stroke.
             if by_layer {
@@ -355,6 +381,18 @@ fn line_type_combo(
     changed
 }
 
+/// A layer row's grid: the current layer's dot, the chevron and the gap between its parts.
+/// The swatch follows, then the name; an opened row's settings start under the swatch.
+const DOT: f32 = 10.0;
+const CHEVRON: f32 = 14.0;
+const ROW_SPACING: f32 = 5.0;
+
+/// The label column of an opened row's settings.
+const DETAIL_LABEL: f32 = 58.0;
+
+/// Space between two rows of the list.
+const ROW_GAP: f32 = 1.0;
+
 fn pos_of(list: &[LayerId], id: LayerId) -> Option<usize> {
     list.iter().position(|l| *l == id)
 }
@@ -364,10 +402,10 @@ fn isolate_bar(ui: &mut egui::Ui, name: &str) -> bool {
     let accent = crate::theme::accent(ui.visuals().dark_mode);
     let mut end = false;
     egui::Frame::new()
-        .fill(accent.gamma_multiply(0.12))
+        .fill(crate::theme::accent_soft(ui.visuals().dark_mode))
         .stroke(egui::Stroke::new(1.0, accent.gamma_multiply(0.5)))
-        .corner_radius(7.0)
-        .inner_margin(egui::Margin::symmetric(6, 3))
+        .corner_radius(crate::theme::radius::CONTROL)
+        .inner_margin(egui::Margin::symmetric(8, 3))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -575,106 +613,106 @@ impl DriftApp {
             ui.separator();
         }
         let mut rows: Vec<(LayerId, egui::Rect)> = Vec::new();
-        let output = egui::ScrollArea::vertical()
+        let area = egui::ScrollArea::vertical()
             .id_salt("layers_scroll")
-            .auto_shrink([false, false])
-            .show_viewport(ui, |ui, viewport| {
-                // Each row's top, from the heights the rows had when last drawn.
-                let closed = if self.drawing.layer_list.row > 0.0 {
-                    self.drawing.layer_list.row
-                } else {
-                    29.0
-                };
-                let heights: Vec<f32> = list
-                    .iter()
-                    .map(|id| {
-                        if self.drawing.expanded_layers.contains(id) {
-                            let opened = self.drawing.layer_list.opened.get(id).copied();
-                            opened.unwrap_or(closed + 140.0)
-                        } else {
-                            closed
-                        }
-                    })
-                    .collect();
-                let mut tops = Vec::with_capacity(list.len() + 1);
-                let mut y = 0.0;
-                for h in &heights {
-                    tops.push(y);
-                    y += h;
-                }
-                tops.push(y);
-                if let Some(i) = self
-                    .drawing
-                    .layer_list
-                    .reveal
-                    .take()
-                    .and_then(|r| pos_of(&list, r))
-                {
-                    let top = ui.max_rect().top();
-                    let rect = egui::Rect::from_x_y_ranges(
-                        ui.max_rect().x_range(),
-                        top + tops[i]..=top + tops[i + 1],
-                    );
-                    ui.scroll_to_rect(rect, None);
-                }
-                // The rows in view, and one more each way.
-                let first = tops
-                    .partition_point(|t| *t <= viewport.min.y)
-                    .saturating_sub(2);
-                let last = tops
-                    .partition_point(|t| *t < viewport.max.y)
-                    .min(list.len());
-                let first = first.min(last);
-                ui.add_space(tops[first]);
-                for (i, &id) in list.iter().enumerate().take(last).skip(first) {
-                    let top = ui.cursor().top();
-                    let rect = self.layer_list_row(ui, id, &info, true, &mut status, &mut action);
-                    ui.add_space(1.0);
-                    rows.push((id, rect));
-                    let drawn = ui.cursor().top() - top;
-                    let open = self.drawing.expanded_layers.contains(&id);
-                    let guess = heights[i];
-                    if open {
-                        self.drawing.layer_list.opened.insert(id, drawn);
+            .auto_shrink([false, false]);
+        let output = crate::theme::pane_scroll_viewport(ui, area, |ui, viewport| {
+            // Each row's top, from the heights the rows had when last drawn.
+            let closed = if self.drawing.layer_list.row > 0.0 {
+                self.drawing.layer_list.row
+            } else {
+                crate::theme::LIST_ROW + ROW_GAP
+            };
+            let heights: Vec<f32> = list
+                .iter()
+                .map(|id| {
+                    if self.drawing.expanded_layers.contains(id) {
+                        let opened = self.drawing.layer_list.opened.get(id).copied();
+                        opened.unwrap_or(closed + 140.0)
                     } else {
-                        self.drawing.layer_list.row = drawn;
+                        closed
                     }
-                    if (drawn - guess).abs() > 0.5 {
-                        // Laid out with a wrong height: again, with the right one.
-                        ui.ctx().request_repaint();
+                })
+                .collect();
+            let mut tops = Vec::with_capacity(list.len() + 1);
+            let mut y = 0.0;
+            for h in &heights {
+                tops.push(y);
+                y += h;
+            }
+            tops.push(y);
+            if let Some(i) = self
+                .drawing
+                .layer_list
+                .reveal
+                .take()
+                .and_then(|r| pos_of(&list, r))
+            {
+                let top = ui.max_rect().top();
+                let rect = egui::Rect::from_x_y_ranges(
+                    ui.max_rect().x_range(),
+                    top + tops[i]..=top + tops[i + 1],
+                );
+                ui.scroll_to_rect(rect, None);
+            }
+            // The rows in view, and one more each way.
+            let first = tops
+                .partition_point(|t| *t <= viewport.min.y)
+                .saturating_sub(2);
+            let last = tops
+                .partition_point(|t| *t < viewport.max.y)
+                .min(list.len());
+            let first = first.min(last);
+            ui.add_space(tops[first]);
+            for (i, &id) in list.iter().enumerate().take(last).skip(first) {
+                let top = ui.cursor().top();
+                let rect = self.layer_list_row(ui, id, &info, true, &mut status, &mut action);
+                ui.add_space(ROW_GAP);
+                rows.push((id, rect));
+                let drawn = ui.cursor().top() - top;
+                let open = self.drawing.expanded_layers.contains(&id);
+                let guess = heights[i];
+                if open {
+                    self.drawing.layer_list.opened.insert(id, drawn);
+                } else {
+                    self.drawing.layer_list.row = drawn;
+                }
+                if (drawn - guess).abs() > 0.5 {
+                    // Laid out with a wrong height: again, with the right one.
+                    ui.ctx().request_repaint();
+                }
+            }
+            ui.add_space(tops[list.len()] - tops[last]);
+            if list.is_empty() {
+                ui.label(egui::RichText::new("No layer matches the filter").weak());
+            }
+            // Room to scroll above and below, for a row dragged to the list's ends.
+            let room = (viewport.min.y > 0.0, viewport.max.y < tops[list.len()]);
+            self.drag_layer(ui, &rows, room);
+            // Below the rows, ids that don't depend on how many rows are drawn.
+            let footer = egui::UiBuilder::new().id(egui::Id::new("layers_footer"));
+            ui.scope_builder(footer, |ui| {
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .button("New layer")
+                        .on_hover_text("A new layer, made current; type its name")
+                        .clicked()
+                    {
+                        let n = self.drawing.editor.doc.layers().count();
+                        let name = format!("Layer {n}");
+                        let id = self.drawing.editor.add_layer(&name);
+                        self.drawing.editor.set_current_layer(id);
+                        self.drawing.renaming_layer = Some(id);
+                        self.drawing.layer_names.insert(id, name);
+                        // The new layer would hide behind a filter it doesn't match.
+                        self.drawing.layer_list.filter.clear();
+                        self.drawing.layer_list.reveal = Some(id);
                     }
-                }
-                ui.add_space(tops[list.len()] - tops[last]);
-                if list.is_empty() {
-                    ui.label(egui::RichText::new("No layer matches the filter").weak());
-                }
-                // Room to scroll above and below, for a row dragged to the list's ends.
-                let room = (viewport.min.y > 0.0, viewport.max.y < tops[list.len()]);
-                self.drag_layer(ui, &rows, room);
-                // Below the rows, ids that don't depend on how many rows are drawn.
-                let footer = egui::UiBuilder::new().id(egui::Id::new("layers_footer"));
-                ui.scope_builder(footer, |ui| {
-                    ui.add_space(6.0);
-                    ui.horizontal(|ui| {
-                        if ui
-                            .button("New layer")
-                            .on_hover_text("A new layer, made current; type its name")
-                            .clicked()
-                        {
-                            let n = self.drawing.editor.doc.layers().count();
-                            let name = format!("Layer {n}");
-                            let id = self.drawing.editor.add_layer(&name);
-                            self.drawing.editor.set_current_layer(id);
-                            self.drawing.renaming_layer = Some(id);
-                            self.drawing.layer_names.insert(id, name);
-                            // The new layer would hide behind a filter it doesn't match.
-                            self.drawing.layer_list.filter.clear();
-                            self.drawing.layer_list.reveal = Some(id);
-                        }
-                    });
-                    self.underlays_section(ui);
                 });
+                self.underlays_section(ui);
             });
+        });
         self.panel_scrolled(ui, crate::dock::Panel::Layers, &output);
         self.drawing.layer_counts.curves = counts;
         self.drawing.layer_counts.layers = layers;
@@ -798,15 +836,12 @@ impl DriftApp {
                             .weak(),
                     )
                     .on_hover_text("Layers matching the filter");
-                    if ui
-                        .small_button("×")
-                        .on_hover_text("Clear the filter")
-                        .clicked()
-                    {
+                    if crate::theme::delete_button(ui, "×", "Clear the filter").clicked() {
                         filter.clear();
                     }
                 }
-                let r = ui.add(
+                let r = crate::theme::field(
+                    ui,
                     egui::TextEdit::singleline(filter)
                         .id_salt("layer_filter")
                         .hint_text("Filter layers")
@@ -845,6 +880,8 @@ impl DriftApp {
         } else {
             egui::Sense::click()
         };
+        // (Filled in once it is known whether the pointer is on the row.)
+        let backdrop = ui.painter().add(egui::Shape::Noop);
         let row = ui.scope_builder(
             // An id of its own: which rows are drawn changes as the list scrolls.
             egui::UiBuilder::new()
@@ -852,14 +889,6 @@ impl DriftApp {
                 .sense(sense),
             |ui| {
                 egui::Frame::new()
-                    .fill(if is_current {
-                        accent.gamma_multiply(0.16)
-                    } else if open {
-                        ui.visuals().faint_bg_color
-                    } else {
-                        egui::Color32::TRANSPARENT
-                    })
-                    .corner_radius(7.0)
                     .inner_margin(egui::Margin::symmetric(4, 2))
                     .show(ui, |ui| {
                         if let Some(a) = self.layer_row(ui, id, &layer, &mut edited, info) {
@@ -878,19 +907,30 @@ impl DriftApp {
         if row.drag_started() {
             self.drawing.layer_drag = Some(id);
         }
-        if self.drawing.layer_drag.is_none() && row.hovered() && !is_current {
-            ui.painter().rect_stroke(
-                row.rect,
-                7.0,
-                egui::Stroke::new(1.0, ui.visuals().widgets.hovered.bg_stroke.color),
-                egui::StrokeKind::Inside,
-            );
+        // The current layer on the accent's tint; an opened one, and the one under the
+        // pointer, on a quiet fill.
+        let radius = crate::theme::radius::CONTROL;
+        let dark = ui.visuals().dark_mode;
+        let hovered = self.drawing.layer_drag.is_none() && row.hovered();
+        let header = egui::Rect::from_min_size(
+            row.rect.min,
+            egui::vec2(row.rect.width(), crate::theme::LIST_ROW),
+        );
+        let quiet = crate::theme::row_fill(dark, false, hovered || open);
+        let tint = crate::theme::row_fill(dark, is_current, false);
+        let mut fills = Vec::new();
+        if let Some(fill) = quiet {
+            fills.push(egui::Shape::rect_filled(row.rect, radius, fill));
         }
+        if let Some(fill) = tint {
+            fills.push(egui::Shape::rect_filled(header, radius, fill));
+        }
+        ui.painter().set(backdrop, egui::Shape::Vec(fills));
         if info.shown == Some(id) {
             ui.painter().rect_stroke(
                 row.rect,
-                7.0,
-                egui::Stroke::new(1.5, accent),
+                radius,
+                egui::Stroke::new(1.0, accent),
                 egui::StrokeKind::Inside,
             );
         }
@@ -969,7 +1009,7 @@ impl DriftApp {
         rect
     }
 
-    /// A layer's row: disclosure chevron, colour swatch, name (click: make current;
+    /// A layer's row (see [`DOT`], [`CHEVRON`] and [`ROW_SPACING`] for its grid): disclosure chevron, colour swatch, name (click: make current;
     /// double-click: rename), the selection marker, curve count, visibility and lock.
     /// Alt-click on the eye isolates the layer (or ends the isolate).
     fn layer_row(
@@ -986,10 +1026,10 @@ impl DriftApp {
         let open = self.drawing.expanded_layers.contains(&id);
         let mut action = None;
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 5.0;
+            ui.spacing_mut().item_spacing.x = ROW_SPACING;
             // The active (current) layer's dot; a faint ring on the others.
             let (dot, dot_response) =
-                ui.allocate_exact_size(egui::vec2(10.0, 22.0), egui::Sense::hover());
+                ui.allocate_exact_size(egui::vec2(DOT, ICON_TOGGLE), egui::Sense::hover());
             if is_current {
                 ui.painter().circle_filled(dot.center(), 4.0, accent);
                 dot_response.on_hover_text("The current layer: what you draw goes on it");
@@ -1000,29 +1040,15 @@ impl DriftApp {
                     egui::Stroke::new(1.0, ui.visuals().weak_text_color().gamma_multiply(0.6)),
                 );
             }
-            let (chev, r) = ui.allocate_exact_size(egui::vec2(14.0, 22.0), egui::Sense::click());
-            let c = chev.center();
+            let (chev, r) =
+                ui.allocate_exact_size(egui::vec2(CHEVRON, ICON_TOGGLE), egui::Sense::click());
             let color = if r.hovered() {
                 ui.visuals().strong_text_color()
             } else {
                 ui.visuals().weak_text_color()
             };
-            let pts = if open {
-                vec![
-                    c + egui::vec2(-3.5, -1.8),
-                    c + egui::vec2(0.0, 1.8),
-                    c + egui::vec2(3.5, -1.8),
-                ]
-            } else {
-                vec![
-                    c + egui::vec2(-1.8, -3.5),
-                    c + egui::vec2(1.8, 0.0),
-                    c + egui::vec2(-1.8, 3.5),
-                ]
-            };
-            ui.painter()
-                .add(egui::Shape::line(pts, egui::Stroke::new(1.4, color)));
-            if r.on_hover_text("Colours and line settings").clicked() {
+            crate::theme::chevron(ui.painter(), chev.center(), open, color);
+            if r.on_hover_text("Colors and line settings").clicked() {
                 if open {
                     self.drawing.expanded_layers.remove(&id);
                 } else {
@@ -1032,7 +1058,7 @@ impl DriftApp {
             // Stroke colour, with the fill colour in the lower right when it differs.
             let (swatch, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
             ui.painter()
-                .rect_filled(swatch, 3.0, to_color32(layer.color, dark));
+                .rect_filled(swatch, 3, to_color32(layer.color, dark));
             if layer.fill_color.is_some_and(|c| Some(c) != layer.color) {
                 ui.painter().add(egui::Shape::convex_polygon(
                     vec![
@@ -1225,7 +1251,10 @@ impl DriftApp {
                 .layer_names
                 .entry(id)
                 .or_insert_with(|| layer.name.clone());
-            let r = ui.add(egui::TextEdit::singleline(name).desired_width(ui.available_width()));
+            let r = crate::theme::field(
+                ui,
+                egui::TextEdit::singleline(name).desired_width(ui.available_width()),
+            );
             if !r.has_focus() && !r.lost_focus() {
                 r.request_focus();
             }
@@ -1285,45 +1314,55 @@ impl DriftApp {
         status: &mut Option<String>,
     ) {
         let dark = ui.visuals().dark_mode;
-        let indent = 19.0;
-        let label = |ui: &mut egui::Ui, text: &str| {
-            ui.add_space(indent);
-            ui.add_sized(
-                [44.0, 20.0],
-                egui::Label::new(egui::RichText::new(text).weak()),
-            );
+        // Under the swatch, so the settings read as the row's own; labels in a column, the
+        // menus filling what is left.
+        let indent = DOT + CHEVRON + 2.0 * ROW_SPACING;
+        let row = |ui: &mut egui::Ui, text: &str, add: &mut dyn FnMut(&mut egui::Ui)| {
+            ui.horizontal(|ui| {
+                ui.set_min_height(crate::theme::ROW_HEIGHT);
+                ui.add_space(indent - ui.spacing().item_spacing.x);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(DETAIL_LABEL, crate::theme::ROW_HEIGHT),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.set_min_width(DETAIL_LABEL);
+                        ui.label(egui::RichText::new(text).color(ui.visuals().weak_text_color()));
+                    },
+                );
+                add(ui);
+            })
         };
-        ui.horizontal(|ui| {
-            label(ui, "Stroke");
+        ui.add_space(2.0);
+        row(ui, "Stroke", &mut |ui| {
             if let Some(c) = color_choice(ui, edited.color, "Auto", dark) {
                 edited.color = c;
             }
         });
-        ui.horizontal(|ui| {
-            label(ui, "Fill");
+        row(ui, "Fill", &mut |ui| {
             if let Some(c) = color_choice(ui, edited.fill_color, "Same as stroke", dark) {
                 edited.fill_color = c;
             }
         })
         .response
-        .on_hover_text("Colour of fills and hatches on this layer");
-        ui.horizontal(|ui| {
-            label(ui, "Line");
+        .on_hover_text("Color of fills and hatches on this layer");
+        row(ui, "Weight", &mut |ui| {
             let mut w = Some(edited.weight);
             if weight_combo(ui, ("layer_weight", id.0), &mut w, false) {
                 edited.weight = w.unwrap_or_default();
             }
+        });
+        row(ui, "Line type", &mut |ui| {
             let mut t = Some(edited.line_type);
-            if line_type_combo(ui, ("layer_type", id.0), &mut t, false) {
+            let width = ui.available_width();
+            if line_type_combo(ui, ("layer_type", id.0), &mut t, false, width) {
                 edited.line_type = t.unwrap_or_default();
             }
         });
-        ui.horizontal(|ui| {
-            label(ui, "Output");
-            ui.checkbox(&mut edited.printable, "Printed and exported");
+        row(ui, "Output", &mut |ui| {
+            crate::theme::checkbox(ui, &mut edited.printable, "Printed and exported");
         });
-        ui.horizontal(|ui| {
-            ui.add_space(indent);
+        ui.horizontal_wrapped(|ui| {
+            ui.add_space(indent - ui.spacing().item_spacing.x);
             if ui.small_button("Select all").clicked() {
                 self.drawing.editor.select_layer(id);
             }
@@ -1354,7 +1393,7 @@ impl DriftApp {
                 self.drawing.expanded_layers.remove(&id);
             }
         });
-        ui.add_space(3.0);
+        ui.add_space(4.0);
     }
 
     /// Appearance controls for the selected curves (in the Properties tab; their layer is
@@ -1377,16 +1416,11 @@ impl DriftApp {
         if curves.is_empty() {
             return;
         }
-        ui.add_space(10.0);
-        egui::Grid::new("appearance")
-            .num_columns(2)
-            .min_col_width(crate::theme::LABEL_WIDTH)
-            .show(ui, |ui| {
-                self.stroke_rows(ui, &curves, "selection");
-            });
+        ui.add_space(2.0);
+        self.stroke_rows(ui, &curves, "selection");
     }
 
-    /// Colour, weight and line type rows (in a two-column grid) for `curves`' own
+    /// Colour, weight and line type rows for `curves`' own
     /// appearance, shown as the first's; `salt` keeps the combos' ids apart.
     pub(crate) fn stroke_rows(&mut self, ui: &mut egui::Ui, curves: &[EntityId], salt: &str) {
         let Some(first) = curves
@@ -1397,33 +1431,33 @@ impl DriftApp {
             return;
         };
         let dark = ui.visuals().dark_mode;
-        let label = |ui: &mut egui::Ui, text: &str| {
-            ui.label(egui::RichText::new(text).color(ui.visuals().weak_text_color()));
-        };
         let a = first.appearance;
-        label(ui, "Colour");
-        if let Some(c) = color_choice(ui, a.color, "By layer", dark) {
-            self.drawing
-                .editor
-                .update_appearance(curves, |x| x.color = c);
-        }
-        ui.end_row();
-        label(ui, "Weight");
-        let mut w = a.weight;
-        if weight_combo(ui, (salt, "weight"), &mut w, true) {
-            self.drawing
-                .editor
-                .update_appearance(curves, |x| x.weight = w);
-        }
-        ui.end_row();
-        label(ui, "Line type");
-        let mut t = a.line_type;
-        if line_type_combo(ui, (salt, "type"), &mut t, true) {
-            self.drawing
-                .editor
-                .update_appearance(curves, |x| x.line_type = t);
-        }
-        ui.end_row();
+        crate::theme::row(ui, "Color", |ui| {
+            ui.push_id((salt, "colour"), |ui| {
+                if let Some(c) = color_choice(ui, a.color, "By layer", dark) {
+                    self.drawing
+                        .editor
+                        .update_appearance(curves, |x| x.color = c);
+                }
+            });
+        });
+        crate::theme::row(ui, "Weight", |ui| {
+            let mut w = a.weight;
+            if weight_combo(ui, (salt, "weight"), &mut w, true) {
+                self.drawing
+                    .editor
+                    .update_appearance(curves, |x| x.weight = w);
+            }
+        });
+        crate::theme::row(ui, "Line type", |ui| {
+            let mut t = a.line_type;
+            let width = ui.available_width();
+            if line_type_combo(ui, (salt, "type"), &mut t, true, width) {
+                self.drawing
+                    .editor
+                    .update_appearance(curves, |x| x.line_type = t);
+            }
+        });
     }
 }
 

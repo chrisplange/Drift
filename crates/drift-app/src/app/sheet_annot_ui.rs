@@ -726,7 +726,8 @@ impl DriftApp {
                 style,
                 ..
             } => {
-                let field = ui.add(
+                let field = crate::theme::field(
+                    ui,
                     egui::TextEdit::multiline(text)
                         .id_salt("sheet-note-text")
                         .hint_text("Type the note")
@@ -760,12 +761,13 @@ impl DriftApp {
                         ui.label("Align");
                         ui.horizontal(|ui| {
                             for al in TextAlign::ALL {
-                                ui.selectable_value(&mut style.align, al, al.label());
+                                ui.selectable_value(&mut style.align, al, theme::us(al.label()));
                             }
                         });
                         ui.end_row();
                         ui.label("Frame");
                         egui::ComboBox::from_id_salt("sheet-note-frame")
+                            .icon(crate::theme::combo_icon)
                             .selected_text(style.frame.label())
                             .show_ui(ui, |ui| {
                                 for f in NoteFrame::ALL {
@@ -775,18 +777,19 @@ impl DriftApp {
                         ui.end_row();
                         ui.label("Style");
                         ui.horizontal(|ui| {
-                            ui.checkbox(&mut style.bold, "Bold");
-                            ui.checkbox(&mut style.italic, "Italic");
+                            crate::theme::checkbox(ui, &mut style.bold, "Bold");
+                            crate::theme::checkbox(ui, &mut style.italic, "Italic");
                         });
                         ui.end_row();
                         ui.label("Mask");
-                        ui.checkbox(&mut style.mask, "Paper behind the text")
+                        crate::theme::checkbox(ui, &mut style.mask, "Paper behind the text")
                             .on_hover_text("So it reads over lines and hatches");
                         ui.end_row();
                         if !leaders.is_empty() {
                             ui.label("Leader end");
                             let mut end = leaders[0].leader.end;
                             egui::ComboBox::from_id_salt("sheet-note-end")
+                                .icon(crate::theme::combo_icon)
                                 .selected_text(end.label())
                                 .show_ui(ui, |ui| {
                                     for e in LeaderEnd::ALL {
@@ -843,13 +846,13 @@ impl DriftApp {
                             ("Text", &mut note.text, "instead of the value"),
                         ] {
                             ui.label(name);
-                            typing |= ui
-                                .add(
-                                    egui::TextEdit::singleline(field)
-                                        .hint_text(hint)
-                                        .desired_width(150.0),
-                                )
-                                .changed();
+                            typing |= crate::theme::field(
+                                ui,
+                                egui::TextEdit::singleline(field)
+                                    .hint_text(hint)
+                                    .desired_width(150.0),
+                            )
+                            .changed();
                             ui.end_row();
                         }
                         ui.label("Text height");
@@ -869,6 +872,7 @@ impl DriftApp {
                         ui.label("Arrows");
                         let mut arrow = look.arrow.unwrap_or(draft.arrow);
                         egui::ComboBox::from_id_salt("sheet-dim-arrow")
+                            .icon(crate::theme::combo_icon)
                             .selected_text(arrow.label())
                             .show_ui(ui, |ui| {
                                 for s in ArrowStyle::ALL {

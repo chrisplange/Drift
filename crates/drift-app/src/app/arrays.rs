@@ -255,13 +255,13 @@ impl DriftApp {
                 let label = ui.label(label);
                 let error = bad(text, kind);
                 let red = ui.visuals().error_fg_color;
-                let response = ui
-                    .add(
-                        egui::TextEdit::singleline(text)
-                            .desired_width(70.0)
-                            .text_color_opt(error.is_some().then_some(red)),
-                    )
-                    .labelled_by(label.id);
+                let response = crate::theme::field(
+                    ui,
+                    egui::TextEdit::singleline(text)
+                        .desired_width(70.0)
+                        .text_color_opt(error.is_some().then_some(red)),
+                )
+                .labelled_by(label.id);
                 let response = match &error {
                     Some(e) => response.on_hover_text(e),
                     None => response,
@@ -280,13 +280,13 @@ impl DriftApp {
                 .show(ui, |ui| match a.mode {
                     ArrayMode::Linear => {
                         let label = ui.label("Count");
-                        changed |= ui
-                            .add_sized(
-                                [70.0, ui.spacing().interact_size.y],
-                                egui::DragValue::new(&mut a.linear_count).range(2..=500),
-                            )
-                            .labelled_by(label.id)
-                            .changed();
+                        changed |= theme::drag_sized(
+                            ui,
+                            70.0,
+                            egui::DragValue::new(&mut a.linear_count).range(2..=500),
+                        )
+                        .labelled_by(label.id)
+                        .changed();
                         ui.end_row();
                         changed |= field(ui, "Spacing X", &mut a.dx, Kind::Length);
                         changed |= field(ui, "Y", &mut a.dy, Kind::Length);
@@ -294,16 +294,16 @@ impl DriftApp {
                     }
                     ArrayMode::Circular => {
                         let label = ui.label("Count");
-                        changed |= ui
-                            .add_sized(
-                                [70.0, ui.spacing().interact_size.y],
-                                egui::DragValue::new(&mut a.circular_count).range(2..=500),
-                            )
-                            .labelled_by(label.id)
-                            .changed();
+                        changed |= theme::drag_sized(
+                            ui,
+                            70.0,
+                            egui::DragValue::new(&mut a.circular_count).range(2..=500),
+                        )
+                        .labelled_by(label.id)
+                        .changed();
                         changed |= field(ui, "Angle", &mut a.angle, Kind::Angle);
                         ui.end_row();
-                        changed |= field(ui, "Centre X", &mut a.cx, Kind::Length);
+                        changed |= field(ui, "Center X", &mut a.cx, Kind::Length);
                         changed |= field(ui, "Y", &mut a.cy, Kind::Length);
                         ui.end_row();
                     }

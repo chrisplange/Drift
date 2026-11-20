@@ -19,6 +19,8 @@ use crate::*;
 
 /// Height of a dock's tab bar.
 const TAB_BAR: f32 = 34.0;
+/// What a named tab is wider than its name by: its icon and the space around the two.
+const TAB_PAD: f32 = 37.0;
 /// Width of a collapsed dock's icon rail.
 const RAIL: f32 = 42.0;
 /// How far into the canvas a drop still docks to that side (where there's no dock yet).
@@ -30,8 +32,8 @@ const HEADER: f32 = 34.0;
 const MIN_PANEL: f32 = HEADER + 64.0;
 /// Space around a panel's contents, docked or floating.
 const BODY_MARGIN: egui::Margin = egui::Margin {
-    left: 14,
-    right: 8,
+    left: theme::PANE_MARGIN as i8,
+    right: theme::PANE_MARGIN as i8,
     top: 2,
     bottom: 0,
 };
@@ -82,6 +84,20 @@ pub(crate) fn glyph(p: Panel) -> Glyph {
     }
 }
 
+/// The front panel's name in a row of its own under the tab bar: for a dock too narrow for
+/// its tabs' names, so the panel is always named. (Painted: the tab is what it is called.)
+fn front_title(ui: &mut egui::Ui, front: Panel) {
+    let (row, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 24.0), egui::Sense::hover());
+    ui.painter().text(
+        egui::pos2(row.left() + theme::PANE_MARGIN, row.center().y + 1.0),
+        egui::Align2::LEFT_CENTER,
+        front.title(),
+        egui::FontId::new(theme::size::SECTION, theme::bold()),
+        theme::neutrals(ui.visuals().dark_mode).secondary,
+    );
+}
+
 /// A small icon button drawn at `rect`.
 fn icon_at(
     ui: &mut egui::Ui,
@@ -92,12 +108,17 @@ fn icon_at(
 ) -> egui::Response {
     let response = ui.interact(rect, id, egui::Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, tip));
+    let n = theme::neutrals(ui.visuals().dark_mode);
     let color = if response.hovered() {
-        ui.painter()
-            .rect_filled(rect, 6.0, ui.visuals().widgets.hovered.bg_fill);
-        ui.visuals().strong_text_color()
+        let fill = if response.is_pointer_button_down_on() {
+            n.pressed
+        } else {
+            n.hover
+        };
+        ui.painter().rect_filled(rect, theme::radius::CONTROL, fill);
+        n.text
     } else {
-        ui.visuals().weak_text_color()
+        n.secondary
     };
     icons::glyph(ui.painter(), rect.shrink(5.0), g, color);
     response.on_hover_text(tip)
@@ -162,6 +183,7 @@ impl DriftApp {
         };
         let response = if self.layout.collapsed[i] {
             make("dock_rail")
+                .show_separator_line(false)
                 .resizable(false)
                 .exact_size(RAIL)
                 .frame(
@@ -171,6 +193,7 @@ impl DriftApp {
                 .response
         } else {
             make("dock")
+                .show_separator_line(false)
                 .resizable(true)
                 .default_size(310.0)
                 .min_size(240.0)
@@ -179,13 +202,21 @@ impl DriftApp {
                     let front = self.layout.active[i]
                         .filter(|p| panels.contains(p))
                         .unwrap_or(panels[0]);
-                    self.tab_bar(ui, side, &panels, front);
+                    if !self.tab_bar(ui, side, &panels, front) {
+                        front_title(ui, front);
+                    }
                     egui::Frame::new()
                         .inner_margin(BODY_MARGIN)
                         .show(ui, |ui| self.panel_body(ui, front));
                 })
                 .response
         };
+        // The line between the dock and the canvas: a pane's edge.
+        let edge = match side {
+            Side::Left => egui::Align2::RIGHT_CENTER,
+            Side::Right => egui::Align2::LEFT_CENTER,
+        };
+        theme::pane_edge(ui, response.rect, edge);
         self.dock_view.docks[i] = Some(response.rect);
     }
 
@@ -195,10 +226,10 @@ impl DriftApp {
         let outer = self.dock_view.in_panel.replace(p);
         match p {
             Panel::Inspector => {
-                let output = egui::ScrollArea::vertical()
+                let area = egui::ScrollArea::vertical()
                     .id_salt("inspector_scroll")
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| self.inspector(ui));
+                    .auto_shrink([false, false]);
+                let output = theme::pane_scroll(ui, area, |ui| self.inspector(ui));
                 self.panel_scrolled(ui, p, &output);
             }
             Panel::Parameters => self.parameters_panel(ui, now),
@@ -210,8 +241,9 @@ impl DriftApp {
     }
 
     /// The tabs across the top of a dock: icon and name (just the icon when they don't fit),
-    /// the front one underlined; then collapse and menu buttons.
-    fn tab_bar(&mut self, ui: &mut egui::Ui, side: Side, panels: &[Panel], front: Panel) {
+    /// the front one underlined; then collapse and menu buttons. Returns whether the front
+    /// tab shows its name (when it doesn't, the dock names the panel under the bar).
+    fn tab_bar(&mut self, ui: &mut egui::Ui, side: Side, panels: &[Panel], front: Panel) -> bool {
         let i = side.index();
         let (bar, _) = ui.allocate_exact_size(
             egui::vec2(ui.available_width(), TAB_BAR),
@@ -219,6 +251,7 @@ impl DriftApp {
         );
         let dark = ui.visuals().dark_mode;
         let accent = theme::accent(dark);
+        let n = theme::neutrals(dark);
         self.dock_view.bars[i] = Some(bar);
         ui.painter().line_segment(
             [bar.left_bottom(), bar.right_bottom()],
@@ -231,7 +264,9 @@ impl DriftApp {
             (!window && panels.contains(&d) && pointer.is_some_and(|at| in_bar(bar, at)))
                 .then_some(d)
         });
-        let font = egui::FontId::new(12.5, egui::FontFamily::Proportional);
+        // (Measured in the front tab's bold, so a tab keeps its width when it comes to the
+        // front.)
+        let font = egui::FontId::new(theme::size::BODY, theme::bold());
         let widths: Vec<f32> = panels
             .iter()
             .map(|p| {
@@ -239,7 +274,7 @@ impl DriftApp {
                     .layout_no_wrap(p.title().to_owned(), font.clone(), egui::Color32::WHITE)
                     .size()
                     .x
-                    + 37.0
+                    + TAB_PAD
             })
             .collect();
         let controls = 58.0;
@@ -248,10 +283,13 @@ impl DriftApp {
         let all = widths.iter().sum::<f32>() + 2.0 * panels.len() as f32 <= room;
         let front_at = panels.iter().position(|p| *p == front).unwrap_or(0);
         let front_only = widths[front_at] + 34.0 * (panels.len() - 1) as f32 <= room;
+        // Icons alone give way too where even they don't fit, so the tabs never run under
+        // the buttons at the bar's end.
+        let icon = ((room - 2.0 * panels.len() as f32) / panels.len() as f32).clamp(20.0, 32.0);
         let mut x = bar.left() + 6.0;
         for (k, &p) in panels.iter().enumerate() {
             let labelled = all || (front_only && p == front);
-            let w = if labelled { widths[k] } else { 32.0 };
+            let w = if labelled { widths[k] } else { icon };
             let r = egui::Rect::from_min_size(egui::pos2(x, bar.top() + 4.0), egui::vec2(w, 26.0));
             x += w + 2.0;
             let id = ui.id().with(("tab", p.key()));
@@ -279,8 +317,8 @@ impl DriftApp {
                     let moved = egui::Rect::from_min_size(egui::pos2(x, r.top()), r.size());
                     ui.painter().rect(
                         moved,
-                        6.0,
-                        ui.visuals().widgets.active.bg_fill,
+                        theme::radius::CONTROL,
+                        n.pressed,
                         egui::Stroke::new(1.0, accent),
                         egui::StrokeKind::Inside,
                     );
@@ -291,24 +329,20 @@ impl DriftApp {
             };
             let dragging = self.dock_view.drag.is_some_and(|(d, _)| d == p);
             if (response.hovered() && !selected) || (dragging && sliding.is_none()) {
-                ui.painter()
-                    .rect_filled(r, 6.0, ui.visuals().widgets.hovered.bg_fill);
+                ui.painter().rect_filled(r, theme::radius::CONTROL, n.hover);
             }
             if selected {
-                ui.painter().line_segment(
-                    [
-                        egui::pos2(r.left() + 8.0, bar.bottom() - 1.0),
-                        egui::pos2(r.right() - 8.0, bar.bottom() - 1.0),
-                    ],
+                // The front tab's underline, on the bar's own rule.
+                ui.painter().hline(
+                    r.left() + 6.0..=r.right() - 6.0,
+                    bar.bottom() - 1.0,
                     egui::Stroke::new(2.0, accent),
                 );
             }
-            let color = if selected {
-                ui.visuals().strong_text_color()
-            } else if response.hovered() {
-                ui.visuals().text_color()
+            let color = if selected || response.hovered() {
+                n.text
             } else {
-                ui.visuals().weak_text_color()
+                n.secondary
             };
             let icon_x = if labelled {
                 r.left() + 17.0
@@ -334,19 +368,16 @@ impl DriftApp {
                     egui::pos2(r.left() + 29.0, r.center().y),
                     egui::Align2::LEFT_CENTER,
                     p.title(),
-                    egui::FontId::new(12.5, family),
+                    egui::FontId::new(theme::size::BODY, family),
                     color,
                 );
             }
             let _ = response.on_hover_ui(|ui| {
                 ui.label(egui::RichText::new(p.title()).family(theme::bold()));
                 ui.label(egui::RichText::new(p.description()).weak());
-                ui.label(
-                    egui::RichText::new(
-                        "Drag to float it or dock it elsewhere; right-click for more",
-                    )
-                    .small()
-                    .weak(),
+                theme::hint(
+                    ui,
+                    "Drag to float it or dock it elsewhere; right-click for more",
                 );
             });
         }
@@ -389,6 +420,7 @@ impl DriftApp {
                 }
             }
         });
+        all || front_only
     }
 
     /// Where a panel can go: dock left or right, float, or close.
@@ -436,44 +468,49 @@ impl DriftApp {
         let front = self.layout.active[i]
             .filter(|p| panels.contains(p))
             .unwrap_or(panels[0]);
-        let accent = theme::accent(ui.visuals().dark_mode);
+        let dark = ui.visuals().dark_mode;
+        let accent = theme::accent(dark);
+        let n = theme::neutrals(dark);
         let edge = ui.max_rect();
+        let at_rest = ui.visuals().text_color();
         ui.vertical_centered(|ui| {
-            ui.spacing_mut().item_spacing.y = 4.0;
+            ui.spacing_mut().item_spacing.y = 2.0;
             let away = match side {
                 Side::Left => Glyph::ChevronsRight,
                 Side::Right => Glyph::ChevronsLeft,
             };
-            if icons::button(ui, 30.0, false, "Expand", |p, r, c| {
-                icons::glyph(p, r, away, c.gamma_multiply(0.7))
+            if icons::button(ui, 30.0, false, "Expand", |p, r, _| {
+                icons::glyph(p, r, away, n.secondary)
             })
             .on_hover_text("Expand")
             .clicked()
             {
                 self.layout.collapsed[i] = false;
             }
-            ui.add_space(2.0);
+            ui.add_space(4.0);
             for &p in panels {
                 let response = icons::button(ui, 32.0, false, p.title(), |painter, r, c| {
+                    // The one in front in the text's tone (the pointed-at one too), the
+                    // others in the secondary: as the tabs are.
                     let c = if p == front {
-                        c
+                        n.text
+                    } else if c == at_rest {
+                        n.secondary
                     } else {
-                        c.gamma_multiply(0.55)
+                        c
                     };
                     icons::glyph(painter, r, glyph(p), c)
                 });
                 if p == front {
-                    // A bar on the canvas side, like the front tab's underline.
+                    // A bar on the canvas side: the front tab's underline, turned.
                     let r = response.rect;
                     let x = match side {
                         Side::Left => edge.right() + 2.0,
                         Side::Right => edge.left() - 2.0,
                     };
-                    ui.painter().line_segment(
-                        [
-                            egui::pos2(x, r.top() + 7.0),
-                            egui::pos2(x, r.bottom() - 7.0),
-                        ],
+                    ui.painter().vline(
+                        x,
+                        r.top() + 6.0..=r.bottom() - 6.0,
                         egui::Stroke::new(2.0, accent),
                     );
                 }
@@ -880,7 +917,7 @@ impl DriftApp {
             ),
             egui::Align2::LEFT_CENTER,
             p.title(),
-            egui::FontId::new(13.0, theme::bold()),
+            egui::FontId::new(theme::size::BODY, theme::bold()),
             text,
         );
         {
@@ -891,21 +928,7 @@ impl DriftApp {
             } else {
                 ui.visuals().weak_text_color()
             };
-            let pts = if folded {
-                vec![
-                    c + egui::vec2(-1.8, -3.5),
-                    c + egui::vec2(1.8, 0.0),
-                    c + egui::vec2(-1.8, 3.5),
-                ]
-            } else {
-                vec![
-                    c + egui::vec2(-3.5, -1.8),
-                    c + egui::vec2(0.0, 1.8),
-                    c + egui::vec2(3.5, -1.8),
-                ]
-            };
-            ui.painter()
-                .add(egui::Shape::line(pts, egui::Stroke::new(1.4, color)));
+            theme::chevron(ui.painter(), c, !folded, color);
         }
         if !folded {
             ui.painter().line_segment(
@@ -1104,8 +1127,8 @@ impl DriftApp {
                     let r = zone.shrink(3.0);
                     painter.rect(
                         r,
-                        8.0,
-                        accent.gamma_multiply(0.18),
+                        theme::radius::MENU,
+                        theme::accent_soft(dark),
                         egui::Stroke::new(1.5, accent),
                         egui::StrokeKind::Inside,
                     );
@@ -1113,7 +1136,7 @@ impl DriftApp {
                         r.center(),
                         egui::Align2::CENTER_CENTER,
                         format!("Dock {}", side.name()),
-                        egui::FontId::new(13.0, theme::bold()),
+                        egui::FontId::new(theme::size::BODY, theme::bold()),
                         accent,
                     );
                 } else if let (Some(k), Some(bar)) = (index, self.dock_view.bars[side.index()]) {
@@ -1141,7 +1164,7 @@ impl DriftApp {
                     // Over another dock (or the edge where one would be): its outline.
                     painter.rect_stroke(
                         zone.shrink(3.0),
-                        8.0,
+                        theme::radius::MENU,
                         egui::Stroke::new(1.5, accent),
                         egui::StrokeKind::Inside,
                     );
@@ -1219,7 +1242,7 @@ impl DriftApp {
         let text = visuals.strong_text_color();
         let galley = painter.layout_no_wrap(
             panel.title().to_owned(),
-            egui::FontId::new(12.5, theme::bold()),
+            egui::FontId::new(theme::size::BODY, theme::bold()),
             text,
         );
         let r = egui::Rect::from_min_size(
@@ -1228,7 +1251,7 @@ impl DriftApp {
         );
         painter.rect(
             r,
-            7.0,
+            theme::radius::CONTROL,
             visuals.window_fill,
             egui::Stroke::new(1.0, accent),
             egui::StrokeKind::Inside,

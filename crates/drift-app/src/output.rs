@@ -1163,7 +1163,7 @@ impl CadFormat {
         match self {
             CadFormat::Dwg => {
                 "For AutoCAD, BricsCAD, DraftSight and the like: true curves, layers, blocks, \
-                 fills and hatches, true colours and line weights"
+                 fills and hatches, true colors and line weights"
             }
             CadFormat::Dxf => "The same drawing as the DWG, for programs that read DXF but not DWG",
             CadFormat::DxfR12 => {

@@ -281,11 +281,13 @@ impl DriftApp {
         let mut typed = Vec::new();
         theme::row(ui, "Origin", |ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
+            // The two share the width.
+            let width = ((ui.available_width() - 4.0) / 2.0).floor();
             for (axis, name, v) in [(0, "X", h.origin.x), (1, "Y", h.origin.y)] {
                 let key = egui::Id::new(("hatch_origin", id.0, axis));
                 let tip = format!("Pattern origin {name}: type a coordinate ({UNITS})");
                 if let Some(text) =
-                    app::panels::value_field(ui, key, &units.format_length(v), 84.0, &tip)
+                    app::panels::value_field(ui, key, &units.format_length(v), width, &tip)
                 {
                     typed.push((Some(axis), text));
                 }
@@ -296,20 +298,27 @@ impl DriftApp {
                 if let Some(at) = anchor_grid(ui, &b) {
                     origin = Some(at);
                 }
-                ui.label(
-                    egui::RichText::new("Origin on a corner or the centre")
-                        .small()
-                        .weak(),
+                // (Wrapped in what the grid leaves of a narrow pane.)
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new("Origin on a corner or the center")
+                            .size(theme::size::CAPTION)
+                            .color(ui.visuals().weak_text_color()),
+                    )
+                    .wrap(),
                 );
             });
         }
         let mut edge = false;
-        theme::row(ui, "Angle", |ui| {
+        let align = theme::button_width(ui, "Align to edge…");
+        theme::wide_row(ui, "Angle", align + 4.0 + 48.0, |ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
             let key = egui::Id::new(("hatch_angle", id.0));
-            let tip = "Pattern angle: type an angle (anticlockwise from +X)";
+            let tip = "Pattern angle: type an angle (counterclockwise from +X)";
+            // The field takes what the button beside it leaves.
+            let width = (ui.available_width() - align - 4.0).max(40.0);
             if let Some(text) =
-                app::panels::value_field(ui, key, &units.format_angle(h.angle), 84.0, tip)
+                app::panels::value_field(ui, key, &units.format_angle(h.angle), width, tip)
             {
                 typed.push((None, text));
             }
@@ -492,7 +501,7 @@ fn anchor_grid(ui: &mut egui::Ui, b: &Bounds) -> Option<DVec2> {
             DVec2::new(b.min.x, b.max.y),
         ),
         ("Top right", egui::vec2(1.0, 0.0), b.max),
-        ("Centre", egui::vec2(0.5, 0.5), (b.min + b.max) / 2.0),
+        ("Center", egui::vec2(0.5, 0.5), (b.min + b.max) / 2.0),
     ];
     let mut picked = None;
     for (name, f, at) in spots {

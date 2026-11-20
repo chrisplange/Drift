@@ -3,7 +3,7 @@
 use drift_core::{FillId, FillKind, Hatch};
 use drift_draft::{Pattern, Placement};
 
-use crate::layers_ui::{color_choice, weight_combo};
+use crate::layers_ui::{color_choice, color_choice_of, weight_combo};
 use crate::*;
 use drift_edit::fills::{FillStyle, PatternLibrary};
 
@@ -73,6 +73,7 @@ fn pattern_combo(
     width: f32,
 ) {
     egui::ComboBox::from_id_salt(("hatch_pattern", id))
+        .icon(crate::theme::combo_icon)
         .selected_text(&h.pattern)
         .width(width)
         .height(360.0)
@@ -176,17 +177,14 @@ fn fill_style_fields(
 ) {
     match &mut style.kind {
         FillKind::Solid => {
-            theme::row(ui, "Colour", |ui| {
+            theme::row(ui, "Color", |ui| {
                 if let Some(c) = color_choice(ui, style.color, "By layer", dark) {
                     style.color = c;
                 }
             });
             theme::row(ui, "Opacity", |ui| {
                 let mut percent = (style.opacity * 100.0).round();
-                if ui
-                    .add(egui::Slider::new(&mut percent, 0.0..=100.0).suffix("%"))
-                    .changed()
-                {
+                if theme::value_slider(ui, &mut percent, 0.0..=100.0, "%", false).changed() {
                     style.opacity = percent / 100.0;
                 }
             });
@@ -195,12 +193,13 @@ fn fill_style_fields(
             theme::row(ui, "Pattern", |ui| {
                 ui.horizontal(|ui| {
                     swatch(ui, patterns.get(&h.pattern), egui::vec2(34.0, 20.0));
-                    let width = ui.available_width() - 6.0;
+                    let width = ui.available_width();
                     pattern_combo(ui, h, patterns, id, width);
                 });
             });
             theme::row(ui, "Scale", |ui| {
-                ui.add(
+                crate::theme::drag(
+                    ui,
                     egui::DragValue::new(&mut h.scale)
                         .speed(0.02)
                         .range(0.001..=10_000.0)
@@ -209,7 +208,8 @@ fn fill_style_fields(
             });
             if angle {
                 theme::row(ui, "Angle", |ui| {
-                    ui.add(
+                    crate::theme::drag(
+                        ui,
                         egui::DragValue::new(&mut h.angle)
                             .speed(1.0)
                             .range(-360.0..=360.0)
@@ -239,7 +239,7 @@ fn fill_style_fields(
             });
             theme::row(ui, "Background", |ui| {
                 let mut on = h.background.is_some();
-                if ui.checkbox(&mut on, "").changed() {
+                if crate::theme::checkbox(ui, &mut on, "").changed() {
                     h.background = on.then_some(drift_core::Rgb([0xff, 0xf4, 0xd6]));
                 }
                 if let Some(bg) = &mut h.background {
@@ -272,7 +272,7 @@ impl DriftApp {
                     "Boundary lost: its curves no longer enclose an area. It keeps its last \
                  shape until you re-pick it.",
                 )
-                .color(egui::Color32::from_rgb(0xff, 0x5d, 0x5d))
+                .color(crate::theme::error_color(ui.visuals().dark_mode))
                 .small(),
             );
             if ui.button("Re-pick boundary").clicked() {
@@ -418,7 +418,7 @@ impl DriftApp {
                     ));
                 });
             }
-            ui.add_space(10.0);
+            ui.add_space(12.0);
             if theme::danger_button(ui, "Delete").clicked() {
                 self.drawing.editor.delete_selection();
             }
@@ -437,17 +437,16 @@ impl DriftApp {
         self.hatch_patterns
             .update(self.drawing.editor.doc.custom_patterns());
         app::panels::title(ui, Some(ToolKind::Fill), "Fill / hatch", "New fills");
-        ui.label(
-            egui::RichText::new(if self.drawing.editor.repick_fill.is_some() {
+        theme::hint(
+            ui,
+            if self.drawing.editor.repick_fill.is_some() {
                 "Click inside the area that should be the fill's new boundary."
             } else if self.drawing.editor.fill_eyedropper {
                 "Click a fill or hatch to pick up its style."
             } else {
                 "Click inside a closed area to fill it with this style; click a fill again to \
                  give it this style. Alt+click a fill to pick up its style."
-            })
-            .small()
-            .weak(),
+            },
         );
         theme::section(ui, "New fills");
         let mut style = self.drawing.editor.prefs.fill_style.clone();
@@ -479,7 +478,7 @@ impl DriftApp {
     /// The drawing tools' Fill control: whether closed shapes come out filled as they are
     /// drawn, and in what style (the Fill tool's).
     pub(crate) fn new_shape_fill_bar(&mut self, ui: &mut egui::Ui) {
-        ui.checkbox(&mut self.drawing.editor.prefs.fill_new_shapes, "Fill")
+        crate::theme::checkbox(ui, &mut self.drawing.editor.prefs.fill_new_shapes, "Fill")
             .on_hover_text(
                 "Closed shapes are filled or hatched as they are drawn, in this style (the \
                  Fill tool's); the fill is part of the shape's undo step",
@@ -499,24 +498,13 @@ impl DriftApp {
     }
 
     /// Solid or hatch, and the colour or pattern, of a fill style (`salt` keeps its
-    /// pattern list's id apart from others on screen).
+    /// pattern list's id apart from others on screen), across a bar.
     pub(crate) fn style_bar(&mut self, ui: &mut egui::Ui, style: &mut FillStyle, salt: &str) {
         let dark = ui.visuals().dark_mode;
-        self.hatch_patterns
-            .update(self.drawing.editor.doc.custom_patterns());
-        let solid = matches!(style.kind, FillKind::Solid);
-        if let Some(choice) =
-            app::context_ui::choice(ui, solid, &[(true, "Solid"), (false, "Hatch")])
-        {
-            style.kind = if choice {
-                FillKind::Solid
-            } else {
-                FillKind::Hatch(Hatch::new("ANSI31"))
-            };
-        }
+        self.style_kind(ui, style);
         match &mut style.kind {
             FillKind::Solid => {
-                if let Some(c) = color_choice(ui, style.color, "By layer", dark) {
+                if let Some(c) = color_choice_of(ui, style.color, "By layer", dark, 90.0) {
                     style.color = c;
                 }
             }
@@ -531,6 +519,48 @@ impl DriftApp {
         }
     }
 
+    /// Whether a fill style is solid or a hatch.
+    pub(crate) fn style_kind(&mut self, ui: &mut egui::Ui, style: &mut FillStyle) {
+        self.hatch_patterns
+            .update(self.drawing.editor.doc.custom_patterns());
+        let solid = matches!(style.kind, FillKind::Solid);
+        if let Some(choice) =
+            app::context_ui::choice(ui, solid, &[(true, "Solid"), (false, "Hatch")])
+        {
+            style.kind = if choice {
+                FillKind::Solid
+            } else {
+                FillKind::Hatch(Hatch::new("ANSI31"))
+            };
+        }
+    }
+
+    /// The colour of a solid fill style or the pattern of a hatch, as a row of an inspector
+    /// (what [`Self::style_bar`] shows after the kind).
+    pub(crate) fn style_row(&mut self, ui: &mut egui::Ui, style: &mut FillStyle, salt: &str) {
+        let dark = ui.visuals().dark_mode;
+        match &mut style.kind {
+            FillKind::Solid => {
+                theme::row(ui, "Color", |ui| {
+                    if let Some(c) = color_choice(ui, style.color, "By layer", dark) {
+                        style.color = c;
+                    }
+                });
+            }
+            FillKind::Hatch(h) => {
+                theme::row(ui, "Pattern", |ui| {
+                    swatch(
+                        ui,
+                        self.hatch_patterns.get(&h.pattern),
+                        egui::vec2(34.0, 20.0),
+                    );
+                    let width = ui.available_width();
+                    pattern_combo(ui, h, &self.hatch_patterns, salt, width);
+                });
+            }
+        }
+    }
+
     /// Buttons under a selected region's measurements: fill or hatch it.
     pub(crate) fn region_fill_buttons(&mut self, ui: &mut egui::Ui) {
         let Some(seed) = self.drawing.editor.selected_region else {
@@ -541,7 +571,7 @@ impl DriftApp {
         ui.horizontal(|ui| {
             if ui
                 .button("Fill")
-                .on_hover_text("Fill this area with a solid colour")
+                .on_hover_text("Fill this area with a solid color")
                 .clicked()
             {
                 make = Some(FillKind::Solid);

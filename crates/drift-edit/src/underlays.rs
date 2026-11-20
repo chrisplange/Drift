@@ -61,12 +61,13 @@ fn default_color(dark: bool) -> [u8; 3] {
     }
 }
 
-/// The canvas background (see `drift_render::Palette`), to fade underlays towards.
-fn background(dark: bool) -> [u8; 3] {
+/// The canvas background, to fade underlays towards: a copy of `drift_render::Palette`'s
+/// (this crate can't read it), kept equal to it by a test in drift-app's `theme`.
+pub fn background(dark: bool) -> [u8; 3] {
     if dark {
-        [0x1b, 0x1d, 0x21]
+        [0x18, 0x18, 0x1a]
     } else {
-        [0xfa, 0xfa, 0xfb]
+        [0xfb, 0xfb, 0xfa]
     }
 }
 

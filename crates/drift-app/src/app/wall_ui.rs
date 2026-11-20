@@ -17,7 +17,7 @@ impl DriftApp {
     /// Arc · ☐ Fill [Solid ▾ ■]`. What is set here is kept for the next drawing too.
     pub(crate) fn wall_tool_bar(&mut self, ui: &mut egui::Ui) {
         let units = self.drawing.editor.doc.units();
-        ui.label(egui::RichText::new("Thickness").size(12.0).weak());
+        theme::bar_caption(ui, "Thickness");
         let unit = units.length.mm_per_unit();
         let mut shown = self.drawing.editor.wall_thickness_now() / unit;
         if ui
@@ -35,7 +35,8 @@ impl DriftApp {
             self.drawing.editor.prefs.wall_thickness_expr = None;
         }
         let presets = self.drawing.editor.wall_presets();
-        ui.menu_button("▾", |ui| {
+        // (A painted chevron: the font has no glyph for one.)
+        theme::menu_chevron(ui, "Wall thickness presets", |ui| {
             for p in presets {
                 let text = format!("{}  ({})", p.label, units.format_readout(p.mm));
                 if ui.button(text).clicked() {
@@ -45,16 +46,15 @@ impl DriftApp {
                 }
             }
         })
-        .response
         .on_hover_text("Common walls, at their actual finished thickness");
-        bar_divider(ui);
+        theme::bar_divider(ui);
         if let Some(j) =
             app::context_ui::choice(ui, self.drawing.editor.prefs.wall_justify, &JUSTIFY)
         {
             self.drawing.editor.prefs.wall_justify = j;
         }
-        ui.label(egui::RichText::new("Space flips").size(12.0).weak());
-        bar_divider(ui);
+        theme::bar_caption(ui, "Space flips");
+        theme::bar_divider(ui);
         if let Some(arc) = app::context_ui::choice(
             ui,
             self.drawing.editor.prefs.wall_arc,
@@ -70,9 +70,9 @@ impl DriftApp {
                 None,
             );
         }
-        ui.label(egui::RichText::new("W").size(12.0).weak());
-        bar_divider(ui);
-        ui.checkbox(&mut self.drawing.editor.prefs.wall_poche.on, "Fill")
+        theme::bar_caption(ui, "W");
+        theme::bar_divider(ui);
+        theme::checkbox(ui, &mut self.drawing.editor.prefs.wall_poche.on, "Fill")
             .on_hover_text("Fill new walls: joined walls of one style on one layer are one area");
         if self.drawing.editor.prefs.wall_poche.on {
             let mut style = self.drawing.editor.prefs.wall_poche.style.clone();
@@ -125,7 +125,9 @@ impl DriftApp {
         theme::row(ui, "Thickness", |ui| {
             let r = ui.add(
                 egui::TextEdit::singleline(&mut text)
-                    .desired_width(ui.available_width() - 34.0)
+                    .desired_width(
+                        ui.available_width() - theme::ROW_HEIGHT - ui.spacing().item_spacing.x,
+                    )
                     .hint_text("various"),
             );
             if r.changed() {
@@ -135,7 +137,7 @@ impl DriftApp {
                 commit = Some(text.clone());
             }
             let presets = self.drawing.editor.wall_presets();
-            ui.menu_button("▾", |ui| {
+            theme::menu_chevron(ui, "Thickness presets", |ui| {
                 for p in presets {
                     let label = format!("{}  ({})", p.label, units.format_readout(p.mm));
                     if ui.button(label).clicked() {
@@ -143,7 +145,8 @@ impl DriftApp {
                         ui.close();
                     }
                 }
-            });
+            })
+            .on_hover_text("Wall thicknesses to pick from");
         });
         if let Some(t) = commit {
             self.drawing.wall_thickness_text = None;
@@ -151,8 +154,8 @@ impl DriftApp {
                 self.drawing.editor.out.notice = Some(e.to_string());
             }
         }
-        theme::row(ui, "Justify", |ui| {
-            if let Some(j) = app::context_ui::choice(ui, first.justify, &JUSTIFY) {
+        theme::wide_row(ui, "Justify", 180.0, |ui| {
+            if let Some(j) = theme::segmented(ui, first.justify, &JUSTIFY) {
                 self.drawing.editor.set_wall_justify(&walls, j);
             }
         });
@@ -164,11 +167,14 @@ impl DriftApp {
             .unwrap_or_else(|| self.drawing.editor.prefs.wall_poche.style.clone());
         let was = (on, style.clone());
         theme::row(ui, "Fill", |ui| {
-            ui.checkbox(&mut on, "");
+            theme::checkbox(ui, &mut on, "");
             if on {
-                self.style_bar(ui, &mut style, "wall_inspector");
+                self.style_kind(ui, &mut style);
             }
         });
+        if on {
+            self.style_row(ui, &mut style, "wall_inspector");
+        }
         if (on, style.clone()) != was {
             self.drawing
                 .editor
@@ -176,8 +182,7 @@ impl DriftApp {
         }
         theme::section(ui, "Joins");
         let mut cross = first.cross;
-        if ui
-            .checkbox(&mut cross, "Joins walls it crosses")
+        if theme::checkbox(ui, &mut cross, "Joins walls it crosses")
             .on_hover_text("Crossing walls of the same fill and layer clean up as an X")
             .changed()
         {
@@ -194,8 +199,7 @@ impl DriftApp {
         if walls.len() == 1 && !closed {
             for (which, label) in [(0, "Joins at its start"), (1, "Joins at its end")] {
                 let mut join = first.ends[which].join;
-                if ui
-                    .checkbox(&mut join, label)
+                if theme::checkbox(ui, &mut join, label)
                     .on_hover_text("Off: this end stays capped and overlaps what it meets")
                     .changed()
                 {
@@ -281,12 +285,4 @@ impl DriftApp {
         }
         true
     }
-}
-
-/// A thin vertical divider on the bar.
-fn bar_divider(ui: &mut egui::Ui) {
-    ui.add_space(2.0);
-    let (r, _) = ui.allocate_exact_size(egui::vec2(1.0, 18.0), egui::Sense::hover());
-    ui.painter().rect_filled(r, 0.0, theme::hairline(ui));
-    ui.add_space(2.0);
 }

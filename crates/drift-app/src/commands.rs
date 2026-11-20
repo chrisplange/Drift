@@ -1473,8 +1473,8 @@ fn table() -> Vec<Spec> {
             "view.wall_centrelines",
             C::View,
             K::Toggle(ViewFlag::Centrelines),
-            "Wall centrelines",
-            "Show every wall's centreline (otherwise only a picked or hovered wall's)",
+            "Wall centerlines",
+            "Show every wall's centerline (otherwise only a picked or hovered wall's)",
         ),
         Spec::new(
             "view.auto_relations",
@@ -1489,21 +1489,21 @@ fn table() -> Vec<Spec> {
             C::View,
             K::Theme(crate::theme::Look::Midnight),
             "Midnight appearance",
-            "The original dark colours: cool greys with a blue accent",
+            "The original dark colors: cool grays with a blue accent",
         ),
         Spec::new(
             "view.theme_obsidian",
             C::View,
             K::Theme(crate::theme::Look::Obsidian),
             "Obsidian appearance",
-            "Dark neutral greys with an orange accent",
+            "Dark neutral grays with an orange accent",
         ),
         Spec::new(
             "view.theme_light",
             C::View,
             K::Theme(crate::theme::Look::Light),
             "Light appearance",
-            "Light colours",
+            "Light colors",
         ),
         Spec::new(
             "view.theme_system",
@@ -1608,7 +1608,7 @@ fn table() -> Vec<Spec> {
             "Walls along the picked lines and arcs, at the Wall tool's settings",
         )
         .when(When::Curves)
-        .words("pick lines centreline"),
+        .words("pick lines centreline centerline"),
         Spec::new(
             "build.walls_from_lines",
             C::Build,
@@ -1738,7 +1738,7 @@ fn table() -> Vec<Spec> {
             C::Modify,
             K::Array(true),
             "Circular array…",
-            "Copies of the selection round a centre, previewed until applied (in the Inspector)",
+            "Copies of the selection round a center, previewed until applied (in the Inspector)",
         )
         .when(When::Selection)
         .aliases(&["ARRAYPOLAR", "AR"])
@@ -1914,7 +1914,7 @@ fn table() -> Vec<Spec> {
             C::Help,
             K::About,
             "About Drift",
-            "Version, licences and credits",
+            "Version, licenses and credits",
         ),
     ]
 }

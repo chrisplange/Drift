@@ -73,6 +73,7 @@ fn pattern_combo(
     width: f32,
 ) {
     egui::ComboBox::from_id_salt(("hatch_pattern", id))
+        .icon(crate::theme::combo_icon)
         .selected_text(&h.pattern)
         .width(width)
         .height(360.0)
@@ -176,17 +177,14 @@ fn fill_style_fields(
 ) {
     match &mut style.kind {
         FillKind::Solid => {
-            theme::row(ui, "Colour", |ui| {
+            theme::row(ui, "Color", |ui| {
                 if let Some(c) = color_choice(ui, style.color, "By layer", dark) {
                     style.color = c;
                 }
             });
             theme::row(ui, "Opacity", |ui| {
                 let mut percent = (style.opacity * 100.0).round();
-                if ui
-                    .add(egui::Slider::new(&mut percent, 0.0..=100.0).suffix("%"))
-                    .changed()
-                {
+                if theme::value_slider(ui, &mut percent, 0.0..=100.0, "%", false).changed() {
                     style.opacity = percent / 100.0;
                 }
             });
@@ -200,7 +198,8 @@ fn fill_style_fields(
                 });
             });
             theme::row(ui, "Scale", |ui| {
-                ui.add(
+                crate::theme::drag(
+                    ui,
                     egui::DragValue::new(&mut h.scale)
                         .speed(0.02)
                         .range(0.001..=10_000.0)
@@ -209,7 +208,8 @@ fn fill_style_fields(
             });
             if angle {
                 theme::row(ui, "Angle", |ui| {
-                    ui.add(
+                    crate::theme::drag(
+                        ui,
                         egui::DragValue::new(&mut h.angle)
                             .speed(1.0)
                             .range(-360.0..=360.0)
@@ -239,7 +239,7 @@ fn fill_style_fields(
             });
             theme::row(ui, "Background", |ui| {
                 let mut on = h.background.is_some();
-                if ui.checkbox(&mut on, "").changed() {
+                if crate::theme::checkbox(ui, &mut on, "").changed() {
                     h.background = on.then_some(drift_core::Rgb([0xff, 0xf4, 0xd6]));
                 }
                 if let Some(bg) = &mut h.background {
@@ -478,7 +478,7 @@ impl DriftApp {
     /// The drawing tools' Fill control: whether closed shapes come out filled as they are
     /// drawn, and in what style (the Fill tool's).
     pub(crate) fn new_shape_fill_bar(&mut self, ui: &mut egui::Ui) {
-        ui.checkbox(&mut self.drawing.editor.prefs.fill_new_shapes, "Fill")
+        crate::theme::checkbox(ui, &mut self.drawing.editor.prefs.fill_new_shapes, "Fill")
             .on_hover_text(
                 "Closed shapes are filled or hatched as they are drawn, in this style (the \
                  Fill tool's); the fill is part of the shape's undo step",
@@ -541,7 +541,7 @@ impl DriftApp {
         let dark = ui.visuals().dark_mode;
         match &mut style.kind {
             FillKind::Solid => {
-                theme::row(ui, "Colour", |ui| {
+                theme::row(ui, "Color", |ui| {
                     if let Some(c) = color_choice(ui, style.color, "By layer", dark) {
                         style.color = c;
                     }
@@ -571,7 +571,7 @@ impl DriftApp {
         ui.horizontal(|ui| {
             if ui
                 .button("Fill")
-                .on_hover_text("Fill this area with a solid colour")
+                .on_hover_text("Fill this area with a solid color")
                 .clicked()
             {
                 make = Some(FillKind::Solid);

@@ -140,7 +140,7 @@ fn several_curves_on_two_layers_show_mixed() {
     ed.selection = sides.iter().copied().collect();
     h.run();
     // Several curves have no Geometry rows: Appearance follows, its kind switch first.
-    let row = layer_row_above(&h, "Colour");
+    let row = layer_row_above(&h, "Color");
     let switch = h
         .query_all_by_role_and_label(egui::accesskit::Role::Button, "Geometry")
         .map(|n| n.rect())
@@ -173,7 +173,7 @@ fn a_filled_shape_shows_its_layer_first() {
     let fill = ed.doc.fills().next().map(|(id, _)| id).unwrap();
     ed.selection = sides.iter().copied().collect();
     h.run();
-    let row = layer_row_above(&h, "Colour");
+    let row = layer_row_above(&h, "Color");
     move_by_the_row(&mut h, row, to, |h| {
         let mut on = entity_layers(h, &sides);
         on.push(h.state().drawing.editor.doc.fill(fill).unwrap().layer);

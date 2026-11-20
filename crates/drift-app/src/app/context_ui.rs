@@ -7,7 +7,7 @@ use crate::icons::{self, Glyph};
 use crate::*;
 use drift_edit::tools::SlotMode;
 
-use crate::theme::{bar_caption as caption, bar_divider as divider};
+use crate::theme::{bar_caption as caption, group_divider as divider};
 
 /// A segmented choice sized to its labels (for the bar, where the full width isn't ours).
 pub(super) fn choice<T: Copy + PartialEq>(
@@ -33,56 +33,91 @@ pub(super) fn choice<T: Copy + PartialEq>(
     out
 }
 
-/// The select tool's filter: a toggle for each kind it picks, and All. Alt-click or
-/// double-click a toggle for that kind alone. Returns the filter clicked to.
+/// One chip of the pick filter, painted at `rect`: on, the accent's tint and the text's
+/// tone; off, the secondary tone and no fill.
+fn pick_chip(ui: &egui::Ui, rect: egui::Rect, response: &egui::Response, on: bool, label: &str) {
+    let dark = ui.visuals().dark_mode;
+    let n = theme::neutrals(dark);
+    let radius = theme::radius::CONTROL - 1;
+    if on {
+        // (On Light's grey track the tint alone is too faint: it sits on the picked white.)
+        if !dark {
+            ui.painter()
+                .rect_filled(rect, radius, theme::segment_picked(dark));
+        }
+        ui.painter()
+            .rect_filled(rect, radius, theme::accent_soft(dark));
+    } else if response.hovered() {
+        ui.painter()
+            .rect_filled(rect, radius, if dark { n.faint } else { n.hover });
+    }
+    let color = if on || response.hovered() {
+        n.text
+    } else {
+        n.secondary
+    };
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        label,
+        egui::FontId::proportional(theme::size::LABEL),
+        color,
+    );
+}
+
+/// The select tool's filter: a track with a chip for each kind it picks, and All beside it.
+/// Alt-click or double-click a chip for that kind alone. Returns the filter clicked to.
 fn pick_filter_toggles(
     ui: &mut egui::Ui,
     filter: drift_edit::editor::PickFilter,
 ) -> Option<drift_edit::editor::PickFilter> {
     use drift_edit::editor::{PickFilter, PickKind};
     let mut out = None;
-    ui.spacing_mut().item_spacing.x = 2.0;
-    caption(ui, "Pick");
-    // Everything picked is the usual state: the toggles show on in a quiet neutral, and
-    // the accent is kept for a narrowed filter, which is worth noticing.
-    let all = filter.is_all();
     let dark = ui.visuals().dark_mode;
-    let strong = ui.visuals().strong_text_color();
-    let quiet_on = |text: &str| {
-        egui::Button::new(egui::RichText::new(text).size(12.0).color(strong))
-            .fill(theme::raised(dark))
-            .stroke(if dark {
-                egui::Stroke::NONE
-            } else {
-                egui::Stroke::new(1.0, theme::neutrals(dark).control_border)
-            })
-            .min_size(egui::vec2(0.0, 22.0))
+    let n = theme::neutrals(dark);
+    let gap = ui.spacing().item_spacing.x;
+    caption(ui, "Pick");
+    // (8 points from the caption to the track, and from the track to All.)
+    ui.add_space(8.0 - gap);
+    let font = egui::FontId::proportional(theme::size::LABEL);
+    let width = |text: &str| {
+        ui.painter()
+            .layout_no_wrap(text.to_owned(), font.clone(), egui::Color32::WHITE)
+            .size()
+            .x
+            + 16.0
     };
-    for kind in PickKind::ALL {
+    let labels = PickKind::ALL.map(|kind| match kind {
+        // (Short, so the bar fits; the tooltip has the whole name.)
+        PickKind::Blocks => "Blocks",
+        k => k.label(),
+    });
+    let widths = labels.map(width);
+    let all_width = width("All");
+    let (track, track_response) = ui.allocate_exact_size(
+        egui::vec2(widths.iter().sum::<f32>() + 4.0, 24.0),
+        egui::Sense::hover(),
+    );
+    ui.painter().rect(
+        track,
+        theme::radius::CONTROL + 1,
+        theme::segment_track(dark),
+        egui::Stroke::new(1.0, n.border),
+        egui::StrokeKind::Inside,
+    );
+    let mut x = track.left() + 2.0;
+    for (i, kind) in PickKind::ALL.into_iter().enumerate() {
         let on = filter.has(kind);
-        let label = match kind {
-            // (Short, so the bar fits; the tooltip has the whole name.)
-            PickKind::Blocks => "Blocks",
-            k => k.label(),
-        };
-        let button = if all {
-            quiet_on(label)
-        } else if on {
-            egui::Button::new(egui::RichText::new(label).size(12.0))
-                .selected(true)
-                .min_size(egui::vec2(0.0, 22.0))
-        } else {
-            egui::Button::new(egui::RichText::new(label).size(12.0).weak())
-                .fill(egui::Color32::TRANSPARENT)
-                .stroke(egui::Stroke::new(1.0, theme::neutrals(dark).control_border))
-                .min_size(egui::vec2(0.0, 22.0))
-        };
-        let response = ui.add(button).on_hover_text(format!(
-            "{}: picks {} · Alt-click or double-click: pick only {}",
-            kind.label(),
-            kind.picks(),
-            kind.label().to_lowercase()
-        ));
+        let rect = egui::Rect::from_min_size(
+            egui::pos2(x, track.top() + 2.0),
+            egui::vec2(widths[i], track.height() - 4.0),
+        );
+        x += widths[i];
+        let response = ui.interact(
+            rect,
+            track_response.id.with(("pick", i)),
+            egui::Sense::click(),
+        );
         response.widget_info(|| {
             egui::WidgetInfo::selected(
                 egui::WidgetType::Checkbox,
@@ -91,6 +126,7 @@ fn pick_filter_toggles(
                 format!("Pick {}", kind.label()),
             )
         });
+        pick_chip(ui, rect, &response, on, labels[i]);
         let alone =
             response.double_clicked() || (response.clicked() && ui.input(|i| i.modifiers.alt));
         if alone {
@@ -98,23 +134,43 @@ fn pick_filter_toggles(
         } else if response.clicked() {
             out = Some(filter.with(kind, !on));
         }
+        response.on_hover_text(format!(
+            "{}: picks {} · Alt-click or double-click: pick only {}",
+            kind.label(),
+            kind.picks(),
+            kind.label().to_lowercase()
+        ));
     }
-    ui.add_space(2.0);
-    // All: pressed while everything is picked; a click puts everything back otherwise.
-    let all_button = if all {
-        quiet_on("All")
-    } else {
-        egui::Button::new(egui::RichText::new("All").size(12.0)).min_size(egui::vec2(0.0, 22.0))
-    };
-    let response = ui.add(all_button).on_hover_text(if all {
+    ui.add_space(8.0 - gap);
+    // All: on while everything is picked; a click puts everything back otherwise.
+    let all = filter.is_all();
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(all_width, 24.0), egui::Sense::click());
+    response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, all, "All"));
+    ui.painter().rect(
+        rect,
+        theme::radius::CONTROL,
+        if all {
+            egui::Color32::TRANSPARENT
+        } else if response.is_pointer_button_down_on() {
+            n.pressed
+        } else if response.hovered() {
+            n.hover
+        } else {
+            n.control
+        },
+        egui::Stroke::new(1.0, n.control_border),
+        egui::StrokeKind::Inside,
+    );
+    pick_chip(ui, rect.shrink(1.0), &response, all, "All");
+    if response.clicked() && !all {
+        out = Some(PickFilter::ALL);
+    }
+    response.on_hover_text(if all {
         "Everything is picked"
     } else {
         "Pick everything again"
     });
-    response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, all, "All"));
-    if response.clicked() && !all {
-        out = Some(PickFilter::ALL);
-    }
     out
 }
 
@@ -183,7 +239,7 @@ fn swatch(ui: &mut egui::Ui, s: Swatch<'_>) -> Option<Edit> {
         egui::StrokeKind::Outside,
     );
     let response = response.on_hover_text(format!(
-        "{} colour: of the selection, or of its layer",
+        "{} color: of the selection, or of its layer",
         s.name
     ));
     let mut out = None;
@@ -206,7 +262,7 @@ fn swatch(ui: &mut egui::Ui, s: Swatch<'_>) -> Option<Edit> {
             let (value, auto_label) = if on_layer {
                 ui.label(
                     egui::RichText::new(format!(
-                        "Layer {}: everything on it follows unless it has its own colour",
+                        "Layer {}: everything on it follows unless it has its own color",
                         s.layer
                     ))
                     .small()
@@ -218,7 +274,7 @@ fn swatch(ui: &mut egui::Ui, s: Swatch<'_>) -> Option<Edit> {
             };
             let mut edited = None;
             let mut auto = value.is_none();
-            if ui.checkbox(&mut auto, auto_label).changed() {
+            if crate::theme::checkbox(ui, &mut auto, auto_label).changed() {
                 edited = Some(if auto {
                     None
                 } else {
@@ -301,6 +357,7 @@ fn stroke_menu<T: Copy + PartialEq>(
     let mut picked = None;
     let shown = current.unwrap_or(from_layer);
     let closed = egui::ComboBox::from_id_salt(id)
+        .icon(crate::theme::combo_icon)
         .width(width)
         // Every option at once: nothing to scroll for.
         .height(420.0)
@@ -387,6 +444,7 @@ impl DriftApp {
         caption(ui, "Layer");
         let mut target = None;
         egui::ComboBox::from_id_salt("bar_layer")
+            .icon(crate::theme::combo_icon)
             .selected_text(if mixed {
                 "(mixed)".to_owned()
             } else {
@@ -464,7 +522,7 @@ impl DriftApp {
                 look.line_type,
                 layer.line_type,
                 &drift_core::LineType::ALL,
-                |t: drift_core::LineType| t.label().to_owned(),
+                |t: drift_core::LineType| theme::us(t.label()).to_owned(),
                 |ui, rect, t| line_sample(ui, rect, 0.35, t),
                 "Line type",
             );
@@ -536,9 +594,7 @@ impl DriftApp {
                 let (r, _) = ui.allocate_exact_size(name.size(), egui::Sense::hover());
                 ui.painter().galley(r.min, name, egui::Color32::WHITE);
                 // A hairline before the options, when the tool or the selection has any.
-                ui.add_space(2.0);
-                let line = theme::bar_divider_slot(ui);
-                ui.add_space(2.0);
+                let line = theme::group_divider_slot(ui);
                 let before = ui.min_rect().right();
                 self.tool_options(ui, kind);
                 if ui.min_rect().right() > before {
@@ -565,7 +621,7 @@ impl DriftApp {
         // (A hairline after it, when the tool has options of its own.)
         let lead = kind
             .draws_curves()
-            .then(|| (theme::bar_divider_slot(ui), ui.min_rect().right()));
+            .then(|| (theme::group_divider_slot(ui), ui.min_rect().right()));
         match kind {
             // On a sheet the model's selection isn't what is being worked on.
             ToolKind::Select if self.drawing.view.sheet_preview => {}
@@ -591,7 +647,7 @@ impl DriftApp {
                     &[
                         (ToolKind::ThreePointArc, "3-point"),
                         (ToolKind::TangentArc, "Tangent"),
-                        (ToolKind::Arc, "Centre"),
+                        (ToolKind::Arc, "Center"),
                     ],
                     "A again switches to the next",
                 ) {
@@ -626,7 +682,7 @@ impl DriftApp {
                     self.drawing.editor.prefs.slot_mode,
                     &[
                         (SlotMode::Straight, "Straight"),
-                        (SlotMode::Centre, "Centre"),
+                        (SlotMode::Centre, "Center"),
                         (SlotMode::Arc, "Arc"),
                     ],
                     "U again switches to the next",
@@ -703,7 +759,7 @@ impl DriftApp {
             ToolKind::Wall => self.wall_tool_bar(ui),
             ToolKind::Opening => self.opening_tool_bar(ui),
             ToolKind::Pen => {
-                ui.checkbox(&mut self.show_combs, "Curvature combs");
+                crate::theme::checkbox(ui, &mut self.show_combs, "Curvature combs");
             }
             ToolKind::Dimension | ToolKind::Ordinate | ToolKind::Note | ToolKind::Callout => {
                 if kind == ToolKind::Dimension {
@@ -717,7 +773,10 @@ impl DriftApp {
                     }
                     ui.add_enabled(
                         self.drawing.editor.prefs.dim_mode == drift_edit::editor::DimMode::Chain,
-                        egui::Checkbox::new(&mut self.drawing.editor.prefs.dim_overall, "Overall"),
+                        crate::theme::Checkbox::new(
+                            &mut self.drawing.editor.prefs.dim_overall,
+                            "Overall",
+                        ),
                     )
                     .on_hover_text(
                         "When a chain ends, add the overall dimension outside it (as a \
@@ -727,7 +786,7 @@ impl DriftApp {
                 }
                 // Dimensioning goes better with the dimensions and relations in view.
                 if matches!(kind, ToolKind::Dimension | ToolKind::Ordinate) {
-                    ui.checkbox(&mut self.show_dimensions, "Show dimensions")
+                    crate::theme::checkbox(ui, &mut self.show_dimensions, "Show dimensions")
                         .on_hover_text("Alt+D");
                     ui.label("Relations").on_hover_text("Alt+R");
                     if let Some(m) = choice(
@@ -829,7 +888,15 @@ impl DriftApp {
         let ed = &self.drawing.editor;
         let n = ed.selection.len() + ed.selected_instances.len();
         if n == 0 && !ed.selected_fills.is_empty() {
-            caption(ui, "Fill");
+            let fills = ed.selected_fills.len();
+            caption(
+                ui,
+                &if fills == 1 {
+                    "1 fill selected".to_owned()
+                } else {
+                    format!("{fills} fills selected")
+                },
+            );
             divider(ui);
             self.selection_look(ui);
             return;
@@ -863,14 +930,7 @@ impl DriftApp {
         // Construction is a property of the curves; the things to do with them are in a menu
         // (and on the right-click menu and their keys), so the bar stays about what is picked.
         if curves
-            && ui
-                .add(
-                    egui::Button::selectable(
-                        construction,
-                        egui::RichText::new("Construction").size(12.5),
-                    )
-                    .min_size(egui::vec2(0.0, 24.0)),
-                )
+            && theme::toggle_chip(ui, construction, "Construction")
                 .on_hover_text(
                     "Construction geometry: guides, off sheets unless a view shows them (Alt+C)",
                 )

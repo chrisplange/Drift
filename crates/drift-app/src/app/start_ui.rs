@@ -251,7 +251,7 @@ impl DriftApp {
                                     }
                                     ui.label(
                                         egui::RichText::new(if units.length.is_metric() {
-                                            "Millimetres; more in File → Drawing settings."
+                                            "Millimeters; more in File → Drawing settings."
                                         } else {
                                             "Feet and inches; more in File → Drawing settings."
                                         })
@@ -504,7 +504,7 @@ impl DriftApp {
                         copied = true;
                     }
                     if ui
-                        .button("Licences…")
+                        .button("Licenses…")
                         .on_hover_text("The fonts and open-source software Drift is built with")
                         .clicked()
                     {
@@ -512,8 +512,8 @@ impl DriftApp {
                     }
                     ui.hyperlink_to("Website", crate::links::WEBSITE);
                     ui.hyperlink_to("User guide", crate::links::GUIDE);
-                    ui.hyperlink_to("Licence", crate::links::LICENCE)
-                        .on_hover_text("Drift's end-user licence agreement");
+                    ui.hyperlink_to("License", crate::links::LICENCE)
+                        .on_hover_text("Drift's end-user license agreement");
                 });
             });
         if close {
@@ -533,15 +533,15 @@ impl DriftApp {
         }
         let mut open = true;
         let mut close = false;
-        theme::dialog(ctx, "Licences")
+        theme::dialog(ctx, "Licenses")
             .open(&mut open)
             .resizable(true)
             .default_size([620.0, 480.0])
             .show(ctx, |ui| {
-                close = theme::dialog_title(ui, "Licences", true);
+                close = theme::dialog_title(ui, "Licenses", true);
                 ui.label(
                     egui::RichText::new(
-                        "The licences and copyright notices of the fonts and crates Drift is \
+                        "The licenses and copyright notices of the fonts and crates Drift is \
                          built with.",
                     )
                     .small()
@@ -696,6 +696,7 @@ impl DriftApp {
         use crate::layers_ui::LayerOnPick;
         theme::section(ui, "When I select an object");
         egui::ComboBox::from_id_salt("layer_on_pick")
+            .icon(crate::theme::combo_icon)
             .selected_text(self.layer_on_pick.label())
             .width(ui.available_width().min(280.0))
             .show_ui(ui, |ui| {
@@ -716,14 +717,16 @@ impl DriftApp {
 
     fn drawing_prefs(&mut self, ui: &mut egui::Ui) {
         theme::section(ui, "While drawing");
-        ui.checkbox(
+        crate::theme::checkbox(
+            ui,
             &mut self.drawing.editor.prefs.auto_relations,
             "Add relations automatically while drawing",
         )
         .on_hover_text(
             "Horizontal, vertical, coincident, tangent and so on, as you snap · Shift+Alt+R",
         );
-        ui.checkbox(
+        crate::theme::checkbox(
+            ui,
             &mut self.perp_tangent_snap,
             "Snap perpendicular and tangent",
         )
@@ -740,7 +743,8 @@ impl DriftApp {
                 self.angle_snap = step;
             }
         });
-        ui.checkbox(
+        crate::theme::checkbox(
+            ui,
             &mut self.round_scale,
             "Round sizes when scaling with dimensions (Alt)",
         )
@@ -749,17 +753,19 @@ impl DriftApp {
              round sizes in the document's units, finer as you zoom in. Off: any size",
         );
         theme::section(ui, "Picked geometry");
-        ui.checkbox(
+        crate::theme::checkbox(
+            ui,
             &mut self.show_temp_dims,
             "Show temporary dimensions on the picked geometry",
         )
         .on_hover_text(
             "Pick one line, circle or arc to see its size and how far it is from its \
-             neighbours. Click a value to type a new one (the picked geometry moves), the lock \
+             neighbors. Click a value to type a new one (the picked geometry moves), the lock \
              to keep it as a dimension, and drag the square at its far end onto other geometry \
              to measure to that",
         );
-        ui.checkbox(
+        crate::theme::checkbox(
+            ui,
             &mut self.show_quick_bar,
             "Show the quick-constrain bar for the picked geometry",
         )
@@ -792,7 +798,7 @@ impl DriftApp {
                     "A mouse wheel zooms; two fingers on a trackpad pan, and a pinch zooms."
                 }
                 WheelMode::Zoom => {
-                    "Scrolling always zooms (if a trackpad isn't recognised as one, or you \
+                    "Scrolling always zooms (if a trackpad isn't recognized as one, or you \
                      prefer it)."
                 }
                 WheelMode::Pan => "Scrolling always pans; Ctrl + scroll zooms.",
@@ -810,7 +816,8 @@ impl DriftApp {
     fn rules_section(&mut self, ui: &mut egui::Ui) {
         theme::section(ui, "Closed areas and fills");
         let mut rules = self.drawing.editor.doc.rules();
-        ui.checkbox(
+        crate::theme::checkbox(
+            ui,
             &mut rules.regions_by_layer,
             "Find closed areas on each layer separately",
         )
@@ -819,7 +826,8 @@ impl DriftApp {
              hatching on other layers don't cut it up or close it. Its outline must then be \
              all on one layer (a door line on another layer leaves a wall open)",
         );
-        ui.checkbox(
+        crate::theme::checkbox(
+            ui,
             &mut rules.regions_need_fill,
             "Pick an area only where it is filled or hatched",
         )
@@ -828,12 +836,16 @@ impl DriftApp {
              outline picks nothing (box selection starts there). Off: it picks the area, to \
              measure it",
         );
-        ui.checkbox(&mut rules.stacked_fills, "Fills cover what is beneath them")
-            .on_hover_text(
-                "On: each solid fill or hatch is drawn over everything below it, with its \
+        crate::theme::checkbox(
+            ui,
+            &mut rules.stacked_fills,
+            "Fills cover what is beneath them",
+        )
+        .on_hover_text(
+            "On: each solid fill or hatch is drawn over everything below it, with its \
                  outline on top, as a drawing program stacks shapes. Off: every fill is drawn \
                  under every curve",
-            );
+        );
         ui.label("When an edit divides a filled area");
         let options = [
             (false, "Keep whole and flag"),

@@ -124,7 +124,7 @@ impl DriftApp {
                             &mut edited.snap,
                             Glyph::Snap,
                             true,
-                            "Snap to its end points, midpoints, centres and curves",
+                            "Snap to its end points, midpoints, centers and curves",
                         );
                         crate::layers_ui::icon_toggle(
                             ui,
@@ -170,7 +170,7 @@ impl DriftApp {
         // Opacity: live while dragging, one undo step.
         theme::row(ui, "Opacity", |ui| {
             let mut percent = u.opacity * 100.0;
-            let r = ui.add(egui::Slider::new(&mut percent, 5.0..=100.0).suffix("%"));
+            let r = theme::value_slider(ui, &mut percent, 5.0..=100.0, "%", false);
             if r.changed() {
                 let continuing = r.dragged() && !r.drag_started();
                 self.drawing
@@ -179,8 +179,8 @@ impl DriftApp {
                 edited.opacity = percent / 100.0;
             }
         });
-        theme::row(ui, "Colour", |ui| {
-            if let Some(c) = crate::layers_ui::color_choice(ui, u.color, "Grey", dark) {
+        theme::row(ui, "Color", |ui| {
+            if let Some(c) = crate::layers_ui::color_choice(ui, u.color, "Gray", dark) {
                 edited.color = c;
             }
         });
@@ -203,6 +203,7 @@ impl DriftApp {
             };
             theme::row(ui, "Pictures", |ui| {
                 egui::ComboBox::from_id_salt(("underlay_pictures", id.0))
+                    .icon(crate::theme::combo_icon)
                     .selected_text(name(u.layer))
                     .show_ui(ui, |ui| {
                         for l in std::iter::once(None).chain(layers.iter().map(|(id, _)| Some(*id)))
@@ -240,18 +241,18 @@ impl DriftApp {
                 }
             });
             let unit = units.length.mm_per_unit();
-            theme::row(ui, "Position", |ui| {
-                for (axis, value) in [("X", u.at.x), ("Y", u.at.y)] {
-                    ui.label(egui::RichText::new(axis).weak());
+            // X and Y each on a row, as a block copy's are: the fields fill the value column.
+            for (axis, value) in [("X", u.at.x), ("Y", u.at.y)] {
+                theme::row(ui, axis, |ui| {
                     let mut shown = value / unit;
-                    if ui
-                        .add(
-                            egui::DragValue::new(&mut shown)
-                                .speed(1.0)
-                                .max_decimals(4)
-                                .suffix(format!(" {}", units.length.symbol())),
-                        )
-                        .changed()
+                    if theme::drag(
+                        ui,
+                        egui::DragValue::new(&mut shown)
+                            .speed(1.0)
+                            .max_decimals(4)
+                            .suffix(format!(" {}", units.length.symbol())),
+                    )
+                    .changed()
                     {
                         if axis == "X" {
                             edited.at.x = shown * unit;
@@ -259,31 +260,27 @@ impl DriftApp {
                             edited.at.y = shown * unit;
                         }
                     }
-                }
-            });
+                });
+            }
             theme::row(ui, "Angle", |ui| {
                 let mut a = u.angle;
-                if ui
-                    .add(egui::DragValue::new(&mut a).suffix("°").speed(0.5))
-                    .changed()
-                {
+                if theme::drag(ui, egui::DragValue::new(&mut a).suffix("°").speed(0.5)).changed() {
                     edited.angle = a.rem_euclid(360.0);
                 }
-                for q in [0.0, 90.0, 180.0, 270.0] {
-                    if ui.small_button(format!("{q:.0}")).clicked() {
-                        // Turn about the underlay's middle, so it stays in view.
-                        let middle = u.bounds().center();
-                        let mut turned = u.clone();
-                        turned.angle = q;
-                        turned.at += middle - turned.to_world(u.to_local(middle));
-                        *edited = drift_core::Underlay {
-                            angle: q,
-                            at: turned.at,
-                            ..edited.clone()
-                        };
-                    }
-                }
             });
+            if let Some(k) = theme::preset_row(ui, &["0", "90", "180", "270"]) {
+                // Turn about the underlay's middle, so it stays in view.
+                let q = 90.0 * k as f64;
+                let middle = u.bounds().center();
+                let mut turned = u.clone();
+                turned.angle = q;
+                turned.at += middle - turned.to_world(u.to_local(middle));
+                *edited = drift_core::Underlay {
+                    angle: q,
+                    at: turned.at,
+                    ..edited.clone()
+                };
+            }
         });
         ui.add_space(4.0);
         ui.horizontal_wrapped(|ui| {

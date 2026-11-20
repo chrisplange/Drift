@@ -32,8 +32,8 @@ const HEADER: f32 = 34.0;
 const MIN_PANEL: f32 = HEADER + 64.0;
 /// Space around a panel's contents, docked or floating.
 const BODY_MARGIN: egui::Margin = egui::Margin {
-    left: 14,
-    right: 8,
+    left: theme::PANE_MARGIN as i8,
+    right: theme::PANE_MARGIN as i8,
     top: 2,
     bottom: 0,
 };
@@ -79,6 +79,20 @@ pub(crate) fn glyph(p: Panel) -> Glyph {
         Panel::Sheets => Glyph::Sheets,
         Panel::Blocks => Glyph::Blocks,
     }
+}
+
+/// The front panel's name in a row of its own under the tab bar: for a dock too narrow for
+/// its tabs' names, so the panel is always named. (Painted: the tab is what it is called.)
+fn front_title(ui: &mut egui::Ui, front: Panel) {
+    let (row, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 24.0), egui::Sense::hover());
+    ui.painter().text(
+        egui::pos2(row.left() + theme::PANE_MARGIN, row.center().y + 1.0),
+        egui::Align2::LEFT_CENTER,
+        front.title(),
+        egui::FontId::new(theme::size::SECTION, theme::bold()),
+        theme::neutrals(ui.visuals().dark_mode).secondary,
+    );
 }
 
 /// A small icon button drawn at `rect`.
@@ -172,7 +186,9 @@ impl DriftApp {
                     let front = self.layout.active[i]
                         .filter(|p| panels.contains(p))
                         .unwrap_or(panels[0]);
-                    self.tab_bar(ui, side, &panels, front);
+                    if !self.tab_bar(ui, side, &panels, front) {
+                        front_title(ui, front);
+                    }
                     egui::Frame::new()
                         .inner_margin(BODY_MARGIN)
                         .show(ui, |ui| self.panel_body(ui, front));
@@ -193,10 +209,10 @@ impl DriftApp {
         let now = ui.input(|i| i.time);
         match p {
             Panel::Inspector => {
-                let output = egui::ScrollArea::vertical()
+                let area = egui::ScrollArea::vertical()
                     .id_salt("inspector_scroll")
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| self.inspector(ui));
+                    .auto_shrink([false, false]);
+                let output = theme::pane_scroll(ui, area, |ui| self.inspector(ui));
                 self.panel_scrolled(ui, p, &output);
             }
             Panel::Parameters => self.parameters_panel(ui, now),
@@ -207,8 +223,9 @@ impl DriftApp {
     }
 
     /// The tabs across the top of a dock: icon and name (just the icon when they don't fit),
-    /// the front one underlined; then collapse and menu buttons.
-    fn tab_bar(&mut self, ui: &mut egui::Ui, side: Side, panels: &[Panel], front: Panel) {
+    /// the front one underlined; then collapse and menu buttons. Returns whether the front
+    /// tab shows its name (when it doesn't, the dock names the panel under the bar).
+    fn tab_bar(&mut self, ui: &mut egui::Ui, side: Side, panels: &[Panel], front: Panel) -> bool {
         let i = side.index();
         let (bar, _) = ui.allocate_exact_size(
             egui::vec2(ui.available_width(), TAB_BAR),
@@ -248,10 +265,13 @@ impl DriftApp {
         let all = widths.iter().sum::<f32>() + 2.0 * panels.len() as f32 <= room;
         let front_at = panels.iter().position(|p| *p == front).unwrap_or(0);
         let front_only = widths[front_at] + 34.0 * (panels.len() - 1) as f32 <= room;
+        // Icons alone give way too where even they don't fit, so the tabs never run under
+        // the buttons at the bar's end.
+        let icon = ((room - 2.0 * panels.len() as f32) / panels.len() as f32).clamp(20.0, 32.0);
         let mut x = bar.left() + 6.0;
         for (k, &p) in panels.iter().enumerate() {
             let labelled = all || (front_only && p == front);
-            let w = if labelled { widths[k] } else { 32.0 };
+            let w = if labelled { widths[k] } else { icon };
             let r = egui::Rect::from_min_size(egui::pos2(x, bar.top() + 4.0), egui::vec2(w, 26.0));
             x += w + 2.0;
             let id = ui.id().with(("tab", p.key()));
@@ -382,6 +402,7 @@ impl DriftApp {
                 }
             }
         });
+        all || front_only
     }
 
     /// Where a panel can go: dock left or right, float, or close.

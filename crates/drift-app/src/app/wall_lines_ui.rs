@@ -72,6 +72,7 @@ impl DriftApp {
         let now = ui.input(|i| i.time);
         theme::row(ui, "Lines used", |ui| {
             egui::ComboBox::from_id_salt("walls_from_lines_used")
+                .icon(crate::theme::combo_icon)
                 .selected_text(report.lines.label())
                 .show_ui(ui, |ui| {
                     for u in UsedLines::ALL {

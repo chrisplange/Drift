@@ -153,7 +153,7 @@ fn the_inspector_aligns_the_pattern_to_corners_an_edge_and_back() {
     h.run();
     assert!(h.query_by_label("Pattern alignment").is_some());
     // The centre of the area, then a corner.
-    h.get_by_label("Origin Centre").click();
+    h.get_by_label("Origin Center").click();
     h.run();
     assert!(close(hatch(&h, fill).origin, DVec2::new(25.0, 15.0)));
     h.get_by_label("Origin Top right").click();

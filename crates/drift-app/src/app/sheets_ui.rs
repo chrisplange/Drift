@@ -249,6 +249,69 @@ pub(crate) enum Output {
     Print,
 }
 
+/// A sheet's row in the Sheets tab: the sheet glyph, its number in the tertiary tone and its
+/// name; the open sheet in the selected row's look. `label` is what it is called (as its tab
+/// is).
+fn sheet_row(
+    ui: &mut egui::Ui,
+    selected: bool,
+    label: &str,
+    number: &str,
+    name: &str,
+) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), theme::LIST_ROW),
+        egui::Sense::click(),
+    );
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, label)
+    });
+    let dark = ui.visuals().dark_mode;
+    let n = theme::neutrals(dark);
+    theme::paint_row(ui, rect, selected, response.hovered());
+    let icon = egui::Rect::from_center_size(
+        egui::pos2(rect.left() + 15.0, rect.center().y),
+        egui::Vec2::splat(14.0),
+    );
+    crate::icons::glyph(
+        ui.painter(),
+        icon,
+        crate::icons::Glyph::Sheets,
+        if selected {
+            theme::accent(dark)
+        } else {
+            n.secondary
+        },
+    );
+    let painter = ui
+        .painter()
+        .with_clip_rect(rect.shrink2(egui::vec2(6.0, 0.0)));
+    let mut x = rect.left() + 30.0;
+    if !number.is_empty() {
+        let r = painter.text(
+            egui::pos2(x, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            number,
+            egui::FontId::proportional(theme::size::LABEL),
+            n.tertiary,
+        );
+        x = r.right() + 8.0;
+    }
+    let family = if selected {
+        theme::bold()
+    } else {
+        egui::FontFamily::Proportional
+    };
+    painter.text(
+        egui::pos2(x, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        name,
+        egui::FontId::new(theme::size::BODY, family),
+        n.text,
+    );
+    response
+}
+
 impl DriftApp {
     /// The file name without its extension, for exports.
     pub(crate) fn file_stem(&self) -> String {
@@ -595,7 +658,7 @@ impl DriftApp {
                     if format != CadFormat::DxfR12 {
                         continue;
                     }
-                    ui.radio_value(&mut self.cad_format, format, format.label());
+                    crate::theme::radio_value(ui, &mut self.cad_format, format, format.label());
                     ui.indent(format.extension(), |ui| {
                         ui.label(egui::RichText::new(format.hint()).small().weak());
                     });
@@ -732,7 +795,7 @@ impl DriftApp {
                 ];
                 for (placement, label, hint, enabled) in choices {
                     ui.add_enabled_ui(enabled, |ui| {
-                        ui.radio_value(&mut choice, placement, label);
+                        crate::theme::radio_value(ui, &mut choice, placement, label);
                     });
                     ui.indent(hint, |ui| {
                         ui.label(egui::RichText::new(hint).small().weak());
@@ -821,7 +884,7 @@ impl DriftApp {
                     .show(ui, |ui| {
                         for (id, label) in &sheets {
                             let mut on = !self.drawing.pdf_left_out.contains(id);
-                            if ui.checkbox(&mut on, label).changed() {
+                            if crate::theme::checkbox(ui, &mut on, label).changed() {
                                 if on {
                                     self.drawing.pdf_left_out.remove(id);
                                 } else {
@@ -1058,20 +1121,27 @@ impl DriftApp {
     // ----- The Sheets tab --------------------------------------------------------------------
 
     pub(crate) fn sheets_panel(&mut self, ui: &mut egui::Ui) {
-        let output = egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .show(ui, |ui| self.sheets_contents(ui));
+        let area = egui::ScrollArea::vertical().auto_shrink([false, false]);
+        let output = theme::pane_scroll(ui, area, |ui| self.sheets_contents(ui));
         self.panel_scrolled(ui, crate::dock::Panel::Sheets, &output);
     }
 
     fn sheets_contents(&mut self, ui: &mut egui::Ui) {
         theme::section(ui, "Sheets");
-        let sheets: Vec<(SheetId, String)> = self
+        // (Each sheet's label, as its tab has it, and its number and name apart.)
+        let sheets: Vec<(SheetId, String, String, String)> = self
             .drawing
             .editor
             .doc
             .sheets()
-            .map(|(id, s)| (id, crate::app::sheet_editor::sheet_label(s)))
+            .map(|(id, s)| {
+                (
+                    id,
+                    crate::app::sheet_editor::sheet_label(s),
+                    s.fields.number.trim().to_owned(),
+                    s.name.clone(),
+                )
+            })
             .collect();
         let current = self.current_sheet();
         if sheets.is_empty() {
@@ -1087,9 +1157,9 @@ impl DriftApp {
         use crate::app::sheet_editor::{SheetMenu, drop_index, gap_at, sheet_menu};
         let mut spots = Vec::new();
         let (mut dragging, mut dropped, mut chose) = (None, None, None);
-        for (k, (id, label)) in sheets.iter().enumerate() {
+        for (k, (id, label, number, name)) in sheets.iter().enumerate() {
             let shown = self.drawing.view.sheet_preview && current == Some(*id);
-            let row = theme::list_row(ui, shown, label).interact(egui::Sense::drag());
+            let row = sheet_row(ui, shown, label, number, name).interact(egui::Sense::drag());
             spots.push((*id, row.rect.top(), row.rect.bottom()));
             if row.dragged() {
                 dragging = Some(*id);
@@ -1148,7 +1218,7 @@ impl DriftApp {
         });
         ui.label(
             egui::RichText::new(
-                "The tabs over the canvas switch between the model and each sheet. Pick a view \
+                "The tabs in the top bar switch between the model and each sheet. Pick a view \
                  or the paper there to set it up in the Inspector.",
             )
             .small()
@@ -1183,13 +1253,13 @@ impl DriftApp {
             ("Company", &mut p.company, "Your practice"),
         ] {
             theme::row(ui, label, |ui| {
-                typing |= ui
-                    .add(
-                        egui::TextEdit::singleline(value)
-                            .hint_text(hint)
-                            .desired_width(ui.available_width()),
-                    )
-                    .changed();
+                typing |= crate::theme::field(
+                    ui,
+                    egui::TextEdit::singleline(value)
+                        .hint_text(hint)
+                        .desired_width(ui.available_width()),
+                )
+                .changed();
             });
         }
         ui.add_space(4.0);
@@ -1232,33 +1302,34 @@ impl DriftApp {
         let mut typing = false;
         theme::section(ui, "Sheet");
         theme::row(ui, "Number", |ui| {
-            typing |= ui
-                .add(
-                    egui::TextEdit::singleline(&mut sheet.fields.number)
-                        .hint_text("A-101")
-                        .desired_width(ui.available_width()),
-                )
-                .changed();
+            typing |= crate::theme::field(
+                ui,
+                egui::TextEdit::singleline(&mut sheet.fields.number)
+                    .hint_text("A-101")
+                    .desired_width(ui.available_width()),
+            )
+            .changed();
         });
         theme::row(ui, "Name", |ui| {
-            typing |= ui
-                .add(
-                    egui::TextEdit::singleline(&mut sheet.name).desired_width(ui.available_width()),
-                )
-                .changed();
+            typing |= crate::theme::field(
+                ui,
+                egui::TextEdit::singleline(&mut sheet.name).desired_width(ui.available_width()),
+            )
+            .changed();
         });
         theme::row(ui, "Status", |ui| {
             // A field of its own, with the common statuses in a menu beside it.
             let room = ui.available_width();
-            typing |= ui
-                .add(
-                    egui::TextEdit::singleline(&mut sheet.fields.status)
-                        .hint_text("For permit")
-                        .desired_width(room - 44.0),
-                )
-                .on_hover_text("What the sheet is issued for")
-                .changed();
+            typing |= crate::theme::field(
+                ui,
+                egui::TextEdit::singleline(&mut sheet.fields.status)
+                    .hint_text("For permit")
+                    .desired_width(room - 44.0),
+            )
+            .on_hover_text("What the sheet is issued for")
+            .changed();
             egui::ComboBox::from_id_salt("sheet_status")
+                .icon(crate::theme::combo_icon)
                 .selected_text("")
                 .width(20.0)
                 .show_ui(ui, |ui| {
@@ -1274,6 +1345,7 @@ impl DriftApp {
         theme::section(ui, "Paper");
         theme::row(ui, "Size", |ui| {
             egui::ComboBox::from_id_salt("paper_size")
+                .icon(crate::theme::combo_icon)
                 .selected_text(sheet.paper.label())
                 .width(ui.available_width())
                 .show_ui(ui, |ui| {
@@ -1290,12 +1362,13 @@ impl DriftApp {
             sheet.portrait = portrait;
         }
         // How it prints: in colour, in greys, or black lines over grey fills.
-        let colours = SheetColours::ALL.map(|c| (c, c.label()));
+        let colours = SheetColours::ALL.map(|c| (c, theme::us(c.label())));
         if let Some(c) = theme::segmented(ui, sheet.colours, &colours) {
             sheet.colours = c;
         }
         theme::section(ui, "Title block");
         egui::ComboBox::from_id_salt("title_block")
+            .icon(crate::theme::combo_icon)
             .selected_text(sheet.title_block.label())
             .width(ui.available_width())
             .show_ui(ui, |ui| {
@@ -1344,26 +1417,42 @@ impl DriftApp {
         }
         for (label, value, hint) in rows {
             theme::row(ui, label, |ui| {
-                typing |= ui
-                    .add(
-                        egui::TextEdit::singleline(value)
-                            .hint_text(hint)
-                            .desired_width(ui.available_width()),
-                    )
-                    .changed();
+                typing |= crate::theme::field(
+                    ui,
+                    egui::TextEdit::singleline(value)
+                        .hint_text(hint)
+                        .desired_width(ui.available_width()),
+                )
+                .changed();
             });
         }
+        // The field takes what the button beside it leaves; where that isn't room for a
+        // date (a narrow dock), the field has the row and the button goes under it.
+        let mut beside = true;
         theme::row(ui, "Date", |ui| {
-            // The field takes what the button beside it leaves.
             let button = theme::button_width(ui, "Today") + ui.spacing().item_spacing.x;
-            let width = (ui.available_width() - button).max(40.0);
-            typing |= ui
-                .add(egui::TextEdit::singleline(&mut f.date).desired_width(width))
-                .changed();
-            if ui.small_button("Today").clicked() {
+            beside = ui.available_width() - button >= 104.0;
+            let width = if beside {
+                ui.available_width() - button
+            } else {
+                ui.available_width()
+            };
+            typing |= crate::theme::field(
+                ui,
+                egui::TextEdit::singleline(&mut f.date).desired_width(width),
+            )
+            .changed();
+            if beside && ui.button("Today").clicked() {
                 f.date = today();
             }
         });
+        if !beside {
+            theme::row(ui, "", |ui| {
+                if ui.button("Today").clicked() {
+                    f.date = today();
+                }
+            });
+        }
         theme::row(ui, "Project", |ui| {
             if ui
                 .button("Project settings…")
@@ -1380,19 +1469,23 @@ impl DriftApp {
         let mut remove = None;
         for (k, r) in sheet.revisions.iter_mut().enumerate() {
             ui.horizontal(|ui| {
-                typing |= ui
-                    .add(egui::TextEdit::singleline(&mut r.rev).desired_width(26.0))
-                    .changed();
-                typing |= ui
-                    .add(egui::TextEdit::singleline(&mut r.date).desired_width(78.0))
-                    .changed();
-                typing |= ui
-                    .add(
-                        egui::TextEdit::singleline(&mut r.by)
-                            .hint_text("by")
-                            .desired_width(30.0),
-                    )
-                    .changed();
+                typing |= crate::theme::field(
+                    ui,
+                    egui::TextEdit::singleline(&mut r.rev).desired_width(34.0),
+                )
+                .changed();
+                typing |= crate::theme::field(
+                    ui,
+                    egui::TextEdit::singleline(&mut r.date).desired_width(90.0),
+                )
+                .changed();
+                typing |= crate::theme::field(
+                    ui,
+                    egui::TextEdit::singleline(&mut r.by)
+                        .hint_text("by")
+                        .desired_width(44.0),
+                )
+                .changed();
                 // (The delete button at the row's end, the description under the three.)
                 let end = 20.0 + ui.spacing().item_spacing.x;
                 ui.add_space((ui.available_width() - end).max(0.0));
@@ -1400,13 +1493,13 @@ impl DriftApp {
                     remove = Some(k);
                 }
             });
-            typing |= ui
-                .add(
-                    egui::TextEdit::singleline(&mut r.description)
-                        .hint_text("Description")
-                        .desired_width(ui.available_width()),
-                )
-                .changed();
+            typing |= crate::theme::field(
+                ui,
+                egui::TextEdit::singleline(&mut r.description)
+                    .hint_text("Description")
+                    .desired_width(ui.available_width()),
+            )
+            .changed();
             ui.add_space(4.0);
         }
         if let Some(k) = remove {
@@ -1484,7 +1577,7 @@ impl DriftApp {
         {
             self.export_model(painter, true);
         }
-        ui.checkbox(&mut self.model_annotations, "Dimensions and notes")
+        crate::theme::checkbox(ui, &mut self.model_annotations, "Dimensions and notes")
             .on_hover_text("Model exports include dimensions and notes");
     }
 
@@ -2401,13 +2494,13 @@ impl DriftApp {
         let mut view = original.clone();
         let mut typing = false;
         theme::row(ui, "Name", |ui| {
-            typing |= ui
-                .add(
-                    egui::TextEdit::singleline(&mut view.name)
-                        .hint_text("Plan, Detail A…")
-                        .desired_width(ui.available_width()),
-                )
-                .changed();
+            typing |= crate::theme::field(
+                ui,
+                egui::TextEdit::singleline(&mut view.name)
+                    .hint_text("Plan, Detail A…")
+                    .desired_width(ui.available_width()),
+            )
+            .changed();
         });
         theme::row(ui, "Scale", |ui| {
             self.scale_menu(ui, "model_view_scale", &mut view.scale);
@@ -2418,14 +2511,14 @@ impl DriftApp {
                 .num_columns(2)
                 .spacing([16.0, 4.0])
                 .show(ui, |ui| {
-                    ui.checkbox(&mut view.dimensions, "Dimensions")
+                    crate::theme::checkbox(ui, &mut view.dimensions, "Dimensions")
                         .on_hover_text("Dimensions and ordinates, in this view");
-                    ui.checkbox(&mut view.notes, "Notes")
+                    crate::theme::checkbox(ui, &mut view.notes, "Notes")
                         .on_hover_text("Notes and callouts, in this view");
                     ui.end_row();
-                    ui.checkbox(&mut view.construction, "Construction")
+                    crate::theme::checkbox(ui, &mut view.construction, "Construction")
                         .on_hover_text(CONSTRUCTION_TIP);
-                    ui.checkbox(&mut view.crop_visible, "Crop")
+                    crate::theme::checkbox(ui, &mut view.crop_visible, "Crop")
                         .on_hover_text("Its crop and name on the canvas (they never print)");
                     ui.end_row();
                 });
@@ -2525,19 +2618,19 @@ impl DriftApp {
             let mut fit = false;
             let mut fill = false;
             theme::row(ui, "Title", |ui| {
-                typing |= ui
-                    .add(
-                        egui::TextEdit::singleline(&mut view.name)
-                            .hint_text("Plan, Detail A…")
-                            .desired_width(ui.available_width()),
-                    )
-                    .changed();
+                typing |= crate::theme::field(
+                    ui,
+                    egui::TextEdit::singleline(&mut view.name)
+                        .hint_text("Plan, Detail A…")
+                        .desired_width(ui.available_width()),
+                )
+                .changed();
             });
             theme::row(ui, "Scale", |ui| {
                 self.scale_menu(ui, "sheet_scale", &mut view.scale);
                 fit = ui
                     .button("Fit")
-                    .on_hover_text("Centre the drawing in the view at the largest scale that fits")
+                    .on_hover_text("Center the drawing in the view at the largest scale that fits")
                     .clicked();
             });
             // A new scale keeps the crop in the model: the frame on the paper grows or shrinks.
@@ -2559,17 +2652,17 @@ impl DriftApp {
                     .num_columns(2)
                     .spacing([16.0, 4.0])
                     .show(ui, |ui| {
-                        ui.checkbox(&mut view.dimensions, "Dimensions")
+                        crate::theme::checkbox(ui, &mut view.dimensions, "Dimensions")
                             .on_hover_text("Dimensions and ordinates, in this view");
-                        ui.checkbox(&mut view.notes, "Notes")
+                        crate::theme::checkbox(ui, &mut view.notes, "Notes")
                             .on_hover_text("Notes and callouts, in this view");
                         ui.end_row();
-                        ui.checkbox(&mut view.construction, "Construction")
+                        crate::theme::checkbox(ui, &mut view.construction, "Construction")
                             .on_hover_text(CONSTRUCTION_TIP);
                         ui.end_row();
-                        ui.checkbox(&mut view.title, "Title")
+                        crate::theme::checkbox(ui, &mut view.title, "Title")
                             .on_hover_text("Its title and scale, written under it");
-                        ui.checkbox(&mut view.border, "Border")
+                        crate::theme::checkbox(ui, &mut view.border, "Border")
                             .on_hover_text("Print the frame's outline");
                         ui.end_row();
                     });
@@ -2586,7 +2679,7 @@ impl DriftApp {
                 ui.vertical(|ui| {
                     for (id, name, drawn) in layers {
                         let mut on = drawn && !view.hidden_layers.contains(&id);
-                        let r = ui.add_enabled(drawn, egui::Checkbox::new(&mut on, name));
+                        let r = ui.add_enabled(drawn, crate::theme::Checkbox::new(&mut on, name));
                         let r = if drawn {
                             r.on_hover_text("Draw this layer in this view")
                         } else {
@@ -2658,6 +2751,7 @@ impl DriftApp {
                 .find(|(i, _)| *i == with)
                 .map_or(String::new(), |(_, n)| n.clone());
             egui::ComboBox::from_id_salt("align_with")
+                .icon(crate::theme::combo_icon)
                 .selected_text(shown)
                 .width(ui.available_width())
                 .show_ui(ui, |ui| {

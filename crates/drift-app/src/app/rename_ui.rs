@@ -48,7 +48,8 @@ impl DriftApp {
             .show(ctx, |ui| {
                 ui.set_width(320.0);
                 theme::dialog_title(ui, &format!("Rename {what}"), false);
-                let field = ui.add(
+                let field = crate::theme::field(
+                    ui,
                     egui::TextEdit::singleline(&mut r.name)
                         .id(field_id)
                         .desired_width(f32::INFINITY),

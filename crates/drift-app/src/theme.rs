@@ -450,6 +450,7 @@ fn style(s: &mut egui::Style, dark: bool) {
     sp.interact_size = vec2(24.0, 24.0);
     sp.icon_width = 14.0;
     sp.icon_width_inner = 8.0;
+    sp.slider_rail_height = 3.0;
     sp.menu_margin = Margin::same(5);
     sp.window_margin = Margin::same(16);
     sp.combo_width = 120.0;
@@ -625,14 +626,14 @@ pub fn fold<R>(
     open.then(|| body(ui))
 }
 
-/// A soft, full-width button for destructive actions.
+/// A button for destructive actions: as wide as its name, red on a faint red.
 pub fn danger_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
     let red = error_color(ui.visuals().dark_mode);
     ui.add(
         egui::Button::new(egui::RichText::new(label).color(red))
             .fill(red.gamma_multiply(0.12))
             .stroke(Stroke::new(1.0, red.gamma_multiply(0.3)))
-            .min_size(vec2(ui.available_width(), 26.0)),
+            .min_size(vec2(0.0, ROW_HEIGHT)),
     )
 }
 
@@ -659,18 +660,25 @@ pub fn caps_header_in(ui: &mut egui::Ui, title: &str, color: Color32) {
         .galley(rect.min + vec2(6.0, 0.0), galley, color);
 }
 
-/// The fill of a control that is on without calling for attention: a pick filter toggle
-/// while everything is picked.
-pub fn raised(dark: bool) -> Color32 {
-    if dark {
-        neutrals(dark).pressed
-    } else {
-        Color32::WHITE
-    }
+/// The track of a segmented control (and of the top bar's tabs): a well in the dark looks,
+/// a control's grey in Light.
+pub fn segment_track(dark: bool) -> Color32 {
+    let n = neutrals(dark);
+    if dark { n.field } else { n.control }
 }
 
-/// A segmented control: a well with the picked segment standing in it as a control.
-/// Returns the clicked segment.
+/// The picked segment standing in [`segment_track`]: a control in the dark looks, white in
+/// Light (edged with the control border in both).
+pub fn segment_picked(dark: bool) -> Color32 {
+    let n = neutrals(dark);
+    if dark { n.control } else { n.raised }
+}
+
+/// The least room either side of a segment's label.
+const SEGMENT_PAD: f32 = 6.0;
+
+/// A segmented control: a track with the picked segment standing in it. Returns the clicked
+/// segment.
 pub fn segmented<T: Copy + PartialEq>(
     ui: &mut egui::Ui,
     current: T,
@@ -684,28 +692,48 @@ pub fn segmented<T: Copy + PartialEq>(
     ui.painter().rect(
         rect,
         radius::CONTROL + 1,
-        n.field,
+        segment_track(dark),
         Stroke::new(1.0, n.border),
         egui::StrokeKind::Inside,
     );
-    // Segments share the width in proportion to their labels (so long ones fit).
-    let font = FontId::new(size::LABEL, bold());
-    let widths: Vec<f32> = options
-        .iter()
-        .map(|(_, label)| {
-            ui.painter()
-                .layout_no_wrap((*label).to_owned(), font.clone(), Color32::WHITE)
-                .size()
-                .x
-                + 12.0
-        })
-        .collect();
-    let total: f32 = widths.iter().sum();
     let room = rect.width() - 4.0;
+    let family = |selected: bool| {
+        if selected {
+            bold()
+        } else {
+            FontFamily::Proportional
+        }
+    };
+    // Each label in its own face (the picked one bold), smaller where the track is too
+    // narrow for them all with room either side; a label is never cut.
+    let mut size = size::LABEL;
+    let mut widths: Vec<f32> = Vec::new();
+    for candidate in [size::LABEL, size::SECTION, size::CAPTION] {
+        size = candidate;
+        widths = options
+            .iter()
+            .map(|(value, label)| {
+                ui.painter()
+                    .layout_no_wrap(
+                        (*label).to_owned(),
+                        FontId::new(size, family(*value == current)),
+                        Color32::WHITE,
+                    )
+                    .size()
+                    .x
+            })
+            .collect();
+        let needed = widths.iter().sum::<f32>() + 2.0 * SEGMENT_PAD * options.len() as f32;
+        if needed <= room {
+            break;
+        }
+    }
+    // The room left over is shared evenly, so every label has the same space around it.
+    let spare = ((room - widths.iter().sum::<f32>()) / options.len().max(1) as f32).max(0.0);
     let mut x = rect.min.x + 2.0;
     let mut clicked = None;
     for (i, (value, label)) in options.iter().enumerate() {
-        let seg = widths[i] / total * room;
+        let seg = widths[i] + spare;
         let r = egui::Rect::from_min_size(egui::pos2(x, rect.min.y + 2.0), vec2(seg, height - 4.0));
         x += seg;
         // Ids from the track's own (unique) id, so several controls can share a parent.
@@ -718,12 +746,13 @@ pub fn segmented<T: Copy + PartialEq>(
             ui.painter().rect(
                 r,
                 radius::CONTROL - 1,
-                n.control,
+                segment_picked(dark),
                 Stroke::new(1.0, n.control_border),
                 egui::StrokeKind::Inside,
             );
         } else if response.hovered() {
-            ui.painter().rect_filled(r, radius::CONTROL - 1, n.faint);
+            ui.painter()
+                .rect_filled(r, radius::CONTROL - 1, if dark { n.faint } else { n.hover });
         }
         let color = if selected || response.hovered() {
             n.text
@@ -734,14 +763,7 @@ pub fn segmented<T: Copy + PartialEq>(
             r.center(),
             egui::Align2::CENTER_CENTER,
             *label,
-            FontId::new(
-                size::LABEL,
-                if selected {
-                    bold()
-                } else {
-                    FontFamily::Proportional
-                },
-            ),
+            FontId::new(size, family(selected)),
             color,
         );
         if response.clicked() {
@@ -774,7 +796,18 @@ pub fn pill(ui: &mut egui::Ui, text: &str, color: Color32) -> egui::Response {
 /// A chip: a small button for one of several things on offer (a relation, a dimension).
 /// `label` is what it shows and what it is called.
 pub fn chip(ui: &mut egui::Ui, label: &str) -> egui::Response {
-    let n = neutrals(ui.visuals().dark_mode);
+    chip_as(ui, None, label)
+}
+
+/// A [`chip`] that is on or off (a quick text that is on a dimension or isn't): on, the
+/// accent's tint and edge.
+pub fn select_chip(ui: &mut egui::Ui, on: bool, label: &str) -> egui::Response {
+    chip_as(ui, Some(on), label)
+}
+
+fn chip_as(ui: &mut egui::Ui, on: Option<bool>, label: &str) -> egui::Response {
+    let dark = ui.visuals().dark_mode;
+    let n = neutrals(dark);
     let galley = ui.painter().layout_no_wrap(
         label.to_owned(),
         FontId::new(size::LABEL, FontFamily::Proportional),
@@ -783,7 +816,10 @@ pub fn chip(ui: &mut egui::Ui, label: &str) -> egui::Response {
     let size = vec2(galley.size().x + 16.0, 22.0);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
     let enabled = ui.is_enabled();
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+    response.widget_info(|| match on {
+        Some(on) => egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, on, label),
+        None => egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label),
+    });
     let fill = if !enabled {
         n.faint
     } else if response.is_pointer_button_down_on() {
@@ -800,6 +836,15 @@ pub fn chip(ui: &mut egui::Ui, label: &str) -> egui::Response {
         Stroke::new(1.0, n.control_border),
         egui::StrokeKind::Inside,
     );
+    if on == Some(true) {
+        ui.painter().rect(
+            rect,
+            radius::CONTROL,
+            accent_soft(dark),
+            Stroke::new(1.0, accent(dark).gamma_multiply(0.7)),
+            egui::StrokeKind::Inside,
+        );
+    }
     let color = if enabled { n.text } else { n.tertiary };
     ui.painter().galley(
         egui::pos2(rect.left() + 8.0, rect.center().y - galley.size().y / 2.0),
@@ -953,6 +998,20 @@ pub fn paint_bar_divider(ui: &egui::Ui, slot: egui::Rect) {
     );
 }
 
+/// The hairline between two groups of options on the options bar: with the bar's 6 points
+/// either side of it, the groups are 12 apart.
+pub fn group_divider(ui: &mut egui::Ui) {
+    let slot = group_divider_slot(ui);
+    paint_bar_divider(ui, slot);
+}
+
+/// Room for a [`group_divider`], to be painted (with [`paint_bar_divider`]) once it is known
+/// that something follows it.
+pub fn group_divider_slot(ui: &mut egui::Ui) -> egui::Rect {
+    ui.allocate_exact_size(vec2(1.0, 16.0), egui::Sense::hover())
+        .0
+}
+
 /// A small caption before a control on a bar.
 pub fn bar_caption(ui: &mut egui::Ui, text: &str) -> egui::Response {
     ui.label(
@@ -1094,20 +1153,20 @@ pub fn hint(ui: &mut egui::Ui, text: &str) -> egui::Response {
     )
 }
 
-/// A chevron: down when `open`, right when folded (a fold, a floating panel's header, a
-/// layer's row).
+/// A chevron, 8 points across: down when `open`, right when folded (a fold, a floating
+/// panel's header, a layer's row, a menu's button).
 pub fn chevron(painter: &egui::Painter, c: egui::Pos2, open: bool, color: Color32) {
     let pts = if open {
         vec![
-            c + vec2(-3.5, -1.8),
-            c + vec2(0.0, 1.8),
-            c + vec2(3.5, -1.8),
+            c + vec2(-4.0, -2.0),
+            c + vec2(0.0, 2.0),
+            c + vec2(4.0, -2.0),
         ]
     } else {
         vec![
-            c + vec2(-1.8, -3.5),
-            c + vec2(1.8, 0.0),
-            c + vec2(-1.8, 3.5),
+            c + vec2(-2.0, -4.0),
+            c + vec2(2.0, 0.0),
+            c + vec2(-2.0, 4.0),
         ]
     };
     painter.add(egui::Shape::line(pts, Stroke::new(1.4, color)));
@@ -1254,7 +1313,7 @@ pub fn fade_bottom(
     if below < 1.0 {
         return;
     }
-    let height = 28.0_f32.min(below + 4.0);
+    let height = 16.0_f32.min(below + 4.0);
     let rect = egui::Rect::from_min_max(egui::pos2(view.left(), view.bottom() - height), view.max);
     let mut mesh = egui::Mesh::default();
     mesh.colored_vertex(rect.left_top(), Color32::TRANSPARENT);
@@ -1416,6 +1475,520 @@ pub fn appearance(ui: &mut egui::Ui) {
     if let Some(look) = segmented(ui, current, &options) {
         set_look(ui.ctx(), look);
     }
+}
+
+/// A label from the drawing's model (a line type, an alignment, a sheet's colours) in the
+/// interface's US spelling: the model keeps its own names.
+pub fn us(label: &str) -> &str {
+    match label {
+        "Centre" => "Center",
+        "Colour" => "Color",
+        "Greyscale" => "Grayscale",
+        other => other,
+    }
+}
+
+/// Space either side of a dock panel's contents: one margin, whatever the panel shows.
+pub const PANE_MARGIN: f32 = 12.0;
+
+/// A scrolled part of a dock panel. The area reaches into the pane's right margin, so its
+/// bar floats there: the contents are as wide scrolled as not, and nothing is laid out
+/// around the bar.
+pub fn pane_scroll<R>(
+    ui: &mut egui::Ui,
+    area: egui::ScrollArea,
+    add: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::scroll_area::ScrollAreaOutput<R> {
+    pane_scroll_viewport(ui, area, |ui, _| add(ui))
+}
+
+/// [`pane_scroll`], told which part of the contents is in view.
+pub fn pane_scroll_viewport<R>(
+    ui: &mut egui::Ui,
+    area: egui::ScrollArea,
+    add: impl FnOnce(&mut egui::Ui, egui::Rect) -> R,
+) -> egui::scroll_area::ScrollAreaOutput<R> {
+    let room = ui.available_rect_before_wrap();
+    let wide = room.with_max_x(room.right() + PANE_MARGIN);
+    let scroll = ui.spacing().scroll;
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(wide)
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+    );
+    child.spacing_mut().scroll.floating_allocated_width = 0.0;
+    let output = area.show_viewport(&mut child, |ui, viewport| {
+        ui.spacing_mut().scroll = scroll;
+        ui.set_max_width(room.width());
+        add(ui, viewport)
+    });
+    // (The pane is as wide as it was: only what is inside the margin counts.)
+    let used = child.min_rect().intersect(room);
+    ui.allocate_rect(used, egui::Sense::hover());
+    output
+}
+
+/// The text margin of a field: a control's own padding (`button_padding.x`), so its text
+/// starts exactly where a menu's does and the two share one left edge down a column.
+pub const FIELD_MARGIN: Margin = Margin {
+    left: 9,
+    right: 9,
+    top: 2,
+    bottom: 2,
+};
+
+/// A text field: its text as far in as a menu's is, its hint in the tertiary tone.
+pub fn field(ui: &mut egui::Ui, edit: egui::TextEdit<'_>) -> egui::Response {
+    let weak = ui.visuals().weak_text_color;
+    ui.visuals_mut().weak_text_color = Some(neutrals(ui.visuals().dark_mode).tertiary);
+    let response = ui.add(edit.margin(FIELD_MARGIN));
+    ui.visuals_mut().weak_text_color = weak;
+    response
+}
+
+/// A number field (dragged or typed) that fills the width it is given, drawn as a field:
+/// its right edge is the column's.
+pub fn drag(ui: &mut egui::Ui, value: egui::DragValue<'_>) -> egui::Response {
+    drag_sized(ui, ui.available_width(), value)
+}
+
+/// [`drag`] at a width.
+pub fn drag_sized(ui: &mut egui::Ui, width: f32, value: egui::DragValue<'_>) -> egui::Response {
+    let n = neutrals(ui.visuals().dark_mode);
+    let height = ui.spacing().interact_size.y;
+    // (Laid out from the left, so the number starts where a text field's text does.)
+    let layout = egui::Layout::left_to_right(egui::Align::Center).with_main_align(egui::Align::Min);
+    ui.allocate_ui_with_layout(vec2(width, height), layout, |ui| {
+        let sp = ui.spacing_mut();
+        sp.interact_size.x = width;
+        sp.button_padding.x = f32::from(FIELD_MARGIN.left);
+        let w = &mut ui.visuals_mut().widgets;
+        for wv in [&mut w.inactive, &mut w.hovered, &mut w.active] {
+            wv.weak_bg_fill = n.field;
+            wv.bg_fill = n.field;
+        }
+        ui.add(value)
+    })
+    .inner
+}
+
+/// The one chevron of every menu button (a `ComboBox`'s icon): painted, 8 points, in the
+/// secondary tone.
+pub fn combo_icon(ui: &egui::Ui, rect: egui::Rect, _: &egui::style::WidgetVisuals, _open: bool) {
+    let n = neutrals(ui.visuals().dark_mode);
+    let color = if ui.is_enabled() {
+        n.secondary
+    } else {
+        n.tertiary
+    };
+    chevron(ui.painter(), rect.center(), true, color);
+}
+
+/// A search field: the search glyph at its left (as the top bar's has), then what is typed
+/// or, empty, `hint` in the tertiary tone.
+pub fn search_field(
+    ui: &mut egui::Ui,
+    text: &mut String,
+    hint: &str,
+    width: f32,
+) -> egui::Response {
+    let n = neutrals(ui.visuals().dark_mode);
+    let weak = ui.visuals().weak_text_color;
+    ui.visuals_mut().weak_text_color = Some(n.tertiary);
+    let response = ui.add(
+        egui::TextEdit::singleline(text)
+            .hint_text(hint.to_owned())
+            .desired_width(width)
+            .min_size(vec2(0.0, ROW_HEIGHT))
+            .vertical_align(egui::Align::Center)
+            .margin(Margin {
+                left: 28,
+                ..FIELD_MARGIN
+            }),
+    );
+    ui.visuals_mut().weak_text_color = weak;
+    crate::icons::glyph(
+        ui.painter(),
+        egui::Rect::from_center_size(
+            egui::pos2(response.rect.left() + 15.0, response.rect.center().y),
+            Vec2::splat(13.0),
+        ),
+        crate::icons::Glyph::Search,
+        n.secondary,
+    );
+    response
+}
+
+/// The presets of the field above them (an angle's 0 / 90 / 180 / 270), as a row of buttons
+/// of one width under it, in the value column. Returns the one clicked.
+pub fn preset_row(ui: &mut egui::Ui, labels: &[&str]) -> Option<usize> {
+    let mut clicked = None;
+    row(ui, "", |ui| {
+        ui.vertical(|ui| clicked = button_row(ui, labels, |_, response| response));
+    });
+    clicked
+}
+
+/// What a checkbox or a radio button shows in its box.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mark {
+    None,
+    Tick,
+    Dash,
+    Dot,
+}
+
+/// A 14 point box (or ring, when `round`) with its mark, then the text: the body of
+/// [`Checkbox`] and [`radio`]. The box is a field with the control border (it shows on a
+/// pane and on what floats above one, in every look); the mark is in the accent.
+fn mark_row(
+    ui: &mut egui::Ui,
+    text: egui::WidgetText,
+    mark: Mark,
+    round: bool,
+    info: impl Fn(bool, &str) -> egui::WidgetInfo,
+) -> egui::Response {
+    let label = text.text().to_owned();
+    let gap = ui.spacing().icon_spacing;
+    let room = (ui.available_width() - 14.0 - gap).max(0.0);
+    let galley = (!label.is_empty()).then(|| text.into_galley(ui, None, room, TextStyle::Body));
+    let text_size = galley.as_ref().map_or(Vec2::ZERO, |g| g.size());
+    let height = ui.spacing().interact_size.y.max(text_size.y);
+    let width = if galley.is_some() {
+        14.0 + gap + text_size.x
+    } else {
+        // (On its own it is a control's square, as egui's is.)
+        ui.spacing().interact_size.y
+    };
+    let (rect, response) = ui.allocate_exact_size(vec2(width, height), egui::Sense::click());
+    let enabled = ui.is_enabled();
+    response.widget_info(|| info(enabled, &label));
+    if !ui.is_rect_visible(rect) {
+        return response;
+    }
+    let dark = ui.visuals().dark_mode;
+    let n = neutrals(dark);
+    let at = if galley.is_some() {
+        egui::pos2(rect.left() + 7.0, rect.center().y)
+    } else {
+        rect.center()
+    };
+    let edge = if response.has_focus() {
+        accent(dark)
+    } else if response.hovered() && enabled {
+        n.tertiary
+    } else {
+        n.control_border
+    };
+    let stroke = Stroke::new(1.0, edge);
+    if round {
+        ui.painter().circle(at, 6.5, n.field, stroke);
+    } else {
+        ui.painter().rect(
+            egui::Rect::from_center_size(at, Vec2::splat(14.0)),
+            4.0,
+            n.field,
+            stroke,
+            egui::StrokeKind::Inside,
+        );
+    }
+    let ink = if enabled { accent(dark) } else { n.tertiary };
+    match mark {
+        Mark::None => {}
+        Mark::Tick => {
+            ui.painter().add(egui::Shape::line(
+                vec![
+                    at + vec2(-3.5, 0.2),
+                    at + vec2(-1.0, 2.8),
+                    at + vec2(3.6, -2.8),
+                ],
+                Stroke::new(1.8, ink),
+            ));
+        }
+        Mark::Dash => {
+            ui.painter()
+                .hline(at.x - 3.5..=at.x + 3.5, at.y, Stroke::new(1.8, ink));
+        }
+        Mark::Dot => {
+            ui.painter().circle_filled(at, 3.5, ink);
+        }
+    }
+    if let Some(galley) = galley {
+        let color = if !enabled {
+            n.tertiary
+        } else if response.hovered() {
+            n.text
+        } else {
+            ui.visuals().widgets.inactive.text_color()
+        };
+        ui.painter().galley(
+            egui::pos2(
+                rect.left() + 14.0 + gap,
+                rect.center().y - galley.size().y / 2.0,
+            ),
+            galley,
+            color,
+        );
+    }
+    response
+}
+
+/// A checkbox in the interface's own look (egui's can't be themed to it): a 14 point box
+/// with the control border, ticked in the accent.
+pub struct Checkbox<'a> {
+    checked: &'a mut bool,
+    text: egui::WidgetText,
+    indeterminate: bool,
+}
+
+impl<'a> Checkbox<'a> {
+    pub fn new(checked: &'a mut bool, text: impl Into<egui::WidgetText>) -> Self {
+        Self {
+            checked,
+            text: text.into(),
+            indeterminate: false,
+        }
+    }
+
+    /// Neither on nor off (what it stands for is mixed): a dash.
+    pub fn indeterminate(mut self, indeterminate: bool) -> Self {
+        self.indeterminate = indeterminate;
+        self
+    }
+}
+
+impl egui::Widget for Checkbox<'_> {
+    fn ui(self, ui: &mut egui::Ui) -> egui::Response {
+        let Checkbox {
+            checked,
+            text,
+            indeterminate,
+        } = self;
+        let mark = if indeterminate {
+            Mark::Dash
+        } else if *checked {
+            Mark::Tick
+        } else {
+            Mark::None
+        };
+        let on = *checked;
+        let mut response = mark_row(ui, text, mark, false, |enabled, label| {
+            if indeterminate {
+                egui::WidgetInfo::labeled(egui::WidgetType::Checkbox, enabled, label)
+            } else {
+                egui::WidgetInfo::selected(egui::WidgetType::Checkbox, enabled, on, label)
+            }
+        });
+        if response.clicked() {
+            *checked = !*checked;
+            response.mark_changed();
+        }
+        response
+    }
+}
+
+/// [`Checkbox`], as `ui.checkbox` is to egui's.
+pub fn checkbox(
+    ui: &mut egui::Ui,
+    checked: &mut bool,
+    text: impl Into<egui::WidgetText>,
+) -> egui::Response {
+    ui.add(Checkbox::new(checked, text))
+}
+
+/// A radio button in the interface's own look: a 14 point ring with the control border,
+/// its dot in the accent.
+pub fn radio(ui: &mut egui::Ui, on: bool, text: impl Into<egui::WidgetText>) -> egui::Response {
+    let mark = if on { Mark::Dot } else { Mark::None };
+    mark_row(ui, text.into(), mark, true, |enabled, label| {
+        egui::WidgetInfo::selected(egui::WidgetType::RadioButton, enabled, on, label)
+    })
+}
+
+/// [`radio`] that sets `current` to `value` when clicked, as `ui.radio_value` does.
+pub fn radio_value<T: PartialEq>(
+    ui: &mut egui::Ui,
+    current: &mut T,
+    value: T,
+    text: impl Into<egui::WidgetText>,
+) -> egui::Response {
+    let mut response = radio(ui, *current == value, text);
+    if response.clicked() && *current != value {
+        *current = value;
+        response.mark_changed();
+    }
+    response
+}
+
+/// A slider in the interface's own look, in two steps. This one adds egui's slider (it
+/// keeps the dragging, the keys and what assistive tech reads) with its own rail and handle
+/// painted in nothing; [`paint_slider`] then draws ours over it, once the value is known.
+pub fn slider_bare(ui: &mut egui::Ui, slider: egui::Slider<'_>) -> egui::Response {
+    ui.scope(|ui| {
+        let clear = Color32::TRANSPARENT;
+        let v = ui.visuals_mut();
+        v.selection.bg_fill = clear;
+        for wv in [
+            &mut v.widgets.inactive,
+            &mut v.widgets.hovered,
+            &mut v.widgets.active,
+            &mut v.widgets.noninteractive,
+        ] {
+            wv.bg_fill = clear;
+            wv.fg_stroke = Stroke::NONE;
+            wv.expansion = 0.0;
+        }
+        ui.add(slider.show_value(false).trailing_fill(false))
+    })
+    .inner
+}
+
+/// The look of a slider added with [`slider_bare`]: a 3 point track in the field's tone,
+/// filled with the accent up to a 12 point round handle. `at` is where the value sits along
+/// it (0 to 1).
+pub fn paint_slider(ui: &egui::Ui, response: &egui::Response, at: f32) {
+    let rect = response.rect;
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    let dark = ui.visuals().dark_mode;
+    let n = neutrals(dark);
+    // (The handle travels where egui's does: the rect less its own handle's radius.)
+    let inset = rect.height() / 2.5;
+    let at = if at.is_finite() {
+        at.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let x = egui::lerp(rect.left() + inset..=rect.right() - inset, at);
+    let y = rect.center().y;
+    let track = egui::Rect::from_min_max(
+        egui::pos2(rect.left(), y - 1.5),
+        egui::pos2(rect.right(), y + 1.5),
+    );
+    let p = ui.painter();
+    p.rect(
+        track,
+        1.5,
+        n.field,
+        Stroke::new(1.0, n.control_border),
+        egui::StrokeKind::Outside,
+    );
+    let ink = if ui.is_enabled() {
+        accent(dark)
+    } else {
+        n.tertiary
+    };
+    p.rect_filled(track.with_max_x(x), 1.5, ink);
+    let edge = if response.has_focus() || response.dragged() {
+        accent(dark)
+    } else {
+        n.control_border
+    };
+    let fill = if response.dragged() {
+        n.pressed
+    } else if response.hovered() {
+        n.hover
+    } else {
+        n.control
+    };
+    p.circle(egui::pos2(x, y), 6.0, fill, Stroke::new(1.0, edge));
+}
+
+/// A slider over a range with its value as a number field beside it (`suffix` after the
+/// number), across the width it is given; `logarithmic` as egui's, for a range above zero.
+pub fn value_slider<N: egui::emath::Numeric>(
+    ui: &mut egui::Ui,
+    value: &mut N,
+    range: std::ops::RangeInclusive<N>,
+    suffix: &str,
+    logarithmic: bool,
+) -> egui::Response {
+    let (lo, hi) = (range.start().to_f64(), range.end().to_f64());
+    // The number's field, at the row's end.
+    let number_width = 64.0;
+    ui.horizontal(|ui| {
+        let gap = ui.spacing().item_spacing.x;
+        let width = ui.spacing().slider_width;
+        ui.spacing_mut().slider_width = (ui.available_width() - number_width - gap).max(60.0);
+        let response = slider_bare(
+            ui,
+            egui::Slider::new(value, range.clone()).logarithmic(logarithmic),
+        );
+        ui.spacing_mut().slider_width = width;
+        let now = value.to_f64();
+        let at = if logarithmic && lo > 0.0 {
+            (now / lo).ln() / (hi / lo).ln()
+        } else {
+            (now - lo) / (hi - lo)
+        };
+        paint_slider(ui, &response, at as f32);
+        let span = hi - lo;
+        let number = drag_sized(
+            ui,
+            number_width,
+            egui::DragValue::new(value)
+                .range(range)
+                .speed(span / 200.0)
+                .max_decimals(if span > 20.0 { 0 } else { 2 })
+                .suffix(suffix.to_owned()),
+        );
+        response | number
+    })
+    .inner
+}
+
+/// A chip that is on or off (a property of what is picked): on, a faint accent tint with
+/// the accent's edge and a filled dot; off, a quiet outline. `label` is what it shows and
+/// what it is called.
+pub fn toggle_chip(ui: &mut egui::Ui, on: bool, label: &str) -> egui::Response {
+    let dark = ui.visuals().dark_mode;
+    let n = neutrals(dark);
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        FontId::new(size::LABEL, FontFamily::Proportional),
+        n.text,
+    );
+    let size = vec2(galley.size().x + 30.0, ROW_HEIGHT);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    let enabled = ui.is_enabled();
+    response
+        .widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, on, label));
+    let (fill, edge) = if on {
+        (accent_soft(dark), accent(dark).gamma_multiply(0.7))
+    } else if response.is_pointer_button_down_on() {
+        (n.pressed, n.control_border)
+    } else if response.hovered() {
+        (n.hover, n.control_border)
+    } else {
+        (Color32::TRANSPARENT, n.control_border)
+    };
+    ui.painter().rect(
+        rect,
+        radius::CONTROL,
+        fill,
+        Stroke::new(1.0, edge),
+        egui::StrokeKind::Inside,
+    );
+    // A dot that fills when it is on: the state at a glance, in either theme.
+    let dot = egui::pos2(rect.left() + 11.0, rect.center().y);
+    if on {
+        ui.painter().circle_filled(dot, 3.5, accent(dark));
+    } else {
+        ui.painter()
+            .circle_stroke(dot, 3.0, Stroke::new(1.0, n.tertiary));
+    }
+    let color = if on || response.hovered() {
+        n.text
+    } else {
+        n.secondary
+    };
+    ui.painter().galley(
+        egui::pos2(rect.left() + 21.0, rect.center().y - galley.size().y / 2.0),
+        galley,
+        color,
+    );
+    response
 }
 
 #[cfg(test)]

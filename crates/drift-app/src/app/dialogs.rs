@@ -5,7 +5,7 @@ use crate::*;
 /// The windows Esc closes, by their egui ids, frontmost first when egui can't tell.
 const WINDOWS: [&str; 12] = [
     "unrestored",
-    "Licences",
+    "Licenses",
     "About Drift",
     "Keyboard shortcuts",
     "Solver benchmark",
@@ -86,7 +86,7 @@ impl DriftApp {
     fn window_open(&self, id: &str) -> bool {
         match id {
             "unrestored" => self.unrestored.is_some(),
-            "Licences" => self.show_licences,
+            "Licenses" => self.show_licences,
             "About Drift" => self.show_about,
             "Keyboard shortcuts" => self.show_shortcuts,
             "Solver benchmark" => self.benchmark.is_some(),
@@ -107,7 +107,7 @@ impl DriftApp {
     fn close_window(&mut self, id: &str) {
         match id {
             "unrestored" => self.unrestored = None,
-            "Licences" => self.show_licences = false,
+            "Licenses" => self.show_licences = false,
             "About Drift" => self.show_about = false,
             "Keyboard shortcuts" => self.show_shortcuts = false,
             "Solver benchmark" => self.benchmark = None,
@@ -332,7 +332,8 @@ impl DriftApp {
                 if theme::dialog_title(ui, "Keyboard shortcuts", true) {
                     close = true;
                 }
-                let field = ui.add(
+                let field = crate::theme::field(
+                    ui,
                     egui::TextEdit::singleline(filter)
                         .hint_text("Filter, e.g. \"dimension\" or \"Ctrl\"")
                         .desired_width(f32::INFINITY),

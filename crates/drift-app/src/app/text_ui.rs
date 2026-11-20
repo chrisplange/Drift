@@ -74,6 +74,7 @@ impl DriftApp {
             None => drawing.as_deref() == Some(family),
         };
         egui::ComboBox::from_id_salt(id)
+            .icon(crate::theme::combo_icon)
             .selected_text(shown)
             .width(ui.available_width())
             .height(380.0)
@@ -128,7 +129,8 @@ impl DriftApp {
                 }
                 ui.separator();
                 ui.label(egui::RichText::new("On this computer").small().weak());
-                ui.add(
+                crate::theme::field(
+                    ui,
                     egui::TextEdit::singleline(&mut self.font_filter)
                         .hint_text("Find a font…")
                         .desired_width(f32::INFINITY),
@@ -553,7 +555,8 @@ impl DriftApp {
         ui.add_space(4.0);
         let mut words = t.text.clone();
         let rows = words.lines().count().clamp(1, 8);
-        let edit = ui.add(
+        let edit = crate::theme::field(
+            ui,
             egui::TextEdit::multiline(&mut words)
                 .hint_text("Type the text")
                 .char_limit(drift_edit::texts::MAX_TEXT_CHARS)
@@ -573,41 +576,36 @@ impl DriftApp {
         let mut edited = t.clone();
         theme::row(ui, "Height", |ui| {
             let mut shown = t.height / unit;
-            if ui
-                .add(
-                    egui::DragValue::new(&mut shown)
-                        .speed(0.1)
-                        .range(0.001..=1e6)
-                        .max_decimals(4)
-                        .suffix(format!(" {}", units.length.symbol())),
-                )
-                .on_hover_text("Height of capital letters")
-                .changed()
+            if crate::theme::drag(
+                ui,
+                egui::DragValue::new(&mut shown)
+                    .speed(0.1)
+                    .range(0.001..=1e6)
+                    .max_decimals(4)
+                    .suffix(format!(" {}", units.length.symbol())),
+            )
+            .on_hover_text("Height of capital letters")
+            .changed()
             {
                 edited.height = shown * unit;
             }
         });
         theme::row(ui, "Angle", |ui| {
             let mut a = t.angle;
-            if ui
-                .add(egui::DragValue::new(&mut a).suffix("°").speed(0.5))
-                .changed()
+            if crate::theme::drag(ui, egui::DragValue::new(&mut a).suffix("°").speed(0.5)).changed()
             {
                 edited.angle = a.rem_euclid(360.0);
             }
         });
         // On its own row, so a narrow dock isn't pushed wider.
-        theme::row(ui, "", |ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            for q in [0.0, 90.0, 180.0, 270.0] {
-                if ui.small_button(format!("{q:.0}")).clicked() {
-                    edited.angle = q;
-                }
-            }
-        });
+        if let Some(k) = theme::preset_row(ui, &["0", "90", "180", "270"]) {
+            edited.angle = 90.0 * k as f64;
+        }
         theme::row(ui, "Align", |ui| {
-            let options: Vec<(TextAlign, &str)> =
-                TextAlign::ALL.iter().map(|a| (*a, a.label())).collect();
+            let options: Vec<(TextAlign, &str)> = TextAlign::ALL
+                .iter()
+                .map(|a| (*a, theme::us(a.label())))
+                .collect();
             if let Some(align) = theme::segmented(ui, t.align, &options) {
                 // The text stays where it is: its anchor moves to the new side of the
                 // first line.
@@ -625,24 +623,23 @@ impl DriftApp {
         });
         theme::row(ui, "Spacing", |ui| {
             let mut spacing = t.spacing;
-            if ui
-                .add(
-                    egui::DragValue::new(&mut spacing)
-                        .speed(0.02)
-                        .range(0.5..=10.0)
-                        .max_decimals(2)
-                        .prefix("× "),
-                )
-                .on_hover_text("From one line to the next, in letter heights")
-                .changed()
+            if crate::theme::drag(
+                ui,
+                egui::DragValue::new(&mut spacing)
+                    .speed(0.02)
+                    .range(0.5..=10.0)
+                    .max_decimals(2)
+                    .prefix("× "),
+            )
+            .on_hover_text("From one line to the next, in letter heights")
+            .changed()
             {
                 edited.spacing = spacing;
             }
         });
         theme::row(ui, "Wrap", |ui| {
             let mut wraps = t.wrap.is_some();
-            if ui
-                .checkbox(&mut wraps, "")
+            if crate::theme::checkbox(ui, &mut wraps, "")
                 .on_hover_text("Break lines at spaces to keep within a width")
                 .changed()
             {
@@ -656,15 +653,15 @@ impl DriftApp {
             }
             if let Some(width) = t.wrap {
                 let mut shown = width / unit;
-                if ui
-                    .add(
-                        egui::DragValue::new(&mut shown)
-                            .speed(0.5)
-                            .range(0.001..=1e6)
-                            .max_decimals(3)
-                            .suffix(format!(" {}", units.length.symbol())),
-                    )
-                    .changed()
+                if crate::theme::drag(
+                    ui,
+                    egui::DragValue::new(&mut shown)
+                        .speed(0.5)
+                        .range(0.001..=1e6)
+                        .max_decimals(3)
+                        .suffix(format!(" {}", units.length.symbol())),
+                )
+                .changed()
                 {
                     edited.wrap = Some(shown * unit);
                 }

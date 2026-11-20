@@ -46,7 +46,8 @@ impl DriftApp {
         let mut response = None;
         theme::row(ui, "Gaps up to", |ui| {
             response = Some(
-                ui.add(
+                crate::theme::drag(
+                    ui,
                     egui::DragValue::new(&mut shown)
                         .speed(0.01)
                         .range(0.0001..=1000.0)

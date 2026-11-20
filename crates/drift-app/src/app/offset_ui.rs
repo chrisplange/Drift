@@ -66,7 +66,8 @@ impl DriftApp {
         };
         let mut commit = None;
         theme::row(ui, "Distance", |ui| {
-            let r = ui.add(
+            let r = crate::theme::field(
+                ui,
                 egui::TextEdit::singleline(&mut text)
                     .desired_width(ui.available_width())
                     .hint_text("various"),

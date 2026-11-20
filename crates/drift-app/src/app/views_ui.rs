@@ -402,15 +402,15 @@ impl DriftApp {
         let mut view = original.clone();
         let mut typing = false;
         ui.label(egui::RichText::new("View").weak());
-        typing |= ui
-            .add(
-                egui::TextEdit::singleline(&mut view.name)
-                    .hint_text("Name")
-                    .desired_width(120.0),
-            )
-            .changed();
+        typing |= crate::theme::field(
+            ui,
+            egui::TextEdit::singleline(&mut view.name)
+                .hint_text("Name")
+                .desired_width(120.0),
+        )
+        .changed();
         self.scale_menu(ui, "bar_view_scale", &mut view.scale);
-        ui.checkbox(&mut view.crop_visible, "Crop")
+        crate::theme::checkbox(ui, &mut view.crop_visible, "Crop")
             .on_hover_text("Show its crop and name on the canvas (they never print)");
         let sheets = self.drawing.editor.doc.sheets_showing(id).len();
         let placed = match sheets {

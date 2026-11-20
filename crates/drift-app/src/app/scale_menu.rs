@@ -26,6 +26,7 @@ pub(crate) fn scale_menu(
     let text_id = id.with("custom");
     let error_id = id.with("error");
     let shown = egui::ComboBox::from_id_salt(id)
+        .icon(crate::theme::combo_icon)
         .selected_text(scale_label(*scale, imperial))
         .width(width)
         .height(460.0)
@@ -54,7 +55,8 @@ pub(crate) fn scale_menu(
             let mut text: String = ui
                 .data(|d| d.get_temp::<String>(text_id))
                 .unwrap_or_default();
-            let edit = ui.add(
+            let edit = crate::theme::field(
+                ui,
                 egui::TextEdit::singleline(&mut text)
                     .hint_text("1:37 or 5\" = 1'-0\"")
                     .desired_width(150.0),

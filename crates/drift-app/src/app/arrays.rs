@@ -255,13 +255,13 @@ impl DriftApp {
                 let label = ui.label(label);
                 let error = bad(text, kind);
                 let red = ui.visuals().error_fg_color;
-                let response = ui
-                    .add(
-                        egui::TextEdit::singleline(text)
-                            .desired_width(70.0)
-                            .text_color_opt(error.is_some().then_some(red)),
-                    )
-                    .labelled_by(label.id);
+                let response = crate::theme::field(
+                    ui,
+                    egui::TextEdit::singleline(text)
+                        .desired_width(70.0)
+                        .text_color_opt(error.is_some().then_some(red)),
+                )
+                .labelled_by(label.id);
                 let response = match &error {
                     Some(e) => response.on_hover_text(e),
                     None => response,
@@ -303,7 +303,7 @@ impl DriftApp {
                             .changed();
                         changed |= field(ui, "Angle", &mut a.angle, Kind::Angle);
                         ui.end_row();
-                        changed |= field(ui, "Centre X", &mut a.cx, Kind::Length);
+                        changed |= field(ui, "Center X", &mut a.cx, Kind::Length);
                         changed |= field(ui, "Y", &mut a.cy, Kind::Length);
                         ui.end_row();
                     }

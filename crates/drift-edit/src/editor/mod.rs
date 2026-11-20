@@ -75,6 +75,11 @@ struct Geometry {
     /// Lines a move of curves keeps from turning round (all but those with a dragged end,
     /// and those too short to see as the drag begins), each with its length as the drag began.
     lines: Vec<(EntityId, f64)>,
+    /// Where the dragged points are asked to be as a step of a drag begins, where that isn't
+    /// where they are: the drag's start plus the whole offset, for the solve that settles a
+    /// frame by the pointer (see `Editor::settle_by_the_pointer`). Empty for any other step,
+    /// which is aimed from where the points are.
+    asked: std::collections::HashMap<EntityId, DVec2>,
 }
 
 /// Why an edit was refused.

@@ -872,7 +872,13 @@ fn kept_met(sys: &System) -> bool {
 fn on_targets(sys: &System, targets: &[(usize, f64)]) -> bool {
     // How far off each point is, squared, and the coarsest bar of its coordinates.
     let mut points: BTreeMap<(EntityId, bool), (f64, f64)> = BTreeMap::new();
+    // (A group once: a carried point joined to a dragged one is in both ranks, and counted
+    // twice its offset was squared twice, the point judged at 0.71 of its bar.)
+    let mut seen: HashSet<usize> = HashSet::new();
     for &(g, v) in targets {
+        if !seen.insert(g) {
+            continue;
+        }
         let off = sys.groups[g].value - v;
         let bar = sys.bars.get(g).copied().unwrap_or(0.0);
         let mut of_a_point = false;

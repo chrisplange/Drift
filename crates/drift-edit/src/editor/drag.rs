@@ -215,6 +215,11 @@ pub(super) struct DragSession {
     revision: u64,
     /// A frame's walls or offsets followed it (changed the drawing).
     followed: bool,
+    /// The offset the last refused frame asked for, and whether it was a move to a typed place
+    /// ([`Editor::drag_to`]): asked for again, it is refused at once. Every frame solves from
+    /// the drag's start, so the same offset is refused the same way; a pointer held against a
+    /// stop asks for it frame after frame.
+    refused: Option<(DVec2, bool)>,
     /// The drawing's [`make_up`](drift_core::Document::make_up) as the drag began.
     make_up: u64,
     /// Whether the last frame pushed curves along that couldn't give way any further.
@@ -484,6 +489,7 @@ impl Editor {
         });
         // (A drag starting now starts with its transaction when nothing changed since it began.)
         let at_begin = self.doc.revision() == self.doc.revision_at_begin();
+        let refused = session.as_ref().and_then(|s| s.refused);
         let (start, offset, parts, whole, lowering, joins) = match session {
             Some(s) => (s.start, s.offset, s.parts, s.whole, s.lowering, s.joins),
             None => {
@@ -510,7 +516,9 @@ impl Editor {
             }
         };
         let to = offset + delta;
-        let mut ok = true;
+        // (Refused already in this drag, at this very offset: refused again, with no solve.)
+        let known = refused == Some((to, self.drag_to_a_place)) && !self.drag_always_look;
+        let mut ok = !known;
         let mut pushed = false;
         self.drag_solves = 0;
         self.drag_unfinished = 0;
@@ -520,7 +528,7 @@ impl Editor {
         self.drag_solved = 0;
         // What goes exactly where it is moved goes in one move, from where the drag found
         // it (as `Document::translate` would move it: arcs' ends kept on their circles).
-        if !whole.points.is_empty() {
+        if !whole.points.is_empty() && !known {
             for &(id, p) in &whole.points {
                 let at = p + to;
                 if self.doc.point(id).ok() != Some(at) {
@@ -533,12 +541,12 @@ impl Editor {
             self.index
                 .update_moved(&self.doc, whole.scope.iter().copied());
         }
-        for part in parts.iter().filter(|p| !p.moves_whole) {
+        for part in parts.iter().filter(|p| !p.moves_whole && !known) {
             self.restore_geometry(&part.start);
         }
         // (The tries at keeping a length share one budget across the parts.)
         let mut length_left = (LENGTH_TRY_SOLVES, UNFINISHED_WORK);
-        for part in parts.iter().filter(|p| !p.moves_whole) {
+        for part in parts.iter().filter(|p| !p.moves_whole && !known) {
             let mut frame = DragFrame {
                 start_circles: &part.start.circles,
                 ids: &part.ids,
@@ -582,7 +590,7 @@ impl Editor {
         }
         self.drag_length_tries.2 = LENGTH_TRY_SOLVES - length_left.0;
         let pushed = ok && pushed;
-        if !ok {
+        if !ok && !known {
             // Where the last frame left it.
             self.restore_geometry(&now);
             self.index.update_moved(&self.doc, scope.iter().copied());
@@ -642,6 +650,11 @@ impl Editor {
             fresh,
             revision: 0,
             followed: followed || follows_changed,
+            refused: if ok {
+                None
+            } else {
+                Some((to, self.drag_to_a_place))
+            },
             make_up,
             pushed,
             parts,
@@ -1381,18 +1394,111 @@ impl Editor {
             if !solves || step <= 0.0 {
                 return false;
             }
-            // (Couldn't go in one: in halves it may, going round what one solve can't.)
+            // (Couldn't go in one: in halves it may, going round what one solve can't. Through
+            // `drag_towards` for the whole move first, which runs the solve that has just failed
+            // once more: wasted, but the work it spends is part of what refuses a drag whose
+            // solves don't finish. Skipped, 6 of the 2,000 seeded #278 drags that stop went.)
             self.restore_geometry(start);
             frame.pushed = Pushed::default();
             return self.drag_towards(frame, DVec2::ZERO, offset, start, 0);
         }
         if self.drag_in_strides(frame, offset, start, step) {
+            self.settle_by_the_pointer(frame, offset, start);
             return true;
         }
         self.restore_geometry(start);
         frame.pushed = Pushed::default();
         frame.wandered = 0;
+        // (With the work for solves that don't finish that one solve first had: spent by the
+        // steps that failed, the one solve was refused where it first didn't finish, not taken
+        // in halves, and a frame that went before was refused.)
+        frame.unfinished_left = UNFINISHED_WORK;
         self.drag_frame(frame, offset, start) && frame.wandered < WANDERED
+    }
+
+    /// After a move's steps: where they left a dragged point off the place it was asked to be
+    /// (`start` moved by `offset`), one more solve with the dragged put there, from the shape
+    /// the steps reached. Kept if it goes; otherwise the frame is as the steps left it (3 in
+    /// 100 of these solves over the slow-drag census; refusing those frames instead stopped 17
+    /// more drags of 3,535 and smoothed nothing).
+    ///
+    /// Each step is aimed from where the last one left the dragged points, which keeps a step
+    /// small: so a point the relations hold back (a lever's end on its circle, a point on a
+    /// fixed line) is carried on by each step's whole length, and runs ahead of the pointer
+    /// (a 10 mm lever dragged 20 mm up ended at 73°, 10° past the nearest place to the pointer).
+    /// Aimed at the pointer, as one solve from the drag's start is, it comes to rest as near
+    /// the pointer as the relations allow (row 1 of `docs/solver-audit-references.md` 3.1),
+    /// where a typed move ([`drag_to`](Self::drag_to)) puts it too.
+    fn settle_by_the_pointer(
+        &mut self,
+        frame: &mut DragFrame<'_>,
+        offset: DVec2,
+        start: &Geometry,
+    ) {
+        if frame.solves_left == 0 {
+            return;
+        }
+        let mut here = self.geometry_of(frame.scope);
+        here.radii = start.radii.clone();
+        here.lengths = start.lengths.clone();
+        here.lines = start.lines.clone();
+        here.asked = start
+            .points
+            .iter()
+            .filter(|&&(id, _)| frame.dragged_set.contains(&Param::X(id)))
+            .map(|&(id, p)| (id, p + offset))
+            .collect();
+        if self.landed(frame, DVec2::ZERO, &here) {
+            return;
+        }
+        let pushed = frame.pushed.clone();
+        let (wandered, kept_wandered, bar) = (frame.wandered, frame.kept_wandered, frame.bar);
+        here.asked.clear();
+        let ended = here.clone();
+        here.asked = start
+            .points
+            .iter()
+            .filter(|&&(id, _)| frame.dragged_set.contains(&Param::X(id)))
+            .map(|&(id, p)| (id, p + offset))
+            .collect();
+        // (And only where it leaves every relation of the part met, as a solve holds them:
+        // a solve from points put this far off can report itself finished with a midpoint
+        // off its line's middle, census case 7930. The steps' own result was met.)
+        let settled = self.drag_frame_today(frame, DVec2::ZERO, &here)
+            && drift_solver::meets_within(
+                &self.doc,
+                frame.scope,
+                frame.relations,
+                frame.lowering.as_deref(),
+                Some(frame.touching),
+            );
+        // (Nor where it moves anything the drag doesn't drag more than a hundred times as far
+        // as it moved the dragged, `LINE_HOLD`: it is there to slide the dragged along what
+        // holds them, and a solve that puts them on their targets by flinging something else
+        // has done another thing. The pin of #278 at ten times its size: the dragged moved
+        // 0.6 mm onto their targets and the pin's free point 139 mm along its line; a frame that
+        // then counted as landed, where the steps alone are refused for the line's pace.)
+        let settled = settled && {
+            let (mut dragged, mut other) = (0.0f64, 0.0f64);
+            for &(id, was) in &ended.points {
+                let moved = self.doc.point(id).map_or(0.0, |now| now.distance(was));
+                if frame.dragged_set.contains(&Param::X(id)) {
+                    dragged = dragged.max(moved);
+                } else {
+                    other = other.max(moved);
+                }
+            }
+            other <= LINE_HOLD * dragged
+        };
+        if !settled {
+            self.restore_geometry(&ended);
+            self.index
+                .update_moved(&self.doc, frame.scope.iter().copied());
+            frame.pushed = pushed;
+            frame.bar = bar;
+        }
+        frame.wandered = wandered;
+        frame.kept_wandered = kept_wandered;
     }
 
     /// [`drag_from_start`](Self::drag_from_start)'s steps: from `start` to `offset` in steps
@@ -1459,16 +1565,21 @@ impl Editor {
         let pushed = frame.pushed.clone();
         // (How far the solves this step keeps wandered: the frame's most is kept beside it.)
         let before = std::mem::take(&mut frame.kept_wandered);
-        // (`drag_frame`, its try at keeping a length left until the step is known to stand: a
-        // step about to be taken again in halves would spend the try for nothing.)
+        // (`drag_frame`, its try at keeping a length left until the step is known to stand,
+        // and made once for the whole step (`depth` 0), not for each half it went in: a refused
+        // frame on a small part spent 11 of its 35 solves on tries for halves.)
         let went = self.drag_frame_today(frame, to - at, &here);
         let wandered = frame.kept_wandered;
         let half = (at + to) / 2.0;
         if !went {
             frame.kept_wandered = before;
-            return depth < 4
+            let halved = depth < 4
                 && self.drag_towards(frame, at, half, start, depth + 1)
                 && self.drag_towards(frame, half, to, start, depth + 1);
+            if halved && depth == 0 {
+                self.keep_lengths(frame, to - at, &here, pushed);
+            }
+            return halved;
         }
         if wandered >= WANDERED && depth < 4 && frame.unfinished_left > 0 {
             let ended = self.geometry_of(frame.scope);
@@ -1486,6 +1597,9 @@ impl Editor {
             }
             if let Some(most) = halves.filter(|&most| most < wandered) {
                 frame.kept_wandered = most.max(before);
+                if depth == 0 {
+                    self.keep_lengths(frame, to - at, &here, pushed);
+                }
                 return true;
             }
             // (As the whole step left it.)
@@ -1495,7 +1609,9 @@ impl Editor {
             frame.pushed = pushed_whole;
         }
         frame.kept_wandered = wandered.max(before);
-        self.keep_lengths(frame, to - at, &here, pushed);
+        if depth == 0 {
+            self.keep_lengths(frame, to - at, &here, pushed);
+        }
         true
     }
 
@@ -1805,7 +1921,7 @@ impl Editor {
     /// floor covers).
     fn landed(&self, frame: &DragFrame<'_>, delta: DVec2, before: &Geometry) -> bool {
         before.points.iter().all(|&(id, p)| {
-            let to = p + delta;
+            let to = before.asked.get(&id).copied().unwrap_or(p) + delta;
             !frame.dragged_set.contains(&Param::X(id))
                 || self
                     .doc
@@ -1934,10 +2050,18 @@ impl Editor {
         // circles, which can take a moved point off its target (the end of an arc that isn't
         // moved with it): put those back, and the solve reshapes the arc instead.
         for &(id, p) in &before.points {
-            if (frame.dragged_set.contains(&Param::X(id)) || carried.contains(&Param::X(id)))
-                && self.doc.point(id).is_ok_and(|now| now != p + delta)
-            {
-                let _ = self.doc.set_point(id, p + delta);
+            let dragged = frame.dragged_set.contains(&Param::X(id));
+            if !dragged && !carried.contains(&Param::X(id)) {
+                continue;
+            }
+            // (A dragged point from where it was asked to be: see `Geometry::asked`.)
+            let from = if dragged {
+                before.asked.get(&id).copied().unwrap_or(p)
+            } else {
+                p
+            };
+            if self.doc.point(id).is_ok_and(|now| now != from + delta) {
+                let _ = self.doc.set_point(id, from + delta);
             }
         }
         self.keep_smooth_anchors(frame.smooth, ids, delta);

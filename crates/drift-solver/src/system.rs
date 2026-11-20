@@ -205,8 +205,8 @@ enum Touching {
 }
 
 /// How far, relative to the size of what is measured (the line's length, the circle's
-/// radius; 1 mm at least), a curve's end may be from the other curve of a tangency and still
-/// count as its touching point; never finer than a few ulps of the stored coordinates
+/// radius), a curve's end may be from the other curve of a tangency and still count as its
+/// touching point; never finer than a few ulps of the stored coordinates
 /// ([`crate::FLOOR_ULPS`]). Exact constructions (a line through an arc's end, an arc ending
 /// on another's circle) are exact to round-off, and a solve that says the tangency is there
 /// holds it to the solve tolerance; a tangency that merely passes near an end (within
@@ -258,7 +258,7 @@ fn touching_end(
         let size = points
             .iter()
             .flat_map(|p| points.iter().map(move |q| p.distance(*q)))
-            .fold(1.0, f64::max);
+            .fold(0.0, f64::max);
         let largest = points
             .iter()
             .flat_map(|p| [p.x.abs(), p.y.abs()])

@@ -364,6 +364,84 @@ fn a_lever_still_goes_at_any_advantage() {
     }
 }
 
+/// Row 1 on a long drag (#362, the review of #489): a 10 mm line from a fixed point with its
+/// length held, its free end dragged straight up by 5 to 80 mm. The end can't leave its circle,
+/// and it stays as near the pointer as the circle allows: on the line from the fixed point to
+/// the pointer, whether the drag goes in frames of 0.25, 1 or 5 mm or in one call, and by a
+/// typed move ([`Editor::drag_to`]) the same. (A move of more than a quarter of the part's
+/// size goes in steps. Each step aimed from where the last left the end, not from where it was
+/// asked to be, carried the end on by the step's whole length: 20 mm up ended at 73.4°, 10° past
+/// the nearest place at 63.4°, where one solve and the typed move put it on it.)
+#[test]
+fn a_lever_dragged_far_stays_nearest_the_pointer_however_the_frames_fall() {
+    let lever = || {
+        let mut ed = Editor::default();
+        ed.doc.begin();
+        let pivot = ed.doc.add_point(DVec2::ZERO);
+        let end = ed.doc.add_point(DVec2::new(10.0, 0.0));
+        ed.doc.add_line(pivot, end).unwrap();
+        for c in [
+            Constraint::Fix {
+                point: pivot,
+                at: DVec2::ZERO,
+            },
+            Constraint::Distance {
+                a: pivot,
+                b: end,
+                value: 10.0,
+            },
+        ] {
+            ed.doc.add_constraint(c).unwrap();
+        }
+        assert!(ed.commit("Lever"));
+        (ed, end)
+    };
+    for up in [5.0, 10.0, 20.0, 40.0, 80.0] {
+        let pointer = DVec2::new(10.0, up);
+        let nearest = pointer.normalize() * 10.0;
+        // In frames of each length, and (0) in one call.
+        for frame in [0.25, 1.0, 5.0, 0.0] {
+            let (mut ed, end) = lever();
+            ed.doc.begin();
+            let frames = if frame > 0.0 {
+                (up / frame).round() as u32
+            } else {
+                1
+            };
+            let mut applied = DVec2::ZERO;
+            for k in 1..=frames {
+                let target = DVec2::new(0.0, up * f64::from(k) / f64::from(frames));
+                assert!(
+                    ed.drag(&[end], target - applied, &Param::point(end)),
+                    "{up} up in frames of {frame}: frame {k} refused"
+                );
+                applied = target;
+                // (Every frame, not only the last: nearest the pointer all the way.)
+                let at = ed.doc.point(end).unwrap();
+                let want = (DVec2::new(10.0, 0.0) + target).normalize() * 10.0;
+                assert!(
+                    at.distance(want) < 1e-6,
+                    "{up} up in frames of {frame}, frame {k}: the end is at {at}, {} from the                      nearest place to the pointer",
+                    at.distance(want)
+                );
+            }
+            assert!(ed.commit("Drag"));
+            let at = ed.doc.point(end).unwrap();
+            assert!(
+                at.distance(nearest) < 1e-6,
+                "{up} up in frames of {frame}: {at}"
+            );
+        }
+        // The typed route ends there too.
+        let (mut ed, end) = lever();
+        ed.doc.begin();
+        assert!(ed.drag_to(&[end], DVec2::new(0.0, up), &Param::point(end)));
+        assert!(ed.commit("Move"));
+        let at = ed.doc.point(end).unwrap();
+        assert!(at.distance(nearest) < 1e-6, "{up} up, typed: {at}");
+    }
+}
+
 /// Row 2 of `docs/solver-audit-references.md` 3.1 (the owner's answer of 2026-11-18 on #362: a
 /// point kept from the pointer only by relations still goes, as near as it can): a point held
 /// on a line whose ends are fixed, dragged off it in 20 frames along a slant. Every frame goes,
@@ -690,6 +768,46 @@ fn the_pin() -> (Plan, Pick, DVec2) {
 fn pin_line(built: &Built) -> f64 {
     let p = built.positions();
     p[5].distance(p[0])
+}
+
+/// A frame refused at an offset is refused again at that offset without a solve (#362, the
+/// review of #489): every frame solves from the drag's start, so the same offset can only be
+/// refused the same way, and a pointer held against a stop asks for it frame after frame.
+/// Another offset is solved again, and so is the same offset by a typed move, which goes
+/// another way there ([`Editor::drag_to`]).
+#[test]
+fn an_offset_refused_once_is_refused_again_without_a_solve() {
+    let (plan, pick, offset) = the_pin();
+    let sketch = plan.sketch().unwrap();
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let ids = pick.ids(&built);
+    let dragged: Vec<Param> = built
+        .ed
+        .doc
+        .defining_points(ids.iter().copied())
+        .into_iter()
+        .flat_map(Param::point)
+        .collect();
+    let start = built.positions();
+    built.ed.doc.begin();
+    assert!(!built.ed.drag(&ids, offset, &dragged));
+    assert!(built.ed.drag_solves > 0);
+    for _ in 0..3 {
+        assert!(!built.ed.drag(&ids, offset, &dragged));
+        assert_eq!(built.ed.drag_solves, 0, "the same offset, solved again");
+        assert_eq!(built.positions(), start);
+    }
+    // (Another offset: solved, whatever it does.)
+    let _ = built.ed.drag(&ids, offset * 0.5, &dragged);
+    assert!(built.ed.drag_solves > 0);
+    built.ed.doc.rollback();
+    // (And the same offset by a typed move is its own question.)
+    built.ed.doc.begin();
+    assert!(!built.ed.drag(&ids, offset, &dragged));
+    let _ = built.ed.drag_to(&ids, offset, &dragged);
+    assert!(built.ed.drag_solves > 0);
+    built.ed.doc.rollback();
+    assert_eq!(built.positions(), start);
 }
 
 /// The pin's drag, at every size, turn and place: refused, its line kept.

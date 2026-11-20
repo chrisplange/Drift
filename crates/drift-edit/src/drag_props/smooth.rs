@@ -8,10 +8,15 @@
 //!   frame by frame, with the same excuse for a forced swing on the first frame);
 //! - **back and forth**: a point goes more than [`BACK`] times the pointer's move one way and,
 //!   on the next frame, more than that back again;
+//! - **a kink**: a point's move changes from one frame to the next by more than [`KINK`]
+//!   times the pointer's move (2.5 mm of a jerk in a frame of 0.25 mm), whichever way. A jump
+//!   has to be 25 mm to count; this is what a snap between two shapes looks like when it is
+//!   smaller than that;
 //! - **a stutter**: the drag stops and then goes on again while the pointer keeps its line
 //!   (a stop that stays stopped is the binding drag rule, not a stutter).
 //!
-//! [`slow_drag_is_smooth`] is the property (no jump, nothing back and forth); the ignored
+//! [`slow_drag_is_smooth`] is the property (no jump, nothing back and forth, no kink); the
+//! ignored
 //! [`smooth_census`] prints one line per drag with all three counts, to compare two builds by:
 //!
 //! ```text
@@ -31,6 +36,12 @@ const JUMP: f64 = 100.0;
 /// frame more than this many times it back, went back and forth. A point on a smooth path
 /// turns round only where it has slowed to nothing.
 const BACK: f64 = 2.0;
+
+/// The most a point's move may change from one frame to the next, as a multiple of the
+/// pointer's move, in a smooth drag (the first frame's forced swing left out, as for a jump).
+/// Along a smooth path the change shrinks with the frame; the slow drags that are smooth by
+/// eye stay under 1, and a snap between two shapes is tens or hundreds.
+const KINK: f64 = 20.0;
 
 /// What a slow drag did, frame against frame.
 #[derive(Clone, Debug, Default)]
@@ -66,7 +77,7 @@ struct Smoothness {
 
 impl Smoothness {
     fn smooth(&self) -> bool {
-        self.broken.is_none() && self.jumps == 0 && self.backs == 0
+        self.broken.is_none() && self.jumps == 0 && self.backs == 0 && self.kink <= KINK
     }
 }
 
@@ -224,8 +235,9 @@ fn slow_drag(built: &mut Built, ids: &[EntityId], offset: DVec2, frame: f64) -> 
     out
 }
 
-/// The property: a slow, straight drag is smooth. No accepted frame jumps, and nothing goes
-/// back and forth. (A frame may be refused: the drag stops at the last valid shape.)
+/// The property: a slow, straight drag is smooth. No accepted frame jumps, nothing goes back
+/// and forth, and no point's move kinks. (A frame may be refused: the drag stops at the last
+/// valid shape.)
 fn smooth(plan: &Plan, pick: &Pick, offset: DVec2) -> Result<(), TestCaseError> {
     let Some(sketch) = plan.sketch() else {
         return Ok(());
@@ -259,6 +271,41 @@ fn smooth(plan: &Plan, pick: &Pick, offset: DVec2) -> Result<(), TestCaseError> 
     Ok(())
 }
 
+/// Census case 2237, the drag #362's jitter was traced on: a line (hanging, tangent at its
+/// end to an arc) and the arc are moved, slowly. In one solve from the drag's start a frame,
+/// with steps only where that failed or wandered, the hanging line's far end ran away at 6 to
+/// 53 times the pointer's pace over a few frames and snapped back 180 times its move on the
+/// next: 4 jumps, 6 frames going back and forth, a kink of 329. In steps from the start every
+/// frame, it is smooth. This is the test that fails if the steps go.
+#[test]
+fn a_line_hanging_from_a_moved_arc_follows_a_slow_drag_smoothly() {
+    let p = DVec2::new;
+    let sketch = Sketch {
+        points: vec![
+            p(0.0, 0.0),
+            p(0.0, -30.0),
+            p(0.0, 15.0),
+            p(-28.97777478867205, 7.235428646924376),
+            p(3.105828541230249, -18.40889008453118),
+            p(14.696938456699069, -21.51471862576143),
+            p(10.814652780161259, -36.00360602009745),
+        ],
+        curves: vec![
+            Curve::Line(0, 1),
+            Curve::Line(2, 3),
+            Curve::Arc(4, 1, 5),
+            Curve::Line(5, 6),
+        ],
+        rels: vec![Rel::OnCurve(2, 0), Rel::Tangent(3, 2), Rel::Vertical(0)],
+    };
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let ids = [built.curves[1], built.curves[2]];
+    let offset = p(-13.345513509701808, -17.126803960491497);
+    let s = slow_drag(&mut built, &ids, offset, FRAME);
+    assert_eq!(s.refused, 0, "{s:?}");
+    assert!(s.smooth(), "{s:?}");
+}
+
 property!(
     #[ignore = "known failure: #362"]
     slow_drag_is_smooth, slow_drag_is_smooth_heavy,
@@ -281,6 +328,7 @@ fn smooth_census() {
     let mut drags = 0usize;
     let mut total = Smoothness::default();
     let (mut jumped, mut backed, mut stuttered, mut broke, mut first_frame) = (0, 0, 0, 0, 0);
+    let mut rough = 0;
     let mut kinks: Vec<f64> = Vec::new();
     let mut creeps: Vec<f64> = Vec::new();
     let mut back_refused = 0usize;
@@ -313,6 +361,7 @@ fn smooth_census() {
         first_frame += usize::from(s.first_jump == 1);
         backed += usize::from(s.backs > 0);
         stuttered += usize::from(s.resumes > 0);
+        rough += usize::from(!s.smooth());
         broke += usize::from(s.broken.is_some());
         kinks.push(s.kink);
         if s.came_back {
@@ -370,7 +419,7 @@ fn smooth_census() {
             .unwrap_or(0.0)
     };
     println!(
-        "T drags {drags} frames {} refused {} | drags that jump {jumped} (on frame 1: {first_frame}) jump frames {} | drags back and forth {backed} frames {} | drags that stutter {stuttered} resumes {} | broken {broke} | kink p50 {:.2e} p90 {:.2e} p99 {:.2e} max {:.2e} | kink>10: {} >30: {} >100: {} | solves {} ({:.2} a frame)",
+        "T drags {drags} frames {} refused {} | not smooth by the property {rough} | drags that jump {jumped} (on frame 1: {first_frame}) jump frames {} | drags back and forth {backed} frames {} | drags that stutter {stuttered} resumes {} | broken {broke} | kink p50 {:.2e} p90 {:.2e} p99 {:.2e} max {:.2e} | kink>10: {} >20: {} >30: {} >100: {} | solves {} ({:.2} a frame)",
         total.frames,
         total.refused,
         total.jumps,
@@ -381,6 +430,7 @@ fn smooth_census() {
         pct(0.99),
         pct(1.0),
         kinks.iter().filter(|&&k| k > 10.0).count(),
+        kinks.iter().filter(|&&k| k > KINK).count(),
         kinks.iter().filter(|&&k| k > 30.0).count(),
         kinks.iter().filter(|&&k| k > 100.0).count(),
         total.solves,

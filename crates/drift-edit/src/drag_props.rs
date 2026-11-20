@@ -1129,16 +1129,30 @@ fn invariant(
         twins.push((run, twin));
     }
     prop_assert!(singular, "{}", why);
-    // The same outcome as the plain drag or one of its nudged twins: committed alike, refused
-    // or not alike, and every arc, tangency and signed distance the same way round.
+    // The same outcome as the plain drag or one of its nudged twins: committed alike, the same
+    // number of frames refused, every arc, tangency and signed distance the same way round,
+    // and every point within the twins' own spread of where that twin put it. The spread is
+    // the farthest any nudged twin ends from the plain drag: what a nudge of round-off is seen
+    // to do to this drag. Four times that, plus the bar, is as far as a copy at another size
+    // may be from a twin and still count as the same drag; farther, something other than the
+    // singular frame depends on the size.
+    let spread = twins
+        .iter()
+        .flat_map(|(run, _)| run.end.iter().zip(&a.end).map(|(p, q)| p.distance(*q)))
+        .fold(0.0, f64::max);
     let alike = twins.iter().any(|(run, twin)| {
         run.committed == b.committed
-            && (run.refused > 0) == (b.refused > 0)
+            && run.refused == b.refused
             && !Orientation::of(&twin.ed.doc, None).turned(&moved.ed.doc)
+            && (0..sketch.points.len()).all(|i| {
+                let off = t.point(run.end[i]).distance(b.end[i]) / t.scale;
+                off <= 4.0 * spread + LANDS * (run.end[i].length() + offset.length()).max(1.0)
+            })
     });
     prop_assert!(
         alike,
-        "a singular drag (the plain one doesn't repeat under a nudge of round-off) ended          another way at another size: {}",
+        "a singular drag (the plain one doesn't repeat under a nudge of round-off, which \
+         moves its end {spread:e}) ended another way at another size: {}",
         why
     );
     Ok(())
@@ -2310,13 +2324,15 @@ const MIDPOINT_MOVE: DVec2 = DVec2::new(-2.7019888370729976, 17.00429950861392);
 /// one it is kept parallel to), its dragged points 7 off target, was kept. The line holding
 /// the dragged midpoint goes along instead: everything lands, the line moved whole.
 #[test]
-fn a_move_that_lands_off_carries_the_line_its_midpoint_is_held_on() {
+fn a_move_that_lands_off_takes_the_line_its_midpoint_is_held_on_along() {
     let sketch = midpoint_at_a_touching_end();
     for t in [Similarity::IDENTITY, SMALL] {
         let start = Built::new(&sketch, t).unwrap().positions();
         let (went, end, pushed) = move_once(&sketch, t, &[3, 4, 5], MIDPOINT_MOVE, false, |_| ());
         // (Carried by one solve of the whole move. In steps (#362) the line follows by
-        // itself, nothing pushed: either way it ends moved whole, as below.)
+        // itself, nothing pushed: either way it ends moved whole, as below. The carry itself
+        // is tested by `a_carried_step_that_does_not_finish_whole_goes_in_halves` and the
+        // `f_free_move_refused_*` pins, which fail with it switched off.)
         let _ = pushed;
         assert!(went, "at scale {}", t.scale);
         // The dragged points (the arc's, both lines') and the carried line's ends.

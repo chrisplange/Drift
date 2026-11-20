@@ -50,15 +50,7 @@ impl DriftApp {
             .collect();
         ui.add_space(8.0);
         theme::section(ui, &format!("Underlays · {}", underlays.len()));
-        if underlays.is_empty() {
-            ui.label(
-                egui::RichText::new(
-                    "A DWG, DXF, SVG, PDF or Illustrator drawing to trace over: snap to it, \
-                     calibrate its scale, and draw on top.",
-                )
-                .weak(),
-            );
-        }
+        // What an underlay is lives on the Import button's tooltip, not as text in the panel.
         let dark = ui.visuals().dark_mode;
         let accent = theme::accent(dark);
         for (id, u) in underlays {
@@ -148,7 +140,10 @@ impl DriftApp {
         ui.add_space(6.0);
         if ui
             .button("Import…")
-            .on_hover_text("Place a DWG, DXF, SVG, PDF or Illustrator drawing under the sketch")
+            .on_hover_text(
+                "Place a DWG, DXF, SVG, PDF or Illustrator drawing under the sketch to trace \
+                 over: snap to it, calibrate its scale, and draw on top",
+            )
             .clicked()
         {
             self.pick_import_file(true);

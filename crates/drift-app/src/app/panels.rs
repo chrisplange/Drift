@@ -2343,7 +2343,7 @@ impl DriftApp {
         } else {
             self.tool.hint()
         };
-        // The Pick filter, while it is narrowed, so a click that picks nothing isn't a mystery
+        // The Selection filter, while it is narrowed, so a click that picks nothing isn't a mystery
         // (#496).
         let filter = self.drawing.editor.prefs.pick_filter;
         let tool_hint = if selecting && !filter.is_all() {

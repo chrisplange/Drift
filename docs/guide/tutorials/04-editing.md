@@ -21,7 +21,7 @@ With the **Select** tool (S, or Esc from any tool):
 | Pick everything inside a box | Drag from left to right (a window selection). |
 | Pick everything the box touches | Drag from right to left (a crossing selection). |
 | Pick a line's midpoint | Click near the middle of the line. |
-| Pick everything (that the pick filter lets through) | Ctrl+A. |
+| Pick everything (that the selection filter lets through) | Ctrl+A. |
 | Clear the selection | Esc, or click empty canvas. |
 
 Clicking inside a fill or hatch picks it; inside a filled shape it picks the shape with its
@@ -32,9 +32,9 @@ a box selection can start there. (To pick a closed area and measure it instead, 
 filled or hatched**; it is saved with the drawing.
 A picked area shows its area, perimeter and centroid in the **Inspector**.)
 
-### Pick filter
+### Selection filter
 
-The **Pick filter** sits at the right end of the top bar, whatever the tool, after a funnel:
+The **Selection filter** sits at the right end of the top bar, whatever the tool, after a funnel:
 what the Select tool picks, **All** by default. Click it for the kinds of thing, each with its glyph and name, and
 turn any off, in any mix, as with the selection filters in AutoCAD, Rhino or Vectorworks:
 
@@ -54,12 +54,12 @@ turn any off, in any mix, as with the selection filters in AutoCAD, Rhino or Vec
   "3 kinds"), the status bar says so, and the
   **Select** tool in the tool palette has a small funnel; hover over it to see what is picked.
 - A click or box that hits only kinds the filter leaves out says so ("Fills are filtered
-  out · Pick filter: Edges only"). Click that message to pick everything again.
+  out · Selection filter: Edges only"). Click that message to pick everything again.
 
 ![Select picking edges only: a box takes just the curves inside it, and the Select tool shows the funnel](../images/pick-filters.png)
 
 The filter applies to clicks, boxes, hover and Select all (Ctrl+A). It isn't saved with the
-drawing. The command palette has each one too (Ctrl+K, "Pick filter: Fills only", "Pick
+drawing. The command palette has each one too (Ctrl+K, "Selection filter: Fills only", "Pick
 everything").
 
 ### Text and annotations in a selection

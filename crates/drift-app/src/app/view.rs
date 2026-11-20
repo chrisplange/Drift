@@ -1499,7 +1499,7 @@ impl DriftApp {
                     .request_repaint_after(std::time::Duration::from_secs_f64(wait));
             }
         }
-        // The Pick filter's message (#496): a click on it picks everything again.
+        // The Selection filter's message (#496): a click on it picks everything again.
         if let Some(shown) = offer {
             let response = ui
                 .interact(shown, ui.id().with("pick_all_offer"), egui::Sense::click())
@@ -1508,12 +1508,12 @@ impl DriftApp {
                 egui::WidgetInfo::labeled(
                     egui::WidgetType::Button,
                     true,
-                    "Pick everything (Pick filter message)",
+                    "Pick everything (Selection filter message)",
                 )
             });
             if response.clicked() {
                 self.set_pick_filter(drift_edit::editor::PickFilter::ALL);
-                self.status_next = Some("Pick filter off: everything can be picked".into());
+                self.status_next = Some("Selection filter off: everything can be picked".into());
             }
         }
         let ctx = ui.ctx().clone();

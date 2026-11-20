@@ -1447,7 +1447,7 @@ fn active_pick(ed: &Editor, id: EntityId) -> Option<EntityId> {
     (set.len() == 1 && set.contains(&id)).then_some(id)
 }
 
-/// A click that picked nothing with the Pick filter narrowed: what it would have picked
+/// A click that picked nothing with the Selection filter narrowed: what it would have picked
 /// without the filter, for the app to say (#496).
 fn filtered_out_click(ed: &mut Editor, p: &Pointer) {
     use crate::editor::PickKind;
@@ -1485,7 +1485,7 @@ fn filtered_out_click(ed: &mut Editor, p: &Pointer) {
     });
 }
 
-/// A box that picked nothing with the Pick filter narrowed: the kinds it would have picked
+/// A box that picked nothing with the Selection filter narrowed: the kinds it would have picked
 /// without the filter, for the app to say (#496).
 fn filtered_out_box(ed: &mut Editor, rect: Bounds, crossing: bool) {
     use crate::editor::PickKind;

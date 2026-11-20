@@ -164,15 +164,15 @@ fn set_placed(
 }
 
 /// Alt-click the select tool's filter toggle for `kind`: only that kind is picked.
-/// The Pick filter's list of kinds (#480), opened from the bar's control if it isn't open.
+/// The Selection filter's list of kinds (#480), opened from the bar's control if it isn't open.
 fn open_pick_filter(h: &mut Harness<'_, DriftApp>) {
     if h.query_by_label("Pick Points").is_none() {
-        h.get_by_label("Pick filter").click();
+        h.get_by_label("Selection filter").click();
         h.run();
     }
 }
 
-/// A click on a row of the Pick filter's list ("Pick Edges", "Pick everything").
+/// A click on a row of the Selection filter's list ("Pick Edges", "Pick everything").
 fn pick_toggle(h: &mut Harness<'_, DriftApp>, label: &str) {
     open_pick_filter(h);
     h.get_by_label(label).click();
@@ -5477,8 +5477,8 @@ fn control_bar_sets_stroke_weight_and_line_type() {
                     crate::theme::bar::TOP..crate::theme::bar::TOP + crate::theme::bar::OPTIONS;
                 bar.contains(&c.rect().top()) && bar.contains(&c.rect().bottom())
             })
-            // (Not the Pick filter, before them.)
-            .filter(|c| c.accesskit_node().label().as_deref() != Some("Pick filter"))
+            // (Not the Selection filter, before them.)
+            .filter(|c| c.accesskit_node().label().as_deref() != Some("Selection filter"))
             .collect();
         combos.sort_by(|a, b| a.rect().left().total_cmp(&b.rect().left()));
         combos[index].click();

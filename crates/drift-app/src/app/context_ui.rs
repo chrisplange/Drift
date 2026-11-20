@@ -432,7 +432,7 @@ impl DriftApp {
     pub(crate) fn context_bar(&mut self, ui: &mut egui::Ui) {
         let kind = self.tool.kind();
         let row = ui.max_rect();
-        // The Pick filter, with every tool, at the bar's right end, a group of its own (on a
+        // The Selection filter, with every tool, at the bar's right end, a group of its own (on a
         // sheet the model isn't picked from). Its caption goes in a narrow window with
         // something picked, where the selection's controls need the room.
         let row = if self.drawing.view.sheet_preview {

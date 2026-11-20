@@ -408,7 +408,7 @@ impl DriftApp {
                 Place::Tile(size) => icons::tool_tile(ui, size, selected, label, draw),
             })
             .inner;
-        // (A click on the Pick filter's mark is a click on the tool.)
+        // (A click on the Selection filter's mark is a click on the tool.)
         let badge = (command == Command::Tool(ToolKind::Select))
             .then(|| self.pick_filter_badge(ui, &response, edge))
             .flatten();
@@ -442,7 +442,7 @@ impl DriftApp {
             }
         }
         // No place's tooltip while a flyout is open: it would draw over the flyout's rows.
-        // (Nor over the Pick filter mark's own.)
+        // (Nor over the Selection filter mark's own.)
         if self.rail_flyout.is_none() && !badge_hovered {
             tip_beside(&response, edge, |ui| {
                 self.rail_tooltip(ui, Some(slot), command, enabled);
@@ -514,7 +514,7 @@ impl DriftApp {
                 others.join(", ")
             )));
         }
-        // The Select tool's Pick filter, while it is narrowed (#496).
+        // The Select tool's Selection filter, while it is narrowed (#496).
         let filter = self.drawing.editor.prefs.pick_filter;
         if command == Command::Tool(ToolKind::Select) && !filter.is_all() {
             ui.label(
@@ -532,7 +532,7 @@ impl DriftApp {
         }
     }
 
-    /// The Pick filter narrowed: a funnel on the Select tool, so it isn't forgotten (#496).
+    /// The Selection filter narrowed: a funnel on the Select tool, so it isn't forgotten (#496).
     /// It sits on a disc cut out of the tile, in amber, so it reads apart from the accent of
     /// the current tool in every look (Obsidian's accent is orange too). Its tooltip names the
     /// filter; it takes a 16-point square, clear of the tool's own tooltip.
@@ -569,7 +569,7 @@ impl DriftApp {
             egui::Sense::click(),
         );
         badge.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "Pick filter on")
+            egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "Selection filter on")
         });
         tip_beside(&badge, edge, |ui| {
             ui.set_max_width(TIP_WIDTH);
@@ -580,7 +580,7 @@ impl DriftApp {
             );
             ui.label(
                 egui::RichText::new(
-                    "Clicks and boxes pick only these. Set it with the bar's Pick filter",
+                    "Clicks and boxes pick only these. Set it with the bar's Selection filter",
                 )
                 .color(n.secondary),
             );

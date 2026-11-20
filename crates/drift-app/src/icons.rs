@@ -65,7 +65,7 @@ pub enum Glyph {
     ChevronDown,
     /// Back (from a sheet to the model): an arrow to the left.
     Back,
-    /// The Pick filter is narrowed: a funnel.
+    /// The Selection filter is narrowed: a funnel.
     Filter,
 }
 
@@ -799,7 +799,7 @@ pub fn glyph(painter: &egui::Painter, rect: Rect, glyph: Glyph, color: Color32) 
     }
 }
 
-/// The glyph of a kind the Pick filter picks, beside its name wherever the filter is set
+/// The glyph of a kind the Selection filter picks, beside its name wherever the filter is set
 /// (the bar's control and its list; the hold-key pie, #481, is meant to reuse it). The
 /// drawing tools' icons where there is one: Text, Fill, Block, Dimension.
 pub fn pick_kind(

@@ -46,7 +46,7 @@ impl PickKind {
         }
     }
 
-    /// Its name where room is short (the bar's Pick filter button): Blocks & groups is
+    /// Its name where room is short (the bar's Selection filter button): Blocks & groups is
     /// Blocks there.
     pub fn short_label(self) -> &'static str {
         match self {
@@ -121,7 +121,7 @@ impl PickFilter {
         PickKind::ALL.into_iter().filter(move |k| self.has(*k))
     }
 
-    /// What it picks, as the Pick filter names it: "All", the one kind ("Edges"), two kinds
+    /// What it picks, as the Selection filter names it: "All", the one kind ("Edges"), two kinds
     /// ("Points & Edges"), "3 kinds", or "Nothing".
     pub fn summary(self) -> String {
         let kinds: Vec<PickKind> = self.kinds().collect();

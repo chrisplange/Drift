@@ -332,7 +332,7 @@ struct Drawing {
     /// A picked note's leader (its index), a grip of the picked note being dragged, and a note
     /// waiting for a click to say what a new leader points to.
     selected_leader: Option<(drift_core::AnnotationId, usize)>,
-    /// The message that a click or box hit only kinds the Pick filter leaves out (#496):
+    /// The message that a click or box hit only kinds the Selection filter leaves out (#496):
     /// while it shows, a click on it picks everything again.
     pick_all_offer: Option<String>,
     leader_grip: Option<(drift_core::AnnotationId, app::note_ui::LeaderGrip)>,

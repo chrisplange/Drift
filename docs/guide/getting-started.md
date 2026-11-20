@@ -131,9 +131,9 @@ The window has six parts:
    and centre arcs, **Trim** Extend and Split, and so on. Right-click it, or hold the button
    down, for the others; the place then shows the one you used last.
 3. **The top bar.** On the left, the active tool and its options. At its right end, with
-   every tool, is the **Pick filter** (**All**; click it to choose among
+   every tool, is the **Selection filter** (**All**; click it to choose among
    **Points**, **Edges**, **Fills**, **Areas**, **Blocks & groups**, **Text** and
-   **Annotations**; see [Pick filter](tutorials/04-editing.md#pick-filter)).
+   **Annotations**; see [Selection filter](tutorials/04-editing.md#selection-filter)).
    With **Select** and something picked, it shows how many, then the selection's **Layer**, **Stroke**
    (colour, weight, line type), **Fill**, a **Construction** button, an **Actions** menu
    and **Delete**. On the right is the **Search commands** field.

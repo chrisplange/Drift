@@ -1,5 +1,5 @@
-//! The Pick filter (#480, #496): which kinds the select tool's clicks and boxes pick. On the
-//! bar it is one control that names what it picks ("Pick filter  All"); a click opens the
+//! The Selection filter (#480, #496): which kinds the select tool's clicks and boxes pick. On the
+//! bar it is one control that names what it picks ("Selection filter  All"); a click opens the
 //! kinds, each with its glyph and its name (never a glyph alone). Narrowed, the control and
 //! the kinds that are on take the accent; with everything on there is no accent anywhere.
 //! A click or box that hits only kinds the filter leaves out says so, and a click on that
@@ -30,20 +30,20 @@ fn kind_list(kinds: &[PickKind]) -> String {
     }
 }
 
-/// The Pick filter in a line, for the bar's tooltip, the rail and the status bar: "Pick
-/// filter: Edges only", "Pick filter: Points, Edges and Fills only".
+/// The Selection filter in a line, for the bar's tooltip, the rail and the status bar: "Pick
+/// filter: Edges only", "Selection filter: Points, Edges and Fills only".
 pub(crate) fn describe(filter: PickFilter) -> String {
     let kinds: Vec<&str> = filter.kinds().map(|k| k.label()).collect();
     match kinds.as_slice() {
-        _ if filter.is_all() => "Pick filter: everything".to_owned(),
-        [] => "Pick filter: nothing can be picked".to_owned(),
-        [one] => format!("Pick filter: {one} only"),
-        [rest @ .., last] => format!("Pick filter: {} and {last} only", rest.join(", ")),
+        _ if filter.is_all() => "Selection filter: everything".to_owned(),
+        [] => "Selection filter: nothing can be picked".to_owned(),
+        [one] => format!("Selection filter: {one} only"),
+        [rest @ .., last] => format!("Selection filter: {} and {last} only", rest.join(", ")),
     }
 }
 
 /// What a click or box that hit only `kinds` (all filtered out) says: "Fills are filtered
-/// out · Pick filter: Edges only · Click here to pick everything".
+/// out · Selection filter: Edges only · Click here to pick everything".
 pub(crate) fn filtered_out_message(kinds: &[PickKind], filter: PickFilter) -> String {
     let plural = kinds.len() > 1 || kinds.first().is_some_and(|k| k.is_plural());
     format!(
@@ -76,12 +76,12 @@ fn button_text(filter: PickFilter) -> (Option<PickKind>, String) {
     }
 }
 
-/// The caption's width: the funnel, a gap, "Pick filter".
+/// The caption's width: the funnel, a gap, "Selection filter".
 fn caption_width(ui: &egui::Ui) -> f32 {
     let font = egui::FontId::proportional(theme::size::LABEL);
     12.0 + 4.0
         + ui.painter()
-            .layout_no_wrap("Pick filter".to_owned(), font, egui::Color32::WHITE)
+            .layout_no_wrap("Selection filter".to_owned(), font, egui::Color32::WHITE)
             .size()
             .x
 }
@@ -109,7 +109,7 @@ pub(super) fn pick_filter_width(ui: &egui::Ui, filter: PickFilter, compact: bool
     caption + button_width(ui, filter)
 }
 
-/// The Pick filter on the bar (its right end, a group of its own, so it reads as what the
+/// The Selection filter on the bar (its right end, a group of its own, so it reads as what the
 /// select tool picks rather than as an option of the tool): a funnel and the caption "Pick
 /// filter" (left out when `compact`), and a button naming what it picks, which opens the
 /// kinds. Returns the filter set.
@@ -124,7 +124,7 @@ pub(super) fn pick_filter_control(
     let narrowed = !filter.is_all();
     let font = egui::FontId::proportional(theme::size::LABEL);
     if !compact {
-        // (Painted, so the button stays the one "Pick filter" for assistive tech.)
+        // (Painted, so the button stays the one "Selection filter" for assistive tech.)
         let weak = ui.visuals().weak_text_color();
         let (r, _) =
             ui.allocate_exact_size(egui::vec2(caption_width(ui), 16.0), egui::Sense::hover());
@@ -140,7 +140,7 @@ pub(super) fn pick_filter_control(
         ui.painter().text(
             egui::pos2(r.left() + 16.0, r.center().y),
             egui::Align2::LEFT_CENTER,
-            "Pick filter",
+            "Selection filter",
             font.clone(),
             weak,
         );
@@ -154,7 +154,8 @@ pub(super) fn pick_filter_control(
     let width = button_width(ui, filter);
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 24.0), egui::Sense::click());
     response.widget_info(|| {
-        let mut info = egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, "Pick filter");
+        let mut info =
+            egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, "Selection filter");
         info.current_text_value = Some(text.clone());
         info
     });
@@ -203,7 +204,8 @@ pub(super) fn pick_filter_control(
     response.on_hover_text(if narrowed {
         format!("{} · click to change", describe(filter))
     } else {
-        "Pick filter: what clicks and boxes pick (everything now) · click to narrow it".to_owned()
+        "Selection filter: what clicks and boxes pick (everything now) · click to narrow it"
+            .to_owned()
     });
     out
 }
@@ -301,7 +303,7 @@ fn pick_filter_list(ui: &mut egui::Ui, filter: PickFilter) -> Option<PickFilter>
 }
 
 impl DriftApp {
-    /// A select click or box that hit only kinds the Pick filter leaves out (the tool's
+    /// A select click or box that hit only kinds the Selection filter leaves out (the tool's
     /// report, with the annotations there, which only the app lays out): say which, and the
     /// filter, in a message a click on which picks everything again.
     pub(super) fn take_filtered_out(

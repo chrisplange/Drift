@@ -1,4 +1,4 @@
-//! The Pick filter (drift-releases#9, #480, #496): one control on the select tool's bar
+//! The Selection filter (drift-releases#9, #480, #496): one control on the select tool's bar
 //! naming what it picks, its list of kinds to combine (Alt-click or double-click for one
 //! alone, Pick everything), a mark on the Select tool while it is narrowed, the filter applied
 //! to clicks, boxes, Select all and the palette, and what a click or box on a kind it leaves
@@ -60,7 +60,7 @@ fn box_all(h: &mut Harness<'_, DriftApp>) {
 }
 
 fn badge(h: &Harness<'_, DriftApp>) -> bool {
-    h.query_by_label("Pick filter on").is_some()
+    h.query_by_label("Selection filter on").is_some()
 }
 
 #[test]
@@ -211,17 +211,17 @@ fn the_palette_offers_one_kind_only_and_everything() {
         h.key_press(Key::Enter);
         h.run();
     };
-    open(&mut h, "Pick filter: Blocks & groups only");
+    open(&mut h, "Selection filter: Blocks & groups only");
     assert_eq!(filter(&h), PickFilter::only(PickKind::Blocks));
-    open(&mut h, "Pick filter: Areas only");
+    open(&mut h, "Selection filter: Areas only");
     assert_eq!(filter(&h), PickFilter::only(PickKind::Areas));
     open(&mut h, "Pick everything");
     assert!(filter(&h).is_all());
 }
 
-/// What the bar's Pick filter button says ("All", "Edges", "3 kinds").
+/// What the bar's Selection filter button says ("All", "Edges", "3 kinds").
 fn control_text(h: &Harness<'_, DriftApp>) -> Option<String> {
-    h.query_by_label("Pick filter")
+    h.query_by_label("Selection filter")
         .and_then(|n| n.accesskit_node().value())
 }
 
@@ -242,7 +242,7 @@ fn one_control_names_the_filter_and_picking_follows_it() {
         h.query_by_label("Pick Points").is_none(),
         "no chips on the bar"
     );
-    let width = h.get_by_label("Pick filter").rect().width();
+    let width = h.get_by_label("Selection filter").rect().width();
     assert!(width < 80.0, "a small control: {width}");
     open_pick_filter(&mut h);
     for kind in PickKind::ALL {
@@ -267,7 +267,7 @@ fn one_control_names_the_filter_and_picking_follows_it() {
     assert_eq!(h.state().drawing.editor.selection, [line].into());
     // Something picked: still named, as the button alone, no wider than before.
     assert_eq!(control_text(&h).as_deref(), Some("Edges"));
-    assert!(h.get_by_label("Pick filter").rect().width() < 90.0);
+    assert!(h.get_by_label("Selection filter").rect().width() < 90.0);
     // A kind added: "Edges & Fills"; a third: "3 kinds".
     pick_toggle(&mut h, "Pick Fills");
     pick_toggle(&mut h, "Pick Text");
@@ -314,7 +314,7 @@ fn a_click_on_a_filtered_out_kind_says_so() {
     h.run();
     // The status bar's hint names the filter.
     assert!(
-        h.query_by_label_contains("Pick filter: Edges only · Click to select")
+        h.query_by_label_contains("Selection filter: Edges only · Click to select")
             .is_some(),
         "the Select hint names the filter"
     );
@@ -323,7 +323,9 @@ fn a_click_on_a_filtered_out_kind_says_so() {
     h.run();
     assert_eq!(
         status(&h).as_deref(),
-        Some("Fills are filtered out · Pick filter: Edges only · Click here to pick everything")
+        Some(
+            "Fills are filtered out · Selection filter: Edges only · Click here to pick everything"
+        )
     );
     // On the text: singular.
     h.state_mut()
@@ -332,7 +334,7 @@ fn a_click_on_a_filtered_out_kind_says_so() {
     h.run();
     assert_eq!(
         status(&h).as_deref(),
-        Some("Text is filtered out · Pick filter: Fills only · Click here to pick everything")
+        Some("Text is filtered out · Selection filter: Fills only · Click here to pick everything")
     );
     // A box round the loose line, with Text only: its edge is filtered out.
     h.state_mut()
@@ -345,7 +347,9 @@ fn a_click_on_a_filtered_out_kind_says_so() {
     h.run();
     assert_eq!(
         status(&h).as_deref(),
-        Some("Edges are filtered out · Pick filter: Text only · Click here to pick everything")
+        Some(
+            "Edges are filtered out · Selection filter: Text only · Click here to pick everything"
+        )
     );
     // A click on blank paper says nothing.
     h.state_mut().status = None;
@@ -354,19 +358,19 @@ fn a_click_on_a_filtered_out_kind_says_so() {
     assert!(status(&h).is_none(), "{:?}", status(&h));
     // The rail's mark: a 16-point target, its tooltip naming the filter; the Select tool's
     // tooltip names it too.
-    let mark = h.get_by_label("Pick filter on").rect();
+    let mark = h.get_by_label("Selection filter on").rect();
     assert!(mark.width() >= 16.0 && mark.height() >= 16.0, "{mark:?}");
     h.hover_at(mark.center());
     h.run_steps(30);
     assert!(
-        h.query_by_label("Pick filter: Text only").is_some(),
+        h.query_by_label("Selection filter: Text only").is_some(),
         "the mark's tooltip"
     );
     let tile = h.get_all_by_label("Select").next().unwrap().rect();
     h.hover_at(egui::pos2(tile.left() + 6.0, tile.bottom() - 6.0));
     h.run_steps(30);
     assert!(
-        h.query_by_label("Pick filter: Text only").is_some(),
+        h.query_by_label("Selection filter: Text only").is_some(),
         "the Select tool's tooltip"
     );
     // The message, clicked: everything again.
@@ -375,7 +379,7 @@ fn a_click_on_a_filtered_out_kind_says_so() {
     click_world(&mut h, DVec2::new(20.0, 15.0));
     h.run();
     let offer = h
-        .get_by_label("Pick everything (Pick filter message)")
+        .get_by_label("Pick everything (Selection filter message)")
         .rect();
     h.hover_at(offer.center());
     h.run();
@@ -390,7 +394,7 @@ fn a_click_on_a_filtered_out_kind_says_so() {
     );
 }
 
-/// Renders for review (#480, #496): the Pick filter at 3440 × 1440 and 740 points wide, in
+/// Renders for review (#480, #496): the Selection filter at 3440 × 1440 and 740 points wide, in
 /// Midnight, Light and Obsidian, into `target/tmp/pick-filter/`. Ignored: it sets the look,
 /// which every test shares.
 #[test]
@@ -448,7 +452,7 @@ fn pick_filter_review_renders() {
             h.run_steps(30);
             shot(&mut h, "f_select_tip");
             // g: the mark's own tooltip.
-            let mark = h.get_by_label("Pick filter on").rect();
+            let mark = h.get_by_label("Selection filter on").rect();
             h.hover_at(mark.center());
             h.run_steps(30);
             shot(&mut h, "g_mark_tip");
@@ -462,7 +466,7 @@ fn pick_filter_review_renders() {
             click_world(&mut h, DVec2::new(20.0, 15.0));
             h.hover_at(screen(&h, DVec2::new(100.0, 40.0)));
             shot(&mut h, "i_picked_all");
-            // j: another tool: the Pick filter is still there.
+            // j: another tool: the Selection filter is still there.
             h.key_press(Key::Escape);
             h.run();
             h.key_press(Key::L);

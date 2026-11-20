@@ -36,7 +36,7 @@ pub struct Outbox {
     /// What edits did to fills beyond following their outlines, until taken (by the
     /// assistant's results; the app clears it).
     pub fill_changes: Vec<crate::fills::FillChange>,
-    /// A click or box of the select tool that picked nothing while the Pick filter was
+    /// A click or box of the select tool that picked nothing while the Selection filter was
     /// narrowed, with the kinds it would have picked without the filter (the app adds the
     /// annotations, which it lays out, and says so).
     pub filtered_out: Option<FilteredOut>,
@@ -44,7 +44,7 @@ pub struct Outbox {
     pub from_lines: Option<crate::walls_from_lines::FromLinesReport>,
 }
 
-/// What a select click or box would have picked but for the Pick filter (see
+/// What a select click or box would have picked but for the Selection filter (see
 /// [`Outbox::filtered_out`]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct FilteredOut {

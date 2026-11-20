@@ -133,7 +133,8 @@ views on it, under its name.
 - **Click** a view to pick it. Its crop shows on the canvas with its grips.
 - **Double-click** it, or right-click it for **Zoom to view**, to see its crop in the model.
 - **Right-click** it (in the Views list or under its sheet) for **Place on sheet** (or
-  **Place again**), **Zoom to view** and **Delete view**.
+  **Place again**), **Zoom to view** and **Delete view**. Under a sheet, it also has
+  **Move to sheet**; dragging it onto another sheet's row does the same.
 - **Referenced by** lists the section and elevation marks that point at the view. Click
   one to pick it in the model.
 - **Delete view** (on its right-click menu) deletes it. If it's on sheets, Drift asks first, and deleting takes it

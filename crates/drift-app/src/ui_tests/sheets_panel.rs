@@ -1,7 +1,7 @@
 //! The Sheets tab's layout: views nest under the sheet they are on, a view's right-click menu
 //! places, zooms to and deletes it, Add view sits with the Views, there is no Output section
-//! (Export and Print are in the File menu), and a sheet's right-click menu exports or prints
-//! just that sheet.
+//! (Export and Print are in the File menu), a sheet's right-click menu exports or prints
+//! just that sheet, and a view under one sheet moves to another (its menu, or a drag).
 
 use super::*;
 
@@ -197,4 +197,141 @@ fn a_sheets_right_click_menu_exports_or_prints_just_that_sheet() {
         [sheets[0]].into_iter().collect(),
         "the dialog's choice is kept"
     );
+}
+
+/// Two sheets, the first holding the example's view, shown in the Sheets tab; the sheets and
+/// the view.
+fn two_sheets(h: &mut Harness<'_, DriftApp>) -> (drift_core::SheetId, drift_core::SheetId, String) {
+    let title = sheet_with_a_view(h);
+    h.get_all_by_label("New sheet").next().unwrap().click();
+    h.run();
+    h.state_mut().show_panel(Panel::Sheets);
+    h.run();
+    h.run();
+    let sheets: Vec<drift_core::SheetId> = h
+        .state()
+        .drawing
+        .editor
+        .doc
+        .sheets()
+        .map(|(id, _)| id)
+        .collect();
+    assert_eq!(sheets.len(), 2);
+    assert_eq!(
+        h.state()
+            .drawing
+            .editor
+            .doc
+            .sheet(sheets[1])
+            .unwrap()
+            .viewports
+            .len(),
+        0
+    );
+    (sheets[0], sheets[1], title)
+}
+
+fn views_on(h: &Harness<'_, DriftApp>, sheet: drift_core::SheetId) -> usize {
+    h.state()
+        .drawing
+        .editor
+        .doc
+        .sheet(sheet)
+        .unwrap()
+        .viewports
+        .len()
+}
+
+/// Where a sheet's row is in the Sheets list (the tab bar has one of the same name, further
+/// left).
+fn sheet_row_at(h: &Harness<'_, DriftApp>, sheet: drift_core::SheetId) -> Pos2 {
+    let label =
+        crate::app::sheet_editor::sheet_label(h.state().drawing.editor.doc.sheet(sheet).unwrap());
+    h.get_all_by_label(&label)
+        .map(|n| n.rect())
+        .max_by(|a, b| a.left().total_cmp(&b.left()))
+        .unwrap()
+        .center()
+}
+
+#[test]
+fn a_view_moves_to_another_sheet_from_its_right_click_menu() {
+    let Some(mut h) = harness() else { return };
+    let (one, two, title) = two_sheets(&mut h);
+    let frame = h.state().drawing.editor.doc.sheet(one).unwrap().viewports[0].at;
+    let at = h.get_all_by_label(&title).next().unwrap().rect().center();
+    right_click(&mut h, at);
+    // (A submenu's button carries its arrow in its label.)
+    let item = h
+        .get_all_by_label_contains("Move to sheet")
+        .map(|n| n.rect())
+        .find(|r| r.left() >= at.x - 1.0)
+        .expect("Move to sheet on a placed view")
+        .center();
+    h.hover_at(item);
+    h.run();
+    h.run();
+    save_png("drift_ui_sheets_move_to_sheet.png", &mut h);
+    // (The submenu, beside the menu (on the left, at the panel's edge): the sheet's row, the
+    // panel's width, and its tab in the top bar have the same name.)
+    let label =
+        crate::app::sheet_editor::sheet_label(h.state().drawing.editor.doc.sheet(two).unwrap());
+    let to = h
+        .get_all_by_label(&label)
+        .map(|n| n.rect())
+        .filter(|r| r.width() < 200.0 && r.left() > at.x - 200.0)
+        .map(|r| r.center())
+        .next()
+        .expect("the other sheet in the submenu");
+    click_at(&mut h, to);
+    assert_eq!(views_on(&h, one), 0, "off the first sheet");
+    assert_eq!(views_on(&h, two), 1, "on the second");
+    let moved = h.state().drawing.editor.doc.sheet(two).unwrap().viewports[0].at;
+    assert!(
+        moved.distance(frame) < 1e-9,
+        "same spot on the same paper size"
+    );
+    assert_eq!(
+        h.state().current_sheet(),
+        Some(two),
+        "the sheet it went to shows"
+    );
+    // One undo step.
+    h.state_mut().undo();
+    assert_eq!((views_on(&h, one), views_on(&h, two)), (1, 0));
+}
+
+#[test]
+fn a_view_dragged_onto_another_sheet_moves_there() {
+    let Some(mut h) = harness() else { return };
+    let (one, two, title) = two_sheets(&mut h);
+    let from = h.get_all_by_label(&title).next().unwrap().rect().center();
+    let to = sheet_row_at(&h, two);
+    h.hover_at(from);
+    h.run();
+    button(&h, from, true);
+    h.run();
+    for k in 1..=8 {
+        h.hover_at(from + (to - from) * (k as f32 / 8.0));
+        h.run();
+    }
+    save_png("drift_ui_sheets_view_drag.png", &mut h);
+    button(&h, to, false);
+    h.run();
+    h.run();
+    assert_eq!((views_on(&h, one), views_on(&h, two)), (0, 1));
+    // Dragged back onto the sheet it is on: nothing changes.
+    let from = h.get_all_by_label(&title).next().unwrap().rect().center();
+    let to = sheet_row_at(&h, two);
+    h.hover_at(from);
+    h.run();
+    button(&h, from, true);
+    h.run();
+    for k in 1..=8 {
+        h.hover_at(from + (to - from) * (k as f32 / 8.0));
+        h.run();
+    }
+    button(&h, to, false);
+    h.run();
+    assert_eq!((views_on(&h, one), views_on(&h, two)), (0, 1));
 }

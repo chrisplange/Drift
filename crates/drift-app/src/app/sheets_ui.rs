@@ -396,11 +396,26 @@ enum ViewMenu {
     Place,
     Zoom,
     Delete,
+    /// Move it (from the sheet whose row it is under) to this sheet.
+    MoveTo(SheetId),
+}
+
+/// A placed view being dragged from under its sheet in the Sheets list: dropped on another
+/// sheet's row, it moves there.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct PlacedDrag {
+    pub(crate) sheet: SheetId,
+    pub(crate) index: usize,
 }
 
 /// A view's right-click menu. `place` is whether it is already on the current sheet, or
-/// `None` with no sheet open (then it can't be placed).
-fn view_menu(ui: &mut egui::Ui, place: Option<bool>) -> Option<ViewMenu> {
+/// `None` with no sheet open (then it can't be placed). `moves` are the sheets a view under a
+/// sheet can move to (none for a row of the Views list).
+fn view_menu(
+    ui: &mut egui::Ui,
+    place: Option<bool>,
+    moves: &[(SheetId, String)],
+) -> Option<ViewMenu> {
     let mut chose = None;
     if let Some(here) = place
         && ui
@@ -412,6 +427,15 @@ fn view_menu(ui: &mut egui::Ui, place: Option<bool>) -> Option<ViewMenu> {
             .clicked()
     {
         chose = Some(ViewMenu::Place);
+    }
+    if !moves.is_empty() {
+        ui.menu_button("Move to sheet", |ui| {
+            for (sheet, label) in moves {
+                if ui.button(label).clicked() {
+                    chose = Some(ViewMenu::MoveTo(*sheet));
+                }
+            }
+        });
     }
     if ui.button("Zoom to view").clicked() {
         chose = Some(ViewMenu::Zoom);
@@ -1308,6 +1332,9 @@ impl DriftApp {
         let (mut dragging, mut dropped, mut chose) = (None, None, None);
         // (A view picked under a sheet: the sheet, the view's index on it, the view.)
         let (mut pick_placed, mut view_chose) = (None, None);
+        // (A view moved from one sheet to another: from, its index there, to. A view of the
+        // Views list dropped on a sheet: it, the sheet.)
+        let (mut move_to, mut place_on) = (None, None);
         for (k, (id, label, number, name)) in sheets.iter().enumerate() {
             let shown = self.drawing.view.sheet_preview && current == Some(*id);
             // The views on it, as they nest under its row (as in a project browser).
@@ -1337,6 +1364,27 @@ impl DriftApp {
                 name,
             )
             .interact(egui::Sense::drag());
+            // A view dragged onto the row: one from under another sheet moves here, one from
+            // the Views list is placed here.
+            let moving = row
+                .dnd_hover_payload::<PlacedDrag>()
+                .is_some_and(|d| d.sheet != *id);
+            if moving || row.dnd_hover_payload::<ViewId>().is_some() {
+                ui.painter().rect_stroke(
+                    row.rect,
+                    theme::radius::CONTROL,
+                    egui::Stroke::new(1.5, theme::accent(ui.visuals().dark_mode)),
+                    egui::StrokeKind::Inside,
+                );
+            }
+            if let Some(d) = row.dnd_release_payload::<PlacedDrag>()
+                && d.sheet != *id
+            {
+                move_to = Some((d.sheet, d.index, *id));
+            }
+            if let Some(view) = row.dnd_release_payload::<ViewId>() {
+                place_on = Some((*view, *id));
+            }
             spots.push((*id, row.rect.top(), row.rect.bottom()));
             if row.dragged() {
                 dragging = Some(*id);
@@ -1367,15 +1415,24 @@ impl DriftApp {
                     && self.drawing.view.sheet_pick == crate::app::sheet_editor::SheetPick::View
                     && self.drawing.view.sheet_view == *index;
                 let response = view_row(ui, picked, true, title, scale);
+                response.dnd_set_drag_payload(PlacedDrag {
+                    sheet: *id,
+                    index: *index,
+                });
                 if response.clicked() {
                     pick_placed = Some((*id, *index, *view));
                 }
                 let here =
                     current.map(|s| self.drawing.editor.doc.sheets_showing(*view).contains(&s));
-                response.context_menu(|ui| {
-                    if let Some(m) = view_menu(ui, here) {
-                        view_chose = Some((*view, m));
-                    }
+                let moves: Vec<(SheetId, String)> = sheets
+                    .iter()
+                    .filter(|(s, ..)| s != id)
+                    .map(|(s, label, ..)| (*s, label.clone()))
+                    .collect();
+                response.context_menu(|ui| match view_menu(ui, here, &moves) {
+                    Some(ViewMenu::MoveTo(to)) => move_to = Some((*id, *index, to)),
+                    Some(m) => view_chose = Some((*view, m)),
+                    None => {}
                 });
             }
         }
@@ -1389,6 +1446,13 @@ impl DriftApp {
         }
         if let Some((view, m)) = view_chose {
             self.run_view_menu(view, m, current);
+        }
+        if let Some((from, index, to)) = move_to {
+            self.move_view_to_sheet(from, index, to);
+        }
+        if let Some((view, sheet)) = place_on {
+            self.place_view(sheet, view, None);
+            self.show_sheet(Some(sheet));
         }
         if let (Some(id), Some(p)) = (dragging.or(dropped), ui.ctx().pointer_interact_pos()) {
             let to = drop_index(&spots, id, p.y);
@@ -1433,6 +1497,8 @@ impl DriftApp {
                 }
             }
             ViewMenu::Zoom => self.zoom_to_view(view),
+            // (Only under a sheet, where the sheet it moves from is known: handled there.)
+            ViewMenu::MoveTo(_) => {}
             ViewMenu::Delete => {
                 if self.drawing.editor.doc.sheets_showing(view).is_empty() {
                     self.delete_view(view);
@@ -2512,6 +2578,42 @@ impl DriftApp {
         Some(index)
     }
 
+    /// Move the view at `index` on sheet `from` to sheet `to`, as one undo step: same view,
+    /// scale and settings, at the same spot on the paper (slid inside the new sheet's drawing
+    /// area if it falls outside it). Notes and dimensions placed on the old sheet stay there,
+    /// as when a view is removed from a sheet. The new sheet is shown, with the view picked.
+    pub(crate) fn move_view_to_sheet(&mut self, from: SheetId, index: usize, to: SheetId) {
+        let doc = &self.drawing.editor.doc;
+        let (Some(mut source), Some(mut target)) =
+            (doc.sheet(from).cloned(), doc.sheet(to).cloned())
+        else {
+            return;
+        };
+        if from == to || index >= source.viewports.len() {
+            return;
+        }
+        let mut port = source.viewports.remove(index);
+        // (Its id named it to the old sheet's annotations.)
+        port.id = None;
+        if let Some(size) = doc.view(port.view).map(|v| v.paper_size()) {
+            let area = drift_draft::sheet::drawing_area(&target);
+            let half = size.min(area.size()) * 0.5;
+            port.at = port.at.max(area.min + half).min(area.max - half);
+        }
+        let view = port.view;
+        target.viewports.push(port);
+        let index = target.viewports.len() - 1;
+        self.drawing.editor.doc.begin();
+        self.drawing.editor.doc.set_sheet(from, source);
+        self.drawing.editor.doc.set_sheet(to, target);
+        self.drawing.editor.commit("Move view to sheet");
+        self.show_sheet(Some(to));
+        self.drawing.view.sheet_view = index;
+        self.drawing.picked_view = Some(view);
+        self.drawing.view.sheet_pick = crate::app::sheet_editor::SheetPick::View;
+        self.drawing.view.view_set = None;
+    }
+
     /// Take the picked view off a sheet. The view stays in the model, for placing again.
     pub(crate) fn remove_viewport(&mut self, id: SheetId) {
         let Some(mut sheet) = self.drawing.editor.doc.sheet(id).cloned() else {
@@ -2604,7 +2706,7 @@ impl DriftApp {
             }
             let here = current.map(|s| self.drawing.editor.doc.sheets_showing(*id).contains(&s));
             response.context_menu(|ui| {
-                if let Some(m) = view_menu(ui, here) {
+                if let Some(m) = view_menu(ui, here, &[]) {
                     chose = Some((*id, m));
                 }
             });

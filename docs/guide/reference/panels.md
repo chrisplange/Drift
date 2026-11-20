@@ -136,7 +136,10 @@ geometry itself (in the **Inspector**, or the top bar's **Stroke** menus).
 - **Sheets:** the drawing's sheets, by number and name, in print order (click one to show
   it, drag one to reorder, right-click to duplicate, move, export, print or delete it), and **New sheet**.
   The views on a sheet are listed under it, with their scale: click one to pick it on the
-  sheet, and the chevron at the sheet's left to show or hide them.
+  sheet, and the chevron at the sheet's left to show or hide them. To move a view to
+  another sheet, drag it onto that sheet's row, or right-click it for **Move to sheet**; it
+  keeps its spot on the paper. Dragging a view from the **Views** list onto a sheet's row
+  places it there.
 - **Views:** every view in the drawing and the sheets it's on, and **Add view** for the
   sheet shown. Drag one onto the sheet, or use **Place on sheet** (or **Place again**),
   **Zoom to view** or **Delete view** on its right-click

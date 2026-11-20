@@ -2767,18 +2767,21 @@ fn hundreds_of_layers_draw_only_the_rows_in_view() {
     assert!(rows.len() < 40, "{} rows drawn", rows.len());
     save_png("drift_ui_many_layers.png", &mut h);
     // Scrolled to the bottom, the first layers are drawn (and the top ones not).
-    let at = h.get_by_label("A-ANNO-499").rect().center();
-    for _ in 0..40 {
-        h.hover_at(at);
-        h.event(Event::MouseWheel {
-            unit: egui::MouseWheelUnit::Point,
-            delta: egui::vec2(0.0, -2000.0),
-            phase: egui::TouchPhase::Move,
-            modifiers: Default::default(),
-        });
-        // (Rows pass under the pointer, their tooltips coming and going.)
-        h.step();
-    }
+    let list = h.get_by_label("A-ANNO-499").rect().center();
+    let to_bottom = |h: &mut Harness<'_, DriftApp>, steps: usize| {
+        for _ in 0..steps {
+            h.hover_at(list);
+            h.event(Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(0.0, -2000.0),
+                phase: egui::TouchPhase::Move,
+                modifiers: Default::default(),
+            });
+            // (Rows pass under the pointer, their tooltips coming and going.)
+            h.step();
+        }
+    };
+    to_bottom(&mut h, 40);
     h.hover_at(h.state().drawing.view.canvas_rect.center());
     h.run();
     let rows = drawn_rows(&h);
@@ -2790,6 +2793,11 @@ fn hundreds_of_layers_draw_only_the_rows_in_view() {
     let walls = ids[0];
     h.state_mut().drawing.expanded_layers.insert(ids[3]);
     h.run();
+    h.run();
+    // (The open row pushes the last ones down, past the pane's foot in a font with taller
+    // lines: scroll to the end again, so the row clicked is in view whatever the font.)
+    to_bottom(&mut h, 4);
+    h.hover_at(h.state().drawing.view.canvas_rect.center());
     h.run();
     let r = h.get_by_label("A-WALL-000").rect();
     let at = egui::pos2(r.right() + 40.0, r.center().y);

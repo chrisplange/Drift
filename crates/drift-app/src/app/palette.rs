@@ -355,6 +355,11 @@ impl DriftApp {
                     self.drawing.editor.pick_fill_alone(f);
                 }
             }
+            Command::Weld(at) => {
+                if let Err(why) = self.drawing.editor.weld_points(at) {
+                    self.drawing.editor.out.notice = Some(why);
+                }
+            }
             Command::JoinCorners => {
                 if let Some(f) = self.drawing.editor.joinable_fill()
                     && let Err(why) = self.drawing.editor.join_corners(f)

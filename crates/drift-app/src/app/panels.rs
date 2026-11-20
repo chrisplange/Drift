@@ -397,6 +397,13 @@ const MENUS: [&str; 8] = [
     "File", "Edit", "View", "Draw", "Build", "Modify", "Annotate", "Help",
 ];
 
+/// Modify's Join submenu: the commands that make points one.
+const JOIN_MENU: [Command; 3] = [
+    Command::JoinCorners,
+    Command::Weld(drift_edit::weld::WeldAt::Active),
+    Command::Weld(drift_edit::weld::WeldAt::Centre),
+];
+
 impl DriftApp {
     /// A menu item for a command of the registry: its label, keys and description; greyed
     /// out (saying why) when it can't run; a check mark for a setting. Returns true if it
@@ -509,6 +516,17 @@ impl DriftApp {
         {
             if breaks.contains(&spec.command) {
                 ui.separator();
+            }
+            // Joining points is one submenu in Modify, so the menu fits a laptop's height.
+            if JOIN_MENU.contains(&spec.command) {
+                if spec.command == JOIN_MENU[0] {
+                    ui.menu_button("Join", |ui| {
+                        for c in JOIN_MENU {
+                            self.command_item(ui, c);
+                        }
+                    });
+                }
+                continue;
             }
             self.command_item(ui, spec.command);
         }

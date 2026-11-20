@@ -98,6 +98,8 @@ With no key (use the Build menu or the command palette): **Walls from curves**, 
 |---|---|---|
 | G | **Move** | Move the selection: X / Y lock an axis, type dX Tab dY, B picks the base point |
 | R (with a selection) | **Rotate** | Turn the selection: type an angle, B picks the pivot, R again rotates by reference |
+| 1 | **Weld to active point** | Make the picked points one point, where the point picked last is: the curves ending at the others now end there |
+| Shift+1 | **Weld at centre** | Make the picked points one point, at the middle of where they are |
 | M | **Mirror** | Mirror the selection about a line (kept symmetric) or two clicked points |
 | O | **Offset** | A parallel copy of a curve and the curves connected to it |
 | T | **Trim** | Remove a piece up to the curves that cut it; drag to trim several |

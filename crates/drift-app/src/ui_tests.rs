@@ -72,6 +72,7 @@ mod updates;
 /// The Wall tool: keys, joins, bends, Backspace and undo.
 #[cfg(not(feature = "demo"))]
 mod walls;
+mod weld;
 
 /// The app at 1280 × 800, or `None` (the test skips) without a graphics adapter; with
 /// `DRIFT_REQUIRE_GPU=1` that fails instead ([`crate::test_gpu`]).

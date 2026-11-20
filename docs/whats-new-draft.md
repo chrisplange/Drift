@@ -9,6 +9,8 @@ The next release's notes, as they land (Beta 1.6's are below).
   get their own point too. Turn **Auto merge** on in the status bar (Shift+Alt+M) to join
   them, or hold Ctrl as you drop to join just once. The snap marker shows **Join** when a
   drop would join.
+- **Weld points.** Pick points and press **1** to weld them onto the one you picked last, or
+  **Shift+1** to weld them at their centre.
 
 ## Notes and dimensions on sheets
 

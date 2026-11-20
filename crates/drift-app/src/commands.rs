@@ -92,6 +92,8 @@ pub(crate) enum Command {
     JoinWalls,
     /// The picked area fill's corners that touch but aren't one point, joined (#202).
     JoinCorners,
+    /// The picked points made one, at the active point or at their centre.
+    Weld(drift_edit::weld::WeldAt),
     /// The picked shape's fill picked on its own, as a double-click inside it does (#223).
     EditFill,
     /// The picked walls' ends set not to join.
@@ -337,6 +339,10 @@ pub(crate) enum When {
     ViewOnSheet,
     /// An area fill picked whose outline's corners touch but aren't joined.
     JoinableCorners,
+    /// Two or more points picked, the one to weld to picked last.
+    WeldToActive,
+    /// Two or more points picked.
+    WeldPoints,
     /// A shape with a fill picked whole (its fill can be picked on its own).
     FilledShape,
     /// Only in development builds (and hidden elsewhere).
@@ -390,6 +396,8 @@ impl When {
                         .is_some_and(|s| !s.viewports.is_empty())
             }
             When::JoinableCorners => app.drawing.editor.joinable_fill().is_some(),
+            When::WeldToActive => ed.can_weld(drift_edit::weld::WeldAt::Active),
+            When::WeldPoints => ed.can_weld(drift_edit::weld::WeldAt::Centre),
             When::FilledShape => app.drawing.editor.picked_shape_fill().is_some(),
             When::Desktop => cfg!(not(target_arch = "wasm32")),
             When::Debug => cfg!(debug_assertions),
@@ -421,6 +429,8 @@ impl When {
             When::PickedView => "Pick a view's crop, or a view on a sheet",
             When::ViewOnSheet => "Pick a view on a sheet",
             When::JoinableCorners => "Pick an area fill whose corners aren't joined",
+            When::WeldToActive => "Pick two or more points, the one to weld to last",
+            When::WeldPoints => "Pick two or more points",
             When::FilledShape => "Pick a shape that has a fill",
         }
     }
@@ -1705,6 +1715,29 @@ fn table() -> Vec<Spec> {
         )
         .when(When::JoinableCorners)
         .words("weld close shape corners ends"),
+        Spec::new(
+            "modify.weld",
+            C::Modify,
+            K::Weld(drift_edit::weld::WeldAt::Active),
+            "Weld to active point",
+            "Make the picked points one point, where the point picked last is: the curves \
+             ending at the others now end there",
+        )
+        .keys(const { &[plain(Key::Num1)] })
+        .guard(Guard::Idle)
+        .when(When::WeldToActive)
+        .words("merge join points vertices collapse"),
+        Spec::new(
+            "modify.weld_centre",
+            C::Modify,
+            K::Weld(drift_edit::weld::WeldAt::Centre),
+            "Weld at centre",
+            "Make the picked points one point, at the middle of where they are",
+        )
+        .keys(const { &[shift(Key::Num1)] })
+        .guard(Guard::Idle)
+        .when(When::WeldPoints)
+        .words("merge join points vertices collapse average centre center"),
         tool("modify.mirror", C::Modify, ToolKind::Mirror)
             .keys(const { &[plain(Key::M)] })
             .aliases(&["MIRROR", "MI"]),

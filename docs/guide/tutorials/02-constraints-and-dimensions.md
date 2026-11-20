@@ -163,6 +163,18 @@ drawn on a point share it, so the shapes move together. The snap marker fills in
 
 Hold **Ctrl** as you drop or click to do the opposite of the switch for that one time.
 
+### Weld points
+
+To join points that are already apart, pick them and weld them:
+
+- **1** (Weld to active point): pick the points, the one to keep last. The others move onto
+  it and become that one point.
+- **Shift+1** (Weld at centre): the picked points meet halfway, at the middle of where they
+  are, and become one point.
+
+Either is one undo step. The two ends of one line or arc can't be welded, since the line
+would shrink to nothing.
+
 ## Edit a dimension
 
 - **Change its value:** double-click the label and type. Any expression works: `60 + 15`,

@@ -829,11 +829,11 @@ impl Editor {
         }
         self.doc.begin();
         let dragged: Vec<Param> = Param::point(point).into_iter().collect();
-        if !self.drag(&[point], to - from, &dragged) {
+        if !self.drag_to(&[point], to - from, &dragged) {
             // Too far for one solve: go in steps.
             const STEPS: u32 = 16;
             for _ in 0..STEPS {
-                self.drag(&[point], (to - from) / f64::from(STEPS), &dragged);
+                self.drag_to(&[point], (to - from) / f64::from(STEPS), &dragged);
             }
         }
         // A drag follows the target closely rather than exactly: close what's left.
@@ -844,7 +844,7 @@ impl Editor {
             if now.distance(to) < 1e-10 {
                 break;
             }
-            self.drag(&[point], to - now, &dragged);
+            self.drag_to(&[point], to - now, &dragged);
         }
         let allowed = 1e-6 * (1.0 + (to - from).length());
         let reached = self
@@ -901,7 +901,7 @@ impl Editor {
                 .copied()
                 .flat_map(Param::point)
                 .collect();
-            if !self.drag(&ids, delta, &dragged) {
+            if !self.drag_to(&ids, delta, &dragged) {
                 self.doc.rollback();
                 self.sync();
                 return Some(false);

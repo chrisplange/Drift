@@ -34,11 +34,24 @@ const DRAG_SOLVES: u32 = 200;
 /// finish go on; so past it a frame runs at most one more unfinished solve for each step
 /// [`Editor::drag`] still tries: the whole move, then the first half at each of a stepped
 /// step's 5 depths (0 to 4), again for each round of carried curves.
+///
+/// A solve that wanders (`SolveReport::wandered`) spends it the same way: a step such a solve
+/// makes is taken again in halves only while some is left (`Editor::drag_towards`). Without
+/// that, a chain of 48 bars folded round, whose every step wanders, ran each frame to its
+/// [`DRAG_SOLVES`] and was refused.
 const UNFINISHED_WORK: usize = 4 * 16 * 100;
 
-/// Lines no longer than this (mm) have no way round that a drag keeps (see
+/// Lines no longer than this (mm) as a drag begins have no way round that it keeps (see
 /// [`Editor::drag`]'s steps): a flattened curve's error, below anything drawn.
 const NO_WAY_ROUND: f64 = drift_core::tolerance::FLATTEN_MM;
+
+/// A line a drag has squeezed to this share of its length as the drag began has no way round
+/// left to keep either: a solve may shut it to nothing, and what is left of its direction is
+/// round-off. A share of its own length, not a length: measured in millimetres
+/// ([`NO_WAY_ROUND`], as it was), a line squeezed step by step dropped out at one size of the
+/// drawing and was still held, and pushed along, at another (#362). A two-thousandth is what
+/// that length was of a 10 mm line.
+const SQUEEZED_SHUT: f64 = 5e-4;
 
 /// Solves a drag call may spend on tries at keeping a length (see `Editor::keep_lengths`),
 /// all its parts together: its own, apart from today's steps' and the fold try's. A try is one
@@ -284,6 +297,26 @@ struct WholeMove {
     rounds: HashSet<EntityId>,
 }
 
+/// The curves a frame's steps pushed along (an arc squeezed as small as it goes, a line that
+/// would turn round, the curves a dragged point is held on: see `Editor::drag_frame_steps`),
+/// and their points that the drag doesn't drag. A curve one step pushes is pushed by every
+/// step after it in the frame: it couldn't give way any further, and the move goes on the
+/// same way. Left to give way again in the next step, it was squeezed there by as much as
+/// that step was long, so where a frame left it depended on where its steps fell (a leg
+/// pushed 39 of a 52 mm move and squeezed for the last 13, where one solve pushes it all the
+/// way).
+#[derive(Clone, Default)]
+struct Pushed {
+    curves: Vec<EntityId>,
+    points: Vec<Param>,
+}
+
+impl Pushed {
+    fn any(&self) -> bool {
+        !self.points.is_empty()
+    }
+}
+
 /// What one call of [`Editor::drag`] works with for one part: the same for each step it
 /// takes.
 struct DragFrame<'a> {
@@ -343,14 +376,18 @@ struct DragFrame<'a> {
     length_unfinished_left: usize,
     /// The most its solves have wandered (see `SolveReport::wandered`).
     wandered: usize,
-    /// A step pushed curves along.
-    pushed: bool,
+    /// The curves the frame's steps so far pushed along (see [`Pushed`]).
+    pushed: Pushed,
     /// The length bar its last solve was held to (`SolveReport::bar`): what a dragged point
     /// is judged landed against (`drift_solver::landed_within`).
     bar: f64,
     /// The bar the frame's first solve was held to (zero before one): the coarsest any later
     /// solve of the frame is held to (`SolveOptions::bar_cap`), whatever a try has flung.
     first_bar: f64,
+    /// The most the solves it kept have wandered: those whose result stands, not the ones a
+    /// step took again in halves, with other curves carried, or put back after a try. What
+    /// `Editor::drag_towards` halves a step for.
+    kept_wandered: usize,
 }
 
 impl Editor {
@@ -478,6 +515,7 @@ impl Editor {
         self.drag_solves = 0;
         self.drag_unfinished = 0;
         self.drag_folds = 0;
+        self.drag_folds_kept = 0;
         self.drag_length_tries = (0, 0, 0);
         self.drag_solved = 0;
         // What goes exactly where it is moved goes in one move, from where the drag found
@@ -525,12 +563,11 @@ impl Editor {
                 length_solves_left: length_left.0,
                 length_unfinished_left: length_left.1,
                 wandered: 0,
-                pushed: false,
+                pushed: Pushed::default(),
                 bar: 0.0,
                 first_bar: 0.0,
+                kept_wandered: 0,
             };
-            // (Every frame tries one solve first, even where the last one wandered: skipping
-            // it would make where the drag is depend on the way there.)
             ok = self.drag_from_start(&mut frame, to, &part.start)
                 && !self.breaks_held_shape(part, to, frame.bar);
             self.drag_solves += 2 * DRAG_SOLVES + length_left.0
@@ -538,7 +575,7 @@ impl Editor {
                 - frame.fold_solves_left
                 - frame.length_solves_left;
             length_left = (frame.length_solves_left, frame.length_unfinished_left);
-            pushed |= frame.pushed;
+            pushed |= frame.pushed.any();
             if !ok {
                 break;
             }
@@ -620,6 +657,20 @@ impl Editor {
         ok
     }
 
+    /// [`drag`](Self::drag) to a place that was typed or worked out (a point's coordinates or
+    /// a line's angle in the inspector, a nudge, a dimension's value, a move the AI link
+    /// asks for), not one a pointer went to: the move is tried in one solve first, and goes in
+    /// steps only where that fails or wanders. There is no way there to follow, only the place:
+    /// a line of fixed length turned to a typed angle by moving its end keeps its start
+    /// where it is, where steps along the straight line between would drag the start along
+    /// with the end. (As every drag went before #362.)
+    pub fn drag_to(&mut self, ids: &[EntityId], delta: DVec2, dragged: &[Param]) -> bool {
+        self.drag_to_a_place = true;
+        let went = self.drag(ids, delta, dragged);
+        self.drag_to_a_place = false;
+        went
+    }
+
     /// Land the move in progress at `offset` from where it began, keeping it open, as
     /// [`drag`](Self::drag) from the drawing as the transaction found it would, in one call
     /// of `offset`: what the modal move's confirm ([`crate::tools`]' `confirm_grab`) does
@@ -671,6 +722,7 @@ impl Editor {
         self.drag_solves = 0;
         self.drag_unfinished = 0;
         self.drag_folds = 0;
+        self.drag_folds_kept = 0;
         self.drag_length_tries = (0, 0, 0);
         self.drag_solved = 0;
         for &(id, p) in &s.whole.points {
@@ -827,9 +879,9 @@ impl Editor {
                 out[k].start.lengths.insert(id, l);
             }
         }
-        for &id in &start.lines {
+        for &(id, length) in &start.lines {
             if let Some(k) = at(&id) {
-                out[k].start.lines.push(id);
+                out[k].start.lines.push((id, length));
             }
         }
         // Each relation, constraint and lowered line to its part (in the drawing's order, as
@@ -1269,24 +1321,34 @@ impl Editor {
         self.drag_session.as_ref().is_some_and(|s| s.pushed)
     }
 
-    /// Move the geometry, as the drag found it (`start`), by `offset`: in steps of an eighth
-    /// of its size at most, so a long way goes round the shape as the pointer would have
-    /// taken it, not across a fold to whichever other solution one big solve happens to land
-    /// on (#103). The steps depend on the offset and the shape alone, so the drag still ends
-    /// where its target says, at any size, and moves on smoothly as the target does (each
-    /// further step starts where the last one ended). Free geometry, which a solve doesn't
-    /// touch, goes in one.
+    /// Move the geometry, as the drag found it (`start`), by `offset`. A move longer than a
+    /// step (a quarter of the part's size; at most 16 of them, so a small part dragged a long
+    /// way needn't crawl) goes in steps along the line from the drag's start, each from where
+    /// the last one ended: round the shape as the pointer would have taken it, not across a
+    /// fold to whichever other solution one big solve happens to land on (#103).
+    ///
+    /// Always in steps, never in one solve first (#362). The steps depend on the offset and the
+    /// shape alone, so where the drag is still depends only on how far it has gone, and it
+    /// moves on smoothly as the pointer does: a frame a little further on takes the same steps
+    /// and one a little longer. One solve first, with the steps only where it failed or
+    /// wandered, made neighbouring frames take different ways to different shapes: a line
+    /// hanging from a moved arc ran away at fifty times the pointer's pace over a few frames
+    /// and snapped back on the next.
+    ///
+    /// Where the steps can't be made, the move is tried in one solve from the start, and kept
+    /// if that lands without wandering (`SolveReport::wandered`): a step may end on a place
+    /// the move itself only passes (a point dragged through its circle's centre, where the
+    /// circle has no size), and the frames that go are then the ones that went before.
+    ///
+    /// A move of no more than a step goes in one solve (in halves where that fails), and free
+    /// geometry, which a solve doesn't touch, in one move. A move to a typed place
+    /// ([`drag_to`](Self::drag_to)) goes in one solve first, as every move did.
     fn drag_from_start(
         &mut self,
         frame: &mut DragFrame<'_>,
         offset: DVec2,
         start: &Geometry,
     ) -> bool {
-        let ok = self.drag_frame(frame, offset, start);
-        // (Or couldn't go at all: in steps it may, going round what one solve can't.)
-        if ok && frame.wandered < WANDERED {
-            return true;
-        }
         // (Its size as the farthest point from its middle: the same however it's turned.)
         let middle =
             start.points.iter().map(|&(_, p)| p).sum::<DVec2>() / start.points.len().max(1) as f64;
@@ -1296,13 +1358,53 @@ impl Editor {
             .map(|&(_, p)| p.distance(middle))
             .fold(0.0, f64::max);
         let whole = offset.length();
-        // (At most 16 of them: a small part dragged a long way needn't crawl.)
         let step = (size / 4.0).max(whole / 16.0);
-        if step <= 0.0 || (ok && whole <= step) {
-            return ok;
+        let solves =
+            frame.needs_solve || self.stretches_hanging_line(frame.ids, frame.dragged_set, start);
+        if self.drag_to_a_place {
+            // (To a typed place: in one solve first, see `drag_to`.)
+            let ok = self.drag_frame(frame, offset, start);
+            if ok && frame.wandered < WANDERED {
+                return true;
+            }
+            if step <= 0.0 || (ok && whole <= step) {
+                return ok;
+            }
+            self.restore_geometry(start);
+            frame.pushed = Pushed::default();
+            return self.drag_in_strides(frame, offset, start, step);
+        }
+        if !solves || step <= 0.0 || whole <= step {
+            if self.drag_frame(frame, offset, start) {
+                return true;
+            }
+            if !solves || step <= 0.0 {
+                return false;
+            }
+            // (Couldn't go in one: in halves it may, going round what one solve can't.)
+            self.restore_geometry(start);
+            frame.pushed = Pushed::default();
+            return self.drag_towards(frame, DVec2::ZERO, offset, start, 0);
+        }
+        if self.drag_in_strides(frame, offset, start, step) {
+            return true;
         }
         self.restore_geometry(start);
-        frame.pushed = false;
+        frame.pushed = Pushed::default();
+        frame.wandered = 0;
+        self.drag_frame(frame, offset, start) && frame.wandered < WANDERED
+    }
+
+    /// [`drag_from_start`](Self::drag_from_start)'s steps: from `start` to `offset` in steps
+    /// of `step` along the line between, each from where the last one ended.
+    fn drag_in_strides(
+        &mut self,
+        frame: &mut DragFrame<'_>,
+        offset: DVec2,
+        start: &Geometry,
+        step: f64,
+    ) -> bool {
+        let whole = offset.length();
         let along = offset / whole;
         let mut at = DVec2::ZERO;
         let mut k = 1;
@@ -1327,6 +1429,18 @@ impl Editor {
 
     /// One step of [`drag_from_start`](Self::drag_from_start), from `at` to `to` (offsets
     /// from the start), in halves where a solve can't make it whole (up to 4 deep).
+    ///
+    /// A step whose solve wandered (`SolveReport::wandered`: it went round a fold between
+    /// solutions) is taken again in halves too, which head for the nearer one: the steps after
+    /// it would otherwise go on from across the fold, where a shorter step stays this side
+    /// (#362). The halves stand only where each wandered less than the whole step did.
+    /// Otherwise the step stands as it was: a solve often mispredicts one step at any length
+    /// (a part swung round, its kept shapes pulling), and halving that again and again ran
+    /// five times the solves to the same place, the last digits of it lost far from the
+    /// origin. Judged on the solves the step keeps (`DragFrame::kept_wandered`), and only
+    /// while the frame has work left for solves that go badly ([`UNFINISHED_WORK`]): on a part
+    /// too big for that work, or late in a frame that has spent it, a step that wanders
+    /// stands, as it did before.
     fn drag_towards(
         &mut self,
         frame: &mut DragFrame<'_>,
@@ -1342,13 +1456,47 @@ impl Editor {
         here.radii = start.radii.clone();
         here.lengths = start.lengths.clone();
         here.lines = start.lines.clone();
-        if self.drag_frame(frame, to - at, &here) {
-            return true;
-        }
+        let pushed = frame.pushed.clone();
+        // (How far the solves this step keeps wandered: the frame's most is kept beside it.)
+        let before = std::mem::take(&mut frame.kept_wandered);
+        // (`drag_frame`, its try at keeping a length left until the step is known to stand: a
+        // step about to be taken again in halves would spend the try for nothing.)
+        let went = self.drag_frame_today(frame, to - at, &here);
+        let wandered = frame.kept_wandered;
         let half = (at + to) / 2.0;
-        depth < 4
-            && self.drag_towards(frame, at, half, start, depth + 1)
-            && self.drag_towards(frame, half, to, start, depth + 1)
+        if !went {
+            frame.kept_wandered = before;
+            return depth < 4
+                && self.drag_towards(frame, at, half, start, depth + 1)
+                && self.drag_towards(frame, half, to, start, depth + 1);
+        }
+        if wandered >= WANDERED && depth < 4 && frame.unfinished_left > 0 {
+            let ended = self.geometry_of(frame.scope);
+            let pushed_whole = std::mem::replace(&mut frame.pushed, pushed.clone());
+            self.restore_geometry(&here);
+            // (Each half's own wandering: a half that wandered less than this step did is
+            // itself taken in halves by the same rule.)
+            frame.kept_wandered = 0;
+            let mut halves = None;
+            if self.drag_towards(frame, at, half, start, depth + 1) {
+                let first = std::mem::take(&mut frame.kept_wandered);
+                if first < wandered && self.drag_towards(frame, half, to, start, depth + 1) {
+                    halves = Some(first.max(frame.kept_wandered));
+                }
+            }
+            if let Some(most) = halves.filter(|&most| most < wandered) {
+                frame.kept_wandered = most.max(before);
+                return true;
+            }
+            // (As the whole step left it.)
+            self.restore_geometry(&ended);
+            self.index
+                .update_moved(&self.doc, frame.scope.iter().copied());
+            frame.pushed = pushed_whole;
+        }
+        frame.kept_wandered = wandered.max(before);
+        self.keep_lengths(frame, to - at, &here, pushed);
+        true
     }
 
     /// The geometry as a drag starting now finds it, with what the drag keeps: the arcs'
@@ -1366,15 +1514,20 @@ impl Editor {
         if !curves {
             return before;
         }
-        let mut lines: Vec<EntityId> = scope
+        // (A line too short to see as the drag begins has no way round to keep, and isn't
+        // among them: any move, however small, could turn it, and every step would be split
+        // for nothing. Imports bring in such slivers.)
+        let mut lines: Vec<(EntityId, f64)> = scope
             .iter()
-            .copied()
-            .filter(|&id| {
-                matches!(self.doc.get(id).map(|e| e.kind),
-                    Some(EntityKind::Line { a, b }) if !dragged_point(a) && !dragged_point(b))
+            .filter_map(|&id| match self.doc.get(id).map(|e| e.kind) {
+                Some(EntityKind::Line { a, b }) if !dragged_point(a) && !dragged_point(b) => {
+                    let length = self.doc.point(a).ok()?.distance(self.doc.point(b).ok()?);
+                    Some((id, length))
+                }
+                _ => None,
             })
             .collect();
-        lines.sort_unstable();
+        lines.sort_unstable_by_key(|&(id, _)| id);
         // A line hangs from the moved geometry when its other end is free: on no other curve,
         // in no relation. Only such a line is carried along at its length (as it would be in
         // a drawing program); one whose far end holds on to more geometry stretches instead,
@@ -1395,7 +1548,7 @@ impl Editor {
             .flat_map(|(_, c)| c.entities().collect::<Vec<_>>())
             .collect();
         let free = |p: EntityId| uses.get(&p) == Some(&1) && !related.contains(&p);
-        for &id in &lines {
+        for &(id, _) in &lines {
             if let Some(EntityKind::Line { a, b }) = self.doc.get(id).map(|e| e.kind)
                 && (free(a) || free(b))
                 && let (Ok(pa), Ok(pb)) = (self.doc.point(a), self.doc.point(b))
@@ -1403,6 +1556,7 @@ impl Editor {
                 before.lengths.insert(id, pa.distance(pb));
             }
         }
+        lines.retain(|&(_, length)| length > NO_WAY_ROUND);
         before.lines = lines;
         before
     }
@@ -1417,7 +1571,7 @@ impl Editor {
     /// Then, where the frame went and landed but left a line hanging from what moves short of
     /// the length it keeps, one more strict try (see [`keep_lengths`](Self::keep_lengths)).
     fn drag_frame(&mut self, frame: &mut DragFrame<'_>, delta: DVec2, before: &Geometry) -> bool {
-        let pushed = frame.pushed;
+        let pushed = frame.pushed.clone();
         let ok = self.drag_frame_today(frame, delta, before);
         if ok {
             self.keep_lengths(frame, delta, before, pushed);
@@ -1432,7 +1586,7 @@ impl Editor {
         delta: DVec2,
         before: &Geometry,
     ) -> bool {
-        let pushed = frame.pushed;
+        let pushed = frame.pushed.clone();
         let ok = self.drag_frame_steps(frame, delta, before);
         if frame.fold
             || !frame.unpinned
@@ -1452,6 +1606,7 @@ impl Editor {
         let ended = self.geometry_of(frame.scope);
         let pushed = std::mem::replace(&mut frame.pushed, pushed);
         let wandered = frame.wandered;
+        let kept_wandered = frame.kept_wandered;
         self.restore_geometry(before);
         self.drag_folds += 1;
         std::mem::swap(&mut frame.solves_left, &mut frame.fold_solves_left);
@@ -1461,9 +1616,11 @@ impl Editor {
             self.drag_frame_steps(frame, delta, before) && self.landed(frame, delta, before);
         frame.fold = false;
         frame.wandered = wandered;
+        frame.kept_wandered = kept_wandered;
         std::mem::swap(&mut frame.solves_left, &mut frame.fold_solves_left);
         std::mem::swap(&mut frame.unfinished_left, &mut frame.fold_unfinished_left);
-        if folded {
+        if folded && !self.drag_undo_folds {
+            self.drag_folds_kept += 1;
             return true;
         }
         self.restore_geometry(&ended);
@@ -1492,7 +1649,7 @@ impl Editor {
         frame: &mut DragFrame<'_>,
         delta: DVec2,
         before: &Geometry,
-        pushed_before: bool,
+        pushed_before: Pushed,
     ) {
         if self.drag_no_length_try
             || frame.fold
@@ -1521,6 +1678,7 @@ impl Editor {
         // where the frame began; `pushed_before`.)
         let pushed = std::mem::replace(&mut frame.pushed, pushed_before);
         let wandered = frame.wandered;
+        let kept_wandered = frame.kept_wandered;
         self.drag_length_tries.0 += 1;
         self.restore_geometry(before);
         std::mem::swap(&mut frame.solves_left, &mut frame.length_solves_left);
@@ -1537,6 +1695,7 @@ impl Editor {
             &mut frame.length_unfinished_left,
         );
         frame.wandered = wandered;
+        frame.kept_wandered = kept_wandered;
         if went
             && kept_to(self, drift_solver::FOLD_MET)
             && drift_solver::meets_within(
@@ -1575,8 +1734,20 @@ impl Editor {
                 .update_moved(&self.doc, frame.scope.iter().copied());
             return true;
         }
+        // (With what the frame's steps before this one pushed: see `Pushed`.)
+        let mut ids = frame.ids.to_vec();
+        ids.extend(
+            frame
+                .pushed
+                .curves
+                .iter()
+                .copied()
+                .filter(|id| !frame.ids.contains(id)),
+        );
+        let mut carried_points = frame.pushed.points.clone();
         let mut turned = Vec::new();
-        let mut ok = self.drag_in_steps(frame, frame.ids, delta, &[], before, 0, &mut turned);
+        let mut ok =
+            self.drag_in_steps(frame, &ids, delta, &carried_points, before, 0, &mut turned);
         if !ok {
             self.restore_geometry(before);
         }
@@ -1585,8 +1756,6 @@ impl Editor {
         // moved end is pushed once it can't shrink any further. (Carried, not dragged: a
         // line hanging from the pushed arc still keeps its length, as one hanging from the
         // selection does.)
-        let mut ids = frame.ids.to_vec();
-        let mut carried_points = Vec::new();
         while !ok && frame.curves && !turned.is_empty() {
             let carried: Vec<EntityId> = std::mem::take(&mut turned)
                 .into_iter()
@@ -1616,12 +1785,17 @@ impl Editor {
             && !self.drag_no_carry
             && !(ok && self.landed(frame, delta, before))
         {
-            ok = self.carry_holding(frame, &ids, &mut carried_points, delta, before, ok);
+            ok = self.carry_holding(frame, &mut ids, &mut carried_points, delta, before, ok);
         }
         // Only the connected part can have moved.
         self.index
             .update_moved(&self.doc, frame.scope.iter().copied());
-        frame.pushed |= ok && !carried_points.is_empty();
+        if ok {
+            frame.pushed = Pushed {
+                curves: ids.split_off(frame.ids.len()),
+                points: carried_points,
+            };
+        }
         ok
     }
 
@@ -1648,7 +1822,7 @@ impl Editor {
     fn carry_holding(
         &mut self,
         frame: &mut DragFrame<'_>,
-        ids: &[EntityId],
+        ids: &mut Vec<EntityId>,
         carried_points: &mut Vec<Param>,
         delta: DVec2,
         before: &Geometry,
@@ -1673,14 +1847,17 @@ impl Editor {
                 }
             }
         }
-        let ids: Vec<EntityId> = ids.iter().copied().chain(holding).collect();
+        let with: Vec<EntityId> = ids.iter().copied().chain(holding).collect();
         let mut turned = Vec::new();
-        if self.drag_in_steps(frame, &ids, delta, &carried, before, 0, &mut turned)
+        let kept_wandered = frame.kept_wandered;
+        if self.drag_in_steps(frame, &with, delta, &carried, before, 0, &mut turned)
             && self.landed(frame, delta, before)
         {
             *carried_points = carried;
+            *ids = with;
             return true;
         }
+        frame.kept_wandered = kept_wandered;
         self.restore_geometry(ended.as_ref().unwrap_or(before));
         ok
     }
@@ -1704,6 +1881,8 @@ impl Editor {
         if frame.solves_left == 0 {
             return false;
         }
+        // (A step that fails keeps nothing: see `DragFrame::kept_wandered`.)
+        let kept_wandered = frame.kept_wandered;
         // (Crushed is judged against the drag's starting radii, which `before` carries.)
         let orientation = drift_solver::Orientation::among_kept(
             &self.doc,
@@ -1724,19 +1903,14 @@ impl Editor {
         let carried_lines: Vec<(EntityId, EntityId, EntityId, DVec2)> = before
             .lines
             .iter()
-            .filter_map(|&line| match self.doc.get(line)?.kind {
-                EntityKind::Line { a, b } if !dragged_point(a) && !dragged_point(b) => Some((
-                    line,
-                    a,
-                    b,
-                    self.doc.point(b).ok()? - self.doc.point(a).ok()?,
-                )),
+            .filter_map(|&(line, began)| match self.doc.get(line)?.kind {
+                EntityKind::Line { a, b } if !dragged_point(a) && !dragged_point(b) => {
+                    let was = self.doc.point(b).ok()? - self.doc.point(a).ok()?;
+                    // (Squeezed shut, it has no way round left: see `SQUEEZED_SHUT`.)
+                    (was.length() > SQUEEZED_SHUT * began).then_some((line, a, b, was))
+                }
                 _ => None,
             })
-            // (A line too short to see has no way round to keep: any move, however small,
-            // could turn it, and every step would be split for nothing. Imports bring in
-            // such slivers.)
-            .filter(|&(.., was)| was.length() > NO_WAY_ROUND)
             .collect();
         // Lines a lowered relation measures a signed offset from (walls' centrelines under
         // dimensioned faces) keep their way round too: turned, which side is the left face
@@ -1805,10 +1979,14 @@ impl Editor {
             bars.push(report.bar);
         }
         let unfinished = self.unfinished(&report);
-        if unfinished {
+        // (A solve that wandered is work of the same kind: a step it makes is taken again in
+        // halves, see `drag_towards`, while there is work left for it.)
+        if unfinished || report.wandered >= WANDERED {
             frame.unfinished_left = frame
                 .unfinished_left
                 .saturating_sub(frame.scope.len() * report.iterations.max(1));
+        }
+        if unfinished {
             self.drag_unfinished += 1;
         }
         let mut flipped: Vec<EntityId> = carried_lines
@@ -1823,6 +2001,7 @@ impl Editor {
             .map(|&(line, ..)| line)
             .collect();
         if !unfinished && flipped.is_empty() && !orientation.turned(&self.doc) {
+            frame.kept_wandered = frame.kept_wandered.max(report.wandered);
             return true;
         }
         if depth >= MAX_SPLITS && !unfinished {
@@ -1845,7 +2024,7 @@ impl Editor {
         halfway.radii = before.radii.clone();
         halfway.lengths = before.lengths.clone();
         halfway.lines = before.lines.clone();
-        self.drag_in_steps(
+        let went = self.drag_in_steps(
             frame,
             ids,
             delta / 2.0,
@@ -1853,7 +2032,11 @@ impl Editor {
             &halfway,
             depth + 1,
             turned,
-        )
+        );
+        if !went {
+            frame.kept_wandered = kept_wandered;
+        }
+        went
     }
 
     /// The smooth anchors among `scope` (each with its two handles), for

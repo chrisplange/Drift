@@ -506,6 +506,82 @@ PR 0 puts the bar in `scripts/solver-bar/` (its README runs all seven). **Known 
 - **Risk:** highest. It rewrites `drag.rs`, and how a drag behaves at a fold becomes a
   deliberate rule instead of an accident. It needs PR 3 and PR 4 first.
 
+**PR 5, parked, and what #362 built instead (2026-11-19).** Two builds of PR 5 as written
+stopped at 259 and 267 of the heavy matrix's 280 and ran 3 to 18 times slower: each frame
+re-traced the whole path with a solve of several ranks whose stops had to agree to the last
+bits at any size (the notes are on #362 and in `E:\Drift\handoff\2026-11-19-pr5\`). The owner
+parked it and asked whether a frame should solve from the last frame instead. Measured on a
+slow drag (`drag_props::smooth`: 3,535 random drags in frames of 0.25 mm, each frame judged
+against the one before):
+
+| | Drags with a jump | Drags with a point going back and forth | Out and back, drags left over 0.1 % of the size off | Solves a frame |
+|---|---|---|---|---|
+| Main: one solve from the start first, steps where it failed or wandered | 47 | 242 | 0 | 1.81 |
+| From the last accepted frame | 10 | 12 | 1,096 of 3,348 | 1.95 |
+| From the start, always in steps (built) | 5 | 59 | 0 | 3.04 |
+
+- **The jitter was the one solve first.** No jump was on a drag's first frame. One big solve
+  from the start lands on a different shape from frame to frame, and so does the switch
+  between one solve and steps (a line hanging from a moved arc ran away at 6 to 53 times the
+  pointer's pace, then snapped back 180 times its move when a frame wandered and went in steps).
+- **From the last frame is what SolveSpace does, and it gives up "out and back returns".**
+  Least-change steps taken one after another don't undo each other: `drag_is_path_independent`
+  failed on every seed, and a stopped drag stayed stopped where main gets past from the start.
+  The owner chose the steps (#362, 2026-11-19).
+- **As built** (`Editor::drag_from_start`): a move longer than a step (a quarter of the part's
+  size, 16 at most) always goes in steps along the line from the drag's start, each from where
+  the last ended. The steps depend on the offset and the shape alone, so a frame a little
+  further on takes the same steps and one a little longer. Where the steps can't be made the
+  move is tried in one solve, kept if it lands without wandering, so the frames that go are
+  the ones that went before (a point dragged through its circle's centre: a step ends on the
+  centre, where the circle has no size).
+- **A move to a typed place keeps one solve first** (`Editor::drag_to`: a point's
+  coordinates or a line's angle in the inspector, a nudge, a dimension's value, the AI link).
+  It names a place, not a way there: in steps along the straight line, a line of fixed length
+  turned to a typed angle by its end dragged its start along.
+- **A step that wanders is taken again in halves**, up to 4 deep, while the frame has work
+  left for solves that go badly (`UNFINISHED_WORK`): the step-size control the table above
+  promised for `WANDERING_GAIN`. Judged on the solves a step keeps, not the ones it took
+  again. The halves stand only where each wandered less than the whole step; otherwise the
+  step stands as it was. (Halved whenever it wandered, a drag whose every solve mispredicts
+  one step ran 271 solves where main ran 48, and its last digits were lost a kilometre out.
+  Not kept at all where its halves failed, a chain of 48 bars folded round was refused.)
+- **Four things the steps showed up, each a decision that depended on the drawing's size,
+  turn or place:**
+  - A curve one step pushes along (a line that would turn round, a squeezed arc) is pushed by
+    every later step of the frame. Left to give way again, a leg was pushed for 39 mm of a
+    52 mm move and squeezed for the last 13.
+  - The solver judged whether a dragged point had landed coordinate by coordinate, the editor
+    by distance. A point 0.8 and 0.7 of the bar off was on target for one and not the other,
+    and with the drawing turned it was the other way about; a step then carried a line at one
+    turn and not at another. The solver now judges a point by distance too (`on_targets`).
+  - A line had "no way round" to keep below 0.005 mm, measured at every step. A line squeezed
+    step by step dropped out at one size and was still held at another. It is now a line too
+    short as the drag begins, or one squeezed to a two-thousandth of its length since
+    (`SQUEEZED_SHUT`).
+  - A tangency counted as touching at a curve's end within 1e-9 of the coordinates: 0.7 µm
+    a kilometre out, where a tangent line passing 0.2 µm from an arc's end part way through a
+    drag was read as touching there, and an accepted frame as leaving a relation unmet. It is
+    now 1e-9 of the line's length or the circle's radius, with a floor of ulps
+    (`TOUCHING_END`).
+- **Deleted:** the rule that every frame tries one solve first. **Not deleted:** the rest of
+  PR 5's list (`land`, the dragged weight, the fold and length tries, their budgets,
+  `SHAPE_HOLD` and `LINE_HOLD`); `wandered` stays, as the step-size control's signal.
+- **Not fixed:** #362's own seeds 32, 34, 44 and 69. They are one small frame from the start
+  whose dragged point can't land, and the solve flings other geometry rather than let the
+  point give way: the pointer's rank, not the path. Nor every slow drag: 59 of 3,535 still
+  have a point go back and forth, so `slow_drag_is_smooth` stays ignored.
+- **Costs.** 3.04 solves a frame on the slow drags against 1.81. A refused frame on a small
+  part 5 → 16 ms, the tiled sketch about a fifth slower; a squeezed arc 4.9 → 1.0 ms and a
+  held landing on a pinned 2,000-bar part 58 → 30 ms. In the similarity census the scales
+  improve (4, 3, 4 → 2, 2, 2 of 10,561) and far out it is worse (100 m 2 → 3, 1 km 3 → 5):
+  case 1468 goes where main stopped, on solves that wander dozens of times, and ends where
+  round-off puts it; 2659 and 3700 land the other way at a fold a kilometre out.
+- **Similarity at a singular drag is judged by outcome** (`drag_props::invariant`, #362's
+  decision 2): where the plain drag itself doesn't repeat under a nudge of 2⁻⁴⁰ of its offset,
+  the copies must commit alike, refuse or not alike, and keep every arc, tangency and signed
+  distance the same way round. Any other drag is held to 1e-6 as before.
+
 ### PR 6: the user's least change (behaviour, needs decision 5)
 - Commits get the same keep-shape preference as drags, ranked below the relations and the
   named geometry: lines keep their lengths and directions, arcs their radii, where the

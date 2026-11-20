@@ -204,11 +204,18 @@ enum Touching {
     OnCircle(EntityId),
 }
 
-/// How far, relative to the size of the coordinates, a curve's end may be from the other
-/// curve of a tangency and still count as its touching point. Exact constructions (a line
-/// through an arc's end, an arc ending on another's circle) are exact to round-off, and a
-/// solve that says the tangency is there holds it to the solve tolerance; a tangency that
-/// merely passes near an end (within √(2·r·this) of it along the curve) is left alone.
+/// How far, relative to the size of what is measured (the line's length, the circle's
+/// radius; 1 mm at least), a curve's end may be from the other curve of a tangency and still
+/// count as its touching point; never finer than a few ulps of the stored coordinates
+/// ([`crate::FLOOR_ULPS`]). Exact constructions (a line through an arc's end, an arc ending
+/// on another's circle) are exact to round-off, and a solve that says the tangency is there
+/// holds it to the solve tolerance; a tangency that merely passes near an end (within
+/// √(2·r·this) of it along the curve) is left alone.
+///
+/// Relative to the coordinates themselves, as it was, "near" grew with the distance from the
+/// origin: a kilometre out it was 0.7 µm, and a tangent line passing 0.2 µm from an arc's end
+/// part way through a drag was read there as touching at that end, where the same drawing at
+/// the origin, and the drag's own solves, read it as passing by (#362).
 const TOUCHING_END: f64 = 1e-9;
 
 /// The touching point of a tangency between `a` and `b` where it is at an end of one curve
@@ -248,11 +255,15 @@ fn touching_end(
     }
     // Or lying on it.
     let near = |d: f64, points: &[DVec2]| {
-        let scale = points
+        let size = points
+            .iter()
+            .flat_map(|p| points.iter().map(move |q| p.distance(*q)))
+            .fold(1.0, f64::max);
+        let largest = points
             .iter()
             .flat_map(|p| [p.x.abs(), p.y.abs()])
-            .fold(1.0, f64::max);
-        d.abs() <= TOUCHING_END * scale
+            .fold(0.0, f64::max);
+        d.abs() <= (TOUCHING_END * size).max(crate::FLOOR_ULPS * f64::EPSILON * largest)
     };
     let on = |e: EntityId, curve: EntityId| {
         let p = at(e)?;

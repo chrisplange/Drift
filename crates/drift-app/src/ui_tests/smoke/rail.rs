@@ -573,3 +573,42 @@ fn smoke_rail_walls_in_build() {
     h.key_press(Key::Escape);
     h.run();
 }
+
+/// A window a little too short for the roomy rail keeps ONE column: shorter tiles and
+/// tighter gaps between the groups come before a second column.
+#[test]
+fn smoke_rail_one_column_with_tighter_groups_before_two() {
+    let Some(mut h) = harness_at(1280.0, 770.0) else {
+        return;
+    };
+    h.run();
+    assert_eq!(rail_edge(&h), SLIM, "still one column");
+    let tiles = rail_in_view(&h, "1280 × 770");
+    assert!(
+        tiles
+            .iter()
+            .all(|r| r.left() == tiles[0].left() && r.height() >= 26.0),
+        "one column of tiles at least 26 high: {tiles:?}"
+    );
+}
+
+/// Two columns have no holes: every tile has a neighbour on its row, or is as wide as the
+/// two columns.
+#[test]
+fn smoke_rail_two_columns_have_no_orphans() {
+    let Some(mut h) = harness_at(1280.0, 700.0) else {
+        return;
+    };
+    h.run();
+    assert_eq!(rail_edge(&h), TWO_COLUMNS);
+    let tiles = rail_in_view(&h, "1280 × 700");
+    for tile in &tiles {
+        let paired = tiles
+            .iter()
+            .any(|other| other != tile && other.top() == tile.top());
+        assert!(
+            paired || tile.width() > 60.0,
+            "{tile:?} is alone on its row and doesn't span it: {tiles:?}"
+        );
+    }
+}

@@ -864,7 +864,7 @@ fn curve_limits(
         ui.label(egui::RichText::new("Before you import").strong());
         for line in heads_up.iter() {
             ui.horizontal_wrapped(|ui| {
-                ui.colored_label(amber, "⚠");
+                warning_mark(ui, amber);
                 ui.label(line);
             });
         }
@@ -881,6 +881,29 @@ fn curve_limits(
         );
     }
     !too_many
+}
+
+/// A warning's mark before its line: a triangle with an exclamation mark, painted (the
+/// font has no such sign).
+fn warning_mark(ui: &mut egui::Ui, color: egui::Color32) {
+    let height = ui.text_style_height(&egui::TextStyle::Body);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(14.0, height), egui::Sense::hover());
+    let c = rect.center();
+    let stroke = egui::Stroke::new(1.3, color);
+    ui.painter().add(egui::Shape::closed_line(
+        vec![
+            c + egui::vec2(0.0, -6.0),
+            c + egui::vec2(6.5, 5.5),
+            c + egui::vec2(-6.5, 5.5),
+        ],
+        stroke,
+    ));
+    ui.painter().line_segment(
+        [c + egui::vec2(0.0, -2.0), c + egui::vec2(0.0, 1.5)],
+        stroke,
+    );
+    ui.painter()
+        .circle_filled(c + egui::vec2(0.0, 3.6), 0.9, color);
 }
 
 /// Above this many curves an import as geometry is warned about, and above the second it is

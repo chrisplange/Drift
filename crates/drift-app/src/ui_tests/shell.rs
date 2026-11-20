@@ -287,3 +287,89 @@ fn the_status_bar_reads_hint_snaps_shows_and_zoom() {
     assert!((closer / paper - 1.25).abs() < 1e-4, "{paper} to {closer}");
     assert!((h.state().drawing.view.camera.scale / scale - 1.0).abs() < 1e-9);
 }
+
+/// With more sheets than tabs, the sheet shown has its tab after the others, out of its
+/// place among the sheets. Pressing that tab and letting go with a small wobble of the
+/// pointer is a drop on its own spot: no sheet moves, and nothing is added to undo.
+#[test]
+fn a_tab_dropped_on_its_own_spot_moves_no_sheet() {
+    let Some(mut h) = harness() else { return };
+    for _ in 0..9 {
+        h.state_mut().new_sheet();
+    }
+    h.run();
+    h.run();
+    let order = |h: &Harness<'_, DriftApp>| -> Vec<String> {
+        let doc = &h.state().drawing.editor.doc;
+        doc.sheets()
+            .map(|(_, s)| crate::app::sheet_editor::sheet_label(s))
+            .collect()
+    };
+    let before = order(&h);
+    let label = |k: usize| format!("A-10{k}  Sheet {k}");
+    let shown = tab(&h, &label(9)).expect("the sheet shown keeps its tab");
+    assert!(tab(&h, &label(8)).is_none(), "its neighbour has no tab");
+    let undo = h
+        .state()
+        .drawing
+        .editor
+        .history
+        .undo_label()
+        .map(str::to_owned);
+    let from = shown.center();
+    drag_steps(&mut h, from, from + egui::vec2(9.0, 2.0), 3, None);
+    assert_eq!(order(&h), before, "no sheet moved");
+    assert_eq!(
+        h.state().drawing.editor.history.undo_label(),
+        undo.as_deref()
+    );
+    assert_ne!(
+        h.state().drawing.editor.history.undo_label(),
+        Some("Move sheet")
+    );
+    // A real move still works: the tab dragged in front of the first sheet's.
+    let from = tab(&h, &label(9)).expect("still there").center();
+    let target = tab(&h, &label(1)).expect("the first sheet's tab");
+    drag_steps(
+        &mut h,
+        from,
+        egui::pos2(target.left() + 6.0, from.y),
+        8,
+        None,
+    );
+    assert_eq!(order(&h)[0], label(9));
+    assert_eq!(
+        h.state().drawing.editor.history.undo_label(),
+        Some("Move sheet")
+    );
+}
+
+/// Undo and redo in the top bar say they can't be used while there is nothing to take back.
+#[test]
+fn undo_and_redo_with_nothing_to_undo_read_as_disabled() {
+    use egui_kittest::kittest::NodeT as _;
+    let Some(mut h) = harness() else { return };
+    assert!(
+        h.get_by_label("Undo last change")
+            .accesskit_node()
+            .is_disabled()
+    );
+    assert!(
+        h.get_by_label("Redo last change")
+            .accesskit_node()
+            .is_disabled()
+    );
+    h.state_mut().new_sheet();
+    h.run();
+    h.run();
+    assert!(
+        !h.get_by_label("Undo last change")
+            .accesskit_node()
+            .is_disabled()
+    );
+    assert!(
+        h.get_by_label("Redo last change")
+            .accesskit_node()
+            .is_disabled()
+    );
+}

@@ -276,6 +276,29 @@ const SCENES: &[Scene] = &[
         h.hover_at(at + egui::vec2(60.0, -60.0));
         h.run();
     }),
+    // The pie pointing at a relation that fits and holds nothing back: the accent's look.
+    ("pie-add", |h| {
+        open_example(h);
+        let lines = first(h, |k| matches!(k, EntityKind::Line { .. }));
+        h.state_mut().drawing.editor.selection = lines.into_iter().take(1).collect();
+        h.run();
+        let at = h.state().drawing.view.canvas_rect.center();
+        h.hover_at(at);
+        h.run();
+        h.key_press(Key::Q);
+        h.run();
+        h.hover_at(at + egui::vec2(-90.0, 60.0));
+        h.run();
+    }),
+    // The Wall tool's options, and the pointer over the canvas (its position in the status
+    // bar).
+    ("wall-tool", |h| {
+        h.state_mut().set_tool(ToolKind::Wall);
+        h.run();
+        let at = h.state().drawing.view.canvas_rect.center();
+        h.hover_at(at + egui::vec2(-120.0, 80.0));
+        h.run();
+    }),
     ("hud-length", |h| {
         h.key_press(Key::L);
         h.run();

@@ -269,17 +269,26 @@ impl DriftApp {
         let zone = ui.max_rect();
         let dark = ui.visuals().dark_mode;
         let n = theme::neutrals(dark);
-        let sheets: Vec<(SheetId, String)> = self
+        // (With each label, how much of its start is the sheet's number: set quieter.)
+        let sheets: Vec<(SheetId, String, usize)> = self
             .drawing
             .editor
             .doc
             .sheets()
-            .map(|(id, s)| (id, sheet_label(s)))
+            .map(|(id, s)| {
+                let label = sheet_label(s);
+                let number = label.len() - s.name.len();
+                (id, label, number)
+            })
             .collect();
         let on_sheet = self.drawing.view.sheet_preview;
         let current = self.current_sheet();
+        let mut numbers = vec![0];
         let mut tabs: Vec<(Option<SheetId>, String)> = vec![(None, "Model".to_owned())];
-        tabs.extend(sheets.into_iter().map(|(id, l)| (Some(id), l)));
+        for (id, label, number) in sheets {
+            tabs.push((Some(id), label));
+            numbers.push(number);
+        }
         let is_active = |id: &Option<SheetId>| match id {
             None => !on_sheet,
             Some(id) => on_sheet && current == Some(*id),
@@ -364,6 +373,8 @@ impl DriftApp {
         let mut dragging = None;
         let mut dropped = None;
         let count = tabs.len() - 1;
+        // A hairline between two tabs at rest, so a row of them isn't one run of words.
+        let mut rest_before: Option<f32> = None;
         for k in shown {
             let (id, label) = &tabs[k];
             let active = is_active(id);
@@ -399,13 +410,32 @@ impl DriftApp {
             } else if response.hovered() {
                 ui.painter().rect_filled(r, theme::radius::CONTROL, n.faint);
             }
-            let color = if active || response.hovered() {
-                n.text
+            let at_rest = !active && !response.hovered();
+            if let Some(x) = rest_before.filter(|_| at_rest) {
+                ui.painter().vline(
+                    x.round() + 0.5,
+                    r.center().y - 7.0..=r.center().y + 7.0,
+                    egui::Stroke::new(1.0, n.control_border),
+                );
+            }
+            rest_before = at_rest.then_some(r.right());
+            // The one shown in bold, in the text's colour; of the others the name in the
+            // secondary tone and the sheet's number quieter still.
+            let (number_color, color) = if active || response.hovered() {
+                (n.text, n.text)
             } else {
-                n.secondary
+                (n.tertiary, n.secondary)
             };
-            let mut job =
-                egui::text::LayoutJob::simple_singleline(label.clone(), font(active), color);
+            let format = |color| egui::TextFormat {
+                font_id: font(active),
+                color,
+                ..Default::default()
+            };
+            let (number, name) = label.split_at(numbers[k].min(label.len()));
+            let mut job = egui::text::LayoutJob::default();
+            job.append(number, 0.0, format(number_color));
+            job.append(name, 0.0, format(color));
+            job.break_on_newline = false;
             job.wrap.max_width = w - 16.0;
             job.wrap.max_rows = 1;
             let galley = ui.painter().layout_job(job);
@@ -488,7 +518,12 @@ impl DriftApp {
         let pointer = ui.ctx().pointer_interact_pos();
         if let (Some(sheet), Some(p)) = (dragging.or(dropped), pointer) {
             let to = drop_index(&spots, sheet, p.x);
-            if dragging.is_some() {
+            // Its own spot among the tabs showing: let go there and nothing moves. (The
+            // sheet shown may have its tab after the others, out of its place among the
+            // sheets: a press that wobbles isn't a move to where its tab happens to be.)
+            let own = spots.iter().position(|(s, _, _)| *s == sheet);
+            let stays = own == Some(to);
+            if dragging.is_some() && !stays {
                 let x = gap_at(&spots, sheet, to);
                 ui.painter().vline(
                     x,
@@ -496,7 +531,7 @@ impl DriftApp {
                     egui::Stroke::new(2.0, theme::accent(dark)),
                 );
             }
-            if dropped.is_some() {
+            if dropped.is_some() && !stays {
                 // (Its place among every sheet: some may have no tab.)
                 let every: Vec<SheetId> = tabs
                     .iter()
@@ -700,7 +735,7 @@ impl DriftApp {
             "Back to model",
             "Esc",
             "Back to the model, to draw and edit",
-            Ok(Glyph::ChevronsLeft),
+            Ok(Glyph::Back),
         ) {
             self.show_sheet(None);
         }

@@ -1450,9 +1450,15 @@ impl DriftApp {
         self.paint_note_grips(&painter, &notes, ui.visuals().dark_mode);
         self.paint_groups(&painter, &map, ui.visuals().dark_mode);
         self.paint_free_directions(&painter, &map);
-        self.empty_canvas_hint(ui, rect);
-        // The quick-constrain bar, and a message above it.
-        let quick_bar = self.quick_bar_wanted(&response, &map);
+        self.empty_canvas_hint(ui, &map);
+        // The quick-constrain bar, and a message clear of it.
+        // (It keeps off the dimensions' labels and the relations' symbols, which are clicked.)
+        let clicked_on: Vec<egui::Rect> = dims
+            .iter()
+            .map(|d| d.text_rect)
+            .chain(shown_glyphs.iter().map(|g| g.rect))
+            .collect();
+        let quick_bar = self.quick_bar_wanted(&response, &map, &painter, &clicked_on);
         let toast_id = overlay::toast_rect_id();
         ui.ctx().data_mut(|d| d.remove::<egui::Rect>(toast_id));
         if quick_bar.is_none() {
@@ -1466,9 +1472,9 @@ impl DriftApp {
                 let shown = overlay::toast(
                     &painter,
                     rect,
-                    Self::toast_bottom(rect, quick_bar.as_ref()),
+                    quick_bar.as_ref().map(|bar| bar.rect),
                     &status.text,
-                    status.error,
+                    overlay::ToastKind::of(&status.text, status.error),
                     ui.visuals().dark_mode,
                     fade,
                 );

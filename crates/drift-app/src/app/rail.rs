@@ -21,8 +21,12 @@ const SHORT_TILE: f32 = 26.0;
 /// Two columns of tiles: each a little narrower, with a gap between.
 const PAIR_WIDTH: f32 = 35.0;
 const PAIR_GAP: f32 = 2.0;
-/// The hairline between the slim rail's groups, with the room either side of it.
+/// The hairline between the slim rail's groups, with the room either side of it (8 pt and
+/// the line); and the same in a window too short for that, tried before a second column.
 const GROUP_GAP: f32 = 9.0;
+const TIGHT_GAP: f32 = 6.0;
+/// The widest a place's tooltip gets.
+const TIP_WIDTH: f32 = 290.0;
 /// The foot of the rail: a hairline and the "Show tool names" toggle.
 const FOOT_GAP: f32 = 7.0;
 const FOOT_BUTTON: f32 = 22.0;
@@ -42,6 +46,8 @@ pub(crate) struct RailLayout {
     columns: usize,
     /// A tile's height.
     tile: f32,
+    /// The room a hairline between two groups takes.
+    gap: f32,
 }
 
 impl RailLayout {
@@ -97,10 +103,13 @@ pub(crate) fn tip_beside(response: &egui::Response, edge: f32, add: impl FnOnce(
 
 /// The hairline between two groups on the rail.
 pub(crate) fn group_line(ui: &mut egui::Ui) {
-    let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), GROUP_GAP),
-        egui::Sense::hover(),
-    );
+    group_line_in(ui, GROUP_GAP);
+}
+
+/// [`group_line`] in `gap` points of room.
+fn group_line_in(ui: &mut egui::Ui, gap: f32) {
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), gap), egui::Sense::hover());
     ui.painter().hline(
         rect.left() + 4.0..=rect.right() - 4.0,
         rect.center().y,
@@ -109,23 +118,27 @@ pub(crate) fn group_line(ui: &mut egui::Ui) {
 }
 
 impl DriftApp {
-    /// The rail's layout in a panel `height` high: tiles as tall as there is room for, and a
-    /// second column before any of them would need scrolling to.
+    /// The rail's layout in a panel `height` high: one column for as long as its tiles can
+    /// be [`SHORT_TILE`] high, with the groups closer together ([`TIGHT_GAP`]) if that is
+    /// what it takes; a second column only before a tile would need scrolling to.
     pub(crate) fn rail_layout(&self, height: f32) -> RailLayout {
-        let one = |tile| RailLayout {
+        let one = |tile, gap| RailLayout {
             names: self.rail_names,
             columns: 1,
             tile,
+            gap,
         };
         if self.rail_names || self.drawing.view.sheet_preview {
-            return one(TILE);
+            return one(TILE, GROUP_GAP);
         }
         let room = height - 2.0 * f32::from(MARGIN_Y) - FOOT;
-        let lines = RAIL.len().saturating_sub(1) as f32 * GROUP_GAP;
+        let groups = RAIL.len().saturating_sub(1) as f32;
         let slots = RAIL.iter().map(|(_, slots)| slots.len()).sum::<usize>() as f32;
-        let tile = ((room - lines) / slots).floor();
-        if tile >= SHORT_TILE {
-            return one(tile.min(TILE));
+        for gap in [GROUP_GAP, TIGHT_GAP] {
+            let tile = ((room - groups * gap) / slots).floor();
+            if tile >= SHORT_TILE {
+                return one(tile.min(TILE), gap);
+            }
         }
         let rows = RAIL
             .iter()
@@ -134,11 +147,12 @@ impl DriftApp {
         RailLayout {
             names: false,
             columns: 2,
-            tile: if rows * TILE + lines <= room {
+            tile: if rows * TILE + groups * GROUP_GAP <= room {
                 TILE
             } else {
                 SHORT_TILE
             },
+            gap: GROUP_GAP,
         }
     }
 
@@ -187,12 +201,14 @@ impl DriftApp {
         }
     }
 
-    /// The slim rail: a tile per place, a hairline between groups.
+    /// The slim rail: a tile per place, a hairline between groups. In two columns a group's
+    /// places go in pairs, and the last of an odd number takes the whole row (Select, alone
+    /// in its group, too): no row is left with a hole in it.
     fn rail_tiles(&mut self, ui: &mut egui::Ui, layout: RailLayout, edge: f32) -> Option<Command> {
         let mut picked = None;
         for (i, (_, slots)) in RAIL.iter().enumerate() {
             if i > 0 {
-                group_line(ui);
+                group_line_in(ui, layout.gap);
             }
             if layout.columns == 1 {
                 let place = Place::Tile(egui::vec2(TILE_WIDTH, layout.tile));
@@ -201,7 +217,12 @@ impl DriftApp {
                 }
             } else {
                 let place = Place::Tile(egui::vec2(PAIR_WIDTH, layout.tile));
+                let whole = Place::Tile(egui::vec2(2.0 * PAIR_WIDTH + PAIR_GAP, layout.tile));
                 for pair in slots.chunks(2) {
+                    if let [slot] = pair {
+                        picked = picked.or(self.rail_place(ui, slot, whole, edge));
+                        continue;
+                    }
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = PAIR_GAP;
                         for slot in pair {
@@ -420,7 +441,7 @@ impl DriftApp {
         // No place's tooltip while a flyout is open: it would draw over the flyout's rows.
         if self.rail_flyout.is_none() {
             tip_beside(&response, edge, |ui| {
-                self.rail_tooltip(ui, slot, command, enabled);
+                self.rail_tooltip(ui, Some(slot), command, enabled);
             });
         }
         if !response.clicked() || !enabled {
@@ -437,9 +458,16 @@ impl DriftApp {
         Some(command)
     }
 
-    /// The tooltip: the name and its keys as key caps, what it does, for a family what else
-    /// is in it, and why it can't be used when it can't.
-    fn rail_tooltip(&self, ui: &mut egui::Ui, slot: &Slot, command: Command, enabled: bool) {
+    /// The tooltip: the name and its keys as key caps, what it does, for a family's place on
+    /// the rail (`slot`) what else is in it, and why it can't be used when it can't. A row
+    /// of a flyout has the same card, without the family's line.
+    fn rail_tooltip(
+        &self,
+        ui: &mut egui::Ui,
+        slot: Option<&Slot>,
+        command: Command,
+        enabled: bool,
+    ) {
         let Some(spec) = commands::spec(command) else {
             return;
         };
@@ -450,7 +478,7 @@ impl DriftApp {
         } else {
             keys
         };
-        ui.set_max_width(280.0);
+        ui.set_max_width(TIP_WIDTH);
         ui.horizontal(|ui| {
             let name = spec.title.trim_end_matches('…');
             ui.label(
@@ -470,7 +498,7 @@ impl DriftApp {
         {
             ui.label(small(again.to_string()));
         }
-        if slot.is_family() {
+        if let Some(slot) = slot.filter(|slot| slot.is_family()) {
             let others: Vec<&str> = slot
                 .offered()
                 .filter(|c| *c != command)
@@ -536,6 +564,15 @@ impl DriftApp {
                 egui::Frame::menu(ui.style()).show(ui, |ui| {
                     ui.set_width(190.0);
                     ui.spacing_mut().item_spacing.y = 0.0;
+                    // The row under the pointer is lighter than the one shown (the tinted
+                    // one), not heavier: in the light look the usual hover fill is the
+                    // darker of the two.
+                    if !ui.visuals().dark_mode {
+                        let n = theme::neutrals(false);
+                        let widgets = &mut ui.visuals_mut().widgets;
+                        widgets.hovered.bg_fill = theme::mix(n.raised, n.hover, 0.3);
+                        widgets.active.bg_fill = theme::mix(n.raised, n.hover, 0.6);
+                    }
                     for command in slot.offered() {
                         let Some(spec) = commands::spec(command) else {
                             continue;
@@ -560,19 +597,14 @@ impl DriftApp {
                         if enabled {
                             rows.push((response.rect, command));
                         }
-                        let tip = if enabled {
-                            spec.description
-                        } else {
-                            spec.when.reason()
-                        };
-                        tips.push((response, tip));
+                        tips.push((response, command, enabled));
                     }
                 });
             });
-        // A row's tooltip goes beside the flyout (left of it if there's no room on the
-        // right), so it never covers the other rows.
+        // A row's tooltip (the card a place on the rail has) goes beside the flyout (left of
+        // it if there's no room on the right), so it never covers the other rows.
         let frame = area.response.rect;
-        for (response, tip) in &tips {
+        for (response, command, enabled) in &tips {
             let beside = egui::Rect::from_x_y_ranges(frame.x_range(), response.rect.y_range());
             let mut tooltip = if response.enabled() {
                 egui::Tooltip::for_enabled(response)
@@ -583,10 +615,9 @@ impl DriftApp {
                 .popup
                 .anchor(beside)
                 .align(egui::RectAlign::RIGHT_START)
-                .align_alternatives(&[egui::RectAlign::RIGHT_START, egui::RectAlign::LEFT_START]);
-            tooltip.show(|ui| {
-                ui.label(*tip);
-            });
+                .align_alternatives(&[egui::RectAlign::RIGHT_START, egui::RectAlign::LEFT_START])
+                .gap(6.0);
+            tooltip.show(|ui| self.rail_tooltip(ui, None, *command, *enabled));
         }
         let (pointer, released, pressed, escape) = ctx.input(|i| {
             (

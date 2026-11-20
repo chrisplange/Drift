@@ -563,15 +563,72 @@ pub fn toast_rect_id() -> egui::Id {
     egui::Id::new("toast_rect")
 }
 
-/// A transient message at the foot of the canvas, its bottom edge at `bottom`, fading out
-/// as `fade` goes from 1 to 0: a raised card in the theme's colours, with a dot in the
-/// accent (or in red for what went wrong). Returns where it was painted.
+/// What a toast is about, which its dot shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToastKind {
+    /// Something to know.
+    Info,
+    /// Something asked for was done (saved, exported, copied).
+    Success,
+    /// Something went wrong or can't be done.
+    Error,
+}
+
+impl ToastKind {
+    /// The kind of a status message: what went wrong; else what says a thing was done, by
+    /// how it starts ("Saved as…", "Exported…"); else something to know.
+    pub fn of(text: &str, error: bool) -> Self {
+        const DONE: [&str; 11] = [
+            "Saved",
+            "Exported",
+            "Copied",
+            "Pasted",
+            "Opened",
+            "Imported",
+            "Added",
+            "Converted",
+            "Pinned",
+            "Removed",
+            "Purged",
+        ];
+        if error {
+            Self::Error
+        } else if DONE.iter().any(|word| {
+            text.strip_prefix(word)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with(' '))
+        }) {
+            Self::Success
+        } else {
+            Self::Info
+        }
+    }
+
+    /// The dot's colour: the theme's green for what was done, its red for what went wrong,
+    /// and the quiet secondary tone for the rest. Never the accent, which marks what is
+    /// current or picked.
+    pub fn dot(self, dark: bool) -> Color32 {
+        match self {
+            Self::Info => crate::theme::neutrals(dark).secondary,
+            Self::Success => crate::theme::ok_color(dark),
+            Self::Error => crate::theme::error_color(dark),
+        }
+    }
+}
+
+/// How far a toast stays from the canvas's foot, and from what it keeps clear of.
+const TOAST_FOOT: f32 = 24.0;
+const TOAST_GAP: f32 = 8.0;
+
+/// A transient message at the foot of the canvas, fading out as `fade` goes from 1 to 0: a
+/// raised card in the theme's colours, with a dot that says what kind of message it is.
+/// Where its usual place would touch `avoid` (the quick-constrain bar) it sits above that
+/// instead. Returns where it was painted.
 pub fn toast(
     painter: &egui::Painter,
     rect: Rect,
-    bottom: f32,
+    avoid: Option<Rect>,
     text: &str,
-    error: bool,
+    kind: ToastKind,
     dark: bool,
     fade: f32,
 ) -> Rect {
@@ -585,8 +642,23 @@ pub fn toast(
         wrap,
     );
     let size = vec2(galley.size().x + 42.0, (galley.size().y + 16.0).max(32.0));
-    let at = egui::pos2(rect.center().x - size.x / 2.0, bottom - size.y);
-    let r = Rect::from_min_size(at, size);
+    let at = egui::pos2(
+        rect.center().x - size.x / 2.0,
+        rect.bottom() - TOAST_FOOT - size.y,
+    );
+    let mut r = Rect::from_min_size(at, size);
+    if let Some(avoid) = avoid
+        && r.expand(TOAST_GAP - 0.5).intersects(avoid)
+    {
+        // Above it; or, with no room there, under it.
+        let above = avoid.top() - TOAST_GAP - size.y;
+        let top = if above >= rect.top() + TOAST_GAP {
+            above
+        } else {
+            avoid.bottom() + TOAST_GAP
+        };
+        r = Rect::from_min_size(egui::pos2(at.x, top), size);
+    }
     // (Lifted like a menu: a soft shadow under it.)
     painter.add(
         egui::epaint::Shadow {
@@ -604,11 +676,7 @@ pub fn toast(
         Stroke::new(1.0, n.control_border.gamma_multiply(fade)),
         StrokeKind::Inside,
     );
-    let dot = if error {
-        crate::theme::error_color(dark)
-    } else {
-        crate::theme::accent(dark)
-    };
+    let dot = kind.dot(dark);
     // (Beside the first line of a message that wraps.)
     let first = galley
         .rows
@@ -656,6 +724,32 @@ mod tests {
                 other => panic!("a dash is a segment, not {other:?}"),
             })
             .collect()
+    }
+
+    /// A toast's dot is green for what was done, red for what went wrong and a quiet grey
+    /// for the rest: never the accent, in any look.
+    #[test]
+    fn a_toasts_dot_is_never_the_accent() {
+        assert_eq!(
+            ToastKind::of("Saved as Plate.drift", false),
+            ToastKind::Success
+        );
+        assert_eq!(ToastKind::of("Copied 3 curves", false), ToastKind::Success);
+        assert_eq!(ToastKind::of("Nothing to undo", false), ToastKind::Info);
+        // (A word that only starts like one of them isn't it.)
+        assert_eq!(ToastKind::of("Addedness", false), ToastKind::Info);
+        assert_eq!(
+            ToastKind::of("Saved nothing: the disk is full", true),
+            ToastKind::Error
+        );
+        for dark in [true, false] {
+            let accent = crate::theme::accent(dark);
+            let dots = [ToastKind::Info, ToastKind::Success, ToastKind::Error].map(|k| k.dot(dark));
+            assert!(dots.iter().all(|dot| *dot != accent), "{dots:?}");
+            assert_eq!(dots[0], crate::theme::neutrals(dark).secondary);
+            assert_eq!(dots[1], crate::theme::ok_color(dark));
+            assert_eq!(dots[2], crate::theme::error_color(dark));
+        }
     }
 
     #[test]

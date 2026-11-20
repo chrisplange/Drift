@@ -248,6 +248,16 @@ pub fn desk(dark: bool) -> Color32 {
     Color32::from_rgb(r, g, b)
 }
 
+/// A colour `t` of the way from `a` to `b` (both opaque): a step between two tokens.
+pub fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
+    let channel = |a: u8, b: u8| (f32::from(a) + (f32::from(b) - f32::from(a)) * t).round() as u8;
+    Color32::from_rgb(
+        channel(a.r(), b.r()),
+        channel(a.g(), b.g()),
+        channel(a.b(), b.b()),
+    )
+}
+
 /// Corner radii: controls (checkboxes included) and chips, menus and popovers, dialogs and
 /// floating panels.
 pub mod radius {

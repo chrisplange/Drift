@@ -1921,17 +1921,29 @@ impl DriftApp {
         });
     }
 
-    /// Where the pointer is on the drawing: X and Y, each value right-aligned in a cell of
-    /// its own so the digits don't jump.
+    /// Where the pointer is on the drawing: X and Y, each a label and 70 pt of value,
+    /// right-aligned so the digits don't jump. With the pointer off the drawing there is
+    /// nothing to read: it takes no room (the hint has it), and is still there to be read
+    /// out as "off the drawing".
     fn pointer_readout(&self, ui: &mut egui::Ui) {
         const AXIS: f32 = 13.0;
-        const CELL: f32 = 82.0;
+        const CELL: f32 = 70.0;
         const GAP: f32 = 12.0;
         let units = self.drawing.editor.doc.units();
         let values = self.drawing.view.pointer.map(|p| {
             let at = p.pos();
             [units.format_readout(at.x), units.format_readout(at.y)]
         });
+        let Some(values) = values else {
+            let was = ui.spacing().item_spacing.x;
+            ui.spacing_mut().item_spacing.x = 0.0;
+            let (_, response) = ui.allocate_exact_size(egui::vec2(0.0, 20.0), egui::Sense::hover());
+            ui.spacing_mut().item_spacing.x = was;
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "Pointer off the drawing")
+            });
+            return;
+        };
         let (rect, response) = ui.allocate_exact_size(
             egui::vec2(2.0 * (AXIS + CELL) + GAP, 20.0),
             egui::Sense::hover(),
@@ -1948,21 +1960,18 @@ impl DriftApp {
                 font.clone(),
                 n.tertiary,
             );
-            let shown = values.as_ref().map_or("–", |v| v[k].as_str());
             painter.text(
                 egui::pos2(left + AXIS + CELL, rect.center().y),
                 egui::Align2::RIGHT_CENTER,
-                shown,
+                &values[k],
                 font.clone(),
                 n.secondary,
             );
             left += AXIS + CELL + GAP;
         }
         response.widget_info(|| {
-            let text = match &values {
-                Some([x, y]) => format!("Pointer at X {x}, Y {y}"),
-                None => "Pointer off the drawing".to_owned(),
-            };
+            let [x, y] = &values;
+            let text = format!("Pointer at X {x}, Y {y}");
             egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text)
         });
     }
@@ -2254,7 +2263,9 @@ impl DriftApp {
                     // The pointer's position, leftmost of the cluster: the first to go when
                     // the window is narrow, so the hint keeps its room.
                     if bar.width() >= 1000.0 {
-                        theme::bar_divider(ui);
+                        if self.drawing.view.pointer.is_some() {
+                            theme::bar_divider(ui);
+                        }
                         self.pointer_readout(ui);
                     }
                     // Where the cluster's leftmost control starts.

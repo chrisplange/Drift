@@ -14,7 +14,7 @@ const JUSTIFY: [(Justify, &str); 3] = [
 
 impl DriftApp {
     /// The Wall tool's bar: `Thickness [ … ▾ ] · Left face | Centre | Right face · Straight |
-    /// Arc · ☐ Poché [Solid ▾ ■]`. What is set here is kept for the next drawing too.
+    /// Arc · ☐ Fill walls [Solid ▾ ■]`. What is set here is kept for the next drawing too.
     pub(crate) fn wall_tool_bar(&mut self, ui: &mut egui::Ui) {
         let units = self.drawing.editor.doc.units();
         theme::bar_caption(ui, "Thickness");
@@ -35,7 +35,8 @@ impl DriftApp {
             self.drawing.editor.prefs.wall_thickness_expr = None;
         }
         let presets = self.drawing.editor.wall_presets();
-        ui.menu_button("▾", |ui| {
+        // (A painted chevron: the font has no glyph for one.)
+        theme::menu_chevron(ui, "Wall thickness presets", |ui| {
             for p in presets {
                 let text = format!("{}  ({})", p.label, units.format_readout(p.mm));
                 if ui.button(text).clicked() {
@@ -45,7 +46,6 @@ impl DriftApp {
                 }
             }
         })
-        .response
         .on_hover_text("Common walls, at their actual finished thickness");
         theme::bar_divider(ui);
         if let Some(j) =
@@ -72,7 +72,7 @@ impl DriftApp {
         }
         theme::bar_caption(ui, "W");
         theme::bar_divider(ui);
-        ui.checkbox(&mut self.drawing.editor.prefs.wall_poche.on, "Poché")
+        ui.checkbox(&mut self.drawing.editor.prefs.wall_poche.on, "Fill walls")
             .on_hover_text("Fill new walls: joined walls of one style on one layer are one area");
         if self.drawing.editor.prefs.wall_poche.on {
             let mut style = self.drawing.editor.prefs.wall_poche.style.clone();

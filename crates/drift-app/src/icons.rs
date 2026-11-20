@@ -61,6 +61,8 @@ pub enum Glyph {
     Minus,
     Plus,
     ChevronDown,
+    /// Back (from a sheet to the model): an arrow to the left.
+    Back,
 }
 
 /// Maps a 20 × 20 design grid into `rect`.
@@ -757,6 +759,10 @@ pub fn glyph(painter: &egui::Painter, rect: Rect, glyph: Glyph, color: Color32) 
             p.line((10.0, 5.0), (10.0, 15.0));
         }
         Glyph::ChevronDown => p.poly(&[(5.5, 8.0), (10.0, 12.5), (14.5, 8.0)], false),
+        Glyph::Back => {
+            p.line((4.0, 10.0), (16.0, 10.0));
+            p.poly(&[(8.5, 5.5), (4.0, 10.0), (8.5, 14.5)], false);
+        }
         Glyph::Delete => {
             p.line((3.5, 5.5), (16.5, 5.5));
             p.poly(&[(7.5, 5.5), (7.5, 3.5), (12.5, 3.5), (12.5, 5.5)], false);
@@ -789,8 +795,9 @@ pub fn tool_row_sized(
 ) -> egui::Response {
     let size = vec2(ui.available_width(), height);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    let enabled = ui.is_enabled();
     response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, label)
+        egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, selected, label)
     });
     let dark = ui.visuals().dark_mode;
     let accent = crate::theme::accent(dark);
@@ -871,8 +878,9 @@ pub fn tool_tile(
     draw: impl FnOnce(&egui::Painter, Rect, Color32),
 ) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    let enabled = ui.is_enabled();
     response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, label)
+        egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, selected, label)
     });
     let dark = ui.visuals().dark_mode;
     let accent = crate::theme::accent(dark);
@@ -919,8 +927,9 @@ pub fn button(
     // A square icon button: a neutral tile with an accent icon when `selected`, a soft hover
     // otherwise. `label` names it for accessibility (screen readers and UI tests).
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), egui::Sense::click());
+    let enabled = ui.is_enabled();
     response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, label)
+        egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, selected, label)
     });
     let dark = ui.visuals().dark_mode;
     let accent = crate::theme::accent(dark);

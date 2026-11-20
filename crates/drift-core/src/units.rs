@@ -264,19 +264,22 @@ impl Units {
         }
     }
 
-    /// True if [`format_length`](Self::format_length) shows `mm` without rounding.
+    /// True if [`format_length`](Self::format_length) shows `mm` without rounding, up to
+    /// the noise a solve leaves (see [`shows_exactly`]).
     pub fn is_exact(&self, mm: f64) -> bool {
-        let shown = match self.length {
+        let step = match self.length {
             LengthFormat::Architectural | LengthFormat::FractionalInch => {
-                let n = (mm / MM_PER_INCH * f64::from(self.fraction)).round();
-                n / f64::from(self.fraction) * MM_PER_INCH
+                MM_PER_INCH / f64::from(self.fraction)
             }
-            f => {
-                let scale = 10f64.powi(i32::from(self.decimals));
-                (mm / f.mm_per_unit() * scale).round() / scale * f.mm_per_unit()
-            }
+            f => 10f64.powi(-i32::from(self.decimals)) * f.mm_per_unit(),
         };
-        (shown - mm).abs() <= 1e-9 * mm.abs().max(1.0)
+        shows_exactly(mm, step)
+    }
+
+    /// True if [`format_angle`](Self::format_angle) shows `degrees` without rounding, up to
+    /// the noise a solve leaves (see [`shows_exactly`]).
+    pub fn is_exact_angle(&self, degrees: f64) -> bool {
+        shows_exactly(degrees, 10f64.powi(-i32::from(self.angle_decimals)))
     }
 
     /// An area (given in mm²) in the display unit squared.
@@ -374,6 +377,18 @@ impl Units {
 
 fn gcd(a: i64, b: i64) -> i64 {
     if b == 0 { a } else { gcd(b, a % b) }
+}
+
+/// Whether `value`, shown rounded to a multiple of `step`, is shown as it is. A value that
+/// follows from a solve, or is measured off solved geometry, lands a hair off the number it
+/// stands for (99.9999999 for 100): it counts as exact within [`NEAR`](crate::tolerance::NEAR)
+/// of its size, the tolerance for numbers measured off drawn geometry, but never within more
+/// than a hundredth of the label's step, so a value genuinely rounded to the label (a third
+/// of 100, at any precision) still shows that it is (#486).
+fn shows_exactly(value: f64, step: f64) -> bool {
+    let shown = (value / step).round() * step;
+    let noise = (crate::tolerance::NEAR * value.abs().max(1.0)).min(0.01 * step);
+    (shown - value).abs() <= noise.max(1e-9 * value.abs().max(1.0))
 }
 
 /// Trim trailing zeros (and a trailing point) from a fixed-point number; `-0` becomes `0`.

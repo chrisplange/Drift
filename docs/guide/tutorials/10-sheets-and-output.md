@@ -36,7 +36,8 @@ and so on.
 The tabs over the canvas are the model and each sheet: click one to show it. On a sheet,
 scroll to zoom, drag with the middle or right button to pan, and press Shift+F to fit the
 sheet. The rail holds what you can do on paper: **Select**, **Add view** and **Back to
-model**. Esc, or the **Model** tab, returns to the model; picking a drawing tool (from the
+model**. The **Model** tab or **Back to model** returns to the model, and Ctrl+PgDn and
+Ctrl+PgUp step through the tabs (Esc never leaves a sheet); picking a drawing tool (from the
 **Draw**, **Build**, **Modify** or **Annotate** menu, or the command palette) takes you back to the model with it.
 
 Sheets are in the order of their tabs, which is the order they print in. To change it,
@@ -93,7 +94,7 @@ sheet, opens with it as the project's.
 
 ## 3. Draw a view on the canvas
 
-1. Click the **Model** tab (or press Esc) to go back to the model.
+1. Click the **Model** tab (or **Back to model** on the rail) to go back to the model.
 2. Pick the **View** tool (**Annotate → View**, or under **Annotate** in the tool palette).
 3. Drag a rectangle round the bore, or click two opposite corners.
 

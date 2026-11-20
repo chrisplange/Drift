@@ -4022,8 +4022,11 @@ fn sheets_preview_and_export() {
     );
     h.state_mut().undo();
     assert_eq!(placed(&h, id)[0].center, views[0].center);
-    // Esc returns to the model.
+    // Esc with nothing to cancel stays on the sheet (#487); Back to model leaves it.
     h.key_press(Key::Escape);
+    h.run();
+    assert!(h.state().drawing.view.sheet_preview);
+    h.get_by_label("Back to model").click();
     h.run();
     assert!(!h.state().drawing.view.sheet_preview);
     // An ANSI B sheet with an ASME title block and revisions.
@@ -8724,6 +8727,80 @@ fn sheets_are_tabs_with_their_own_tools_and_inspector() {
     h.run();
     assert!(!h.state().drawing.view.sheet_preview);
     save_png("drift_ui_sheet_tabs.png", &mut h);
+}
+
+/// #487: Esc on a sheet stops at the last thing it can cancel and never leaves the sheet;
+/// Ctrl+PgDn / PgUp step through the canvas tabs (the model, then each sheet), wrapping.
+#[test]
+fn esc_never_leaves_a_sheet_and_ctrl_page_keys_step_the_tabs() {
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    for _ in 0..2 {
+        h.get_by_label("Add a sheet").click();
+        h.run();
+        h.run();
+    }
+    let sheets: Vec<_> = h
+        .state()
+        .drawing
+        .editor
+        .doc
+        .sheets()
+        .map(|(id, _)| id)
+        .collect();
+    assert_eq!(sheets.len(), 2);
+    let tab = |h: &Harness<'_, DriftApp>| {
+        let app = h.state();
+        app.drawing
+            .view
+            .sheet_preview
+            .then(|| app.current_sheet())
+            .flatten()
+    };
+    let step = |h: &mut Harness<'_, DriftApp>, key: Key| {
+        h.key_press_modifiers(EguiModifiers::COMMAND, key);
+        h.run();
+        h.run();
+    };
+    assert_eq!(tab(&h), Some(sheets[1]));
+
+    // Esc puts the Note tool down, then does nothing however often it's pressed.
+    h.key_press(Key::N);
+    h.run();
+    assert_eq!(h.state().tool.kind(), ToolKind::Note);
+    for _ in 0..4 {
+        h.key_press(Key::Escape);
+        h.run();
+        assert_eq!(tab(&h), Some(sheets[1]), "Esc stays on the sheet");
+    }
+    assert_eq!(h.state().tool.kind(), ToolKind::Select);
+
+    // Ctrl+PgDn: on to the next tab, wrapping round from the last sheet to the model.
+    step(&mut h, Key::PageDown);
+    assert_eq!(tab(&h), None, "the last sheet wraps to the model");
+    step(&mut h, Key::PageDown);
+    assert_eq!(tab(&h), Some(sheets[0]));
+    step(&mut h, Key::PageDown);
+    assert_eq!(tab(&h), Some(sheets[1]));
+    // Ctrl+PgUp goes back, wrapping from the model to the last sheet.
+    step(&mut h, Key::PageUp);
+    assert_eq!(tab(&h), Some(sheets[0]));
+    step(&mut h, Key::PageUp);
+    assert_eq!(tab(&h), None);
+    step(&mut h, Key::PageUp);
+    assert_eq!(
+        tab(&h),
+        Some(sheets[1]),
+        "the model wraps to the last sheet"
+    );
+    // Esc in the model doesn't open a sheet either.
+    step(&mut h, Key::PageDown);
+    h.key_press(Key::Escape);
+    h.run();
+    assert_eq!(tab(&h), None);
 }
 
 #[test]

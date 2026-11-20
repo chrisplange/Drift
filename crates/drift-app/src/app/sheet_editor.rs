@@ -66,6 +66,8 @@ pub(crate) enum SheetMenu {
     /// Move it to this position.
     Move(usize),
     Delete,
+    /// Export just it as a PDF, or print just it.
+    Output(crate::app::sheets_ui::Output),
 }
 
 /// The right-click menu of a sheet (a canvas tab or a row in the Sheets list), at position
@@ -98,6 +100,13 @@ pub(crate) fn sheet_menu(ui: &mut egui::Ui, at: usize, count: usize) -> Option<S
         .clicked()
     {
         chose = Some(SheetMenu::Move(at + 1));
+    }
+    ui.separator();
+    if ui.button("Export PDF…").clicked() {
+        chose = Some(SheetMenu::Output(crate::app::sheets_ui::Output::Pdf));
+    }
+    if ui.button("Print…").clicked() {
+        chose = Some(SheetMenu::Output(crate::app::sheets_ui::Output::Print));
     }
     ui.separator();
     if ui.button("Delete sheet").clicked() {
@@ -368,6 +377,7 @@ impl DriftApp {
         let mut delete = None;
         let mut duplicate = None;
         let mut moved = None;
+        let mut output = None;
         // Sheet tabs (where each starts and ends), and a tab being dragged to a new place.
         let mut spots: Vec<(SheetId, f32, f32)> = Vec::new();
         let mut dragging = None;
@@ -460,6 +470,7 @@ impl DriftApp {
                                 SheetMenu::Duplicate(views) => duplicate = Some((sheet, views)),
                                 SheetMenu::Move(to) => moved = Some((sheet, to)),
                                 SheetMenu::Delete => delete = Some(sheet),
+                                SheetMenu::Output(kind) => output = Some((sheet, kind)),
                             }
                         }
                     });
@@ -561,6 +572,10 @@ impl DriftApp {
         }
         if let Some((id, to)) = moved {
             self.move_sheet(id, to);
+        }
+        if let Some((id, kind)) = output {
+            let painter = ui.painter().clone();
+            self.output_sheet(&painter, id, kind);
         }
     }
 

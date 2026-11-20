@@ -134,17 +134,19 @@ geometry itself (in the **Inspector**, or the top bar's **Stroke** menus).
 ## Sheets
 
 - **Sheets:** the drawing's sheets, by number and name, in print order (click one to show
-  it, drag one to reorder, right-click to duplicate, move or delete it), **New sheet**, and
-  **Add view** for the sheet shown.
-- **Views:** every view in the drawing and the sheets it's on. Drag one onto the sheet, or
-  use **Place on sheet** (or **Place again**), **Zoom to view** or **Delete view**; double-click
-  one to zoom to it. A view on no sheet yet has **Name** and **Scale** here; once it's
-  placed, its settings are in the **Inspector** (pick it on the sheet), and in the top bar
-  when its crop is picked in the model.
-- **Output:** **PDF…**, **SVG…**, **DWG / DXF…** and **Print…**. With several sheets, **PDF…** and
-  **Print…** ask which sheets to include. Under **Model at 1 : 1**: **Model as SVG…**,
-  **Model as PDF…** and **Dimensions and notes** (the model, or the selection, with no
-  sheet).
+  it, drag one to reorder, right-click to duplicate, move, export, print or delete it), and **New sheet**.
+  The views on a sheet are listed under it, with their scale: click one to pick it on the
+  sheet, and the chevron at the sheet's left to show or hide them.
+- **Views:** every view in the drawing and the sheets it's on, and **Add view** for the
+  sheet shown. Drag one onto the sheet, or use **Place on sheet** (or **Place again**),
+  **Zoom to view** or **Delete view**, under the picked view or on any view's right-click
+  menu (here or under its sheet); double-click one to zoom to it. A view on no sheet yet has
+  **Name** and **Scale** here; once it's placed, its settings are in the **Inspector** (pick
+  it on the sheet), and in the top bar when its crop is picked in the model.
+
+Exporting and printing are in the **File** menu (**File → Export**, **File → Print…**). To
+export or print one sheet, right-click it (in the list or on its tab) for **Export PDF…** or
+**Print…**: just that sheet, still numbered as in the set.
 
 Clicking in the Sheets panel (a sheet in the list, **New sheet**) keeps the panel in front;
 a view or the paper picked on the sheet brings the **Inspector** forward.

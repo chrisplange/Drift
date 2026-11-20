@@ -127,10 +127,13 @@ Crops and their names are for working on the canvas. They never print or export.
 ## 4. The Views list
 
 The **Views** section of the Sheets panel lists every view in the drawing, with its scale
-and the sheets it's on (or **not placed**).
+and the sheets it's on (or **not placed**). Each sheet in the list above also shows the
+views on it, under its name.
 
 - **Click** a view to pick it. Its crop shows on the canvas with its grips.
 - **Double-click** it, or click **Zoom to view**, to see its crop in the model.
+- **Right-click** it (in the Views list or under its sheet) for **Place on sheet** (or
+  **Place again**), **Zoom to view** and **Delete view**.
 - **Referenced by** lists the section and elevation marks that point at the view. Click
   one to pick it in the model.
 - **Delete view** deletes it. If it's on sheets, Drift asks first, and deleting takes it
@@ -310,7 +313,8 @@ to the new paper.
 
 ## 6. Output
 
-From the **Sheets** panel's **Output** section, or **File → Export** (and **File → Print…**):
+From **File → Export** and **File → Print…** (or the command palette). For one sheet,
+right-click it in the Sheets list or on its tab for **Export PDF…** or **Print…**:
 
 | Output | What you get |
 |---|---|
@@ -326,8 +330,8 @@ Exporting never replaces your `.drift` file.
 ### The model at 1 : 1
 
 **Model as SVG…** and **Model as PDF…** are for flat shapes that go on to another program:
-laser cutting, signage, patterns, profiles. They're in **File → Export**, under **Model at
-1 : 1** in the Output section, and in the command palette (**Export model as SVG…**).
+laser cutting, signage, patterns, profiles. They're in **File → Export** and in the command
+palette (**Export model as SVG…**).
 
 - **What goes out:** with nothing picked, everything that prints. With curves, copies of
   blocks, text or fills picked, only those, with the dimensions and notes picked or on the

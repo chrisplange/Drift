@@ -59,6 +59,8 @@ mod shapes;
 /// A sheet's own notes and dimensions: placed, picked, moved, edited and deleted (#432).
 #[cfg(not(feature = "demo"))]
 mod sheet_annotations;
+#[cfg(not(feature = "demo"))]
+mod sheets_panel;
 /// The frame: the top bar, the options bar and the status bar.
 #[cfg(not(feature = "demo"))]
 mod shell;
@@ -8513,12 +8515,15 @@ fn views_are_drawn_on_the_canvas_and_placed_on_sheets() {
     );
     h.run();
     // (Sheets by number and name.)
-    let row = format!(
-        "View 1\n{} · on A-101  Sheet 1, A-102  Sheet 2",
+    let detail = format!(
+        "{} · on A-101  Sheet 1, A-102  Sheet 2",
         scale_label(view.scale, false)
     );
     assert!(
-        h.query_by_label(&row).is_some(),
+        h.output().shapes.iter().any(|c| matches!(
+            &c.shape,
+            egui::Shape::Text(t) if t.galley.job.text == detail
+        )),
         "the Views list says where"
     );
 
@@ -8560,10 +8565,11 @@ fn views_are_drawn_on_the_canvas_and_placed_on_sheets() {
             .sheets_showing(two)
             .contains(&other)
     );
-    let rows = h.get_by_label_contains("View 2\n");
+    // (Its row in the Views list, after the sheets' nested rows.)
+    let rows = h.get_all_by_label("View 2").last().unwrap();
     rows.scroll_to_me();
     h.run();
-    let from = h.get_by_label_contains("View 2\n").rect().center();
+    let from = h.get_all_by_label("View 2").last().unwrap().rect().center();
     let rect = h.state().drawing.view.canvas_rect;
     let to = rect.center() + egui::vec2(-120.0, 60.0);
     h.hover_at(from);
@@ -9202,7 +9208,7 @@ fn sheets_reorder_duplicate_and_choose_for_pdf() {
         ["A-103  Sheet 1 copy", "A-102  Sheet 2", "A-101  Sheet 1"]
     );
 
-    // PDF… with several sheets asks which: all, or just the one shown.
+    // Export PDF with several sheets asks which: all, or just the one shown.
     let painter = h.ctx.layer_painter(egui::LayerId::background());
     let pages = |h: &mut Harness<'_, DriftApp>| {
         let pdf = h.state_mut().pdf_bytes(&painter);
@@ -9211,7 +9217,7 @@ fn sheets_reorder_duplicate_and_choose_for_pdf() {
             .count()
     };
     assert_eq!(pages(&mut h), 3);
-    h.get_by_label("PDF…").click();
+    h.state_mut().export_pdf(&painter);
     h.run();
     h.run();
     assert_eq!(

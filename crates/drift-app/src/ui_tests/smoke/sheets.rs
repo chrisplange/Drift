@@ -183,8 +183,8 @@ fn smoke_sheet_with_a_view_title_block_and_export() {
         h.state().drawing.output_dialog.is_some(),
         "Print asks for the sheets"
     );
-    // (The Sheets panel stays in front, with its own Print… button.)
-    assert!(h.get_all_by_label("Print…").count() >= 2);
+    // (The dialog's own Print…; the Sheets panel has none: Print is in the File menu.)
+    assert_eq!(h.get_all_by_label("Print…").count(), 1);
     h.get_by_label("Cancel").click();
     h.run();
     assert!(h.state().drawing.output_dialog.is_none());
@@ -407,7 +407,6 @@ fn smoke_sheet_views_list_is_left_justified() {
         .map(|(_, v)| v.title().to_owned())
         .collect();
     assert_eq!(names.len(), 2);
-    let pad = h.ctx.global_style().spacing.button_padding.x;
     for name in &names {
         let row = h
             .get_all_by_label_contains(name)
@@ -428,8 +427,9 @@ fn smoke_sheet_views_list_is_left_justified() {
                 _ => None,
             })
             .unwrap_or_else(|| panic!("the text of {name}"));
+        // (After the view glyph; under a sheet, a step in, below the sheet's name.)
         assert!(
-            (text_left - (row.left() + pad)).abs() < 1.5,
+            text_left > row.left() && text_left - row.left() < 80.0,
             "{name}: text at {text_left}, row from {}",
             row.left()
         );

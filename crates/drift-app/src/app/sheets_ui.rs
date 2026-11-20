@@ -241,20 +241,29 @@ pub(crate) struct PlacePrompt {
     pub(crate) choice: PdfPlacement,
 }
 
-/// What the output dialog makes.
-#[cfg(not(feature = "demo"))]
+/// What the output dialog (or a sheet's right-click menu) makes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Output {
     Pdf,
     Print,
 }
 
-/// A sheet's row in the Sheets tab: the sheet glyph, its number in the tertiary tone and its
-/// name; the open sheet in the selected row's look. `label` is what it is called (as its tab
-/// is).
+/// How far in from a sheet row's left edge its glyph sits: the room on its left holds the
+/// chevron that opens and closes the views on it.
+const TREE_INDENT: f32 = 18.0;
+
+/// Whether a click on a sheet row at `x` landed on its chevron.
+fn on_chevron(row: egui::Rect, x: f32) -> bool {
+    x < row.left() + TREE_INDENT
+}
+
+/// A sheet's row in the Sheets tab: the chevron (when views are on it, `open` says whether
+/// they show beneath), the sheet glyph, its number in the tertiary tone and its name; the open
+/// sheet in the selected row's look. `label` is what it is called (as its tab is).
 fn sheet_row(
     ui: &mut egui::Ui,
     selected: bool,
+    open: Option<bool>,
     label: &str,
     number: &str,
     name: &str,
@@ -269,8 +278,20 @@ fn sheet_row(
     let dark = ui.visuals().dark_mode;
     let n = theme::neutrals(dark);
     theme::paint_row(ui, rect, selected, response.hovered());
+    if let Some(open) = open {
+        let chevron = egui::Rect::from_center_size(
+            egui::pos2(rect.left() + TREE_INDENT / 2.0 + 1.0, rect.center().y),
+            egui::Vec2::splat(12.0),
+        );
+        let glyph = if open {
+            crate::icons::Glyph::ChevronDown
+        } else {
+            crate::icons::Glyph::ChevronRight
+        };
+        crate::icons::glyph(ui.painter(), chevron, glyph, n.tertiary);
+    }
     let icon = egui::Rect::from_center_size(
-        egui::pos2(rect.left() + 15.0, rect.center().y),
+        egui::pos2(rect.left() + TREE_INDENT + 9.0, rect.center().y),
         egui::Vec2::splat(14.0),
     );
     crate::icons::glyph(
@@ -286,7 +307,7 @@ fn sheet_row(
     let painter = ui
         .painter()
         .with_clip_rect(rect.shrink2(egui::vec2(6.0, 0.0)));
-    let mut x = rect.left() + 30.0;
+    let mut x = rect.left() + TREE_INDENT + 24.0;
     if !number.is_empty() {
         let r = painter.text(
             egui::pos2(x, rect.center().y),
@@ -310,6 +331,96 @@ fn sheet_row(
         n.text,
     );
     response
+}
+
+/// A view's row: under its sheet in the Sheets list (`nested`), or in the Views list. The
+/// view glyph, its name, then `detail` (its scale, and where it is placed) in the tertiary
+/// tone; the picked view in the selected row's look.
+fn view_row(
+    ui: &mut egui::Ui,
+    selected: bool,
+    nested: bool,
+    name: &str,
+    detail: &str,
+) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), theme::LIST_ROW),
+        egui::Sense::click_and_drag(),
+    );
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, name)
+    });
+    let dark = ui.visuals().dark_mode;
+    let n = theme::neutrals(dark);
+    theme::paint_row(ui, rect, selected, response.hovered());
+    // Nested, the glyph sits under its sheet's name, a step in from the sheet's own glyph.
+    let left = rect.left() + if nested { TREE_INDENT + 24.0 } else { 6.0 };
+    let icon = egui::Rect::from_center_size(
+        egui::pos2(left + 9.0, rect.center().y),
+        egui::Vec2::splat(14.0),
+    );
+    crate::icons::glyph(
+        ui.painter(),
+        icon,
+        crate::icons::Glyph::View,
+        if selected {
+            theme::accent(dark)
+        } else {
+            n.secondary
+        },
+    );
+    let painter = ui
+        .painter()
+        .with_clip_rect(rect.shrink2(egui::vec2(6.0, 0.0)));
+    let r = painter.text(
+        egui::pos2(left + 24.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        name,
+        egui::FontId::proportional(theme::size::BODY),
+        n.text,
+    );
+    painter.text(
+        egui::pos2(r.right() + 8.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        detail,
+        egui::FontId::proportional(theme::size::LABEL),
+        n.tertiary,
+    );
+    response
+}
+
+/// What a view's right-click menu chose.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ViewMenu {
+    /// Place it on the current sheet (again, if it is already there).
+    Place,
+    Zoom,
+    Delete,
+}
+
+/// A view's right-click menu. `place` is whether it is already on the current sheet, or
+/// `None` with no sheet open (then it can't be placed).
+fn view_menu(ui: &mut egui::Ui, place: Option<bool>) -> Option<ViewMenu> {
+    let mut chose = None;
+    if let Some(here) = place
+        && ui
+            .button(if here {
+                "Place again"
+            } else {
+                "Place on sheet"
+            })
+            .clicked()
+    {
+        chose = Some(ViewMenu::Place);
+    }
+    if ui.button("Zoom to view").clicked() {
+        chose = Some(ViewMenu::Zoom);
+    }
+    ui.separator();
+    if ui.button("Delete view").clicked() {
+        chose = Some(ViewMenu::Delete);
+    }
+    chose
 }
 
 impl DriftApp {
@@ -935,6 +1046,36 @@ impl DriftApp {
     }
 
     #[cfg(not(feature = "demo"))]
+    /// Export one sheet as a PDF, or print it, from its right-click menu: no dialog, since the
+    /// sheet is chosen.
+    pub(crate) fn output_sheet(&mut self, painter: &egui::Painter, id: SheetId, kind: Output) {
+        let bytes = self.sheet_pdf_bytes(painter, id);
+        let name = format!("{}.pdf", self.file_stem());
+        match kind {
+            Output::Pdf => self.files.export(&name, PDF_FILE, bytes),
+            Output::Print => self.files.open_externally(&name, &bytes),
+        }
+    }
+
+    #[cfg(not(feature = "demo"))]
+    /// One sheet as a PDF (keeping its number in the set). The others are left out of this
+    /// one only: the PDF dialog's choice stays as it was.
+    pub(crate) fn sheet_pdf_bytes(&mut self, painter: &egui::Painter, id: SheetId) -> Vec<u8> {
+        let others = self
+            .drawing
+            .editor
+            .doc
+            .sheets()
+            .map(|(s, _)| s)
+            .filter(|s| *s != id)
+            .collect();
+        let kept = std::mem::replace(&mut self.drawing.pdf_left_out, others);
+        let bytes = self.placed_pdf_bytes(painter, PdfPlacement::Fit);
+        self.drawing.pdf_left_out = kept;
+        bytes
+    }
+
+    #[cfg(not(feature = "demo"))]
     /// Open the chosen sheets as a PDF in the system viewer (a browser tab on the web) to
     /// print.
     fn open_to_print(&mut self, painter: &egui::Painter, placement: PdfPlacement) {
@@ -971,6 +1112,14 @@ impl DriftApp {
     #[cfg(feature = "demo")]
     pub(crate) fn print(&mut self, _: &egui::Painter) {
         self.not_in_demo("Printing");
+    }
+
+    #[cfg(feature = "demo")]
+    pub(crate) fn output_sheet(&mut self, _: &egui::Painter, _: SheetId, kind: Output) {
+        self.not_in_demo(match kind {
+            Output::Pdf => "Exporting a PDF",
+            Output::Print => "Printing",
+        });
     }
 
     /// Say what an import brought in; what it left out or changed stays up in a report.
@@ -1157,9 +1306,37 @@ impl DriftApp {
         use crate::app::sheet_editor::{SheetMenu, drop_index, gap_at, sheet_menu};
         let mut spots = Vec::new();
         let (mut dragging, mut dropped, mut chose) = (None, None, None);
+        // (A view picked under a sheet: the sheet, the view's index on it, the view.)
+        let (mut pick_placed, mut view_chose) = (None, None);
         for (k, (id, label, number, name)) in sheets.iter().enumerate() {
             let shown = self.drawing.view.sheet_preview && current == Some(*id);
-            let row = sheet_row(ui, shown, label, number, name).interact(egui::Sense::drag());
+            // The views on it, as they nest under its row (as in a project browser).
+            let doc = &self.drawing.editor.doc;
+            let placed: Vec<(usize, ViewId, String, String)> = doc
+                .sheet(*id)
+                .map(|s| {
+                    s.viewports
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, port)| {
+                            let v = doc.view(port.view)?;
+                            let scale = scale_label(v.scale, self.imperial());
+                            Some((i, port.view, v.title().to_owned(), scale))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let open_id = ui.id().with(("sheet_open", *id));
+            let open = ui.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(true);
+            let row = sheet_row(
+                ui,
+                shown,
+                (!placed.is_empty()).then_some(open),
+                label,
+                number,
+                name,
+            )
+            .interact(egui::Sense::drag());
             spots.push((*id, row.rect.top(), row.rect.bottom()));
             if row.dragged() {
                 dragging = Some(*id);
@@ -1167,16 +1344,51 @@ impl DriftApp {
             if row.drag_stopped() {
                 dropped = Some(*id);
             }
-            if row.clicked() {
+            let on_chevron = !placed.is_empty()
+                && row
+                    .interact_pointer_pos()
+                    .is_some_and(|p| on_chevron(row.rect, p.x));
+            if row.clicked() && on_chevron {
+                ui.data_mut(|d| d.insert_temp(open_id, !open));
+            } else if row.clicked() {
                 self.show_sheet(Some(*id));
                 self.show_panel(crate::dock::Panel::Inspector);
             }
-            row.on_hover_text("Drag to reorder; right-click for more")
-                .context_menu(|ui| {
-                    if let Some(m) = sheet_menu(ui, k, sheets.len()) {
-                        chose = Some((*id, m));
+            row.context_menu(|ui| {
+                if let Some(m) = sheet_menu(ui, k, sheets.len()) {
+                    chose = Some((*id, m));
+                }
+            });
+            if !open {
+                continue;
+            }
+            for (index, view, title, scale) in &placed {
+                let picked = shown
+                    && self.drawing.view.sheet_pick == crate::app::sheet_editor::SheetPick::View
+                    && self.drawing.view.sheet_view == *index;
+                let response = view_row(ui, picked, true, title, scale);
+                if response.clicked() {
+                    pick_placed = Some((*id, *index, *view));
+                }
+                let here =
+                    current.map(|s| self.drawing.editor.doc.sheets_showing(*view).contains(&s));
+                response.context_menu(|ui| {
+                    if let Some(m) = view_menu(ui, here) {
+                        view_chose = Some((*view, m));
                     }
                 });
+            }
+        }
+        if let Some((sheet, index, view)) = pick_placed {
+            self.show_sheet(Some(sheet));
+            self.drawing.view.sheet_view = index;
+            self.drawing.picked_view = Some(view);
+            self.drawing.view.sheet_pick = crate::app::sheet_editor::SheetPick::View;
+            self.drawing.view.view_set = None;
+            self.show_panel(crate::dock::Panel::Inspector);
+        }
+        if let Some((view, m)) = view_chose {
+            self.run_view_menu(view, m, current);
         }
         if let (Some(id), Some(p)) = (dragging.or(dropped), ui.ctx().pointer_interact_pos()) {
             let to = drop_index(&spots, id, p.y);
@@ -1197,36 +1409,40 @@ impl DriftApp {
             Some((id, SheetMenu::Duplicate(views))) => self.duplicate_sheet(id, views),
             Some((id, SheetMenu::Move(to))) => self.move_sheet(id, to),
             Some((id, SheetMenu::Delete)) => self.delete_sheet(id),
+            Some((id, SheetMenu::Output(kind))) => {
+                let painter = ui.painter().clone();
+                self.output_sheet(&painter, id, kind);
+            }
             None => {}
         }
         ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            if ui.button("New sheet").clicked() {
-                self.new_sheet();
-            }
-            if let Some(id) = current
-                && ui
-                    .button("Add view")
-                    .on_hover_text(
-                        "Drag a rectangle round what the view shows, in the model; it goes on \
-                         the sheet",
-                    )
-                    .clicked()
-            {
-                self.start_add_view(id);
-            }
-        });
-        ui.label(
-            egui::RichText::new(
-                "The tabs in the top bar switch between the model and each sheet. Pick a view \
-                 or the paper there to set it up in the Inspector.",
-            )
-            .small()
-            .weak(),
-        );
+        if ui.button("New sheet").clicked() {
+            self.new_sheet();
+        }
+        // (Export and Print are in the File menu, as in other drawing apps.)
         self.model_views_section(ui, current);
-        theme::section(ui, "Output");
-        self.output_buttons(ui);
+    }
+
+    /// Do what a view's right-click menu chose. Placing goes on `current`, the open sheet.
+    fn run_view_menu(&mut self, view: ViewId, chose: ViewMenu, current: Option<SheetId>) {
+        match chose {
+            ViewMenu::Place => {
+                if let Some(sheet) = current {
+                    self.place_view(sheet, view, None);
+                    self.drawing.view.sheet_preview = true;
+                }
+            }
+            ViewMenu::Zoom => self.zoom_to_view(view),
+            ViewMenu::Delete => {
+                if self.drawing.editor.doc.sheets_showing(view).is_empty() {
+                    self.delete_view(view);
+                } else {
+                    // (Asked in the Views section, under the picked view.)
+                    self.drawing.picked_view = Some(view);
+                    self.drawing.confirm_delete_view = Some(view);
+                }
+            }
+        }
     }
 
     /// Drawing settings → Project: what every sheet's title block shares. Typing merges into
@@ -1522,66 +1738,8 @@ impl DriftApp {
         typing
     }
 
-    fn output_buttons(&mut self, ui: &mut egui::Ui) {
-        let painter = ui.painter().clone();
-        ui.horizontal_wrapped(|ui| {
-            if ui
-                .button("PDF…")
-                .on_hover_text("The sheets you choose, at true scale")
-                .clicked()
-            {
-                self.export_pdf(&painter);
-            }
-            if ui
-                .button("SVG…")
-                .on_hover_text("This sheet, at true scale")
-                .clicked()
-            {
-                self.export_svg(&painter);
-            }
-            if ui
-                .button("DWG / DXF…")
-                .on_hover_text("The model at full size, with its layers, for CAD")
-                .clicked()
-            {
-                self.export_dxf(&painter);
-            }
-            if ui.button("Print…").clicked() {
-                self.print(&painter);
-            }
-        });
-        ui.label(egui::RichText::new("Model at 1 : 1").weak());
-        ui.horizontal_wrapped(|ui| self.model_export_buttons(ui, &painter));
-    }
-
-    /// Model as SVG and PDF, and whether they carry dimensions and notes.
-    pub(crate) fn model_export_buttons(&mut self, ui: &mut egui::Ui, painter: &egui::Painter) {
-        let scope = if self.model_scope().is_some() {
-            "The selection"
-        } else {
-            "Everything that prints"
-        };
-        if ui
-            .button("Model as SVG…")
-            .on_hover_text(format!(
-                "{scope}, at true size on a page fitted to it, a group per layer"
-            ))
-            .clicked()
-        {
-            self.export_model(painter, false);
-        }
-        if ui
-            .button("Model as PDF…")
-            .on_hover_text(format!("{scope}, at true size on a page fitted to it"))
-            .clicked()
-        {
-            self.export_model(painter, true);
-        }
-        crate::theme::checkbox(ui, &mut self.model_annotations, "Dimensions and notes")
-            .on_hover_text("Model exports include dimensions and notes");
-    }
-
     /// What a model export is limited to: the pick, if anything is picked.
+    #[cfg(not(feature = "demo"))]
     fn model_scope(&self) -> Option<crate::output::Scope> {
         let dimension = self.drawing.selected_constraint.filter(|id| {
             self.drawing
@@ -2433,19 +2591,10 @@ impl DriftApp {
             );
         }
         let mut zoom = None;
+        let mut chose = None;
         for (id, name, detail) in &rows {
             let picked = self.drawing.picked_view == Some(*id);
-            let text = egui::RichText::new(format!("{name}\n{detail}"));
-            // (The space after the text grows: it sits at the left, as in the other lists.)
-            let response = ui
-                .add_sized(
-                    [ui.available_width(), 34.0],
-                    egui::Button::selectable(picked, (text, egui::Atom::grow()))
-                        .sense(egui::Sense::click_and_drag()),
-                )
-                .on_hover_text(
-                    "Double-click to zoom to it in the model; drag it onto the sheet to place it",
-                );
+            let response = view_row(ui, picked, false, name, detail);
             response.dnd_set_drag_payload(*id);
             if response.clicked() || response.drag_started() {
                 self.drawing.picked_view = Some(*id);
@@ -2453,9 +2602,24 @@ impl DriftApp {
             if response.double_clicked() {
                 zoom = Some(*id);
             }
+            let here = current.map(|s| self.drawing.editor.doc.sheets_showing(*id).contains(&s));
+            response.context_menu(|ui| {
+                if let Some(m) = view_menu(ui, here) {
+                    chose = Some((*id, m));
+                }
+            });
         }
         if let Some(id) = zoom {
             self.zoom_to_view(id);
+        }
+        if let Some((id, m)) = chose {
+            self.run_view_menu(id, m, current);
+        }
+        if let Some(id) = current {
+            ui.add_space(4.0);
+            if ui.button("Add view").clicked() {
+                self.start_add_view(id);
+            }
         }
         let Some(view_id) = self
             .drawing
@@ -2497,18 +2661,13 @@ impl DriftApp {
                     } else {
                         "Place on sheet"
                     })
-                    .on_hover_text("Put it on the current sheet, where there is room")
                     .clicked()
                 {
                     self.place_view(sheet, view_id, None);
                     self.drawing.view.sheet_preview = true;
                 }
             }
-            if ui
-                .button("Zoom to view")
-                .on_hover_text("Show its crop in the model")
-                .clicked()
-            {
+            if ui.button("Zoom to view").clicked() {
                 self.zoom_to_view(view_id);
             }
             if ui.button("Delete view").clicked() {

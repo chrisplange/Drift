@@ -28,6 +28,7 @@ Seeded 2026-11-09 from the command registry, importers/exporters, agent schema a
 - Regular polygon. `crates/drift-edit/src/tools/polygon.rs`
 - Circle. `crates/drift-edit/src/tools/circle.rs`
 - Arcs: centre, three-point and tangent. `crates/drift-edit/src/tools/arc.rs`
+- An arc continuing a line or arc: Space cycles tangent, reverse tangent and free. `crates/drift-edit/src/tools/tangent_arc.rs`
 - Ellipse. `crates/drift-edit/src/tools/ellipse.rs`
 - Pen (smooth curves, Illustrator-style). `crates/drift-edit/src/tools/pen.rs`
 - Slot. `crates/drift-edit/src/tools/slot.rs`
@@ -41,6 +42,7 @@ Seeded 2026-11-09 from the command registry, importers/exporters, agent schema a
 - Rotate tool around a base point. `crates/drift-edit/src/tools/rotate.rs`
 - Trim, extend, break at point. `crates/drift-edit/src/tools/curve_ops.rs`
 - Fillet and chamfer, editable by drag. `crates/drift-edit/src/tools/corners.rs`
+- A corner kept for a dimension, and a fillet's centre, drawn as a muted cross until the fillet or its lines are lit. `crates/drift-edit/src/editor/muted_points.rs`
 - Join corners. `crates/drift-app/src/commands.rs`
 - Linear and circular arrays, previewed on the canvas until applied (one undo step). `crates/drift-app/src/app/arrays.rs`
 - Find overlapping curves. `crates/drift-app/src/commands.rs`
@@ -79,6 +81,7 @@ Seeded 2026-11-09 from the command registry, importers/exporters, agent schema a
 ## Fills and hatches
 - Solid fills of closed areas. `crates/drift-edit/src/tools/fill.rs`
 - Hatch patterns. `crates/drift-draft/src/hatch.rs`
+- H with the Fill tool on switches between the last hatch and Solid. `crates/drift-app/src/app/fill_ui.rs`
 - Edit fill. `crates/drift-app/src/app/fill_ui.rs`
 - Closed-area detection. `crates/drift-geom/src/regions.rs`
 

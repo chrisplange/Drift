@@ -194,6 +194,9 @@ impl ItemsCache {
         }
         let points = ed.points_of(moving.iter().copied());
         moving.extend(points);
+        // Kept corners and fillet centres their fillet or lines light up (#501).
+        let muted = ed.muted_lit_by(&moving);
+        moving.extend(muted);
         for id in moving {
             let Ok(at) = self.slots.binary_search_by_key(&id, |(e, _)| *e) else {
                 continue;

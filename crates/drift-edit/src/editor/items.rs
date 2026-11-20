@@ -71,6 +71,7 @@ impl Editor {
             status_colors,
             dark,
             rest,
+            muted: self.muted_points(),
             hidden,
             shown_ends,
             selected: self.selection.iter().copied().collect(),
@@ -321,6 +322,19 @@ impl Editor {
         if role.is_some_and(|r| r != PointRole::Standalone && r != PointRole::Handle) {
             item = item.as_vertex();
         }
+        // A kept corner or a fillet's centre: a muted cross unless what it belongs to is
+        // lit up (#501).
+        if entity.kind.is_point()
+            && look.muted.muted(id, |e| {
+                look.selected.contains(&e)
+                    || (!look.rest
+                        && (self.hovered == Some(e)
+                            || self.highlight.contains(&e)
+                            || self.snapped_point == Some(e)))
+            })
+        {
+            item = item.as_marker();
+        }
         let owner = look.wall_owners.as_ref().and_then(|o| o.get(id));
         let wall = owner
             .filter(|o| matches!(o, drift_core::Owner::Wall(_)))
@@ -430,6 +444,8 @@ pub(crate) struct ItemLook {
     hovered_wall: Option<drift_core::WallId>,
     hovered_offset: Option<drift_core::OffsetId>,
     wall_owners: Option<std::rc::Rc<drift_core::Owners>>,
+    /// The points drawn muted when nothing they belong to is lit (#501).
+    muted: std::rc::Rc<super::muted_points::MutedPoints>,
 }
 
 /// Which end and centre points show (#259): every end point with View → End points on, and

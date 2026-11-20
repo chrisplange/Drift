@@ -667,6 +667,9 @@ pub struct DriftApp {
     show_axes: bool,
     /// Built-in and imported hatch patterns.
     hatch_patterns: fills::PatternLibrary,
+    /// The hatch the Fill tool had before it was set to Solid: H with the tool on, or the
+    /// bar's Hatch, brings it back (#497).
+    last_hatch: Option<drift_core::Hatch>,
     /// A message to show in the next frame (from code that doesn't know the time).
     status_next: Option<String>,
     /// An error to show in the next frame (from code that doesn't know the time).
@@ -877,6 +880,7 @@ impl DriftApp {
             show_grid: true,
             show_axes: true,
             hatch_patterns: Default::default(),
+            last_hatch: None,
             status_next: None,
             status_error_next: None,
             model_annotations: true,

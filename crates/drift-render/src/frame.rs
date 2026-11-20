@@ -566,6 +566,22 @@ impl Builder<'_> {
         }
         let (color, half_width, dash) = self.style(item);
         match item.shape {
+            Shape::Point(p) if item.marker && item.emphasis == Emphasis::Normal => {
+                // A small muted cross in the construction colour (#501).
+                let c = self.to_px(p);
+                if self.visible(c, DVec2::ZERO) {
+                    let ppp = self.ppp();
+                    let r = 3.0 * ppp;
+                    let color = if item.dof == DofState::Over {
+                        self.palette.over
+                    } else {
+                        self.palette.construction
+                    };
+                    for d in [DVec2::new(r, r), DVec2::new(r, -r)] {
+                        self.add_segment(c - d, c + d, color, 0.5 * ppp, [0.0; 3], 0.0);
+                    }
+                }
+            }
             Shape::Point(p) => {
                 let c = self.to_px(p);
                 if self.visible(c, DVec2::ZERO) {

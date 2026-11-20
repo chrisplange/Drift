@@ -249,15 +249,15 @@ pub(crate) fn value_field(
     let mut text = ui
         .data(|d| d.get_temp::<String>(key))
         .unwrap_or_else(|| shown.to_owned());
-    let response = ui
-        .add(
-            egui::TextEdit::singleline(&mut text)
-                .id(key.with("field"))
-                .desired_width(width)
-                .min_size(egui::vec2(0.0, theme::ROW_HEIGHT))
-                .vertical_align(egui::Align::Center),
-        )
-        .on_hover_text(tip);
+    let response = theme::field(
+        ui,
+        egui::TextEdit::singleline(&mut text)
+            .id(key.with("field"))
+            .desired_width(width)
+            .min_size(egui::vec2(0.0, theme::ROW_HEIGHT))
+            .vertical_align(egui::Align::Center),
+    )
+    .on_hover_text(tip);
     if response.has_focus() {
         ui.data_mut(|d| d.insert_temp(key, text.clone()));
     }
@@ -352,7 +352,8 @@ fn size_rows(ui: &mut egui::Ui, ed: &Editor, id: drift_core::EntityId) -> Option
             let shown = units.format_angle(d.y.atan2(d.x).to_degrees());
             theme::row(ui, "Angle", |ui| {
                 let key = egui::Id::new(("angle", id.0));
-                let tip = "Type an angle to turn the line about its start (anticlockwise from +X)";
+                let tip =
+                    "Type an angle to turn the line about its start (counterclockwise from +X)";
                 let width = ui.available_width();
                 if let Some(text) = value_field(ui, key, &shown, width, tip) {
                     *out.borrow_mut() = Some(SizeEdit::Angle(id, text));
@@ -1171,6 +1172,7 @@ impl DriftApp {
         ui.add_space(4.0);
         theme::row(ui, "Layer", |ui| {
             egui::ComboBox::from_id_salt("inspector_layer")
+                .icon(crate::theme::combo_icon)
                 .selected_text(text)
                 .width(ui.available_width())
                 .truncate()
@@ -1395,7 +1397,7 @@ impl DriftApp {
                 &[
                     (LineKind::Solid, "Geometry"),
                     (LineKind::Construction, "Construction"),
-                    (LineKind::Center, "Centre line"),
+                    (LineKind::Center, "Center line"),
                 ],
             ) {
                 self.set_selection_style(style);
@@ -1758,7 +1760,8 @@ impl DriftApp {
                             .cloned()
                             .or_else(|| ed.dimension_edit_text(*id))
                             .unwrap_or_default();
-                        let response = ui.add(
+                        let response = crate::theme::field(
+                            ui,
                             egui::TextEdit::singleline(&mut text)
                                 .id(field)
                                 .desired_width(value_width)

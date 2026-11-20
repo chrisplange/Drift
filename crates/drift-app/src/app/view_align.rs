@@ -38,7 +38,7 @@ impl AlignTo {
         (AlignTo::Left, "Left", "Left edges in line"),
         (
             AlignTo::Centre,
-            "Centre",
+            "Center",
             "Middles in line, one above the other",
         ),
         (AlignTo::Right, "Right", "Right edges in line"),

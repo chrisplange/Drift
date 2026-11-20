@@ -3485,7 +3485,7 @@ fn a_sheet_prints_in_greyscale_or_black_and_white() {
     assert_eq!(pages[0], mono, "what prints is what the preview shows");
     save_png("drift_ui_sheet_mono.png", &mut h);
 
-    h.get_by_label("Greyscale").click();
+    h.get_by_label("Grayscale").click();
     h.run();
     h.run();
     let greys = preview(&h);
@@ -4942,7 +4942,7 @@ fn text_is_typed_in_place_and_windows_open() {
     h.run();
     save_png("drift_ui_about.png", &mut h);
     // About → Licences shows the third-party notices.
-    h.get_by_label("Licences…").click();
+    h.get_by_label("Licenses…").click();
     h.run();
     h.run();
     h.run();

@@ -461,7 +461,8 @@ impl DriftApp {
     /// Preferences → Updates.
     pub(crate) fn updates_section(&mut self, ui: &mut egui::Ui) {
         theme::section(ui, "Updates");
-        ui.checkbox(
+        crate::theme::checkbox(
+            ui,
             &mut self.updates.auto_check,
             "Check for updates when Drift starts",
         );

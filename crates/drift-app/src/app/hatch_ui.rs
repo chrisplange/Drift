@@ -301,7 +301,7 @@ impl DriftApp {
                 // (Wrapped in what the grid leaves of a narrow pane.)
                 ui.add(
                     egui::Label::new(
-                        egui::RichText::new("Origin on a corner or the centre")
+                        egui::RichText::new("Origin on a corner or the center")
                             .size(theme::size::CAPTION)
                             .color(ui.visuals().weak_text_color()),
                     )
@@ -314,7 +314,7 @@ impl DriftApp {
         theme::wide_row(ui, "Angle", align + 4.0 + 48.0, |ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
             let key = egui::Id::new(("hatch_angle", id.0));
-            let tip = "Pattern angle: type an angle (anticlockwise from +X)";
+            let tip = "Pattern angle: type an angle (counterclockwise from +X)";
             // The field takes what the button beside it leaves.
             let width = (ui.available_width() - align - 4.0).max(40.0);
             if let Some(text) =
@@ -501,7 +501,7 @@ fn anchor_grid(ui: &mut egui::Ui, b: &Bounds) -> Option<DVec2> {
             DVec2::new(b.min.x, b.max.y),
         ),
         ("Top right", egui::vec2(1.0, 0.0), b.max),
-        ("Centre", egui::vec2(0.5, 0.5), (b.min + b.max) / 2.0),
+        ("Center", egui::vec2(0.5, 0.5), (b.min + b.max) / 2.0),
     ];
     let mut picked = None;
     for (name, f, at) in spots {

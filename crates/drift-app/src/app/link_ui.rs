@@ -167,12 +167,16 @@ impl DriftApp {
                 .small()
                 .weak(),
         );
-        ui.checkbox(&mut self.ai_link, "Let AI assistants edit the open drawing")
-            .on_hover_text(
-                "Claude and other assistants connected through drift-mcp work on the drawing \
+        crate::theme::checkbox(
+            ui,
+            &mut self.ai_link,
+            "Let AI assistants edit the open drawing",
+        )
+        .on_hover_text(
+            "Claude and other assistants connected through drift-mcp work on the drawing \
                  in this window, and you see each change as it is made. Only programs \
                  running as you on this computer can connect.",
-            );
+        );
         if let Some(e) = &self.link.failed {
             ui.label(
                 egui::RichText::new(format!("The link couldn't start: {e}"))

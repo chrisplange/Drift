@@ -145,7 +145,7 @@ impl DriftApp {
         let mut on = canvas == refs.len();
         let mixed = canvas > 0 && !on;
         if ui
-            .add(egui::Checkbox::new(&mut on, "On the canvas").indeterminate(mixed))
+            .add(crate::theme::Checkbox::new(&mut on, "On the canvas").indeterminate(mixed))
             .on_hover_text(
                 "Off: not drawn on the canvas (Alt+H, or View → Hidden annotations, shows \
                  them faded). A hidden dimension still holds its geometry",
@@ -158,7 +158,8 @@ impl DriftApp {
         let mixed = sheets > 0 && !on;
         if ui
             .add(
-                egui::Checkbox::new(&mut on, "On sheets, in print and export").indeterminate(mixed),
+                crate::theme::Checkbox::new(&mut on, "On sheets, in print and export")
+                    .indeterminate(mixed),
             )
             .on_hover_text("Off: left off sheets, PDF, SVG, DXF and print; still on the canvas")
             .changed()
@@ -202,6 +203,7 @@ impl DriftApp {
         let mut change = None;
         theme::row(ui, "In views", |ui| {
             egui::ComboBox::from_id_salt("annotation_views")
+                .icon(crate::theme::combo_icon)
                 .selected_text(summary)
                 .width(ui.available_width())
                 .show_ui(ui, |ui| {
@@ -214,7 +216,10 @@ impl DriftApp {
                         let mut on = n == refs.len();
                         let mixed = n > 0 && !on;
                         if ui
-                            .add(egui::Checkbox::new(&mut on, name.as_str()).indeterminate(mixed))
+                            .add(
+                                crate::theme::Checkbox::new(&mut on, name.as_str())
+                                    .indeterminate(mixed),
+                            )
                             .changed()
                         {
                             change = Some(Some((*id, on)));

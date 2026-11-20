@@ -51,16 +51,15 @@ fn slider_range(kind: Kind, v: f64) -> (f64, f64) {
 
 impl DriftApp {
     pub(crate) fn parameters_panel(&mut self, ui: &mut egui::Ui, now: f64) {
-        let output = egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                // The drawing's units and drafting standard are in Preferences: this tab is
-                // for what drives the sketch.
-                self.variables_section(ui, now);
-                self.options_section(ui, now);
-                self.measurements_section(ui);
-                self.patterns_section(ui);
-            });
+        let area = egui::ScrollArea::vertical().auto_shrink([false, false]);
+        let output = crate::theme::pane_scroll(ui, area, |ui| {
+            // The drawing's units and drafting standard are in Preferences: this tab is
+            // for what drives the sketch.
+            self.variables_section(ui, now);
+            self.options_section(ui, now);
+            self.measurements_section(ui);
+            self.patterns_section(ui);
+        });
         self.panel_scrolled(ui, crate::dock::Panel::Parameters, &output);
     }
 
@@ -128,6 +127,7 @@ impl DriftApp {
         };
         crate::theme::row(ui, "Format", |ui| {
             egui::ComboBox::from_id_salt("length_format")
+                .icon(crate::theme::combo_icon)
                 .selected_text(units.length.label())
                 .width(ui.available_width())
                 .show_ui(ui, |ui| {
@@ -139,22 +139,27 @@ impl DriftApp {
         if units.length.is_fractional() {
             crate::theme::row(ui, "Round to", |ui| {
                 egui::ComboBox::from_id_salt("fraction")
+                    .icon(crate::theme::combo_icon)
                     .selected_text(format!("1/{}\"", units.fraction))
                     .show_ui(ui, |ui| {
                         for f in FRACTIONS {
                             ui.selectable_value(&mut units.fraction, f, format!("1/{f}\""));
                         }
                     });
-                ui.checkbox(&mut units.zero_feet, "Show 0'");
+                crate::theme::checkbox(ui, &mut units.zero_feet, "Show 0'");
             });
         } else {
             crate::theme::row(ui, "Decimals", |ui| {
-                ui.add(egui::DragValue::new(&mut units.decimals).range(0..=8));
+                crate::theme::drag(ui, egui::DragValue::new(&mut units.decimals).range(0..=8));
             });
         }
         crate::theme::row(ui, "Angles", |ui| {
-            ui.add(egui::DragValue::new(&mut units.angle_decimals).range(0..=8));
-            ui.label(egui::RichText::new("decimals").weak());
+            crate::theme::drag(
+                ui,
+                egui::DragValue::new(&mut units.angle_decimals)
+                    .range(0..=8)
+                    .suffix(" decimals"),
+            );
         });
         if units != before {
             self.drawing.editor.set_units(units);
@@ -200,9 +205,11 @@ impl DriftApp {
                     .name_text
                     .entry(*id)
                     .or_insert_with(|| var.name.clone());
-                let r = ui
-                    .add(egui::TextEdit::singleline(name).desired_width(name_width))
-                    .on_hover_text(format!("A {}", var.kind.label().to_lowercase()));
+                let r = crate::theme::field(
+                    ui,
+                    egui::TextEdit::singleline(name).desired_width(name_width),
+                )
+                .on_hover_text(format!("A {}", var.kind.label().to_lowercase()));
                 if r.lost_focus() {
                     let text = std::mem::take(name);
                     self.drawing.params.name_text.remove(id);
@@ -223,7 +230,8 @@ impl DriftApp {
                     .or_insert_with(|| var.expr.clone());
                 value_left = ui.cursor().left();
                 let room = ui.available_width() - 20.0 - ui.spacing().item_spacing.x;
-                let r = ui.add(
+                let r = crate::theme::field(
+                    ui,
                     egui::TextEdit::singleline(expr)
                         .desired_width(room)
                         .id(egui::Id::new(("var_expr", id.0))),
@@ -275,13 +283,15 @@ impl DriftApp {
         ui.add_space(4.0);
         let mut enter = false;
         ui.horizontal(|ui| {
-            ui.add(
+            crate::theme::field(
+                ui,
                 egui::TextEdit::singleline(&mut self.drawing.params.new_name)
                     .hint_text("name")
                     .desired_width(name_width),
             );
             ui.label(egui::RichText::new("=").weak());
-            let r = ui.add(
+            let r = crate::theme::field(
+                ui,
                 egui::TextEdit::singleline(&mut self.drawing.params.new_expr)
                     .hint_text("value or expression")
                     .desired_width(ui.available_width()),
@@ -290,6 +300,7 @@ impl DriftApp {
         });
         ui.horizontal(|ui| {
             egui::ComboBox::from_id_salt("new_kind")
+                .icon(crate::theme::combo_icon)
                 .selected_text(self.drawing.params.new_kind.label())
                 .width(name_width)
                 .show_ui(ui, |ui| {
@@ -324,12 +335,13 @@ impl DriftApp {
         let mut v = value;
         let width = ui.spacing().slider_width;
         ui.spacing_mut().slider_width = ui.available_width();
-        let r = ui.add(
-            egui::Slider::new(&mut v, lo..=hi)
-                .show_value(false)
-                .clamping(egui::SliderClamping::Always),
+        let r = crate::theme::slider_bare(
+            ui,
+            egui::Slider::new(&mut v, lo..=hi).clamping(egui::SliderClamping::Always),
         );
         ui.spacing_mut().slider_width = width;
+        let at = if hi > lo { (v - lo) / (hi - lo) } else { 0.0 };
+        crate::theme::paint_slider(ui, &r, at as f32);
         if r.drag_started() {
             self.drawing.params.slider_range = Some((id, lo, hi));
         }
@@ -412,7 +424,8 @@ impl DriftApp {
                         if let Some((rid, text)) = &mut self.drawing.params.renaming
                             && *rid == id
                         {
-                            let r = ui.add(
+                            let r = crate::theme::field(
+                                ui,
                                 egui::TextEdit::singleline(text)
                                     .desired_width(ui.available_width()),
                             );
@@ -426,9 +439,10 @@ impl DriftApp {
                                 r.request_focus();
                             }
                         } else {
-                            let r = ui.radio(active == Some(id), &name).on_hover_text(format!(
-                                "{kind}. Click to apply; double-click to rename"
-                            ));
+                            let r = crate::theme::radio(ui, active == Some(id), &name)
+                                .on_hover_text(format!(
+                                    "{kind}. Click to apply; double-click to rename"
+                                ));
                             if r.double_clicked() {
                                 self.drawing.params.renaming = Some((id, name.clone()));
                             } else if r.clicked()
@@ -444,12 +458,14 @@ impl DriftApp {
         }
         ui.add_space(2.0);
         ui.horizontal(|ui| {
-            ui.add(
+            crate::theme::field(
+                ui,
                 egui::TextEdit::singleline(&mut self.drawing.params.option_name)
                     .hint_text("name")
                     .desired_width(ui.available_width() - 118.0 - ui.spacing().item_spacing.x),
             );
             egui::ComboBox::from_id_salt("option_kind")
+                .icon(crate::theme::combo_icon)
                 .width(118.0)
                 .selected_text(if self.drawing.params.option_whole {
                     "Whole sketch"

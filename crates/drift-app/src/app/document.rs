@@ -1015,8 +1015,8 @@ impl DriftApp {
             (self.thin_lines, "Thin lines", "Lines at their weights"),
             (
                 self.status_colors,
-                "Curves coloured by constraint status",
-                "Curves in their own and their layers' colours",
+                "Curves colored by constraint status",
+                "Curves in their own and their layers' colors",
             ),
             (
                 self.drawing.editor.prefs.always_endpoints,

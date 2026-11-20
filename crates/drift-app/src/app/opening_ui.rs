@@ -27,6 +27,7 @@ impl DriftApp {
         };
         let mut pick: Option<Option<&'static str>> = None;
         egui::ComboBox::from_id_salt(salt)
+            .icon(crate::theme::combo_icon)
             .selected_text(shown)
             .show_ui(ui, |ui| {
                 if ui
@@ -65,12 +66,13 @@ impl DriftApp {
     /// is kept for the next drawing too.
     pub(crate) fn opening_tool_bar(&mut self, ui: &mut egui::Ui) {
         self.size_set_picker(ui, "opening_size_set");
-        bar_divider(ui);
+        theme::group_divider(ui);
         let set = self.drawing.editor.size_set();
         let now = self.drawing.editor.opening_type_now();
         let family_name = hosted::family(now.family).map_or(now.family, |f| f.name);
         let mut family: Option<&'static str> = None;
         egui::ComboBox::from_id_salt("opening_family")
+            .icon(crate::theme::combo_icon)
             .selected_text(family_name)
             .show_ui(ui, |ui| {
                 for f in set.families() {
@@ -85,6 +87,7 @@ impl DriftApp {
         let now = self.drawing.editor.opening_type_now();
         let mut row: Option<sizes::SizeRow> = None;
         egui::ComboBox::from_id_salt("opening_type")
+            .icon(crate::theme::combo_icon)
             .selected_text(if now.name.is_empty() {
                 "Custom".to_owned()
             } else {
@@ -102,10 +105,10 @@ impl DriftApp {
         if let Some(r) = row {
             self.drawing.editor.set_opening_type(&r);
         }
-        bar_divider(ui);
+        theme::group_divider(ui);
         let units = self.drawing.editor.doc.units();
         let unit = units.length.mm_per_unit();
-        ui.label(egui::RichText::new("Opening").size(12.0).weak());
+        theme::bar_caption(ui, "Opening");
         let now = self.drawing.editor.opening_type_now();
         let mut shown = now.opening.0 / unit;
         if ui
@@ -127,7 +130,7 @@ impl DriftApp {
             self.drawing.editor.prefs.opening.family = now.family.to_owned();
             self.drawing.editor.prefs.opening.type_name.clear();
         }
-        bar_divider(ui);
+        theme::group_divider(ui);
         let swing = (
             self.drawing.editor.prefs.opening.hand,
             self.drawing.editor.prefs.opening.facing,
@@ -136,7 +139,7 @@ impl DriftApp {
             self.drawing.editor.prefs.opening.hand = h;
             self.drawing.editor.prefs.opening.facing = f;
         }
-        ui.label(egui::RichText::new("Space").size(12.0).weak());
+        theme::bar_caption(ui, "Space");
     }
 
     /// The Inspector for picked openings. False when no opening is picked.
@@ -197,9 +200,9 @@ impl DriftApp {
                 };
                 let mut commit = None;
                 theme::row(ui, label, |ui| {
-                    let r = ui.add(
-                        egui::TextEdit::singleline(&mut text)
-                            .desired_width(ui.available_width() - 8.0),
+                    let r = crate::theme::field(
+                        ui,
+                        egui::TextEdit::singleline(&mut text).desired_width(ui.available_width()),
                     );
                     if r.changed() {
                         self.drawing.opening_text = Some((first, field, text.clone()));
@@ -234,6 +237,8 @@ impl DriftApp {
         let swing = (op.hand, op.facing);
         theme::row(ui, "Opens", |ui| {
             egui::ComboBox::from_id_salt("opening_swing")
+                .icon(crate::theme::combo_icon)
+                .width(ui.available_width())
                 .selected_text(
                     SWINGS
                         .iter()
@@ -276,7 +281,7 @@ impl DriftApp {
             });
             if !centred
                 && ui
-                    .button("Centre")
+                    .button("Center")
                     .on_hover_text("In the middle of its wall segment")
                     .clicked()
             {
@@ -337,12 +342,4 @@ impl DriftApp {
             }
         }
     }
-}
-
-/// A thin vertical divider on the bar.
-fn bar_divider(ui: &mut egui::Ui) {
-    ui.add_space(2.0);
-    let (r, _) = ui.allocate_exact_size(egui::vec2(1.0, 18.0), egui::Sense::hover());
-    ui.painter().rect_filled(r, 0.0, theme::hairline(ui));
-    ui.add_space(2.0);
 }

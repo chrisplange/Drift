@@ -4,7 +4,7 @@
 //! lit, and choosing it takes it off; ones that don't fit the selection are dimmed. While it is
 //! open, each relation's letter (shown on it) chooses it outright: Q then H for horizontal.
 
-use crate::annotations::{self, AnnotationColors, AnnotationState, GlyphKind};
+use crate::annotations::{self, AnnotationColors, GlyphKind};
 use crate::*;
 use drift_edit::editor::ConstraintOption;
 
@@ -48,7 +48,8 @@ fn key_for(label: &str) -> Option<Key> {
 const DEAD_ZONE: f32 = 22.0;
 const RADIUS: f32 = 96.0;
 
-fn glyph(label: &str) -> GlyphKind {
+/// The symbol of a relation, by the name it is offered under.
+pub(crate) fn glyph(label: &str) -> GlyphKind {
     match label {
         "Horizontal" => GlyphKind::Horizontal,
         "Vertical" => GlyphKind::Vertical,
@@ -296,18 +297,17 @@ fn paint(
     let visuals = ui.visuals();
     let dark = visuals.dark_mode;
     let accent = theme::accent(dark);
-    let amber = egui::Color32::from_rgb(0xff, 0x9f, 0x0a);
+    let amber = crate::theme::amber(dark);
+    let n = theme::neutrals(dark);
+    // (The symbols on the pills' own fill, not on a tile of the canvas's.)
     let glyph_colors = AnnotationColors::new(dark);
+    let radius = theme::radius::MENU;
     // The middle: a ring, with a mark towards what would be chosen.
-    painter.circle_filled(
-        center,
-        DEAD_ZONE - 6.0,
-        visuals.window_fill.gamma_multiply(0.92),
-    );
+    painter.circle_filled(center, DEAD_ZONE - 6.0, n.raised);
     painter.circle_stroke(
         center,
         DEAD_ZONE - 6.0,
-        egui::Stroke::new(2.0, theme::hairline(ui)),
+        egui::Stroke::new(2.0, n.control_border),
     );
     if let Some(place) = towards {
         let dir = (place_pos(center, place) - center).normalized();
@@ -321,63 +321,70 @@ fn paint(
         let available = slice.option.is_some();
         let hot = towards == Some(place);
         let text_color = if !available {
-            visuals.weak_text_color().gamma_multiply(0.6)
+            n.tertiary.gamma_multiply(0.75)
         } else if slice.on {
             visuals.strong_text_color()
         } else {
-            visuals.text_color()
+            n.text
         };
         let galley = painter.layout_no_wrap(
             slice.label.to_owned(),
-            egui::FontId::proportional(13.0),
+            egui::FontId::proportional(theme::size::BODY),
             text_color,
         );
         let key = key_for(slice.label).map(|k| {
             painter.layout_no_wrap(
                 k.name().to_owned(),
                 egui::FontId::proportional(theme::size::CAPTION),
-                visuals.weak_text_color(),
+                n.tertiary,
             )
         });
         let size = egui::vec2(
-            galley.size().x + 42.0 + key.as_ref().map_or(0.0, |k| k.size().x + 8.0),
+            galley.size().x + 46.0 + key.as_ref().map_or(0.0, |k| k.size().x + 14.0),
             30.0,
         );
         // Labels to the sides start at the ring rather than straddling it.
         let at = place_pos(center, place);
         let lean = (at.x - center.x) / RADIUS;
         let rect = egui::Rect::from_center_size(at + egui::vec2(lean * size.x * 0.5, 0.0), size);
-        let fill = if slice.on {
-            accent.gamma_multiply(if hot { 0.55 } else { 0.35 })
-        } else if hot && available {
-            visuals.widgets.hovered.bg_fill
+        // Opaque, like everything that floats: what is on is tinted with the accent over
+        // the raised fill, what doesn't fit sinks back to the panel's.
+        let fill = if !available {
+            n.panel
+        } else if hot {
+            n.hover
         } else {
-            visuals.window_fill
+            n.raised
         };
-        painter.rect_filled(
-            rect,
-            15.0,
-            fill.gamma_multiply(if available { 1.0 } else { 0.7 }),
-        );
+        painter.rect_filled(rect, radius, fill);
+        if slice.on {
+            painter.rect_filled(rect, radius, theme::accent_soft(dark));
+        }
         let stroke = if hot && conflict {
             egui::Stroke::new(1.5, amber)
         } else if hot && available || slice.on {
             egui::Stroke::new(1.5, accent)
+        } else if available {
+            egui::Stroke::new(1.0, n.control_border)
         } else {
-            egui::Stroke::new(1.0, theme::hairline(ui))
+            egui::Stroke::new(1.0, n.border)
         };
-        painter.rect_stroke(rect, 15.0, stroke, egui::StrokeKind::Inside);
+        painter.rect_stroke(rect, radius, stroke, egui::StrokeKind::Inside);
         let icon = egui::Rect::from_center_size(
             egui::pos2(rect.left() + 19.0, rect.center().y),
             egui::Vec2::splat(18.0),
         );
-        let faded = glyph_colors.faded();
-        annotations::paint_glyph(
+        annotations::paint_glyph_icon(
             painter,
             icon,
             glyph(slice.label),
-            AnnotationState::Normal,
-            if available { &glyph_colors } else { &faded },
+            if !available {
+                n.tertiary.gamma_multiply(0.75)
+            } else if slice.on {
+                accent
+            } else {
+                glyph_colors.normal
+            },
         );
         painter.galley(
             egui::pos2(rect.left() + 34.0, rect.center().y - galley.size().y / 2.0),
@@ -392,7 +399,7 @@ fn paint(
                     rect.center().y - key.size().y / 2.0,
                 ),
                 key,
-                visuals.weak_text_color(),
+                n.tertiary,
             );
         }
     }
@@ -400,10 +407,7 @@ fn paint(
     let note = towards.map(|place| {
         let slice = &slices[place];
         if slice.option.is_none() {
-            (
-                "Doesn't fit this selection".to_owned(),
-                visuals.weak_text_color(),
-            )
+            ("Doesn't fit this selection".to_owned(), n.secondary)
         } else if slice.on {
             (
                 format!("Remove {}", slice.label.to_lowercase()),
@@ -419,10 +423,17 @@ fn paint(
         }
     });
     if let Some((text, color)) = note {
-        let galley = painter.layout_no_wrap(text, egui::FontId::proportional(12.0), color);
+        let galley =
+            painter.layout_no_wrap(text, egui::FontId::proportional(theme::size::LABEL), color);
         let at = egui::pos2(center.x - galley.size().x / 2.0, center.y + RADIUS + 26.0);
-        let back = egui::Rect::from_min_size(at, galley.size()).expand2(egui::vec2(8.0, 4.0));
-        painter.rect_filled(back, 6.0, visuals.window_fill.gamma_multiply(0.92));
+        let back = egui::Rect::from_min_size(at, galley.size()).expand2(egui::vec2(9.0, 5.0));
+        painter.rect(
+            back,
+            theme::radius::CONTROL,
+            n.raised,
+            egui::Stroke::new(1.0, n.control_border),
+            egui::StrokeKind::Outside,
+        );
         painter.galley(at, galley, color);
     }
 }

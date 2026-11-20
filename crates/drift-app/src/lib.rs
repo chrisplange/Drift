@@ -645,6 +645,9 @@ pub struct DriftApp {
     rail_shown: Vec<(app::palette::Command, app::palette::Command)>,
     /// The tool rail's open flyout.
     rail_flyout: Option<app::rail::Flyout>,
+    /// The rail as a list with each tool's name and key, rather than icon tiles ("Show tool
+    /// names" at its foot; kept with the view preferences).
+    rail_names: bool,
     backend: String,
     window_title: String,
     /// Results of Help → Run solver benchmark (in development builds).
@@ -685,6 +688,9 @@ pub struct DriftApp {
     show_hidden_annotations: bool,
     /// Temporary dimensions show on a picked curve (a preference).
     show_temp_dims: bool,
+    /// The quick-constrain bar: the relations and dimensions that fit what is picked, on a
+    /// bar floating at the foot of the canvas.
+    show_quick_bar: bool,
     /// What picking an object does in the Layers panel (a preference, drift-releases#19).
     layer_on_pick: layers_ui::LayerOnPick,
     /// The rules a new drawing starts with (how its areas and fills behave, its gap
@@ -858,6 +864,7 @@ impl DriftApp {
             last_command: None,
             rail_shown: Vec::new(),
             rail_flyout: None,
+            rail_names: false,
             backend,
             window_title: String::new(),
             benchmark: None,
@@ -882,6 +889,7 @@ impl DriftApp {
             show_view_crops: true,
             show_hidden_annotations: false,
             show_temp_dims: true,
+            show_quick_bar: true,
             layer_on_pick: Default::default(),
             new_rules: drift_core::DrawingRules::default(),
             view_seen: None,
@@ -1270,28 +1278,44 @@ impl eframe::App for DriftApp {
         };
         #[cfg(feature = "demo")]
         self.demo_banner(ui);
-        egui::Panel::top("menu")
-            .frame(frame(8, 3))
-            .show(ui, |ui| self.menu_bar(ui));
-        egui::Panel::top("context")
-            .frame(frame(10, 3))
+        // The frame: three bars of a fixed height and the rail, each pane edged by a line the
+        // frame paints itself (darker than the hairlines inside a pane, which egui's own
+        // separator can't be).
+        let top = egui::Panel::top("menu")
+            .frame(frame(0, 0))
+            .exact_size(theme::bar::TOP)
+            .show_separator_line(false)
+            .show(ui, |ui| self.top_bar(ui));
+        theme::pane_edge(ui, top.response.rect, egui::Align2::CENTER_BOTTOM);
+        let options = egui::Panel::top("context")
+            .frame(frame(12, 0))
+            .exact_size(theme::bar::OPTIONS)
+            .show_separator_line(false)
             .show(ui, |ui| self.context_bar(ui));
-        egui::Panel::bottom("status")
-            .frame(frame(12, 4))
+        theme::pane_edge(ui, options.response.rect, egui::Align2::CENTER_BOTTOM);
+        let status = egui::Panel::bottom("status")
+            .frame(frame(12, 0))
+            .exact_size(theme::bar::STATUS)
+            .show_separator_line(false)
             .show(ui, |ui| self.status_bar(ui, now));
+        theme::pane_edge(ui, status.response.rect, egui::Align2::CENTER_TOP);
         let wide = ctx.content_rect().width() >= WIDE_LAYOUT;
-        egui::Panel::left("tools")
+        // The rail is as wide as its layout: a slim column of tiles (two in a short window),
+        // or the list with names. Its height is what the bars leave.
+        let rail_layout =
+            self.rail_layout(status.response.rect.top() - options.response.rect.bottom());
+        let rail = egui::Panel::left("tools")
             .resizable(false)
-            .frame(frame(8, 6))
-            .exact_size(if wide { 168.0 } else { 84.0 })
-            .show(ui, |ui| self.toolbar(ui, wide));
+            .frame(frame(rail_layout.margin(), app::rail::MARGIN_Y))
+            .exact_size(rail_layout.width())
+            .show_separator_line(false)
+            .show(ui, |ui| self.toolbar(ui, rail_layout));
+        theme::pane_edge(ui, rail.response.rect, egui::Align2::RIGHT_CENTER);
         self.begin_docks(wide);
         self.dock(ui, dock::Side::Left);
         self.dock(ui, dock::Side::Right);
         egui::CentralPanel::no_frame().show(ui, |ui| {
-            // The model and each sheet, as tabs over the canvas, right on top of it.
             ui.spacing_mut().item_spacing.y = 0.0;
-            self.canvas_tabs(ui);
             // Between the model and a sheet a tool starts afresh: a pick made in one means
             // nothing in the other. And nothing made in the model is ever the sheet's.
             let on_sheet = self.drawing.view.sheet_preview;

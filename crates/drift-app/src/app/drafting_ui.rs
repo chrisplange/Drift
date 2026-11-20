@@ -10,7 +10,8 @@ use crate::*;
 
 /// A millimetre size field (paper sizes are always mm, whatever the display units).
 fn mm_field(ui: &mut egui::Ui, value: &mut f64, range: std::ops::RangeInclusive<f64>) -> bool {
-    ui.add(
+    crate::theme::drag(
+        ui,
         egui::DragValue::new(value)
             .speed(0.05)
             .range(range)
@@ -48,7 +49,7 @@ impl DriftApp {
                 "drawing_scale",
                 &mut style.scale,
                 imperial,
-                ui.available_width() - 6.0,
+                ui.available_width(),
             );
         })
         .response
@@ -63,8 +64,9 @@ impl DriftApp {
         self.kept_fonts_note(ui);
         theme::row(ui, "Arrows", |ui| {
             egui::ComboBox::from_id_salt("arrow_style")
+                .icon(crate::theme::combo_icon)
                 .selected_text(style.arrow.label())
-                .width(ui.available_width() - 6.0)
+                .width(ui.available_width())
                 .show_ui(ui, |ui| {
                     for a in ArrowStyle::ALL {
                         ui.selectable_value(&mut style.arrow, a, a.label());
@@ -85,20 +87,21 @@ impl DriftApp {
         .response
         .on_hover_text("How far extension lines run past the dimension line");
         theme::row(ui, "Text", |ui| {
-            ui.checkbox(&mut style.aligned_text, "Aligned")
+            crate::theme::checkbox(ui, &mut style.aligned_text, "Aligned")
                 .on_hover_text("ISO: above the dimension line and parallel to it");
         });
         theme::row(ui, "Zeros", |ui| {
-            ui.checkbox(&mut style.trailing_zeros, "Trailing")
+            crate::theme::checkbox(ui, &mut style.trailing_zeros, "Trailing")
                 .on_hover_text("Pad decimals to the display precision: 1.500");
-            ui.checkbox(&mut style.leading_zero, "Leading")
+            crate::theme::checkbox(ui, &mut style.leading_zero, "Leading")
                 .on_hover_text("Write 0.5 rather than .5");
         });
         theme::row(ui, "Dual units", |ui| {
             let text = style.alt_units.map_or("None", LengthFormat::label);
             egui::ComboBox::from_id_salt("alt_units")
+                .icon(crate::theme::combo_icon)
                 .selected_text(text)
-                .width(ui.available_width() - 6.0)
+                .width(ui.available_width())
                 .show_ui(ui, |ui| {
                     ui.selectable_value(&mut style.alt_units, None, "None");
                     for f in LengthFormat::METRIC
@@ -110,7 +113,7 @@ impl DriftApp {
                 });
         });
         let dark = ui.visuals().dark_mode;
-        theme::row(ui, "Colour", |ui| {
+        theme::row(ui, "Color", |ui| {
             if let Some(color) = crate::layers_ui::color_choice(ui, style.color, "Default", dark) {
                 style.color = color;
             }
@@ -155,8 +158,7 @@ impl DriftApp {
         // Driven: a reference that reports the geometry's size rather than setting it.
         let driven = self.drawing.editor.doc.is_driven(id);
         let mut want = driven;
-        if ui
-            .checkbox(&mut want, "Driven (reference)")
+        if crate::theme::checkbox(ui, &mut want, "Driven (reference)")
             .on_hover_text(
                 "A driven dimension reports the geometry's size, in parentheses, and doesn't \
                  hold it. Untick to make it drive the geometry again",
@@ -192,33 +194,37 @@ impl DriftApp {
         let before = note.clone();
         theme::section(ui, "Text");
         theme::row(ui, "Prefix", |ui| {
-            ui.add(
+            crate::theme::field(
+                ui,
                 egui::TextEdit::singleline(&mut note.prefix)
                     .hint_text("e.g. 4×")
-                    .desired_width(ui.available_width() - 8.0),
+                    .desired_width(ui.available_width()),
             );
         });
         theme::row(ui, "Suffix", |ui| {
-            ui.add(
+            crate::theme::field(
+                ui,
                 egui::TextEdit::singleline(&mut note.suffix)
                     .hint_text("e.g. THRU")
-                    .desired_width(ui.available_width() - 8.0),
+                    .desired_width(ui.available_width()),
             );
         });
         dimension_chips(ui, &mut note);
         theme::row(ui, "Under line", |ui| {
-            ui.add(
+            crate::theme::field(
+                ui,
                 egui::TextEdit::singleline(&mut note.below)
                     .hint_text("e.g. TO FACE OF STUD")
-                    .desired_width(ui.available_width() - 8.0),
+                    .desired_width(ui.available_width()),
             )
             .on_hover_text("A line of text under the dimension line");
         });
         theme::row(ui, "Show instead", |ui| {
-            ui.add(
+            crate::theme::field(
+                ui,
                 egui::TextEdit::singleline(&mut note.text)
                     .hint_text("e.g. EQ (the value still holds)")
-                    .desired_width(ui.available_width() - 8.0),
+                    .desired_width(ui.available_width()),
             )
             .on_hover_text(
                 "Text shown in place of the value, such as EQ or VARIES. The dimension still \
@@ -254,8 +260,9 @@ impl DriftApp {
                 Tolerance::Fit("H7".into()),
             ];
             egui::ComboBox::from_id_salt("tolerance_kind")
+                .icon(crate::theme::combo_icon)
                 .selected_text(note.tolerance.label())
-                .width(ui.available_width() - 8.0)
+                .width(ui.available_width())
                 .show_ui(ui, |ui| {
                     for k in kinds {
                         let same =
@@ -276,14 +283,14 @@ impl DriftApp {
             let field = |ui: &mut egui::Ui, label: &str, v: &mut f64| {
                 theme::row(ui, label, |ui| {
                     let mut shown = *v / scale;
-                    if ui
-                        .add(
-                            egui::DragValue::new(&mut shown)
-                                .speed(0.001)
-                                .max_decimals(4)
-                                .suffix(format!(" {unit}")),
-                        )
-                        .changed()
+                    if crate::theme::drag(
+                        ui,
+                        egui::DragValue::new(&mut shown)
+                            .speed(0.001)
+                            .max_decimals(4)
+                            .suffix(format!(" {unit}")),
+                    )
+                    .changed()
                     {
                         *v = shown * scale;
                     }
@@ -298,7 +305,8 @@ impl DriftApp {
                 }
                 Tolerance::Fit(f) => {
                     theme::row(ui, "Fit", |ui| {
-                        ui.add(
+                        crate::theme::field(
+                            ui,
                             egui::TextEdit::singleline(f)
                                 .hint_text("H7, g6…")
                                 .desired_width(80.0),
@@ -350,13 +358,17 @@ pub(crate) fn dimension_chips(ui: &mut egui::Ui, note: &mut drift_core::DimNote)
         ),
     ];
     ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
         for (text, place, hint) in CHIPS {
             let on = match place {
                 -1 => note.prefix.contains(text),
                 1 => note.suffix.split_whitespace().any(|w| w == text),
                 _ => note.text == text,
             };
-            if ui.selectable_label(on, text).on_hover_text(hint).clicked() {
+            if theme::select_chip(ui, on, text)
+                .on_hover_text(hint)
+                .clicked()
+            {
                 match place {
                     0 => note.text = if on { String::new() } else { text.to_owned() },
                     -1 if on => note.prefix = note.prefix.replace(text, "").trim().to_owned(),
@@ -387,6 +399,19 @@ type StyleEdit = Box<dyn Fn(&mut StyleOverride)>;
 /// A setting's row in the Drafting style section: the label (in the accent when the picked ones set it
 /// themselves), the control, and a reset arrow when overridden. Returns whether reset was
 /// clicked.
+const RESET: f32 = 22.0;
+
+/// The width a menu takes in a [`style_row`]: what is left of the row, less the reset arrow
+/// of a setting the picked ones set themselves.
+fn style_menu_width(ui: &egui::Ui, overridden: bool) -> f32 {
+    let reset = if overridden {
+        RESET + ui.spacing().item_spacing.x
+    } else {
+        0.0
+    };
+    (ui.available_width() - reset).max(60.0)
+}
+
 fn style_row(
     ui: &mut egui::Ui,
     label: &str,
@@ -395,9 +420,10 @@ fn style_row(
 ) -> bool {
     let mut reset = false;
     ui.horizontal(|ui| {
+        ui.set_min_height(theme::ROW_HEIGHT);
         let dark = ui.visuals().dark_mode;
         ui.allocate_ui_with_layout(
-            egui::vec2(theme::LABEL_WIDTH, 20.0),
+            egui::vec2(theme::LABEL_WIDTH, theme::ROW_HEIGHT),
             egui::Layout::left_to_right(egui::Align::Center),
             |ui| {
                 ui.set_min_width(theme::LABEL_WIDTH);
@@ -412,7 +438,7 @@ fn style_row(
         add(ui);
         if overridden {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                reset = icons::button(ui, 22.0, false, "Reset", |p, r, c| {
+                reset = icons::button(ui, RESET, false, "Reset", |p, r, c| {
                     icons::glyph(p, r, icons::Glyph::Reset, c)
                 })
                 .on_hover_text("Back to the drawing's setting")
@@ -474,9 +500,8 @@ impl DriftApp {
                     if overridden == 1 { "" } else { "s" }
                 )
             };
-            ui.label(egui::RichText::new(text).small().weak());
+            theme::hint(ui, &text);
         });
-        ui.add_space(2.0);
         if !notes {
             let mut v = shown.text_height;
             if style_row(ui, "Text height", set(|o| o.text_height.is_some()), |ui| {
@@ -488,10 +513,12 @@ impl DriftApp {
             }
         }
         let mut arrow = shown.arrow;
-        if style_row(ui, "Arrows", set(|o| o.arrow.is_some()), |ui| {
+        let own_arrow = set(|o| o.arrow.is_some());
+        if style_row(ui, "Arrows", own_arrow, |ui| {
             egui::ComboBox::from_id_salt("own_arrow")
+                .icon(crate::theme::combo_icon)
                 .selected_text(arrow.label())
-                .width(110.0)
+                .width(style_menu_width(ui, own_arrow))
                 .show_ui(ui, |ui| {
                     for a in ArrowStyle::ALL {
                         if ui.selectable_value(&mut arrow, a, a.label()).clicked() {
@@ -513,8 +540,7 @@ impl DriftApp {
         if numbers {
             let mut aligned = shown.aligned_text;
             if style_row(ui, "Text", set(|o| o.aligned_text.is_some()), |ui| {
-                if ui
-                    .checkbox(&mut aligned, "Aligned")
+                if crate::theme::checkbox(ui, &mut aligned, "Aligned")
                     .on_hover_text("Above the dimension line and parallel to it (ISO)")
                     .changed()
                 {
@@ -526,11 +552,19 @@ impl DriftApp {
             let (mut trailing, mut leading) = (shown.trailing_zeros, shown.leading_zero);
             let zeros = set(|o| o.trailing_zeros.is_some() || o.leading_zero.is_some());
             if style_row(ui, "Zeros", zeros, |ui| {
-                if ui.checkbox(&mut trailing, "Trailing").changed() {
-                    edit = Some(Box::new(move |o| o.trailing_zeros = Some(trailing)));
-                }
-                if ui.checkbox(&mut leading, "Leading").changed() {
-                    edit = Some(Box::new(move |o| o.leading_zero = Some(leading)));
+                // Side by side, or one over the other in a narrow pane.
+                let mut both = |ui: &mut egui::Ui| {
+                    if crate::theme::checkbox(ui, &mut trailing, "Trailing").changed() {
+                        edit = Some(Box::new(move |o| o.trailing_zeros = Some(trailing)));
+                    }
+                    if crate::theme::checkbox(ui, &mut leading, "Leading").changed() {
+                        edit = Some(Box::new(move |o| o.leading_zero = Some(leading)));
+                    }
+                };
+                if style_menu_width(ui, zeros) >= 170.0 {
+                    both(ui);
+                } else {
+                    ui.vertical(both);
                 }
             }) {
                 edit = Some(Box::new(|o| {
@@ -539,10 +573,12 @@ impl DriftApp {
                 }));
             }
             let mut alt = shown.alt_units;
-            if style_row(ui, "Dual units", set(|o| o.alt_units.is_some()), |ui| {
+            let own_alt = set(|o| o.alt_units.is_some());
+            if style_row(ui, "Dual units", own_alt, |ui| {
                 egui::ComboBox::from_id_salt("own_alt_units")
+                    .icon(crate::theme::combo_icon)
                     .selected_text(alt.map_or("None", LengthFormat::label))
-                    .width(110.0)
+                    .width(style_menu_width(ui, own_alt))
                     .show_ui(ui, |ui| {
                         let options = std::iter::once(None).chain(
                             LengthFormat::METRIC
@@ -564,11 +600,19 @@ impl DriftApp {
         // Colour: the drawing's, or one of its own.
         let own_color = own[0].color.flatten();
         let dark = ui.visuals().dark_mode;
-        if style_row(ui, "Colour", set(|o| o.color.is_some()), |ui| {
+        let own_colour = set(|o| o.color.is_some());
+        if style_row(ui, "Color", own_colour, |ui| {
             let custom = own_color.is_some();
+            // (Less the swatch of a colour of its own.)
+            let swatch = if custom {
+                ui.spacing().interact_size.x + ui.spacing().item_spacing.x + 16.0
+            } else {
+                0.0
+            };
             egui::ComboBox::from_id_salt("own_colour")
+                .icon(crate::theme::combo_icon)
                 .selected_text(if custom { "Custom" } else { "Drawing's" })
-                .width(90.0)
+                .width((style_menu_width(ui, own_colour) - swatch).max(60.0))
                 .show_ui(ui, |ui| {
                     if ui.selectable_label(!custom, "Drawing's").clicked() && custom {
                         edit = Some(Box::new(|o| o.color = None));

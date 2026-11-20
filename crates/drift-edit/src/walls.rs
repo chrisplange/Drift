@@ -1017,7 +1017,7 @@ impl Editor {
     }
 
     pub fn set_wall_poche(&mut self, walls: &[WallId], poche: Option<FillStyle>) -> bool {
-        self.edit_walls(walls, "Wall poché", |w| w.poche = poche.clone())
+        self.edit_walls(walls, "Wall fill", |w| w.poche = poche.clone())
     }
 
     /// Re-evaluate walls' thickness expressions (inside a transaction, before a solve).

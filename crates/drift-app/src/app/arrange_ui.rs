@@ -35,26 +35,23 @@ impl DriftApp {
     /// The Inspector's Arrange buttons, for picked fills and shapes.
     pub(crate) fn arrange_row(&mut self, ui: &mut egui::Ui) {
         let now = ui.input(|i| i.time);
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            for (how, short) in [
-                (Arrange::ToFront, "To front"),
-                (Arrange::Forward, "Forward"),
-                (Arrange::Backward, "Backward"),
-                (Arrange::ToBack, "To back"),
-            ] {
-                if ui
-                    .button(short)
-                    .on_hover_text(format!(
-                        "{} on its layer ({})",
-                        how.label(),
-                        Self::arrange_keys(how)
-                    ))
-                    .clicked()
-                {
-                    self.arrange(how, now);
-                }
-            }
+        const STEPS: [(Arrange, &str); 4] = [
+            (Arrange::ToFront, "To front"),
+            (Arrange::Forward, "Forward"),
+            (Arrange::Backward, "Backward"),
+            (Arrange::ToBack, "To back"),
+        ];
+        let labels = STEPS.map(|(_, label)| label);
+        let clicked = theme::button_row(ui, &labels, |i, response| {
+            let how = STEPS[i].0;
+            response.on_hover_text(format!(
+                "{} on its layer ({})",
+                how.label(),
+                Self::arrange_keys(how)
+            ))
         });
+        if let Some(i) = clicked {
+            self.arrange(STEPS[i].0, now);
+        }
     }
 }

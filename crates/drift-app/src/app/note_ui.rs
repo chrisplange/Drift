@@ -106,7 +106,8 @@ fn mark_fields(
     example: &str,
 ) {
     theme::row(ui, "Label", |ui| {
-        ui.add(
+        crate::theme::field(
+            ui,
             egui::TextEdit::singleline(label)
                 .hint_text(example)
                 .desired_width(60.0),
@@ -115,8 +116,9 @@ fn mark_fields(
     theme::row(ui, "View", |ui| {
         let title = |v: drift_core::ViewId| doc.view(v).map_or("None", |v| v.title());
         egui::ComboBox::from_id_salt("mark_view")
+            .icon(crate::theme::combo_icon)
             .selected_text(view.map_or("None", title))
-            .width(ui.available_width() - 8.0)
+            .width(ui.available_width())
             .show_ui(ui, |ui| {
                 ui.selectable_value(view, None, "None");
                 for (id, v) in doc.views() {
@@ -144,10 +146,11 @@ fn mark_fields(
         }
         None => {
             theme::row(ui, "On sheet", |ui| {
-                ui.add(
+                crate::theme::field(
+                    ui,
                     egui::TextEdit::singleline(sheet)
                         .hint_text("e.g. A-201")
-                        .desired_width(ui.available_width() - 8.0),
+                        .desired_width(ui.available_width()),
                 )
                 .on_hover_text(
                     "The sheet the view is drawn on: written in the lower half of the flag",
@@ -1075,7 +1078,8 @@ impl DriftApp {
                     head - egui::vec2(16.0, 16.0),
                     egui::Vec2::ZERO,
                 ));
-                ui.add(
+                crate::theme::field(
+                    ui,
                     egui::TextEdit::multiline(&mut typed)
                         .id(field)
                         .desired_rows(1)
@@ -1274,13 +1278,13 @@ impl DriftApp {
         }
         ui.add_space(6.0);
         let label = if unmarked.len() == 1 {
-            "Add centre mark".to_owned()
+            "Add center mark".to_owned()
         } else {
-            format!("Add {} centre marks", unmarked.len())
+            format!("Add {} center marks", unmarked.len())
         };
         if ui
             .button(label)
-            .on_hover_text("Centre lines across the selected circles and arcs")
+            .on_hover_text("Center lines across the selected circles and arcs")
             .clicked()
         {
             self.drawing.editor.doc.begin();
@@ -1323,16 +1327,16 @@ impl DriftApp {
                 style,
             } => {
                 theme::section(ui, "Text");
-                ui.add(
+                crate::theme::field(
+                    ui,
                     egui::TextEdit::multiline(text)
                         .desired_rows(3)
-                        .desired_width(ui.available_width() - 8.0),
+                        .desired_width(ui.available_width()),
                 );
                 theme::section(ui, "Style");
                 theme::row(ui, "Size", |ui| {
                     let mut own = style.height.is_some();
-                    if ui
-                        .checkbox(&mut own, "")
+                    if crate::theme::checkbox(ui, &mut own, "")
                         .on_hover_text("Off: the drafting style's text height")
                         .changed()
                     {
@@ -1340,7 +1344,8 @@ impl DriftApp {
                             own.then(|| self.drawing.editor.doc.draft_style().text_height);
                     }
                     if let Some(h) = &mut style.height {
-                        ui.add(
+                        crate::theme::drag(
+                            ui,
                             egui::DragValue::new(h)
                                 .speed(0.05)
                                 .range(0.5..=50.0)
@@ -1357,23 +1362,25 @@ impl DriftApp {
                         .on_hover_text("Italic");
                 });
                 theme::row(ui, "Align", |ui| {
-                    if let Some(a) =
-                        theme::segmented(ui, style.align, &TextAlign::ALL.map(|a| (a, a.label())))
-                    {
+                    if let Some(a) = theme::segmented(
+                        ui,
+                        style.align,
+                        &TextAlign::ALL.map(|a| (a, theme::us(a.label()))),
+                    ) {
                         style.align = a;
                     }
                 });
                 theme::row(ui, "Wrap", |ui| {
                     let mut wraps = style.wrap.is_some();
-                    if ui
-                        .checkbox(&mut wraps, "")
+                    if crate::theme::checkbox(ui, &mut wraps, "")
                         .on_hover_text("Wrap the text to a width")
                         .changed()
                     {
                         style.wrap = wraps.then_some(40.0);
                     }
                     if let Some(w) = &mut style.wrap {
-                        ui.add(
+                        crate::theme::drag(
+                            ui,
                             egui::DragValue::new(w)
                                 .speed(0.5)
                                 .range(5.0..=1000.0)
@@ -1388,17 +1395,25 @@ impl DriftApp {
                         style.frame = f;
                     }
                 });
-                ui.checkbox(&mut style.mask, "Mask what's behind it")
+                crate::theme::checkbox(ui, &mut style.mask, "Mask what's behind it")
                     .on_hover_text("Paper behind the text, so it reads over hatches and lines");
                 theme::section(ui, &format!("Leaders · {}", leaders.len()));
                 let doc = &self.drawing.editor.doc;
                 let pos = doc.note_text_pos(*at, leaders);
                 let mut remove = None;
                 for (k, l) in leaders.iter_mut().enumerate() {
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         ui.label(egui::RichText::new(format!("{}", k + 1)).weak());
+                        // The two menus share what the shoulder's box and the delete button
+                        // leave (in a narrow pane those two go on a line of their own).
+                        let gap = ui.spacing().item_spacing.x;
+                        let tail = ui.spacing().interact_size.x + 20.0 + 3.0 * gap;
+                        let width = ((ui.available_width() - tail - gap) / 2.0)
+                            .floor()
+                            .max(88.0);
                         egui::ComboBox::from_id_salt(("leader_end", k))
-                            .width(96.0)
+                            .icon(crate::theme::combo_icon)
+                            .width(width)
                             .selected_text(l.end.label())
                             .show_ui(ui, |ui| {
                                 for e in LeaderEnd::ALL {
@@ -1406,7 +1421,8 @@ impl DriftApp {
                                 }
                             });
                         egui::ComboBox::from_id_salt(("leader_shape", k))
-                            .width(82.0)
+                            .icon(crate::theme::combo_icon)
+                            .width(width)
                             .selected_text(l.shape.label())
                             .show_ui(ui, |ui| {
                                 let tip = doc.anchor_pos(&l.to);
@@ -1427,13 +1443,10 @@ impl DriftApp {
                                     }
                                 }
                             });
-                        ui.checkbox(&mut l.shoulder, "")
+                        crate::theme::checkbox(ui, &mut l.shoulder, "")
                             .on_hover_text("A short level shoulder into the text");
-                        if ui
-                            .small_button("×")
-                            .on_hover_text("Remove this leader (the text stays)")
-                            .clicked()
-                        {
+                        let tip = "Remove this leader (the text stays)";
+                        if theme::delete_button(ui, "×", tip).clicked() {
                             remove = Some(k);
                         }
                     });
@@ -1481,10 +1494,11 @@ impl DriftApp {
                 }
                 theme::section(ui, "Text");
                 theme::row(ui, "Suffix", |ui| {
-                    ui.add(
+                    crate::theme::field(
+                        ui,
                         egui::TextEdit::singleline(suffix)
                             .hint_text("THRU, ↧ 10…")
-                            .desired_width(ui.available_width() - 8.0),
+                            .desired_width(ui.available_width()),
                     );
                 });
                 ui.horizontal(|ui| {
@@ -1521,7 +1535,7 @@ impl DriftApp {
             }
             Annotation::CentreMark { .. } | Annotation::Centreline { .. } => {
                 ui.label(
-                    egui::RichText::new("Follows its geometry; drawn as a centre line.")
+                    egui::RichText::new("Follows its geometry; drawn as a center line.")
                         .small()
                         .weak(),
                 );
@@ -1564,19 +1578,17 @@ impl DriftApp {
                 theme::section(ui, "Mark");
                 mark_fields(ui, &self.drawing.editor.doc, label, sheet, view, "1");
                 theme::row(ui, "Facing", |ui| {
-                    ui.add(
+                    crate::theme::drag(
+                        ui,
                         egui::DragValue::new(angle)
                             .speed(1.0)
                             .range(-360.0..=360.0)
                             .suffix("°"),
                     );
-                    for (text, degrees) in [("→", 0.0), ("↑", 90.0), ("←", 180.0), ("↓", 270.0)]
-                    {
-                        if ui.small_button(text).clicked() {
-                            *angle = degrees;
-                        }
-                    }
                 });
+                if let Some(k) = theme::preset_row(ui, &["→", "↑", "←", "↓"]) {
+                    *angle = 90.0 * k as f64;
+                }
             }
         }
         if edited != a {

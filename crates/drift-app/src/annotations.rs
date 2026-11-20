@@ -67,7 +67,7 @@ impl AnnotationColors {
                 conflict: Color32::from_rgb(0xff, 0x5d, 0x5d),
                 preview: Color32::from_rgb(0x5e, 0xd3, 0xa3),
                 driven: Color32::from_rgb(0x8a, 0x90, 0x99),
-                text_background: Color32::from_rgb(0x1b, 0x1d, 0x21),
+                text_background: crate::theme::canvas(true),
                 glyph_background: Color32::from_rgb(0x2a, 0x2e, 0x35),
             }
         } else {
@@ -78,7 +78,7 @@ impl AnnotationColors {
                 conflict: Color32::from_rgb(0xd3, 0x2f, 0x2f),
                 preview: Color32::from_rgb(0x13, 0x9a, 0x6a),
                 driven: Color32::from_rgb(0x7a, 0x80, 0x88),
-                text_background: Color32::from_rgb(0xfb, 0xfb, 0xfa),
+                text_background: crate::theme::canvas(false),
                 glyph_background: Color32::from_rgb(0xe8, 0xea, 0xee),
             }
         }
@@ -1159,10 +1159,7 @@ pub fn dimension_text(c: &Constraint, units: &Units) -> String {
 fn dimension_text_styled(c: &Constraint, units: &Units, style: &DraftStyle) -> String {
     let v = c.value().unwrap_or(0.0);
     let (n, exact) = match c {
-        Constraint::Angle { .. } => {
-            let scale = 10f64.powi(i32::from(units.angle_decimals));
-            (units.format_angle(v), (v * scale).round() / scale == v)
-        }
+        Constraint::Angle { .. } => (units.format_angle(v), units.is_exact_angle(v)),
         _ => (style.length(units, v), units.is_exact(v)),
     };
     let n = if exact { n } else { format!("~{n}") };
@@ -2449,6 +2446,12 @@ pub fn paint_glyph(
     } else {
         painter.rect_stroke(rect, 4.0, Stroke::new(1.0, color), StrokeKind::Inside);
     }
+    paint_glyph_icon(painter, rect, kind, color);
+}
+
+/// A relation's symbol alone, in `color`, sized for the tile `rect`: what [`paint_glyph`]
+/// draws on its tile, for a button that adds the relation.
+pub fn paint_glyph_icon(painter: &egui::Painter, rect: Rect, kind: GlyphKind, color: Color32) {
     // The icons were drawn for a 15 pt tile; they scale with it.
     let k = rect.width() / GLYPH_ICON_BASE;
     let c = rect.center();
@@ -2650,6 +2653,22 @@ mod tests {
         // Round-off is not rounding.
         assert_eq!(text(distance(0.1 + 0.2)), "0.3");
         assert_eq!(text(distance(12.34567)), "~12.346");
+        // What a solve leaves a hair off the shown number isn't rounding either (#486)...
+        assert_eq!(text(distance(99.999_999_9)), "100");
+        assert_eq!(text(distance(100.000_000_2)), "100");
+        // ...but a value genuinely rounded to the label is, at any precision.
+        assert_eq!(text(distance(100.0 / 3.0)), "~33.333");
+        let fine = Units { decimals: 6, ..mm };
+        assert_eq!(dimension_text(&distance(100.0 / 3.0), &fine), "~33.333333");
+        assert_eq!(dimension_text(&distance(12.000_000_4), &fine), "~12");
+        let angle = |degrees| Constraint::Angle {
+            a: e,
+            b: e,
+            degrees,
+        };
+        assert_eq!(text(angle(89.999_999_99)), "90°");
+        assert_eq!(text(angle(45.0 + 1e-10)), "45°");
+        assert_eq!(text(angle(53.130_102)), "~53.13°");
         let arch = Units::architectural();
         assert_eq!(dimension_text(&distance(18.5 * 25.4), &arch), "1'-6 1/2\"");
         assert_eq!(dimension_text(&distance(100.0), &arch), "~3 15/16\"");
@@ -2675,6 +2694,72 @@ mod tests {
             }),
             "30°"
         );
+    }
+
+    /// #486: dimensions that follow from others set exactly show no `~` once solved; one
+    /// that is genuinely rounded still does.
+    #[test]
+    fn driven_dimensions_of_an_exact_shape_show_no_tilde() {
+        let mut doc = Document::new();
+        // A rough right triangle, drawn off the axes so the solve leaves round-off.
+        let a = doc.add_point(DVec2::new(3.1, 1.7));
+        let b = doc.add_point(DVec2::new(27.0, 21.0));
+        let c = doc.add_point(DVec2::new(5.0, 43.0));
+        let ab = doc.add_line(a, b).unwrap();
+        let bc = doc.add_line(b, c).unwrap();
+        let ca = doc.add_line(c, a).unwrap();
+        doc.add_constraint(Constraint::Fix {
+            point: a,
+            at: DVec2::new(3.1, 1.7),
+        })
+        .unwrap();
+        doc.add_constraint(Constraint::Perpendicular { a: ab, b: bc })
+            .unwrap();
+        doc.add_constraint(Constraint::Distance { a, b, value: 30.0 })
+            .unwrap();
+        doc.add_constraint(Constraint::Distance {
+            a: b,
+            b: c,
+            value: 40.0,
+        })
+        .unwrap();
+        drift_solver::solve(&mut doc, &drift_solver::SolveOptions::default());
+        let driven = |doc: &mut Document, c: Constraint| {
+            let id = doc.add_constraint(c).unwrap();
+            doc.set_driven(id, true).unwrap();
+            let c = *doc.constraint(id).unwrap();
+            dimension_label(doc, Some(id), &c).plain()
+        };
+        // (Driven dimensions show what they measure, whatever value they were made with.)
+        // The hypotenuse is 50, and the corner a right angle, however the solve rounded.
+        let hyp = driven(
+            &mut doc,
+            Constraint::Distance {
+                a: c,
+                b: a,
+                value: 1.0,
+            },
+        );
+        assert!(hyp.contains("50") && !hyp.contains('~'), "{hyp}");
+        let right = driven(
+            &mut doc,
+            Constraint::Angle {
+                a: ab,
+                b: bc,
+                degrees: 10.0,
+            },
+        );
+        assert!(right.contains("90°") && !right.contains('~'), "{right}");
+        // The angle at a is atan(4/3) = 53.1301...°: rounded, so marked.
+        let rounded = driven(
+            &mut doc,
+            Constraint::Angle {
+                a: ab,
+                b: ca,
+                degrees: 10.0,
+            },
+        );
+        assert!(rounded.contains('~'), "{rounded}");
     }
 
     #[test]

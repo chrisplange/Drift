@@ -20,6 +20,8 @@ mod audit_sheets;
 mod commands;
 /// Screenshots for the user guide.
 mod docs;
+/// Screenshots for judging the look, at every window size it has to look right at.
+mod fresh;
 /// The last-resort guard: a panic in a tool, a command or a file's reader (#440).
 mod guard;
 /// Aligning a hatch on a shape: handles, Pattern alignment, Align to edge, Alt-click.
@@ -42,6 +44,9 @@ mod link;
 mod note_typing;
 /// Selection filters you can combine.
 mod pick_filters;
+/// The quick-constrain bar on the canvas, the message above it, and the empty canvas's hint.
+#[cfg(not(feature = "demo"))]
+mod quick_bar;
 /// Which relations show their symbols: Off, Picked only, All (#337).
 mod relations_shown;
 /// Picking and moving: G with a midpoint, axis locks in a drag, hidden areas.
@@ -52,6 +57,9 @@ mod shapes;
 /// A sheet's own notes and dimensions: placed, picked, moved, edited and deleted (#432).
 #[cfg(not(feature = "demo"))]
 mod sheet_annotations;
+/// The frame: the top bar, the options bar and the status bar.
+#[cfg(not(feature = "demo"))]
+mod shell;
 /// The regression smoke suite (`cargo test -p drift-app smoke_`): docs/regression-checklist.md.
 #[cfg(not(feature = "demo"))]
 mod smoke;
@@ -96,6 +104,17 @@ fn button(h: &Harness<'_, DriftApp>, pos: Pos2, pressed: bool) {
         pressed,
         modifiers: EguiModifiers::NONE,
     });
+}
+
+/// The example shown with room round the plate, whatever the canvas's shape: for tests that
+/// click beside the drawing (a note above it, a crop dragged past its top), where a fit of
+/// the drawing alone would put those points off a wider canvas.
+fn example_with_room(h: &mut Harness<'_, DriftApp>) {
+    h.state_mut().drawing.view.fit_target = Some(drift_core::Bounds {
+        min: DVec2::new(-31.0, -44.5),
+        max: DVec2::new(131.0, 93.5),
+    });
+    h.run();
 }
 
 /// Move, press and release at a world position, one frame per event like a real user.
@@ -2748,18 +2767,21 @@ fn hundreds_of_layers_draw_only_the_rows_in_view() {
     assert!(rows.len() < 40, "{} rows drawn", rows.len());
     save_png("drift_ui_many_layers.png", &mut h);
     // Scrolled to the bottom, the first layers are drawn (and the top ones not).
-    let at = h.get_by_label("A-ANNO-499").rect().center();
-    for _ in 0..40 {
-        h.hover_at(at);
-        h.event(Event::MouseWheel {
-            unit: egui::MouseWheelUnit::Point,
-            delta: egui::vec2(0.0, -2000.0),
-            phase: egui::TouchPhase::Move,
-            modifiers: Default::default(),
-        });
-        // (Rows pass under the pointer, their tooltips coming and going.)
-        h.step();
-    }
+    let list = h.get_by_label("A-ANNO-499").rect().center();
+    let to_bottom = |h: &mut Harness<'_, DriftApp>, steps: usize| {
+        for _ in 0..steps {
+            h.hover_at(list);
+            h.event(Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(0.0, -2000.0),
+                phase: egui::TouchPhase::Move,
+                modifiers: Default::default(),
+            });
+            // (Rows pass under the pointer, their tooltips coming and going.)
+            h.step();
+        }
+    };
+    to_bottom(&mut h, 40);
     h.hover_at(h.state().drawing.view.canvas_rect.center());
     h.run();
     let rows = drawn_rows(&h);
@@ -2771,6 +2793,11 @@ fn hundreds_of_layers_draw_only_the_rows_in_view() {
     let walls = ids[0];
     h.state_mut().drawing.expanded_layers.insert(ids[3]);
     h.run();
+    h.run();
+    // (The open row pushes the last ones down, past the pane's foot in a font with taller
+    // lines: scroll to the end again, so the row clicked is in view whatever the font.)
+    to_bottom(&mut h, 4);
+    h.hover_at(h.state().drawing.view.canvas_rect.center());
     h.run();
     let r = h.get_by_label("A-WALL-000").rect();
     let at = egui::pos2(r.right() + 40.0, r.center().y);
@@ -3065,6 +3092,7 @@ fn drafting_tools_annotate_the_plate() {
     h.run();
     h.get_by_label("Open example").click();
     h.run();
+    example_with_room(&mut h);
     let annotations = |h: &Harness<'_, DriftApp>| -> Vec<Annotation> {
         h.state()
             .drawing
@@ -3468,7 +3496,7 @@ fn a_sheet_prints_in_greyscale_or_black_and_white() {
     assert_eq!(pages[0], mono, "what prints is what the preview shows");
     save_png("drift_ui_sheet_mono.png", &mut h);
 
-    h.get_by_label("Greyscale").click();
+    h.get_by_label("Grayscale").click();
     h.run();
     h.run();
     let greys = preview(&h);
@@ -3994,8 +4022,11 @@ fn sheets_preview_and_export() {
     );
     h.state_mut().undo();
     assert_eq!(placed(&h, id)[0].center, views[0].center);
-    // Esc returns to the model.
+    // Esc with nothing to cancel stays on the sheet (#487); Back to model leaves it.
     h.key_press(Key::Escape);
+    h.run();
+    assert!(h.state().drawing.view.sheet_preview);
+    h.get_by_label("Back to model").click();
     h.run();
     assert!(!h.state().drawing.view.sheet_preview);
     // An ANSI B sheet with an ASME title block and revisions.
@@ -4925,7 +4956,7 @@ fn text_is_typed_in_place_and_windows_open() {
     h.run();
     save_png("drift_ui_about.png", &mut h);
     // About → Licences shows the third-party notices.
-    h.get_by_label("Licences…").click();
+    h.get_by_label("Licenses…").click();
     h.run();
     h.run();
     h.run();
@@ -5214,11 +5245,15 @@ fn control_bar_overlap_warning_and_corner_angles() {
         h.get_by_role_and_label(Role::Button, "Stroke");
         h.get_by_role_and_label(Role::Button, "Fill");
     }
-    // The tool's hint, in the middle of the status bar, stops short of every switch, however
+    // The tool's hint, at the left of the status bar, stops short of every switch, however
     // wide the right-hand group is (with this warning showing, and wider fonts, it used to lie
     // over the leftmost ones and take their clicks).
     let hint = h.get_by_label(&h.state().tool.hint()).rect();
+    assert!(hint.left() < 20.0, "the hint starts the bar: {hint:?}");
     for name in [
+        "Snap to grid",
+        "Perpendicular & tangent",
+        "Angle snap",
         "Grid",
         "Origin axes",
         "End points",
@@ -5418,7 +5453,12 @@ fn control_bar_sets_stroke_weight_and_line_type() {
     let menu = |h: &mut Harness<'static, DriftApp>, index: usize, item: &str| {
         let mut combos: Vec<_> = h
             .get_all_by_role(egui::accesskit::Role::ComboBox)
-            .filter(|c| c.rect().top() < 64.0)
+            // (The options bar's: under the top bar, over the canvas.)
+            .filter(|c| {
+                let bar =
+                    crate::theme::bar::TOP..crate::theme::bar::TOP + crate::theme::bar::OPTIONS;
+                bar.contains(&c.rect().top()) && bar.contains(&c.rect().bottom())
+            })
             .collect();
         combos.sort_by(|a, b| a.rect().left().total_cmp(&b.rect().left()));
         combos[index].click();
@@ -8288,6 +8328,7 @@ fn views_are_drawn_on_the_canvas_and_placed_on_sheets() {
     h.run();
     h.get_by_label("Open example").click();
     h.run();
+    example_with_room(&mut h);
     let near = |a: DVec2, b: DVec2| a.distance(b) < 0.01;
 
     // The View tool: drag a crop round the plate's left half (Alt: free of snaps).
@@ -8688,6 +8729,80 @@ fn sheets_are_tabs_with_their_own_tools_and_inspector() {
     save_png("drift_ui_sheet_tabs.png", &mut h);
 }
 
+/// #487: Esc on a sheet stops at the last thing it can cancel and never leaves the sheet;
+/// Ctrl+PgDn / PgUp step through the canvas tabs (the model, then each sheet), wrapping.
+#[test]
+fn esc_never_leaves_a_sheet_and_ctrl_page_keys_step_the_tabs() {
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    for _ in 0..2 {
+        h.get_by_label("Add a sheet").click();
+        h.run();
+        h.run();
+    }
+    let sheets: Vec<_> = h
+        .state()
+        .drawing
+        .editor
+        .doc
+        .sheets()
+        .map(|(id, _)| id)
+        .collect();
+    assert_eq!(sheets.len(), 2);
+    let tab = |h: &Harness<'_, DriftApp>| {
+        let app = h.state();
+        app.drawing
+            .view
+            .sheet_preview
+            .then(|| app.current_sheet())
+            .flatten()
+    };
+    let step = |h: &mut Harness<'_, DriftApp>, key: Key| {
+        h.key_press_modifiers(EguiModifiers::COMMAND, key);
+        h.run();
+        h.run();
+    };
+    assert_eq!(tab(&h), Some(sheets[1]));
+
+    // Esc puts the Note tool down, then does nothing however often it's pressed.
+    h.key_press(Key::N);
+    h.run();
+    assert_eq!(h.state().tool.kind(), ToolKind::Note);
+    for _ in 0..4 {
+        h.key_press(Key::Escape);
+        h.run();
+        assert_eq!(tab(&h), Some(sheets[1]), "Esc stays on the sheet");
+    }
+    assert_eq!(h.state().tool.kind(), ToolKind::Select);
+
+    // Ctrl+PgDn: on to the next tab, wrapping round from the last sheet to the model.
+    step(&mut h, Key::PageDown);
+    assert_eq!(tab(&h), None, "the last sheet wraps to the model");
+    step(&mut h, Key::PageDown);
+    assert_eq!(tab(&h), Some(sheets[0]));
+    step(&mut h, Key::PageDown);
+    assert_eq!(tab(&h), Some(sheets[1]));
+    // Ctrl+PgUp goes back, wrapping from the model to the last sheet.
+    step(&mut h, Key::PageUp);
+    assert_eq!(tab(&h), Some(sheets[0]));
+    step(&mut h, Key::PageUp);
+    assert_eq!(tab(&h), None);
+    step(&mut h, Key::PageUp);
+    assert_eq!(
+        tab(&h),
+        Some(sheets[1]),
+        "the model wraps to the last sheet"
+    );
+    // Esc in the model doesn't open a sheet either.
+    step(&mut h, Key::PageDown);
+    h.key_press(Key::Escape);
+    h.run();
+    assert_eq!(tab(&h), None);
+}
+
 #[test]
 fn place_on_sheet_finds_free_paper() {
     use crate::app::sheet_editor::drawing_extent;
@@ -8982,8 +9097,9 @@ fn sheets_reorder_duplicate_and_choose_for_pdf() {
     let tab = |h: &Harness<'_, DriftApp>, label: &str| {
         h.get_all_by_label(label)
             .map(|n| n.rect())
-            .find(|r| r.bottom() <= canvas.top() + 1.0 && r.left() < canvas.right())
-            .expect("a canvas tab")
+            // (The tabs are in the top bar; the Sheets list names the sheets too.)
+            .find(|r| r.bottom() <= crate::theme::bar::TOP)
+            .expect("a sheet's tab in the top bar")
     };
     let at = tab(&h, "A-102  Sheet 2").center();
     h.hover_at(at);
@@ -10196,7 +10312,7 @@ fn saved_preferences_read_back_unchanged() {
         "fillalone=2;xsize=16;xfull=0;xweight=1;upchk=1;dock_left=;",
         "dock_right=inspector,parameters,layers,sheets,blocks;dock_stacks=;dock_front_left=;",
         "dock_front_right=inspector;dock_collapsed=00;dock_last=;dock_home_left=;",
-        "dock_weights=;dock_folded="
+        "dock_weights=;dock_folded=;quickbar=1"
     );
     let Some(mut h) = harness() else { return };
     h.state_mut().apply_view_prefs(SAVED);
@@ -10211,13 +10327,13 @@ fn saved_preferences_read_back_unchanged() {
     assert_eq!(prefs.fill_alone_picks, 2);
     // (Which relations show is saved since #337, and Auto merge since: keys those builds
     // didn't write. Auto merge reads back off, its default.)
-    assert_eq!(
-        h.state()
-            .view_prefs()
-            .replace("rels=all;", "")
-            .replace("merge=0;", ""),
-        SAVED
-    );
+    // (And whether the rail shows names since the Studio rail: appended, off unless set.)
+    let written = h
+        .state()
+        .view_prefs()
+        .replace("rels=all;", "")
+        .replace("merge=0;", "");
+    assert_eq!(written.strip_suffix(";railnames=0"), Some(SAVED));
 }
 
 #[test]

@@ -66,11 +66,7 @@ impl CanvasPainter {
             images,
             groups,
         } = content;
-        let palette = if options.dark_mode {
-            Palette::dark()
-        } else {
-            Palette::light()
-        };
+        let palette = Palette::themed(options.dark_mode);
         let viewport = Viewport {
             size_px: DVec2::new(f64::from(rect.width()), f64::from(rect.height()))
                 * pixels_per_point,

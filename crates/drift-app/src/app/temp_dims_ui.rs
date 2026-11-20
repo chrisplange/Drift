@@ -45,6 +45,19 @@ pub(crate) struct TempLayout {
     end: Option<egui::Pos2>,
 }
 
+impl TempLayout {
+    /// What of it is read and clicked on the canvas: its value, its lock and its far end's
+    /// handle. The quick-constrain bar keeps off these.
+    pub(crate) fn keep_clear(&self) -> impl Iterator<Item = egui::Rect> + '_ {
+        let end = self
+            .end
+            .map(|p| egui::Rect::from_center_size(p, egui::Vec2::splat(HANDLE_PT + 6.0)));
+        [Some(self.dim.text_rect.expand(4.0)), Some(self.lock), end]
+            .into_iter()
+            .flatten()
+    }
+}
+
 /// Draws dimension lines dashed.
 struct Dashed<'a>(&'a egui::Painter);
 

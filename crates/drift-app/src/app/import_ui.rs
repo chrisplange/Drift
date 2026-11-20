@@ -341,7 +341,11 @@ impl DriftApp {
                         } else {
                             "Page"
                         });
-                        ui.add(egui::DragValue::new(&mut pending.page).range(1..=pending.pages));
+                        theme::drag_sized(
+                            ui,
+                            56.0,
+                            egui::DragValue::new(&mut pending.page).range(1..=pending.pages),
+                        );
                         ui.label(format!("of {}", pending.pages));
                     });
                 }
@@ -423,7 +427,8 @@ impl DriftApp {
                         );
                     }
                 }
-                ui.checkbox(
+                theme::checkbox(
+                    ui,
                     &mut pending.calibrate,
                     "Then calibrate: pick two points on it and type their real distance",
                 )
@@ -436,7 +441,7 @@ impl DriftApp {
                 // A PDF's pictures come in with it either way; an SVG's only as geometry.
                 let pdf = matches!(pending.source, ImportSource::Pdf(_));
                 if pictures && (pdf || !pending.underlay()) {
-                    ui.checkbox(&mut pending.images, "Bring in images as pictures")
+                    theme::checkbox(ui, &mut pending.images, "Bring in images as pictures")
                         .on_hover_text(
                             "Photos and scans in the file come in as pictures on an underlay \
                              beneath the drawing",
@@ -445,12 +450,14 @@ impl DriftApp {
                 if !pending.underlay() {
                     ui.add_space(6.0);
                     ui.label("Edges of shapes that are filled but not outlined:");
-                    ui.radio_value(
+                    theme::radio_value(
+                        ui,
                         &mut pending.construction_edges,
                         true,
                         "Construction: they shape the fill, and don't print",
                     );
-                    ui.radio_value(
+                    theme::radio_value(
+                        ui,
                         &mut pending.construction_edges,
                         false,
                         "Lines: they print, in the layer's style",
@@ -859,12 +866,12 @@ fn curve_limits(
         ));
     }
     if !heads_up.is_empty() {
-        let amber = egui::Color32::from_rgb(0xff, 0x9f, 0x0a);
+        let amber = crate::theme::amber(ui.visuals().dark_mode);
         ui.add_space(6.0);
         ui.label(egui::RichText::new("Before you import").strong());
         for line in heads_up.iter() {
             ui.horizontal_wrapped(|ui| {
-                ui.colored_label(amber, "⚠");
+                warning_mark(ui, amber);
                 ui.label(line);
             });
         }
@@ -881,6 +888,29 @@ fn curve_limits(
         );
     }
     !too_many
+}
+
+/// A warning's mark before its line: a triangle with an exclamation mark, painted (the
+/// font has no such sign).
+fn warning_mark(ui: &mut egui::Ui, color: egui::Color32) {
+    let height = ui.text_style_height(&egui::TextStyle::Body);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(14.0, height), egui::Sense::hover());
+    let c = rect.center();
+    let stroke = egui::Stroke::new(1.3, color);
+    ui.painter().add(egui::Shape::closed_line(
+        vec![
+            c + egui::vec2(0.0, -6.0),
+            c + egui::vec2(6.5, 5.5),
+            c + egui::vec2(-6.5, 5.5),
+        ],
+        stroke,
+    ));
+    ui.painter().line_segment(
+        [c + egui::vec2(0.0, -2.0), c + egui::vec2(0.0, 1.5)],
+        stroke,
+    );
+    ui.painter()
+        .circle_filled(c + egui::vec2(0.0, 3.6), 0.9, color);
 }
 
 /// Above this many curves an import as geometry is warned about, and above the second it is

@@ -2,52 +2,10 @@
 
 use crate::*;
 
-/// Keys as keycaps ("Ctrl+Z / Ctrl+Y"); descriptions ("Click inside a closed area") as text.
-pub(crate) fn keycaps(ui: &mut egui::Ui, keys: &str) {
-    ui.spacing_mut().item_spacing.x = 4.0;
-    for (i, piece) in keys.split(" / ").enumerate() {
-        if i > 0 {
-            ui.label(egui::RichText::new("/").weak());
-        }
-        let is_key = !piece.contains(' ') || piece.len() <= 3;
-        if !is_key {
-            ui.label(egui::RichText::new(piece).weak());
-            continue;
-        }
-        let text = egui::RichText::new(piece).size(theme::size::CAPTION + 0.5);
-        let galley = egui::WidgetText::from(text).into_galley(
-            ui,
-            Some(egui::TextWrapMode::Extend),
-            f32::INFINITY,
-            egui::TextStyle::Body,
-        );
-        let size = galley.size() + egui::vec2(12.0, 6.0);
-        let (r, _) = ui.allocate_exact_size(size, egui::Sense::hover());
-        let v = ui.visuals();
-        ui.painter().rect(
-            r,
-            theme::radius::CONTROL,
-            v.faint_bg_color,
-            egui::Stroke::new(1.0, theme::hairline(ui)),
-            egui::StrokeKind::Inside,
-        );
-        // A deeper bottom edge, like a key.
-        ui.painter().line_segment(
-            [
-                r.left_bottom() + egui::vec2(3.0, -0.5),
-                r.right_bottom() + egui::vec2(-3.0, -0.5),
-            ],
-            egui::Stroke::new(1.5, theme::hairline(ui)),
-        );
-        ui.painter()
-            .galley(r.min + egui::vec2(6.0, 3.0), galley, v.text_color());
-    }
-}
-
 /// The windows Esc closes, by their egui ids, frontmost first when egui can't tell.
 const WINDOWS: [&str; 12] = [
     "unrestored",
-    "Licences",
+    "Licenses",
     "About Drift",
     "Keyboard shortcuts",
     "Solver benchmark",
@@ -128,7 +86,7 @@ impl DriftApp {
     fn window_open(&self, id: &str) -> bool {
         match id {
             "unrestored" => self.unrestored.is_some(),
-            "Licences" => self.show_licences,
+            "Licenses" => self.show_licences,
             "About Drift" => self.show_about,
             "Keyboard shortcuts" => self.show_shortcuts,
             "Solver benchmark" => self.benchmark.is_some(),
@@ -149,7 +107,7 @@ impl DriftApp {
     fn close_window(&mut self, id: &str) {
         match id {
             "unrestored" => self.unrestored = None,
-            "Licences" => self.show_licences = false,
+            "Licenses" => self.show_licences = false,
             "About Drift" => self.show_about = false,
             "Keyboard shortcuts" => self.show_shortcuts = false,
             "Solver benchmark" => self.benchmark = None,
@@ -374,7 +332,8 @@ impl DriftApp {
                 if theme::dialog_title(ui, "Keyboard shortcuts", true) {
                     close = true;
                 }
-                let field = ui.add(
+                let field = crate::theme::field(
+                    ui,
                     egui::TextEdit::singleline(filter)
                         .hint_text("Filter, e.g. \"dimension\" or \"Ctrl\"")
                         .desired_width(f32::INFINITY),
@@ -426,7 +385,7 @@ impl DriftApp {
                                             .with_main_wrap(true),
                                         |ui| {
                                             ui.set_min_width(150.0);
-                                            keycaps(ui, &keys);
+                                            theme::keycaps(ui, &keys);
                                         },
                                     );
                                     ui.add(egui::Label::new(action).wrap());

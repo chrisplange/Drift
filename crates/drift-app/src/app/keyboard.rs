@@ -33,6 +33,23 @@ impl DriftApp {
         if ctx.text_edit_focused() || self.text_was_focused {
             return;
         }
+        // Ctrl/⌘+PgDn and PgUp step through the canvas tabs (the model, then each sheet),
+        // wrapping at the ends.
+        if !self.tool.is_busy() {
+            let step = ctx.input_mut(|i| {
+                if i.consume_key(egui::Modifiers::COMMAND, Key::PageDown) {
+                    Some(true)
+                } else if i.consume_key(egui::Modifiers::COMMAND, Key::PageUp) {
+                    Some(false)
+                } else {
+                    None
+                }
+            });
+            if let Some(forward) = step {
+                self.step_canvas_tab(forward);
+                return;
+            }
+        }
         // Add view from a sheet: Esc (before the crop is started) goes back to the sheet.
         if let Some(sheet) = self.drawing.add_view_on
             && !self.tool.is_busy()
@@ -42,7 +59,8 @@ impl DriftApp {
             self.show_sheet(Some(sheet));
             return;
         }
-        // The sheet preview takes no drawing keys: Esc (or F) returns to the model.
+        // The sheet preview takes no drawing keys. Esc never leaves it for the model (Back
+        // to model, the Sheet menu, the canvas tabs or Ctrl+PgDn / PgUp do).
         if self.drawing.view.sheet_preview {
             // V adds a view, by its region in the model.
             if ctx.input(|i| i.modifiers.is_none() && i.key_pressed(Key::V))
@@ -63,7 +81,8 @@ impl DriftApp {
                 }
             }
             // Esc gives up what the Note or Dimension tool has picked, then the tool, then
-            // a picked annotation, then several picked views; then it returns to the model.
+            // a picked annotation, then several picked views. With nothing left it does
+            // nothing: one Esc too many never throws you out of the sheet (#487).
             if ctx.input(|i| i.key_pressed(Key::Escape)) {
                 if self.cancel_sheet_annotation_drag() {
                     // (A note or label being dragged went back to where it was.)
@@ -77,8 +96,6 @@ impl DriftApp {
                     self.pick_sheet_annotation(None);
                 } else if self.drawing.view.view_set.take().is_some() {
                     self.drawing.view.sheet_pick = crate::app::sheet_editor::SheetPick::Paper;
-                } else {
-                    self.drawing.view.sheet_preview = false;
                 }
             }
             if ctx.input(|i| i.key_pressed(Key::F) && i.modifiers.shift_only()) {
@@ -630,5 +647,29 @@ impl DriftApp {
             }
         }
         b
+    }
+}
+
+impl DriftApp {
+    /// Shows the next (or previous) canvas tab: the model, then each sheet in order,
+    /// wrapping at the ends (Ctrl/⌘+PgDn and PgUp).
+    pub(crate) fn step_canvas_tab(&mut self, forward: bool) {
+        let mut tabs: Vec<Option<drift_core::SheetId>> = vec![None];
+        tabs.extend(self.drawing.editor.doc.sheets().map(|(id, _)| Some(id)));
+        let here = if self.drawing.view.sheet_preview {
+            self.current_sheet()
+        } else {
+            None
+        };
+        let at = tabs.iter().position(|t| *t == here).unwrap_or(0);
+        let n = tabs.len();
+        let next = if forward {
+            (at + 1) % n
+        } else {
+            (at + n - 1) % n
+        };
+        if next != at {
+            self.show_sheet(tabs[next]);
+        }
     }
 }

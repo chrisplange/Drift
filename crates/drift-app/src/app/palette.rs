@@ -518,9 +518,10 @@ impl DriftApp {
         if scrim.inner.clicked() {
             close = true;
         }
-        let width = 540.0_f32.min(content.width() - 32.0);
+        let width = 600.0_f32.min(content.width() - 32.0);
         let dark = ctx.theme() == egui::Theme::Dark;
         let accent = theme::accent(dark);
+        let n = theme::neutrals(dark);
         egui::Area::new(egui::Id::new("command_palette"))
             .order(egui::Order::Tooltip)
             .fixed_pos(egui::pos2(
@@ -530,18 +531,22 @@ impl DriftApp {
             .show(ctx, |ui| {
                 let style = ui.style().clone();
                 egui::Frame::popup(&style)
-                    .corner_radius(12.0)
+                    .corner_radius(theme::radius::DIALOG)
                     .inner_margin(egui::Margin::same(8))
                     .show(ui, |ui| {
                         ui.set_width(width - 16.0);
                         ui.horizontal(|ui| {
+                            // (In line with the rows' icons.)
                             let (r, _) = ui
-                                .allocate_exact_size(egui::vec2(22.0, 28.0), egui::Sense::hover());
+                                .allocate_exact_size(egui::vec2(28.0, 30.0), egui::Sense::hover());
                             icons::glyph(
                                 ui.painter(),
-                                egui::Rect::from_center_size(r.center(), egui::Vec2::splat(15.0)),
+                                egui::Rect::from_center_size(
+                                    egui::pos2(r.left() + 18.0, r.center().y),
+                                    egui::Vec2::splat(16.0),
+                                ),
                                 Glyph::Search,
-                                ui.visuals().weak_text_color(),
+                                n.secondary,
                             );
                             let field = ui.add(
                                 egui::TextEdit::singleline(&mut state.query)
@@ -559,8 +564,9 @@ impl DriftApp {
                                 state.selected = 0;
                             }
                         });
-                        ui.add_space(4.0);
+                        ui.add_space(2.0);
                         ui.separator();
+                        ui.spacing_mut().item_spacing.y = 1.0;
                         if entries.is_empty() {
                             ui.add_space(8.0);
                             ui.vertical_centered(|ui| {
@@ -570,7 +576,7 @@ impl DriftApp {
                         }
                         for (k, e) in entries.iter().take(shown).enumerate() {
                             let (r, response) = ui.allocate_exact_size(
-                                egui::vec2(ui.available_width(), 30.0),
+                                egui::vec2(ui.available_width(), 32.0),
                                 egui::Sense::click(),
                             );
                             response.widget_info(|| {
@@ -587,21 +593,31 @@ impl DriftApp {
                             }
                             let selected = k == state.selected;
                             let painter = ui.painter();
-                            let (fg, weak) = if selected {
-                                painter.rect_filled(r, 7.0, accent);
-                                (egui::Color32::WHITE, egui::Color32::from_white_alpha(180))
-                            } else {
-                                (ui.visuals().text_color(), ui.visuals().weak_text_color())
-                            };
+                            // The row the keys act on: a tint of the accent, its text as
+                            // it is everywhere, its icon in the accent.
+                            if selected {
+                                painter.rect_filled(
+                                    r,
+                                    theme::radius::CONTROL,
+                                    theme::accent_soft(dark),
+                                );
+                            }
                             // What can't run now is dimmed, and says why on the right.
-                            let fg = if e.enabled { fg } else { weak };
+                            let fg = if e.enabled { n.text } else { n.tertiary };
+                            let mark = if !e.enabled {
+                                n.tertiary
+                            } else if selected {
+                                accent
+                            } else {
+                                n.secondary
+                            };
                             let icon = egui::Rect::from_center_size(
                                 egui::pos2(r.left() + 18.0, r.center().y),
                                 egui::Vec2::splat(16.0),
                             );
                             match e.spec.and_then(|s| s.icon) {
-                                Some(Icon::Tool(kind)) => icons::tool(painter, icon, kind, fg),
-                                Some(Icon::Glyph(g)) => icons::glyph(painter, icon, g, fg),
+                                Some(Icon::Tool(kind)) => icons::tool(painter, icon, kind, mark),
+                                Some(Icon::Glyph(g)) => icons::glyph(painter, icon, g, mark),
                                 None => {
                                     if let Some(on) = e.on {
                                         // A check box for settings.
@@ -609,7 +625,7 @@ impl DriftApp {
                                         painter.rect_stroke(
                                             b,
                                             3.0,
-                                            egui::Stroke::new(1.2, weak),
+                                            egui::Stroke::new(1.2, n.tertiary),
                                             egui::StrokeKind::Inside,
                                         );
                                         if on {
@@ -619,7 +635,7 @@ impl DriftApp {
                                                     b.center_bottom() + egui::vec2(-1.0, -3.0),
                                                     b.right_top() + egui::vec2(-2.5, 3.0),
                                                 ],
-                                                egui::Stroke::new(1.6, fg),
+                                                egui::Stroke::new(1.6, mark),
                                             ));
                                         }
                                     }
@@ -629,31 +645,22 @@ impl DriftApp {
                                 egui::pos2(r.left() + 36.0, r.center().y),
                                 egui::Align2::LEFT_CENTER,
                                 &e.title,
-                                egui::FontId::proportional(13.5),
+                                egui::FontId::proportional(13.0),
                                 fg,
                             );
-                            let mut right = r.right() - 10.0;
+                            // At the right: its keys as caps, and before them its group.
+                            let mut right = r.right() - 8.0;
                             if !e.keys.is_empty() {
-                                let g = painter.layout_no_wrap(
-                                    e.keys.clone(),
-                                    egui::FontId::proportional(theme::size::CAPTION),
-                                    weak,
-                                );
-                                right -= g.size().x;
-                                painter.galley(
-                                    egui::pos2(right, r.center().y - g.size().y / 2.0),
-                                    g,
-                                    weak,
-                                );
-                                right -= 12.0;
+                                theme::keycap_at(ui, egui::pos2(right, r.center().y), &e.keys);
+                                right -= theme::keycaps_width(ui, &e.keys) + 10.0;
                             }
                             let group = if e.enabled { e.group } else { e.reason };
                             painter.text(
                                 egui::pos2(right, r.center().y),
                                 egui::Align2::RIGHT_CENTER,
                                 group,
-                                egui::FontId::proportional(11.5),
-                                weak,
+                                egui::FontId::proportional(theme::size::CAPTION),
+                                n.tertiary,
                             );
                             if response.clicked() {
                                 chosen = Some(k);

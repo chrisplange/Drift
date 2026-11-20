@@ -98,7 +98,7 @@ impl DriftApp {
                 ui.label(units.format_readout(r.perimeter));
             });
         }
-        ui.add_space(10.0);
+        ui.add_space(12.0);
         if theme::danger_button(ui, "Delete").clicked() {
             // The whole shape: its outline, and with it its fill.
             self.drawing
@@ -192,19 +192,13 @@ impl DriftApp {
             });
         }
         if on {
-            ui.add_space(4.0);
-            egui::Grid::new(("stroke", curves.first()))
-                .num_columns(2)
-                .min_col_width(theme::LABEL_WIDTH)
-                .show(ui, |ui| self.stroke_rows(ui, curves, "shape"));
+            ui.add_space(2.0);
+            self.stroke_rows(ui, curves, "shape");
         } else {
-            ui.label(
-                egui::RichText::new(
-                    "No stroke: the outline isn't drawn or printed, but still bounds the fill, \
-                     snaps and holds its relations.",
-                )
-                .small()
-                .weak(),
+            theme::hint(
+                ui,
+                "No stroke: the outline isn't drawn or printed, but still bounds the fill, \
+                 snaps and holds its relations.",
             );
         }
     }

@@ -15,7 +15,7 @@ fn thumbnail(ui: &mut egui::Ui, block: &drift_core::Block, size: f32) -> egui::R
     let (rect, response) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::click());
     let visuals = ui.visuals();
     ui.painter()
-        .rect_filled(rect, 6.0, visuals.extreme_bg_color);
+        .rect_filled(rect, theme::radius::CONTROL, visuals.extreme_bg_color);
     paint_block(ui.painter(), rect.shrink(5.0), block, visuals.text_color());
     response
 }
@@ -78,12 +78,13 @@ fn library_tile(
     } else {
         visuals.extreme_bg_color
     };
-    ui.painter().rect_filled(thumb, theme::radius::MENU, fill);
+    ui.painter()
+        .rect_filled(thumb, theme::radius::CONTROL, fill);
     if added {
         ui.painter().rect_stroke(
             thumb,
-            theme::radius::MENU,
-            egui::Stroke::new(1.5, theme::accent(dark).gamma_multiply(0.7)),
+            theme::radius::CONTROL,
+            egui::Stroke::new(1.0, theme::accent(dark).gamma_multiply(0.8)),
             egui::StrokeKind::Inside,
         );
     }
@@ -93,17 +94,18 @@ fn library_tile(
         &entry.block,
         visuals.text_color(),
     );
-    let font = egui::FontId::proportional(11.0);
+    let font = egui::FontId::proportional(theme::size::CAPTION);
+    let ink = visuals.weak_text_color();
     let galley = ui
         .painter()
-        .layout(entry.type_name.clone(), font, visuals.text_color(), size.x);
+        .layout(entry.type_name.clone(), font, ink, size.x);
     ui.painter().galley(
         egui::pos2(
             rect.center().x - galley.size().x / 2.0,
             thumb.bottom() + 2.0,
         ),
         galley,
-        visuals.text_color(),
+        ink,
     );
     response
 }
@@ -152,7 +154,7 @@ impl DriftApp {
                 self.drawing.editor.base_point_pick =
                     Some(drift_edit::blocks::BasePointPick::Make(name.to_owned()));
                 self.status_next =
-                    Some("Click the block's base point, or press Enter for the centre".into());
+                    Some("Click the block's base point, or press Enter for the center".into());
             }
             Err(e) => self.status_next = Some(e),
         }
@@ -163,7 +165,7 @@ impl DriftApp {
         self.set_tool(ToolKind::BasePoint);
         self.drawing.editor.base_point_pick = Some(drift_edit::blocks::BasePointPick::Block(copy));
         self.status_next = Some(
-            "Click the new base point: every copy stays where it is (Enter: the centre)".into(),
+            "Click the new base point: every copy stays where it is (Enter: the center)".into(),
         );
     }
 
@@ -184,9 +186,8 @@ impl DriftApp {
 
     /// The Blocks tab.
     pub(crate) fn blocks_panel(&mut self, ui: &mut egui::Ui) {
-        let output = egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .show(ui, |ui| self.blocks_contents(ui));
+        let area = egui::ScrollArea::vertical().auto_shrink([false, false]);
+        let output = theme::pane_scroll(ui, area, |ui| self.blocks_contents(ui));
         self.panel_scrolled(ui, crate::dock::Panel::Blocks, &output);
     }
 
@@ -203,16 +204,17 @@ impl DriftApp {
         if !self.drawing.editor.selection.is_empty() {
             theme::section(ui, "New block");
             ui.horizontal(|ui| {
-                ui.add(
+                crate::theme::field(
+                    ui,
                     egui::TextEdit::singleline(&mut self.new_block_name)
                         .hint_text(format!("Block {}", blocks.len() + 1))
-                        .desired_width(ui.available_width() - 70.0),
+                        .desired_width(ui.available_width() - 56.0 - ui.spacing().item_spacing.x),
                 );
                 if ui
-                    .button("Make")
+                    .add(egui::Button::new("Make").min_size(egui::vec2(56.0, 0.0)))
                     .on_hover_text(
                         "Make a block from the selection; a copy takes its place. Then click \
-                         its base point, or press Enter for the centre",
+                         its base point, or press Enter for the center",
                     )
                     .clicked()
                 {
@@ -221,11 +223,13 @@ impl DriftApp {
                 }
             });
         }
-        ui.add_space(6.0);
-        ui.add(
-            egui::TextEdit::singleline(&mut self.block_search)
-                .hint_text("Search blocks and the library")
-                .desired_width(ui.available_width()),
+        ui.add_space(4.0);
+        let width = ui.available_width();
+        theme::search_field(
+            ui,
+            &mut self.block_search,
+            "Search blocks and the library",
+            width,
         );
         let search = self.block_search.trim().to_owned();
         let words: Vec<String> = search.split_whitespace().map(str::to_lowercase).collect();
@@ -266,21 +270,28 @@ impl DriftApp {
         for (id, block) in shown {
             let picked =
                 self.tool.kind() == ToolKind::Block && self.drawing.editor.place_block == Some(*id);
+            // (Filled in once it is known whether the pointer is on the row.)
+            let backdrop = ui.painter().add(egui::Shape::Noop);
             let row = egui::Frame::new()
-                .fill(if picked {
-                    theme::accent(ui.visuals().dark_mode).gamma_multiply(0.18)
-                } else {
-                    egui::Color32::TRANSPARENT
-                })
-                .corner_radius(8.0)
                 .inner_margin(egui::Margin::same(4))
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        let thumb = thumbnail(ui, block, 44.0);
+                        ui.set_min_width(ui.available_width());
+                        ui.spacing_mut().item_spacing.x = 8.0;
+                        let thumb = thumbnail(ui, block, 40.0);
                         ui.vertical(|ui| {
-                            let name = egui::RichText::new(&block.name).family(theme::bold());
+                            ui.spacing_mut().item_spacing.y = 1.0;
+                            ui.add_space(3.0);
+                            let mut name = egui::RichText::new(&block.name);
+                            if picked {
+                                name = name.family(theme::bold());
+                            }
                             if ui
-                                .add(egui::Label::new(name).sense(egui::Sense::click()))
+                                .add(
+                                    egui::Label::new(name)
+                                        .sense(egui::Sense::click())
+                                        .truncate(),
+                                )
                                 .clicked()
                             {
                                 place = Some(*id);
@@ -297,8 +308,8 @@ impl DriftApp {
                                 } else {
                                     copies
                                 })
-                                .small()
-                                .weak(),
+                                .size(theme::size::CAPTION)
+                                .color(ui.visuals().weak_text_color()),
                             );
                         });
                         if thumb.clicked() {
@@ -306,10 +317,15 @@ impl DriftApp {
                         }
                     });
                 });
-            let response = row
-                .response
-                .interact(egui::Sense::click())
-                .on_hover_text("Click to place copies (I)");
+            let response = row.response.interact(egui::Sense::click());
+            if let Some(fill) = theme::row_fill(ui.visuals().dark_mode, picked, response.hovered())
+            {
+                ui.painter().set(
+                    backdrop,
+                    egui::epaint::RectShape::filled(response.rect, theme::radius::CONTROL, fill),
+                );
+            }
+            let response = response.on_hover_text("Click to place copies (I)");
             if response.clicked() {
                 place = Some(*id);
             }
@@ -337,8 +353,7 @@ impl DriftApp {
                         ui.close();
                     }
                     let mut is_profile = block.profile;
-                    if ui
-                        .checkbox(&mut is_profile, "Blender profile")
+                    if crate::theme::checkbox(ui, &mut is_profile, "Blender profile")
                         .on_hover_text(PROFILE_HINT)
                         .changed()
                     {
@@ -351,7 +366,7 @@ impl DriftApp {
                         .unwrap_or_else(|| block.name.clone());
                     ui.horizontal(|ui| {
                         ui.label("Name");
-                        let field = ui.text_edit_singleline(&mut name);
+                        let field = theme::field(ui, egui::TextEdit::singleline(&mut name));
                         if field.changed() {
                             ui.data_mut(|d| d.insert_temp(typed, name.clone()));
                         }
@@ -366,7 +381,7 @@ impl DriftApp {
                     if ui
                         .button(
                             egui::RichText::new("Delete block and copies")
-                                .color(egui::Color32::from_rgb(0xff, 0x5d, 0x5d)),
+                                .color(crate::theme::error_color(ui.visuals().dark_mode)),
                         )
                         .clicked()
                     {
@@ -427,6 +442,7 @@ impl DriftApp {
         theme::section(ui, "Library");
         let label = |c: Option<Category>| c.map_or("All categories", Category::label);
         egui::ComboBox::from_id_salt("library_category")
+            .icon(crate::theme::combo_icon)
             .selected_text(label(self.library_category))
             .width(ui.available_width())
             .show_ui(ui, |ui| {
@@ -450,24 +466,28 @@ impl DriftApp {
             .filter(|e| self.drawing.editor.doc.block_named(&e.block.name).is_none())
             .count();
         ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new(if search.is_empty() {
+            ui.set_min_height(theme::ROW_HEIGHT);
+            theme::hint(
+                ui,
+                &if search.is_empty() {
                     format!("{} blocks · imperial sizes", entries.len())
                 } else {
                     format!("{} found in all categories", entries.len())
-                })
-                .small()
-                .weak(),
+                },
             );
-            if missing > 0
+            // (At the row's end, under the menu's arrow.)
+            let add_all = missing > 0
                 && ui
-                    .small_button("Add all")
-                    .on_hover_text(format!(
-                        "Add the {missing} shown that the drawing doesn't have yet, without \
-                         placing them"
-                    ))
-                    .clicked()
-            {
+                    .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.small_button("Add all")
+                            .on_hover_text(format!(
+                                "Add the {missing} shown that the drawing doesn't have yet, \
+                                 without placing them"
+                            ))
+                            .clicked()
+                    })
+                    .inner;
+            if add_all {
                 let n = self
                     .drawing
                     .editor
@@ -484,8 +504,9 @@ impl DriftApp {
             ui.add_space(4.0);
             ui.label(
                 egui::RichText::new(family[0].family)
-                    .small()
-                    .family(theme::bold()),
+                    .size(theme::size::CAPTION)
+                    .family(theme::bold())
+                    .color(ui.visuals().weak_text_color()),
             );
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
@@ -562,12 +583,11 @@ impl DriftApp {
             .data(|d| d.get_temp::<String>(kept))
             .unwrap_or_else(|| name.clone());
         theme::row(ui, "Name", |ui| {
-            let field = ui
-                .add(
-                    egui::TextEdit::singleline(&mut typed)
-                        .desired_width(ui.available_width() - 8.0),
-                )
-                .on_hover_text("The block's name: every copy shares it");
+            let field = crate::theme::field(
+                ui,
+                egui::TextEdit::singleline(&mut typed).desired_width(ui.available_width()),
+            )
+            .on_hover_text("The block's name: every copy shares it");
             if field.has_focus() {
                 ui.data_mut(|d| d.insert_temp(kept, typed.clone()));
             } else {
@@ -580,11 +600,13 @@ impl DriftApp {
         let mut replace = None;
         theme::row(ui, "Definition", |ui| {
             egui::ComboBox::from_id_salt("instance_block")
+                .icon(crate::theme::combo_icon)
                 .selected_text(format!(
                     "{name} · {copies} {}",
                     if copies == 1 { "copy" } else { "copies" }
                 ))
-                .width(ui.available_width() - 8.0)
+                .width(ui.available_width())
+                .truncate()
                 .show_ui(ui, |ui| {
                     for (id, n) in &blocks {
                         if ui.selectable_label(*id == first.block, n).clicked() {
@@ -633,8 +655,7 @@ impl DriftApp {
             .doc
             .block(first.block)
             .is_some_and(|b| b.profile);
-        if ui
-            .checkbox(&mut is_profile, "Blender profile")
+        if crate::theme::checkbox(ui, &mut is_profile, "Blender profile")
             .on_hover_text(PROFILE_HINT)
             .changed()
         {
@@ -649,14 +670,14 @@ impl DriftApp {
             let length_row = |ui: &mut egui::Ui, label: &str, v: &mut f64| {
                 theme::row(ui, label, |ui| {
                     let mut shown = *v / unit;
-                    if ui
-                        .add(
-                            egui::DragValue::new(&mut shown)
-                                .speed(1.0)
-                                .max_decimals(4)
-                                .suffix(format!(" {}", units.length.symbol())),
-                        )
-                        .changed()
+                    if crate::theme::drag(
+                        ui,
+                        egui::DragValue::new(&mut shown)
+                            .speed(1.0)
+                            .max_decimals(4)
+                            .suffix(format!(" {}", units.length.symbol())),
+                    )
+                    .changed()
                     {
                         *v = shown * unit;
                     }
@@ -665,26 +686,28 @@ impl DriftApp {
             length_row(ui, "X", &mut edited.at.x);
             length_row(ui, "Y", &mut edited.at.y);
             theme::row(ui, "Angle", |ui| {
-                ui.add(
+                crate::theme::drag(
+                    ui,
                     egui::DragValue::new(&mut edited.angle)
                         .speed(1.0)
                         .max_decimals(4)
                         .suffix("°"),
                 );
-                for a in [0.0, 90.0, 180.0, 270.0] {
-                    if ui.small_button(format!("{a}")).clicked() {
-                        edited.angle = a;
-                    }
-                }
             });
+            if let Some(k) = theme::preset_row(ui, &["0", "90", "180", "270"]) {
+                edited.angle = 90.0 * k as f64;
+            }
             theme::row(ui, "Scale", |ui| {
-                ui.add(
+                crate::theme::drag(
+                    ui,
                     egui::DragValue::new(&mut edited.scale)
                         .speed(0.01)
                         .range(0.001..=1000.0)
                         .prefix("× "),
                 );
-                ui.checkbox(&mut edited.mirror, "Mirror");
+            });
+            theme::row(ui, "", |ui| {
+                crate::theme::checkbox(ui, &mut edited.mirror, "Mirror");
             });
         }
         // (Only a lone copy's placement is edited here; the layer row is at the top.)
@@ -711,7 +734,7 @@ impl DriftApp {
                 self.drawing.editor.select_copies(first.block);
             }
         });
-        ui.add_space(10.0);
+        ui.add_space(12.0);
         if theme::danger_button(ui, "Delete").clicked() {
             self.drawing.editor.delete_selection();
         }
@@ -730,7 +753,11 @@ impl DriftApp {
             .block(edit.block)
             .map_or_else(String::new, |b| b.name.clone());
         theme::section(ui, "Editing block");
-        ui.label(egui::RichText::new(&name).family(theme::bold()).size(15.0));
+        ui.label(
+            egui::RichText::new(&name)
+                .family(theme::bold())
+                .size(theme::size::TITLE),
+        );
         ui.label(
             egui::RichText::new(
                 "Change it with any tool; what you draw becomes part of it. Every copy updates \

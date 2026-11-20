@@ -95,18 +95,15 @@ impl DriftApp {
     pub(crate) fn crosshair_prefs(&mut self, ui: &mut egui::Ui) {
         let x = &mut self.crosshair;
         theme::row(ui, "Size", |ui| {
-            ui.add_enabled(
-                !x.full,
-                egui::Slider::new(&mut x.size, SIZE_RANGE)
-                    .suffix(" pt")
-                    .logarithmic(true),
-            )
-            .on_hover_text("How far each arm reaches from the centre");
+            ui.add_enabled_ui(!x.full, |ui| {
+                theme::value_slider(ui, &mut x.size, SIZE_RANGE, " pt", true)
+                    .on_hover_text("How far each arm reaches from the center");
+            });
         });
-        ui.checkbox(&mut x.full, "Full screen")
+        crate::theme::checkbox(ui, &mut x.full, "Full screen")
             .on_hover_text("Lines across the whole canvas, as in AutoCAD");
         theme::row(ui, "Weight", |ui| {
-            ui.add(egui::Slider::new(&mut x.weight, WEIGHT_RANGE).suffix(" pt"));
+            theme::value_slider(ui, &mut x.weight, WEIGHT_RANGE, " pt", false);
         });
     }
 }

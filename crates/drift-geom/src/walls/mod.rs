@@ -1752,7 +1752,7 @@ impl Gen<'_> {
         if !open_walls.is_empty() {
             let list: Vec<String> = open_walls.iter().map(WallId::to_string).collect();
             self.out.notices.push(format!(
-                "The outline of walls {} doesn't close: they have no poché",
+                "The outline of walls {} doesn't close: they have no fill",
                 list.join(", ")
             ));
         }

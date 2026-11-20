@@ -1364,7 +1364,7 @@ impl DriftApp {
         {
             if let Some(shape) = shapes.get(&id) {
                 let color = if shape.lost {
-                    egui::Color32::from_rgb(0xff, 0x5d, 0x5d)
+                    crate::theme::error_color(dark)
                 } else {
                     colors.window
                 };
@@ -1452,18 +1452,37 @@ impl DriftApp {
         self.paint_note_grips(&painter, &notes, ui.visuals().dark_mode);
         self.paint_groups(&painter, &map, ui.visuals().dark_mode);
         self.paint_free_directions(&painter, &map);
+        self.empty_canvas_hint(ui, &map);
+        // The quick-constrain bar, and a message clear of it.
+        // (It keeps off the dimensions' labels, the temporary dimensions and the relations'
+        // symbols, which are read and clicked.)
+        let clicked_on: Vec<egui::Rect> = dims
+            .iter()
+            .map(|d| d.text_rect)
+            .chain(shown_glyphs.iter().map(|g| g.rect))
+            .chain(temps.iter().flat_map(|t| t.keep_clear()))
+            .collect();
+        let quick_bar = self.quick_bar_wanted(&response, &map, &painter, &clicked_on);
+        let toast_id = overlay::toast_rect_id();
+        ui.ctx().data_mut(|d| d.remove::<egui::Rect>(toast_id));
+        if quick_bar.is_none() {
+            let bar_id = app::quick_bar::rect_id();
+            ui.ctx().data_mut(|d| d.remove::<egui::Rect>(bar_id));
+        }
         if let Some(status) = &self.status {
             let now = ui.input(|i| i.time);
             if now < status.until {
                 let fade = ((status.until - now) / 0.4).clamp(0.0, 1.0) as f32;
-                overlay::toast(
+                let shown = overlay::toast(
                     &painter,
                     rect,
+                    quick_bar.as_ref().map(|bar| bar.rect),
                     &status.text,
-                    status.error,
+                    overlay::ToastKind::of(&status.text, status.error),
                     ui.visuals().dark_mode,
                     fade,
                 );
+                ui.ctx().data_mut(|d| d.insert_temp(toast_id, shown));
                 // Sleep until the fade starts, then animate it.
                 let remaining = status.until - now;
                 let wait = if remaining > 0.4 {
@@ -1484,6 +1503,9 @@ impl DriftApp {
         let notes = self.layout_notes(&annotation_painter, &map);
         self.note_editor(&ctx, &notes);
         self.scale_hint(&ctx, rect);
+        if let Some(bar) = quick_bar {
+            self.quick_bar(&ctx, rect, bar);
+        }
         self.text_editor(ui, &map, &painter);
         self.paint_add_view_prompt(&painter, &map);
         if let (Some(p), Some(pos)) = (self.drawing.view.pointer, pos) {
@@ -1746,11 +1768,7 @@ impl DriftApp {
             stroke,
             egui::StrokeKind::Middle,
         );
-        let fill = if dark {
-            egui::Color32::from_rgb(0x1b, 0x1d, 0x21)
-        } else {
-            egui::Color32::WHITE
-        };
+        let fill = crate::theme::canvas(dark);
         for (_, at) in frame.scale_handles(pad) {
             let square = egui::Rect::from_center_size(map.to_screen(at), egui::vec2(7.0, 7.0));
             painter.rect_filled(square, 0.0, fill);

@@ -28,6 +28,7 @@ pub(crate) mod offset_ui;
 pub(crate) mod opening_ui;
 pub(crate) mod palette;
 pub(crate) mod panels;
+pub(crate) mod pick_filter_ui;
 pub(crate) mod pie;
 pub(crate) mod quick_bar;
 pub(crate) mod rail;

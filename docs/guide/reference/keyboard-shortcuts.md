@@ -43,7 +43,7 @@ does the last command or tool again, as in AutoCAD.
 | Ctrl+Shift+G | **Ungroup** | Ungroup the picked groups |
 | Shift+D | **Duplicate** | Copy the selection in place, then move the copy |
 | F2 | **Rename block or group…** | Rename the picked group, or the block of the picked copies |
-| Ctrl+A | **Select all** | Pick everything the selection filter lets through |
+| Ctrl+A | **Select all** | Pick everything the Selection filter lets through |
 | S | **Select** | Pick, drag and box-select geometry; G moves the selection |
 | Ctrl+, | **Preferences…** | Theme, pointer, drawing aids and updates |
 

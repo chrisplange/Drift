@@ -2358,6 +2358,17 @@ impl DriftApp {
         } else {
             self.tool.hint()
         };
+        // The Selection filter, while it is narrowed, so a click that picks nothing isn't a mystery
+        // (#496).
+        let filter = self.drawing.editor.prefs.pick_filter;
+        let tool_hint = if selecting && !filter.is_all() {
+            format!(
+                "{} · {tool_hint}",
+                crate::app::pick_filter_ui::describe(filter)
+            )
+        } else {
+            tool_hint
+        };
         // Inside a block or group open for editing, a click outside it does nothing: only Esc
         // (or Finish editing) leaves.
         let tool_hint = match (

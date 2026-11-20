@@ -65,6 +65,8 @@ pub enum Glyph {
     ChevronDown,
     /// Back (from a sheet to the model): an arrow to the left.
     Back,
+    /// The Selection filter is narrowed: a funnel.
+    Filter,
 }
 
 /// Maps a 20 × 20 design grid into `rect`.
@@ -779,6 +781,57 @@ pub fn glyph(painter: &egui::Painter, rect: Rect, glyph: Glyph, color: Color32) 
             p.line((8.5, 8.5), (8.5, 13.5));
             p.line((11.5, 8.5), (11.5, 13.5));
         }
+        Glyph::Filter => {
+            // Solid, so it still reads at the rail's badge size.
+            let pts: Vec<Pos2> = [
+                (2.5, 3.5),
+                (17.5, 3.5),
+                (11.8, 10.5),
+                (11.8, 16.5),
+                (8.2, 14.5),
+                (8.2, 10.5),
+            ]
+            .iter()
+            .map(|(x, y)| p.p(*x, *y))
+            .collect();
+            painter.add(Shape::convex_polygon(pts, color, Stroke::NONE));
+        }
+    }
+}
+
+/// The glyph of a kind the Selection filter picks, beside its name wherever the filter is set
+/// (the bar's control and its list; the hold-key pie, #481, is meant to reuse it). The
+/// drawing tools' icons where there is one: Text, Fill, Block, Dimension.
+pub fn pick_kind(
+    painter: &egui::Painter,
+    rect: Rect,
+    kind: drift_edit::editor::PickKind,
+    color: Color32,
+) {
+    use drift_edit::editor::PickKind;
+    let p = pen(painter, rect, color);
+    match kind {
+        PickKind::Points => {
+            // A point: a dot in a ring.
+            p.circle(10.0, 10.0, 5.5);
+            p.dot(10.0, 10.0, 2.2);
+        }
+        PickKind::Edges => {
+            // A line running into an arc, no end points.
+            p.line((3.0, 16.0), (9.0, 10.0));
+            p.arc(13.0, 14.0, 5.66, -PI * 0.75, PI * 0.5);
+        }
+        PickKind::Areas => {
+            // An empty closed outline, dashed.
+            p.dashed((3.5, 4.5), (16.5, 4.5));
+            p.dashed((16.5, 4.5), (16.5, 15.5));
+            p.dashed((16.5, 15.5), (3.5, 15.5));
+            p.dashed((3.5, 15.5), (3.5, 4.5));
+        }
+        PickKind::Fills => tool(painter, rect, ToolKind::Fill, color),
+        PickKind::Blocks => tool(painter, rect, ToolKind::Block, color),
+        PickKind::Text => tool(painter, rect, ToolKind::Text, color),
+        PickKind::Annotations => tool(painter, rect, ToolKind::Dimension, color),
     }
 }
 

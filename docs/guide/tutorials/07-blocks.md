@@ -100,8 +100,8 @@ The **Inspector** shows the copy, laid out as it shows a group:
 
 ![A block copy picked: its Layer, Name, Definition, Placement and Array in the Inspector](../images/block-copy.png)
 
-A click picks a copy while the top bar's **Blocks** pick filter is on (see
-[Pick filters](04-editing.md#pick-filters)). Turn it off and clicks pass over copies, to the
+A click picks a copy while **Blocks & groups** is on in the top bar's **Selection filter** (see
+[Selection filter](04-editing.md#selection-filter)). Turn it off and clicks pass over copies, to the
 lines or fills beneath them.
 
 Tools snap to copies: to the corners, side middles and centre of each copy's box, its

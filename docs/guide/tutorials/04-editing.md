@@ -21,7 +21,7 @@ With the **Select** tool (S, or Esc from any tool):
 | Pick everything inside a box | Drag from left to right (a window selection). |
 | Pick everything the box touches | Drag from right to left (a crossing selection). |
 | Pick a line's midpoint | Click near the middle of the line. |
-| Pick everything (that the pick filter lets through) | Ctrl+A. |
+| Pick everything (that the selection filter lets through) | Ctrl+A. |
 | Clear the selection | Esc, or click empty canvas. |
 
 Clicking inside a fill or hatch picks it; inside a filled shape it picks the shape with its
@@ -32,31 +32,34 @@ a box selection can start there. (To pick a closed area and measure it instead, 
 filled or hatched**; it is saved with the drawing.
 A picked area shows its area, perimeter and centroid in the **Inspector**.)
 
-### Pick filters
+### Selection filter
 
-With nothing picked, the top bar shows what the Select tool picks: a toggle for each kind
-of thing, all on by default. Turn any off, in any mix, as with the selection filters in
-AutoCAD, Rhino or Vectorworks:
+The **Selection filter** sits at the right end of the top bar, whatever the tool, after a funnel:
+what the Select tool picks, **All** by default. Click it for the kinds of thing, each with its glyph and name, and
+turn any off, in any mix, as with the selection filters in AutoCAD, Rhino or Vectorworks:
 
-| Toggle | Picks |
+| Kind | Picks |
 |---|---|
 | **Points** | End points, centres and standalone points. A centre is picked only while it shows: when its arc or circle is picked, or hovered (it stays shown while the pointer moves in from the curve towards it). With **Edges** off, a box takes every point inside it. |
 | **Edges** | Lines, arcs, circles, ellipses and curves (and the relation symbols on them). |
 | **Fills** | Solid fills and hatches. With **Edges** off, a click inside a shape picks its fill without its outline. |
 | **Areas** | Empty closed areas (to measure or fill them), when **Pick an area only where it is filled or hatched** is off in **File → Drawing settings…**. |
-| **Blocks** | Copies of blocks, and groups with **Edges** off. A group is always picked whole; double-click it to pick its lines one by one. |
+| **Blocks & groups** | Copies of blocks, and groups with **Edges** off. A group is always picked whole; double-click it to pick its lines one by one. |
 | **Text** | Sketch text. |
 | **Annotations** | Dimensions, notes, centre marks, and section and elevation marks. |
 
-- **Alt-click** or **double-click** a toggle to pick only that kind.
-- **All** turns every toggle back on.
-- While a filter is on, the **Select** tool in the tool palette has an orange dot; hover over it
-  to see what is picked.
+- **Alt-click** or **double-click** a kind to pick only that kind.
+- **Pick everything** turns every kind back on.
+- While the filter is narrowed, the bar's control names it in the accent color ("Edges", or
+  "3 kinds"), the status bar says so, and the
+  **Select** tool in the tool palette has a small funnel; hover over it to see what is picked.
+- A click or box that hits only kinds the filter leaves out says so ("Fills are filtered
+  out · Selection filter: Edges only"). Click that message to pick everything again.
 
-![Select picking edges only: a box takes just the curves inside it, and the Select tool shows the orange dot](../images/pick-filters.png)
+![Select picking edges only: a box takes just the curves inside it, and the Select tool shows the funnel](../images/pick-filters.png)
 
 The filter applies to clicks, boxes, hover and Select all (Ctrl+A). It isn't saved with the
-drawing. The command palette has each one too (Ctrl+K, "Select fills only", "Select
+drawing. The command palette has each one too (Ctrl+K, "Selection filter: Fills only", "Pick
 everything").
 
 ### Text and annotations in a selection

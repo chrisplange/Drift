@@ -603,10 +603,12 @@ against the one before):
 - **Costs.** 3.13 solves a frame on the slow drags against 1.81. A drag longer than four
   times its part's size takes 16 steps every frame. A refused frame on a small part runs 31
   solves against 8 (11 were tries at keeping a length, now one a step; the rest one step
-  halved till an arc turns, its carry, and halvings of a step that wandered): under a moving
-  pointer that is 5.3 → 13.6 ms a frame, 2.6 times (the Fable re-review's measure, the
-  refusal memory off), and on a folded chain pulled out of reach about a quarter more
-  (32 → 40 ms); held still it costs nothing. The tiled sketch is 22 to 31 % slower, a
+  halved till an arc turns, its carry, and halvings of a step that wandered). Under a pointer
+  moving 0.25 mm a frame its mean is level with main (13.8 → 14.2 ms) and its median twice
+  main's (6.9 → 14.0 ms): main is uneven, some offsets sending its one solve into steps (59
+  solves, 27 ms) and others not, where every frame here takes the same route (39 solves at
+  most, 15 ms). A folded chain pulled out of reach costs about a quarter more (32 → 40 ms);
+  held still a refused frame costs nothing. The tiled sketch is 22 to 31 % slower, a
   carried drag on a small part 1.6 → 2.3 ms; a squeezed arc 8.8 → 1.9 ms and a held landing
   on a pinned 2,000-bar part 88 → 45 ms. One drag of #377's 17,563 that went now stops,
   case 5049: the solve isn't asked to keep the radius of an arc whose only dragged end is a

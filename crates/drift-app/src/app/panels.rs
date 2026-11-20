@@ -2339,8 +2339,8 @@ impl DriftApp {
         } else if self.drawing.add_view_on.is_some() && !self.tool.is_busy() {
             "Drag a rectangle round what the new view shows · Esc cancels".to_owned()
         } else if self.drawing.view.sheet_preview {
-            "Drag a view to move it · Alt-drag the drawing inside it · its handles crop it · Esc \
-             returns to the model"
+            "Drag a view to move it · Alt-drag the drawing inside it · its handles crop it · the \
+             Model tab returns to the model"
                 .to_owned()
         } else if let Some(f) = self.drawing.editor.hovered_fill.filter(|_| selecting) {
             // What the fill under the pointer is: a shape, or an area fill and why (#202).

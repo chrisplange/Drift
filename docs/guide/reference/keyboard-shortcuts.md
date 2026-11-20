@@ -193,7 +193,8 @@ With no key (use the Annotate menu or the command palette): **Section mark**, **
 | Ctrl+A | Pick every view on the sheet |
 | Arrow keys | Nudge the picked views 1 mm of paper; Shift+arrow, 10 |
 | Delete or Backspace | Take the picked views off the sheet (they stay in the drawing) |
-| Esc | Let go of several picked views, then back to the model |
+| Esc | Cancel the Note or Dimension tool, then let go of a picked annotation or several picked views (it never leaves the sheet) |
+| Ctrl+PgDn / Ctrl+PgUp | The next or previous canvas tab (the model, then each sheet) |
 
 <!-- END commands -->
 

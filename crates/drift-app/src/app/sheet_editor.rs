@@ -665,7 +665,13 @@ impl DriftApp {
                 Err(tool) => icons::tool(p, r, tool, c),
             };
             let response = if names {
-                icons::tool_row(ui, selected, label, Some(key), draw)
+                icons::tool_row(
+                    ui,
+                    selected,
+                    label,
+                    Some(key).filter(|k| !k.is_empty()),
+                    draw,
+                )
             } else {
                 let size = egui::vec2(rail::TILE_WIDTH, rail::TILE);
                 icons::tool_tile(ui, size, selected, label, draw)
@@ -733,7 +739,7 @@ impl DriftApp {
             ui,
             false,
             "Back to model",
-            "Esc",
+            "",
             "Back to the model, to draw and edit",
             Ok(Glyph::Back),
         ) {

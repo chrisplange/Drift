@@ -2038,7 +2038,12 @@ pub(crate) const OTHER_KEYS: &[(&str, &[(&str, &str)])] = &[
             ),
             (
                 "Esc",
-                "Let go of several picked views, then back to the model",
+                "Cancel the Note or Dimension tool, then let go of a picked annotation or \
+                 several picked views (it never leaves the sheet)",
+            ),
+            (
+                "Ctrl+PgDn / Ctrl+PgUp",
+                "The next or previous canvas tab (the model, then each sheet)",
             ),
         ],
     ),

@@ -1816,6 +1816,7 @@ pub fn radio(ui: &mut egui::Ui, on: bool, text: impl Into<egui::WidgetText>) -> 
 }
 
 /// [`radio`] that sets `current` to `value` when clicked, as `ui.radio_value` does.
+#[cfg_attr(feature = "demo", allow(dead_code))]
 pub fn radio_value<T: PartialEq>(
     ui: &mut egui::Ui,
     current: &mut T,

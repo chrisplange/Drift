@@ -85,6 +85,18 @@ version**: they ask you to update Drift. Keep a copy saved from Beta 1.6 if you 
 
 <!-- PRs: figures (#475, #477), pick cycling (#419, #449), show relations (#457, #382), conflicts pill (#469), automatic relations (#437, #380) -->
 
+## Points join only when you want them to
+
+- **Auto merge, off by default.** Dragging a point onto another shape's point no longer fuses
+  the two: it lands there and stays its own. Lines and arcs drawn on another shape's point
+  get their own point too. Turn **Auto merge** on in the status bar (Shift+Alt+M) to join
+  them, or hold Ctrl as you drop to join just once. The snap marker shows **Join** when a
+  drop would join.
+- **Weld points.** Pick points and press **1** to weld them onto the one you picked last, or
+  **Shift+1** to weld them at their centre.
+
+<!-- PRs: auto merge and weld (#493) -->
+
 ## Tools
 
 - **Mirror without drawing a line first:** click two points for a temporary axis. Clicking a
@@ -100,8 +112,9 @@ version**: they ask you to update Drift. Keep a copy saved from Beta 1.6 if you 
 - **Esc no longer leaves a sheet.** Go back with **Back to model**, or step through the Model
   and sheet tabs with Ctrl+PgDn and Ctrl+PgUp.
 - **No stray `~` on dimensions** whose value only differs by rounding noise.
+- A floating panel's resize stops at the canvas edge instead of growing the other way.
 
-<!-- PRs: mirror axis (#418), trim walls (#413), papercuts (#416, #412, #447, #492), PDF with no sheets (#417), Layer 1 (#454) -->
+<!-- PRs: mirror axis (#418), trim walls (#413), papercuts (#416, #412, #447, #492), floating-panel resize (#493), PDF with no sheets (#417), Layer 1 (#454) -->
 
 ## Drift script and the AI link
 
@@ -121,16 +134,6 @@ version**: they ask you to update Drift. Keep a copy saved from Beta 1.6 if you 
 - Fills, walls and openings stay right when a drawing is far from the origin or very small.
 
 <!-- PRs: undo budget (#471), never-crash (#443, #444, #449), PDF import (#402), regions (#472), openings (#473) -->
-
-## Points join only when you want them to
-
-- **Auto merge, off by default.** Dragging a point onto another shape's point no longer fuses
-  the two: it lands there and stays its own. Lines and arcs drawn on another shape's point
-  get their own point too. Turn **Auto merge** on in the status bar (Shift+Alt+M) to join
-  them, or hold Ctrl as you drop to join just once. The snap marker shows **Join** when a
-  drop would join.
-- **Weld points.** Pick points and press **1** to weld them onto the one you picked last, or
-  **Shift+1** to weld them at their centre.
 
 ## Notes and dimensions on sheets
 

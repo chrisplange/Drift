@@ -335,3 +335,54 @@ fn a_view_dragged_onto_another_sheet_moves_there() {
     h.run();
     assert_eq!((views_on(&h, one), views_on(&h, two)), (0, 1));
 }
+
+/// The Inspector of the view on sheet `one`, picked.
+fn view_inspector(h: &mut Harness<'_, DriftApp>, one: drift_core::SheetId) {
+    let app = h.state_mut();
+    app.show_sheet(Some(one));
+    app.drawing.view.sheet_view = 0;
+    app.drawing.picked_view = Some(app.drawing.editor.doc.sheet(one).unwrap().viewports[0].view);
+    app.drawing.view.sheet_pick = crate::app::sheet_editor::SheetPick::View;
+    app.show_panel(Panel::Inspector);
+    h.run();
+    h.run();
+}
+
+#[test]
+fn a_views_inspector_keeps_its_actions_in_the_title_menu() {
+    let Some(mut h) = harness() else { return };
+    let (one, two, _) = two_sheets(&mut h);
+    // On a second sheet too: the title says so.
+    let view = h.state().drawing.editor.doc.views().next().unwrap().0;
+    h.state_mut().place_view(two, view, None);
+    view_inspector(&mut h, one);
+    save_png("drift_ui_view_inspector.png", &mut h);
+    assert!(h.query_by_label_contains("also on A-102").is_some());
+
+    h.get_by_label("View actions").click();
+    h.run();
+    save_png("drift_ui_view_inspector_actions.png", &mut h);
+    for item in [
+        "Fit scale to frame",
+        "Fill drawing area",
+        "Remove from sheet",
+    ] {
+        assert!(h.query_by_label(item).is_some(), "{item} in the menu");
+    }
+    assert!(h.query_by_label_contains("Move to sheet").is_some());
+    // Delete asks first, under the title.
+    h.get_by_label("Delete view\u{2026}").click();
+    h.run();
+    assert!(h.query_by_label("Keep it").is_some());
+    h.get_by_label("Keep it").click();
+    h.run();
+    assert!(h.query_by_label("Keep it").is_none());
+
+    // Remove from sheet: off this sheet, still in the model.
+    h.get_by_label("View actions").click();
+    h.run();
+    h.get_by_label("Remove from sheet").click();
+    h.run();
+    assert_eq!(views_on(&h, one), 0);
+    assert_eq!(h.state().drawing.editor.doc.views().count(), 1);
+}

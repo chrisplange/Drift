@@ -860,6 +860,8 @@ impl DriftApp {
         let mut delete_views = false;
         let mut whole = false;
         let mut bring = None;
+        // (A view moved to another sheet from the title's menu: its index here, the sheet.)
+        let mut moved = None;
         let placed = self.drawing.editor.doc.placed_views(&sheet);
         let pick = if placed.is_empty() {
             SheetPick::Paper
@@ -928,17 +930,94 @@ impl DriftApp {
                 }
             }
             SheetPick::View => {
-                let v = &placed[self.current_view(&sheet).min(placed.len() - 1)];
-                crate::app::panels::title(
+                let index = self.current_view(&sheet).min(placed.len() - 1);
+                let v = &placed[index];
+                // Where it is: this sheet, and the others that show it too.
+                let doc = &self.drawing.editor.doc;
+                let elsewhere: Vec<String> = doc
+                    .sheets_showing(v.id)
+                    .into_iter()
+                    .filter(|s| *s != id)
+                    .filter_map(|s| doc.sheet(s).map(sheet_label))
+                    .collect();
+                let detail = if elsewhere.is_empty() {
+                    label.clone()
+                } else {
+                    format!("{label} · also on {}", elsewhere.join(", "))
+                };
+                let others: Vec<(SheetId, String)> = doc
+                    .sheets()
+                    .filter(|(s, _)| *s != id)
+                    .map(|(s, sh)| (s, sheet_label(sh)))
+                    .collect();
+                // Its actions, in the title's menu: the panel below is all settings.
+                let (mut fit, mut fill, mut move_to) = (false, false, None);
+                crate::app::panels::title_with_actions(
                     ui,
-                    None,
+                    crate::icons::Glyph::View,
                     v.title(),
-                    &format!(
-                        "On {label} · {}",
-                        drift_core::sheets::scale_label(v.scale, self.imperial())
-                    ),
+                    &detail,
+                    "View actions",
+                    &mut |ui| {
+                        if ui
+                            .button("Fit scale to frame")
+                            .on_hover_text(
+                                "Center the drawing in the view at the largest scale that fits",
+                            )
+                            .clicked()
+                        {
+                            fit = true;
+                        }
+                        if ui
+                            .button("Fill drawing area")
+                            .on_hover_text(
+                                "Frame it to the sheet's whole drawing area, cropping more or \
+                                 less of the model",
+                            )
+                            .clicked()
+                        {
+                            fill = true;
+                        }
+                        if !others.is_empty() {
+                            ui.menu_button("Move to sheet", |ui| {
+                                for (sheet, name) in &others {
+                                    if ui.button(name).clicked() {
+                                        move_to = Some(*sheet);
+                                    }
+                                }
+                            });
+                        }
+                        ui.separator();
+                        if ui.button("Remove from sheet").clicked() {
+                            remove_view = true;
+                        }
+                        let red = crate::theme::error_color(ui.visuals().dark_mode);
+                        if ui
+                            .button(egui::RichText::new("Delete view\u{2026}").color(red))
+                            .clicked()
+                        {
+                            self.drawing.confirm_delete_set = true;
+                        }
+                    },
                 );
-                typing |= self.views_section(ui, &sheet, &mut view);
+                if self.drawing.confirm_delete_set {
+                    ui.label(
+                        egui::RichText::new(
+                            "Deleting it takes it out of the model and off every sheet.",
+                        )
+                        .color(crate::theme::error_color(ui.visuals().dark_mode)),
+                    );
+                    ui.horizontal(|ui| {
+                        if ui.button("Delete it").clicked() {
+                            delete_views = true;
+                        }
+                        if ui.button("Keep it").clicked() {
+                            self.drawing.confirm_delete_set = false;
+                        }
+                    });
+                }
+                typing |= self.views_section(ui, &sheet, &mut view, fit, fill);
+                moved = move_to.map(|to| (index, to));
                 // The model's notes and dimensions this view shows, onto the sheet.
                 let count = self.view_annotation_count();
                 if count > 0 {
@@ -979,10 +1058,6 @@ impl DriftApp {
                         }
                     });
                 }
-                ui.add_space(16.0);
-                remove_view = theme::danger_button(ui, "Remove from sheet")
-                    .on_hover_text("Take the picked view off this sheet (it stays in the model)")
-                    .clicked();
             }
             SheetPick::Paper | SheetPick::Annotation => {
                 let orientation = if sheet.portrait {
@@ -1032,6 +1107,9 @@ impl DriftApp {
         if remove_view {
             self.remove_picked_views(id);
             self.drawing.view.sheet_pick = SheetPick::Paper;
+        }
+        if let Some((index, to)) = moved {
+            self.move_view_to_sheet(id, index, to);
         }
         if delete_views {
             self.delete_picked_views();

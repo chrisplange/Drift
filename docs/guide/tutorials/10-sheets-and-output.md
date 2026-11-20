@@ -119,7 +119,8 @@ With the select tool:
 Crops and their names are for working on the canvas. They never print or export.
 
 - **View → View crops** (Shift+Alt+B) shows or hides every crop.
-- A view's own **Crop** switch (in the top bar, or in the Inspector once it's on a sheet)
+- A view's own **Crop** switch (in the top bar, or **Show crop** in the Inspector once it's
+  on a sheet)
   hides just that one,
   like Revit's **Crop Region Visible**. A hidden crop can't be picked on the canvas, but you
   can still pick its view in the list. Its crop then shows faintly while picked.
@@ -184,9 +185,11 @@ Dashed guides show what lined up. Hold Ctrl to place freely.
 
 ### The views on a sheet
 
-Pick a view by clicking it on the sheet. The **Inspector** shows the views on the sheet
-(**Views on this sheet**), and for the picked one two sections. **View** is the view itself,
-the same on every sheet it's on (with several, it says so):
+Pick a view by clicking it on the sheet, or under its sheet in the **Sheets** panel. The
+**Inspector**'s title names it and the sheets it's on ("A-101  Ground floor · also on
+A-104"). Its **⋯** menu holds what you can do with it: **Fit scale to frame**, **Fill drawing
+area**, **Move to sheet**, **Remove from sheet** and **Delete view…**. Below are two sections.
+**View** is the view itself, shared by every sheet it's on:
 
 - **Name:** its name, as the canvas and the marks show it.
 - **Scale:** choose from the menu, or type one under **Custom** at its foot (`1:75`,
@@ -196,28 +199,33 @@ the same on every sheet it's on (with several, it says so):
   (1" = 1") through 6" = 1'-0" down to 1/32" = 1'-0", and engineering scales (1" = 10' to
   1" = 200'), with your drawing's units first. See
   [Sheet scales](../reference/units.md#sheet-scales).
-- **Fit:** the largest scale at which the whole drawing fits the frame, centred. The frame
-  stays as it is on the paper, and the crop changes to suit.
-- **Show:** **Dimensions**, **Notes**, **Construction** and **Crop** (its crop on the model
-  canvas, which never prints). **Construction** puts the view's construction geometry on the sheet as thin, light grey
+- **Shows:** **Dimensions**, **Notes** and **Construction**. **Construction** puts the view's construction geometry on the sheet as thin, light grey
   dashed lines (off to start with). It prints and exports to PDF and SVG as the preview
   shows it, in the sheet's **Colours**. Points and an import's fill edges stay out.
-- **Referenced by:** the marks that point at the view.
-- **Layers:** untick a layer to leave it out of this view, wherever the view is placed:
-  a setting-out layer in the plan but not in the details, say. Dimensions and notes on
-  nothing but that layer's geometry go with it. A layer hidden or set not to print in the
-  **Layers** panel is greyed out here: it's off in every view.
+- **Layers:** reads **All layers**, or how many it draws ("3 of 12 layers"). Open it and
+  untick a layer to leave it out of this view, wherever the view is placed: a setting-out
+  layer in the plan but not in the details, say. **All** and **None** set them all, and with
+  many layers a search box finds one. Dimensions and notes on nothing but that layer's
+  geometry go with it. A layer hidden or set not to print in the **Layers** panel is greyed
+  out here: it's off in every view.
+- **Model canvas:** **Show crop** shows its crop and name on the model canvas (they never
+  print).
+- **Referenced by:** the marks that point at the view, when there are any.
 
 **On this sheet** is how this sheet shows it:
 
-- **Fill drawing area:** frames the view to the sheet's whole drawing area, after a change
-  of paper size, say.
-- **Show:** **Title** prints its name, with the scale beneath it, under the view;
+- **Prints:** **Title** prints its name, with the scale beneath it, under the view;
   **Border** prints the frame's outline.
+
+In the **⋯** menu, **Fit scale to frame** picks the largest scale at which the whole drawing
+fits the frame, centred (the frame stays as it is on the paper, and the crop changes to
+suit), and **Fill drawing area** frames the view to the sheet's whole drawing area, after a
+change of paper size, say.
 
 If the views on a sheet have different scales, the title block's scale reads **As shown**.
 
-A view's number on a sheet is its place in **Views on this sheet**, from 1. A section or
+A view's number on a sheet is its place among the views under that sheet in the
+**Sheets** panel, from 1. A section or
 elevation mark linked to the view reads that number over the sheet's number (`2 / A-101`),
 on the canvas and in print. When a view is on several sheets, marks read the first one.
 See [Annotation](09-annotation.md) for **Make view**.
@@ -225,7 +233,8 @@ See [Annotation](09-annotation.md) for **Make view**.
 **Align with** lines the picked view up with another one: **Left**, **Centre**, **Right**,
 **Top**, **Middle**, **Bottom**, **Drawings level** or **Drawings in line**.
 
-**Remove from sheet** (in the Inspector, or Delete on the sheet) takes the picked view off
+**Remove from sheet** (in the Inspector's **⋯** menu, or Delete on the sheet) takes the
+picked view off
 the sheet. The view
 stays in the drawing, in the **Views** list, to place again. A sheet can be empty.
 
@@ -309,8 +318,8 @@ dimension is a reference).
 
 In drawings made before views came in, each view a sheet held becomes a view of its own.
 It's named after its title, or its sheet. Every sheet prints as it did. A view that filled a
-sheet keeps its crop if you change the paper size. Click **Fill drawing area** to frame it
-to the new paper.
+sheet keeps its crop if you change the paper size. Choose **Fill drawing area** in its **⋯** menu
+to frame it to the new paper.
 
 ## 6. Output
 

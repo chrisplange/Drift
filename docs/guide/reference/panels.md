@@ -157,8 +157,9 @@ a view or the paper picked on the sheet brings the **Inspector** forward.
 A sheet's own settings (number, name, paper, title block, revisions, **Delete sheet**) are
 in the **Inspector** when you pick bare paper on the sheet. Pick a view there and the
 **Inspector** shows its settings in two parts: **View** (its name, scale, what it shows, its
-crop and layers, the same on every sheet it's on) and **On this sheet** (frame, title,
-border, alignment, **Remove from sheet**). See
+layers and crop, shared by every sheet it's on) and **On this sheet** (title, border,
+alignment). Its actions (**Fit scale to frame**, **Fill drawing area**, **Move to sheet**,
+**Remove from sheet**, **Delete view…**) are in the **⋯** menu by its name. See
 [Sheets and output](../tutorials/10-sheets-and-output.md).
 
 ## Blocks

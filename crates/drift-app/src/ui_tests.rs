@@ -9034,8 +9034,11 @@ fn a_view_leaves_out_the_layers_it_hides() {
     assert!(on_layer(&before) > 0 && dimension(&before));
     save_png("drift_ui_view_layers_on.png", &mut h);
 
-    // Off in the view's Inspector: gone from the sheet, dimension and all, as one step.
-    h.get_by_label("Setting out").scroll_to_me();
+    // Off in the view's Inspector (its Layers menu): gone from the sheet, dimension and all,
+    // as one step.
+    h.get_by_value("All layers").scroll_to_me();
+    h.get_by_value("All layers").click();
+    h.run();
     h.get_by_label("Setting out").click();
     h.run();
     h.run();
@@ -9147,7 +9150,7 @@ fn a_view_can_show_construction_geometry() {
     h.run();
     h.run();
     assert!(
-        h.query_by_label_contains("Referenced by").is_some(),
+        h.state().drawing.picked_view.is_some(),
         "the view, picked in the list"
     );
     assert!(h.query_by_label("Construction").is_none());

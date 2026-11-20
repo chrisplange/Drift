@@ -2782,51 +2782,38 @@ impl DriftApp {
         crate::app::scale_menu::scale_menu(ui, id, scale, self.imperial(), 110.0);
     }
 
-    /// The Sheets panel's section for the views on the current sheet, and the picked one's
-    /// settings. Its edits come back in `edited` (its index and new state). Returns true if
-    /// text was typed (so the edits merge into one undo step).
+    /// The picked view's settings in the Inspector, on a sheet: the view's own (shared by every
+    /// sheet it is on), then how this sheet shows it. `fit` and `fill` are the title's actions
+    /// (Fit scale to frame, Fill drawing area), done here. Its edits come back in `edited`
+    /// (its index and new state). Returns true if text was typed (so the edits merge into one
+    /// undo step).
     pub(crate) fn views_section(
         &mut self,
         ui: &mut egui::Ui,
         sheet: &Sheet,
         edited: &mut Option<(usize, PlacedView)>,
+        fit: bool,
+        fill: bool,
     ) -> bool {
         let mut typing = false;
         let imperial = self.imperial();
-        theme::section(ui, "Views on this sheet");
+        // (The views on the sheet are picked on the canvas or in the Sheets panel, not here.)
         let views = self.drawing.editor.doc.placed_views(sheet);
-        let picked = self.current_view(sheet);
-        for (i, v) in views.iter().enumerate() {
-            let text = format!(
-                "{}  {}  ·  {}",
-                i + 1,
-                v.title(),
-                scale_label(v.scale, self.imperial())
-            );
-            if theme::list_row(ui, picked == i, &text).clicked() {
-                self.drawing.view.sheet_view = i;
-                self.drawing.picked_view = Some(v.id);
-            }
-        }
         let picked = self.current_view(sheet);
         let bounds = self.fit_bounds();
         let area = drift_draft::sheet::drawing_area(sheet);
         if let Some(original) = views.get(picked) {
             let mut view = original.clone();
-            let mut fit = false;
-            let mut fill = false;
             // The view itself: what every sheet it is on shows (#425). The crop's switch on
             // the model canvas is the view's too, though it never prints.
             let model_view = self.drawing.editor.doc.view(original.id).cloned();
             let mut crop_visible = model_view.as_ref().is_some_and(|v| v.crop_visible);
             theme::section(ui, "View");
-            let on = self.drawing.editor.doc.sheets_showing(original.id).len();
-            if on > 1 {
-                ui.label(
-                    egui::RichText::new(format!("On {on} sheets: a change here shows on each."))
-                        .weak(),
-                );
-            }
+            ui.label(
+                egui::RichText::new("Shared by every sheet it’s on")
+                    .size(theme::size::CAPTION)
+                    .color(ui.visuals().weak_text_color()),
+            );
             theme::row(ui, "Name", |ui| {
                 typing |= ui
                     .add(
@@ -2838,17 +2825,13 @@ impl DriftApp {
             });
             theme::row(ui, "Scale", |ui| {
                 self.scale_menu(ui, "sheet_scale", &mut view.scale);
-                fit = ui
-                    .button("Fit")
-                    .on_hover_text("Center the drawing in the view at the largest scale that fits")
-                    .clicked();
             });
             // A new scale keeps the crop in the model: the frame on the paper grows or shrinks.
             if view.scale != original.scale {
                 view.frame.size = original.frame.size * original.scale / view.scale;
             }
-            // What the view shows, in two even columns.
-            theme::row(ui, "Show", |ui| {
+            // What the view draws, in two even columns.
+            theme::row(ui, "Shows", |ui| {
                 egui::Grid::new("view_show")
                     .num_columns(2)
                     .spacing([16.0, 4.0])
@@ -2860,43 +2843,16 @@ impl DriftApp {
                         ui.end_row();
                         crate::theme::checkbox(ui, &mut view.construction, "Construction")
                             .on_hover_text(CONSTRUCTION_TIP);
-                        ui.add_enabled(
-                            model_view.is_some(),
-                            egui::Checkbox::new(&mut crop_visible, "Crop"),
-                        )
-                        .on_hover_text("Its crop and name on the model canvas (they never print)");
                         ui.end_row();
                     });
             });
-            // The layers drawn in this view; one hidden in the model is off everywhere.
-            let layers: Vec<(drift_core::LayerId, String, bool)> = self
-                .drawing
-                .editor
-                .doc
-                .layers()
-                .map(|(id, l)| (id, l.name.clone(), l.visible && l.printable))
-                .collect();
-            theme::row(ui, "Layers", |ui| {
-                ui.vertical(|ui| {
-                    for (id, name, drawn) in layers {
-                        let mut on = drawn && !view.hidden_layers.contains(&id);
-                        let r = ui.add_enabled(drawn, crate::theme::Checkbox::new(&mut on, name));
-                        let r = if drawn {
-                            r.on_hover_text("Draw this layer in this view")
-                        } else {
-                            r.on_disabled_hover_text(
-                                "Hidden or not printed in the model (Layers panel)",
-                            )
-                        };
-                        if r.changed() {
-                            if on {
-                                view.hidden_layers.remove(&id);
-                            } else {
-                                view.hidden_layers.insert(id);
-                            }
-                        }
-                    }
-                });
+            self.view_layers_row(ui, &mut view);
+            theme::row(ui, "Model canvas", |ui| {
+                ui.add_enabled(
+                    model_view.is_some(),
+                    crate::theme::Checkbox::new(&mut crop_visible, "Show crop"),
+                )
+                .on_hover_text("Its crop and name on the model canvas (they never print)");
             });
             self.referenced_by(ui, original.id);
             if let Some(v) = model_view
@@ -2904,18 +2860,9 @@ impl DriftApp {
             {
                 self.update_view(original.id, drift_core::View { crop_visible, ..v }, false);
             }
-            // Where and how this sheet shows it.
+            // How this sheet shows it.
             theme::section(ui, "On this sheet");
-            theme::row(ui, "Frame", |ui| {
-                fill = ui
-                    .button("Fill drawing area")
-                    .on_hover_text(
-                        "Frame it to the sheet's whole drawing area (after changing the paper \
-                         size, say), cropping more or less of the model",
-                    )
-                    .clicked();
-            });
-            theme::row(ui, "Show", |ui| {
+            theme::row(ui, "Prints", |ui| {
                 egui::Grid::new("placed_view_show")
                     .num_columns(2)
                     .spacing([16.0, 4.0])
@@ -2956,6 +2903,91 @@ impl DriftApp {
             );
         }
         typing
+    }
+
+    /// The layers a view draws, as one row: a summary ("All layers", "3 of 12 layers") that
+    /// opens a checklist, with All and None and, past a handful, a search. A layer hidden or
+    /// not printed in the model is off in every view, and can't be ticked here.
+    fn view_layers_row(&mut self, ui: &mut egui::Ui, view: &mut PlacedView) {
+        let layers: Vec<(drift_core::LayerId, String, bool)> = self
+            .drawing
+            .editor
+            .doc
+            .layers()
+            .map(|(id, l)| (id, l.name.clone(), l.visible && l.printable))
+            .collect();
+        let drawn = layers.iter().filter(|(_, _, d)| *d).count();
+        let shown = layers
+            .iter()
+            .filter(|(id, _, d)| *d && !view.hidden_layers.contains(id))
+            .count();
+        let summary = if shown == drawn && drawn == layers.len() {
+            "All layers".to_owned()
+        } else if shown == 0 {
+            "No layers".to_owned()
+        } else {
+            format!("{shown} of {} layers", layers.len())
+        };
+        theme::row(ui, "Layers", |ui| {
+            let id = ui.id().with("view_layers");
+            let search_id = id.with("search");
+            egui::ComboBox::from_id_salt(id)
+                .icon(crate::theme::combo_icon)
+                .selected_text(summary)
+                .width(ui.available_width())
+                .height(420.0)
+                // (Ticking several in a row keeps it open.)
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                .show_ui(ui, |ui| {
+                    ui.set_min_width(200.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("All").clicked() {
+                            view.hidden_layers.clear();
+                        }
+                        if ui.button("None").clicked() {
+                            view.hidden_layers = layers.iter().map(|(id, ..)| *id).collect();
+                        }
+                    });
+                    let mut search: String = ui
+                        .data(|d| d.get_temp::<String>(search_id))
+                        .unwrap_or_default();
+                    if layers.len() > 8 {
+                        crate::theme::field(
+                            ui,
+                            egui::TextEdit::singleline(&mut search)
+                                .hint_text("Find a layer")
+                                .desired_width(ui.available_width()),
+                        );
+                    }
+                    let needle = search.to_lowercase();
+                    ui.separator();
+                    for (layer, name, drawn) in &layers {
+                        if !needle.is_empty() && !name.to_lowercase().contains(&needle) {
+                            continue;
+                        }
+                        let mut on = *drawn && !view.hidden_layers.contains(layer);
+                        let r = ui.add_enabled(
+                            *drawn,
+                            crate::theme::Checkbox::new(&mut on, name.as_str()),
+                        );
+                        let r = if *drawn {
+                            r.on_hover_text("Draw this layer in this view")
+                        } else {
+                            r.on_disabled_hover_text(
+                                "Hidden or not printed in the model (Layers panel)",
+                            )
+                        };
+                        if r.changed() {
+                            if on {
+                                view.hidden_layers.remove(layer);
+                            } else {
+                                view.hidden_layers.insert(*layer);
+                            }
+                        }
+                    }
+                    ui.data_mut(|d| d.insert_temp(search_id, search));
+                });
+        });
     }
 
     /// Align the picked view with another: frame edges and middles, or lining the drawings

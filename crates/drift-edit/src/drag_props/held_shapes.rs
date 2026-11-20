@@ -442,6 +442,45 @@ fn a_lever_dragged_far_stays_nearest_the_pointer_however_the_frames_fall() {
     }
 }
 
+/// #377's random census case 5283, pinned: a settle by the pointer never makes a frame the
+/// steps made be refused. A line and an arc are dragged; a second arc, equal to the first,
+/// shares its fixed end, so the drag holds it (it moves none of its points). The steps of the
+/// fifth frame of five leave the held arc at 11.81 of its 12, which goes; the settle
+/// (`Editor::settle_by_the_pointer`) then grew it to 12.17 to bring the dragged nearer the
+/// pointer, and the frame was refused by the binding rule, where main went. The settle is
+/// undone where it breaks a held shape, and every frame goes.
+#[test]
+fn a_settle_that_grows_a_held_arc_is_undone_and_the_frame_goes() {
+    let p = DVec2::new;
+    let sketch = Sketch {
+        points: vec![
+            p(0.0, 0.0),
+            p(0.0, 30.0),
+            p(11.59110991546882, 33.10582854123025),
+            p(14.696938456699064, 44.69693845669907),
+            p(17.802766997929307, 33.10582854123025),
+            p(20.908595539159553, 21.514718625761432),
+        ],
+        curves: vec![Curve::Line(0, 1), Curve::Arc(2, 3, 1), Curve::Arc(4, 5, 3)],
+        rels: vec![Rel::Equal(1, 2), Rel::Fix(3), Rel::Length(0)],
+    };
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let ids = [built.curves[0], built.curves[1]];
+    let before = radii(&built);
+    let run = drag(
+        &mut built,
+        &ids,
+        p(-7.540169064311135, 17.72442872576064),
+        5,
+    )
+    .unwrap();
+    assert_eq!(run.refused, 0, "a frame was refused");
+    assert!(run.committed);
+    for (was, now) in before.iter().zip(radii(&built)) {
+        assert!(now <= was + 1e-9, "a radius grew: {was} to {now}");
+    }
+}
+
 /// Row 2 of `docs/solver-audit-references.md` 3.1 (the owner's answer of 2026-11-18 on #362: a
 /// point kept from the pointer only by relations still goes, as near as it can): a point held
 /// on a line whose ends are fixed, dragged off it in 20 frames along a slant. Every frame goes,

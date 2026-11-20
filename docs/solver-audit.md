@@ -519,7 +519,7 @@ against the one before):
 | Main: one solve from the start first, steps where it failed or wandered | 47 | 242 | 0 | 1.81 |
 | From the last accepted frame | 10 | 12 | 1,096 of 3,348 | 1.95 |
 | From the start, always in steps | 5 | 59 | 0 | 3.04 |
-| The same, a frame that didn't land settled by the pointer (built) | 13 | 87 | 0 | 3.22 |
+| The same, a frame that didn't land settled by the pointer (built) | 13 | 87 | 0 | 3.13 |
 
 - **The jitter was the one solve first.** No jump was on a drag's first frame. One big solve
   from the start lands on a different shape from frame to frame, and so does the switch
@@ -545,9 +545,16 @@ against the one before):
   goes, leaves the part's relations met, and moves nothing else more than a hundred times as
   far as it moved the dragged (`LINE_HOLD`): without the last two a solve reported itself
   finished with a midpoint off its line (census case 7930), and landed #278's pin by flinging
-  its free point 139 mm. It costs smoothness: this is the solve main makes every frame, and
-  jumps went 5 → 13, back and forth 59 → 87 (main 47 and 242). Aiming every step at the
-  pointer instead measured the same jitter and more stops.
+  its free point 139 mm. Nor is it kept where it breaks a shape the drag holds
+  (`breaks_held_shape`): the steps' shape is judged in its place, so the settle never makes a
+  frame the steps made be refused (#377's case 5283: the steps left a held arc of 12 at 11.81,
+  the settle grew it to 12.17 and the frame was refused; pinned as
+  `a_settle_that_grows_a_held_arc_is_undone_and_the_frame_goes`). It isn't tried for a
+  dragged point that is fixed, which no solve brings nearer, and its solve, a step of no
+  length, isn't halved where it fails (the halves were the same solve, 7 times). It costs
+  smoothness: this is the solve main makes every frame, and jumps went 5 → 13, back and
+  forth 59 → 87 (main 47 and 242). Aiming every step at the pointer instead measured the
+  same jitter and more stops.
 - **An offset refused once in a drag is refused again without a solve**
   (`DragSession::refused`): every frame solves from the start, so the answer can't differ,
   and a pointer held against a stop asks for it frame after frame.
@@ -593,16 +600,20 @@ against the one before):
   pointer's move; main 297), so its property stays ignored. Census case 2237 is pinned as a
   normal test (`a_line_hanging_from_a_moved_arc_follows_a_slow_drag_smoothly`), which fails
   if the steps go.
-- **Costs.** 3.22 solves a frame on the slow drags against 1.81. A drag longer than four
-  times its part's size takes 16 steps every frame. The first refused frame on a small part
-  runs 31 solves against 8 (11 were tries at keeping a length, now one a step; the rest one
-  step halved till an arc turns, its carry, and halvings of a step that wandered), and a
-  refused frame under a moving pointer about a quarter more (a folded chain pulled out of
-  reach, 32 → 40 ms); held still it costs nothing. The tiled sketch is 22 to 31 % slower, a
+- **Costs.** 3.13 solves a frame on the slow drags against 1.81. A drag longer than four
+  times its part's size takes 16 steps every frame. A refused frame on a small part runs 31
+  solves against 8 (11 were tries at keeping a length, now one a step; the rest one step
+  halved till an arc turns, its carry, and halvings of a step that wandered): under a moving
+  pointer that is 5.3 → 13.6 ms a frame, 2.6 times (the Fable re-review's measure, the
+  refusal memory off), and on a folded chain pulled out of reach about a quarter more
+  (32 → 40 ms); held still it costs nothing. The tiled sketch is 22 to 31 % slower, a
   carried drag on a small part 1.6 → 2.3 ms; a squeezed arc 8.8 → 1.9 ms and a held landing
-  on a pinned 2,000-bar part 88 → 45 ms. Two drags of #377's 17,563 that went now stop, both
-  by the binding rule (cases 5049 and 5283: in steps a held arc grows, 8.0 → 8.1 and
-  12.0 → 12.2, where main's one solve shrank it). In the similarity census the scales
+  on a pinned 2,000-bar part 88 → 45 ms. One drag of #377's 17,563 that went now stops,
+  case 5049: the solve isn't asked to keep the radius of an arc whose only dragged end is a
+  fixed point, while the editor counts that arc held, so the radius goes whichever way the
+  solve falls. Main's one solve shrank it (8.0 → 5.7), the steps grow it (8.0 → 8.1 to 8.3),
+  and "never grow" refuses every frame. The mismatch is on main too; it is #491, not fixed
+  here. In the similarity census the scales
   improve (4, 3, 4 → 2, 2, 2 of 10,561) and far out it is worse (100 m 2 → 3, 1 km 3 → 5):
   case 1468 goes where main stopped, on solves that wander dozens of times, and ends where
   round-off puts it; 2659 and 3700 land the other way at a fold a kilometre out.
@@ -612,7 +623,7 @@ against the one before):
   alike, the same number of frames refused, every arc, tangency and signed distance the same
   way round, and every point within four times the twins' own spread, plus the bar, of where
   that twin put it. Any other drag is held to 1e-6 as before. `heavy.py` lists the seeds that
-  pass only this way (seed 14, on Windows).
+  pass only this way: seed 14 on Windows and ubuntu, and seed 20 on ubuntu.
 
 ### PR 6: the user's least change (behaviour, needs decision 5)
 - Commits get the same keep-shape preference as drags, ranked below the relations and the

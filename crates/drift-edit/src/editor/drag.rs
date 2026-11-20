@@ -576,7 +576,7 @@ impl Editor {
                 first_bar: 0.0,
                 kept_wandered: 0,
             };
-            ok = self.drag_from_start(&mut frame, to, &part.start)
+            ok = self.drag_from_start(&mut frame, to, part)
                 && !self.breaks_held_shape(part, to, frame.bar);
             self.drag_solves += 2 * DRAG_SOLVES + length_left.0
                 - frame.solves_left
@@ -1143,6 +1143,25 @@ impl Editor {
         self.find_held_shapes(part, &locked, &made);
     }
 
+    /// Whether every coordinate of `part`'s dragged points that the drag can move
+    /// ([`DragPart::free_dragged`]) is at its target, the drag's start moved by `offset`, to
+    /// within the length bar `bar` (read through `drift_solver::landed_within`).
+    fn landed_where_free(&self, part: &DragPart, offset: DVec2, bar: f64) -> bool {
+        part.free_dragged
+            .iter()
+            .all(|&(id, start, [free_x, free_y])| {
+                let to = start + offset;
+                self.doc.point(id).is_ok_and(|at| {
+                    let off = at - to;
+                    let off = DVec2::new(
+                        if free_x { off.x } else { 0.0 },
+                        if free_y { off.y } else { 0.0 },
+                    );
+                    off.length() <= drift_solver::landed_within(bar, to)
+                })
+            })
+    }
+
     /// Whether `part`, moved by `offset` from where the drag found it, grew an arc or circle it
     /// doesn't move, or crushed a held line at #278's pace (both of the next two, landed or
     /// not), or didn't land and broke a shape the drag doesn't move: changed the radius of a
@@ -1161,20 +1180,7 @@ impl Editor {
         if part.held_radii.is_empty() && part.held_lines.is_empty() {
             return false;
         }
-        let landed = part
-            .free_dragged
-            .iter()
-            .all(|&(id, start, [free_x, free_y])| {
-                let to = start + offset;
-                self.doc.point(id).is_ok_and(|at| {
-                    let off = at - to;
-                    let off = DVec2::new(
-                        if free_x { off.x } else { 0.0 },
-                        if free_y { off.y } else { 0.0 },
-                    );
-                    off.length() <= drift_solver::landed_within(bar, to)
-                })
-            });
+        let landed = self.landed_where_free(part, offset, bar);
         // An arc or circle the drag doesn't move never grows, landed or not: the binding rule
         // (a drag whose radii can't follow stops at the last valid shape, and radii are never
         // grown; circles as arcs, the user's decision of 2026-11-11). Since PR 3 a solve that
@@ -1360,8 +1366,9 @@ impl Editor {
         &mut self,
         frame: &mut DragFrame<'_>,
         offset: DVec2,
-        start: &Geometry,
+        part: &DragPart,
     ) -> bool {
+        let start = &part.start;
         // (Its size as the farthest point from its middle: the same however it's turned.)
         let middle =
             start.points.iter().map(|&(_, p)| p).sum::<DVec2>() / start.points.len().max(1) as f64;
@@ -1403,7 +1410,7 @@ impl Editor {
             return self.drag_towards(frame, DVec2::ZERO, offset, start, 0);
         }
         if self.drag_in_strides(frame, offset, start, step) {
-            self.settle_by_the_pointer(frame, offset, start);
+            self.settle_by_the_pointer(frame, offset, part);
             return true;
         }
         self.restore_geometry(start);
@@ -1429,15 +1436,15 @@ impl Editor {
     /// Aimed at the pointer, as one solve from the drag's start is, it comes to rest as near
     /// the pointer as the relations allow (row 1 of `docs/solver-audit-references.md` 3.1),
     /// where a typed move ([`drag_to`](Self::drag_to)) puts it too.
-    fn settle_by_the_pointer(
-        &mut self,
-        frame: &mut DragFrame<'_>,
-        offset: DVec2,
-        start: &Geometry,
-    ) {
+    ///
+    /// It never makes a frame the steps made be refused: a settled shape that
+    /// [`breaks_held_shape`](Self::breaks_held_shape) is undone here, before the frame is
+    /// judged, and the steps' shape judged in its place.
+    fn settle_by_the_pointer(&mut self, frame: &mut DragFrame<'_>, offset: DVec2, part: &DragPart) {
         if frame.solves_left == 0 {
             return;
         }
+        let start = &part.start;
         let mut here = self.geometry_of(frame.scope);
         here.radii = start.radii.clone();
         here.lengths = start.lengths.clone();
@@ -1448,7 +1455,15 @@ impl Editor {
             .filter(|&&(id, _)| frame.dragged_set.contains(&Param::X(id)))
             .map(|&(id, p)| (id, p + offset))
             .collect();
-        if self.landed(frame, DVec2::ZERO, &here) {
+        // (Landed, as far as the drag can move its points: a coordinate that is fixed never
+        // reaches its target, and a solve aimed at the pointer brings it no nearer. Four in
+        // ten of the settles over the slow-drag census were for a fixed dragged point alone.)
+        let landed = if part.needs_solve {
+            self.landed_where_free(part, offset, frame.bar)
+        } else {
+            self.landed(frame, DVec2::ZERO, &here)
+        };
+        if landed {
             return;
         }
         let pushed = frame.pushed.clone();
@@ -1490,6 +1505,11 @@ impl Editor {
             }
             other <= LINE_HOLD * dragged
         };
+        // (Nor where it breaks a shape the drag holds, which the frame would be refused for:
+        // the steps' shape goes in its place. #377's case 5283: the steps left a held arc of
+        // 12 at 11.81, the settle grew it to 12.17 to land, and the fifth frame of five was
+        // refused; `a_settle_that_grows_a_held_arc_is_undone_and_the_frame_goes`.)
+        let settled = settled && !self.breaks_held_shape(part, offset, frame.bar);
         if !settled {
             self.restore_geometry(&ended);
             self.index
@@ -2128,6 +2148,14 @@ impl Editor {
             frame.kept_wandered = frame.kept_wandered.max(report.wandered);
             return true;
         }
+        // (A step of no length has no halves: each is the same solve from the same place, to
+        // fail the same way. The settle's solve is one, `settle_by_the_pointer`, its dragged
+        // points put by `Geometry::asked`; halved, one that failed ran 7 times.)
+        let depth = if delta == DVec2::ZERO {
+            MAX_SPLITS
+        } else {
+            depth
+        };
         if depth >= MAX_SPLITS && !unfinished {
             // Even the smallest step turns these. (A solve that didn't finish left the
             // geometry part way, which says nothing of what turns.)

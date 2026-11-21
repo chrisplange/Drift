@@ -12,8 +12,9 @@ fn units(h: &Harness<'_, DriftApp>) -> Units {
     h.state().drawing.editor.doc.units()
 }
 
-/// Imperial in Preferences: File → New starts in feet and inches, a file opened keeps its own
-/// units, and the choice is kept with the app's settings for the next start.
+/// Imperial in Preferences: the untouched blank drawing open now and File → New start in feet
+/// and inches, a drawing with something in it and a file opened keep their own units, and the
+/// choice is kept with the app's settings for the next start.
 #[test]
 fn imperial_new_drawings_from_preferences() {
     let Some(mut h) = harness() else { return };
@@ -25,10 +26,20 @@ fn imperial_new_drawings_from_preferences() {
     h.get_by_label("Imperial (ft-in)").click();
     h.run();
     assert_eq!(h.state().new_drawing.units, NewUnits::Imperial);
-    // The drawing open now keeps its units: only new ones start in the chosen ones.
-    assert_eq!(units(&h), Units::metric());
+    // The blank drawing open now, nothing done to it yet, follows (and stays clean).
+    assert_eq!(units(&h), Units::architectural(), "the untouched blank");
+    assert!(!h.state().is_dirty());
+    // One with something drawn keeps its units.
+    draw_a_point(&mut h);
+    h.get_by_label("Metric (mm)").click();
+    h.run();
+    assert_eq!(h.state().new_drawing.units, NewUnits::Metric);
+    assert_eq!(units(&h), Units::architectural(), "drawn in: left as it is");
+    h.get_by_label("Imperial (ft-in)").click();
+    h.run();
     h.state_mut().show_settings = false;
     h.run();
+    h.state_mut().drawing.file.clean_revision = Some(h.state().drawing.editor.doc.revision());
     h.key_press_modifiers(EguiModifiers::COMMAND, Key::N);
     h.run_steps(2);
     assert_eq!(units(&h), Units::architectural(), "File → New");
@@ -42,7 +53,8 @@ fn imperial_new_drawings_from_preferences() {
     h.run();
     assert_eq!(units(&h), Units::metric(), "opened as it was saved");
 
-    // Kept with the settings: the next start's blank drawing, and its File → New, are imperial.
+    // Kept with the settings, and a blank drawing kept from last time (in millimetres) starts
+    // in feet and inches, as does the next File → New.
     let mut storage = MemoryStorage::default();
     eframe::App::save(h.state_mut(), &mut storage);
     assert_eq!(
@@ -52,8 +64,7 @@ fn imperial_new_drawings_from_preferences() {
     let Some(mut fresh) = harness() else { return };
     fresh.state_mut().restore_session(&MemoryStorage::default());
     assert_eq!(fresh.state().new_drawing.units, NewUnits::Metric);
-    // (A session to restore would replace the blank drawing: start from none.)
-    storage.set_string(crate::KEY_DOCUMENT, String::new());
+    keep_session(&mut storage, &drift_core::Document::new(), None);
     fresh.state_mut().restore_session(&storage);
     fresh.run();
     assert_eq!(fresh.state().new_drawing.units, NewUnits::Imperial);
@@ -62,6 +73,26 @@ fn imperial_new_drawings_from_preferences() {
     fresh.key_press_modifiers(EguiModifiers::COMMAND, Key::N);
     fresh.run_steps(2);
     assert_eq!(units(&fresh), Units::architectural());
+}
+
+/// Draw a point (one undo step): the drawing is no longer an untouched new one.
+fn draw_a_point(h: &mut Harness<'_, DriftApp>) {
+    let ed = &mut h.state_mut().drawing.editor;
+    ed.doc.begin();
+    ed.doc.add_point(DVec2::new(5.0, 5.0));
+    ed.commit("Point");
+    h.run();
+}
+
+/// Keep `doc` in `storage` as last session's drawing, clean, from `path` (or none).
+fn keep_session(storage: &mut MemoryStorage, doc: &drift_core::Document, path: Option<&str>) {
+    storage.set_string(
+        crate::KEY_DOCUMENT,
+        drift_io::save(doc, &Default::default()),
+    );
+    storage.set_string(crate::KEY_NAME, "Kept.drift".into());
+    storage.set_string(crate::KEY_PATH, path.unwrap_or_default().into());
+    storage.set_string(crate::KEY_DIRTY, "0".into());
 }
 
 /// The start screen's Metric / Imperial switch sets the blank drawing's units and the
@@ -151,8 +182,13 @@ fn the_default_logo_is_cleared_or_replaced_in_preferences() {
     // A drawing opened with a logo of its own doesn't change the default...
     let mut doc = drift_core::Document::new();
     doc.set_logo(OTHER_LOGO.into());
-    h.state_mut()
-        .replace_document(doc, "Theirs.drift".into(), None, Default::default(), true);
+    h.state_mut().replace_document(
+        doc,
+        "Theirs.drift".into(),
+        Some("Theirs.drift".into()),
+        Default::default(),
+        true,
+    );
     assert_eq!(h.state().new_drawing.logo, LOGO_SVG);
     // ...until Use this drawing's.
     h.state_mut().show_settings = true;
@@ -194,4 +230,26 @@ fn the_default_logo_is_cleared_or_replaced_in_preferences() {
     storage.set_string("drift.default_logo", "<svg><text>Acme</text></svg>".into());
     next.state_mut().restore_session(&storage);
     assert!(next.state().new_drawing.logo.is_empty());
+}
+
+/// #429: the blank drawing open now, nothing done to it yet, follows the default logo: one
+/// kept from last time gets it at start, and Clear takes it off again.
+#[test]
+fn the_untouched_blank_follows_the_default_logo() {
+    let mut storage = MemoryStorage::default();
+    storage.set_string("drift.default_logo", LOGO_SVG.into());
+    keep_session(&mut storage, &drift_core::Document::new(), None);
+    let Some(mut h) = harness() else { return };
+    h.state_mut().restore_session(&storage);
+    h.run();
+    assert_eq!(logo(&h), LOGO_SVG, "the kept blank drawing gets it");
+    assert!(!h.state().is_dirty());
+    h.state_mut().show_settings = true;
+    h.run();
+    h.run();
+    h.get_by_label("Clear").click();
+    h.run();
+    assert!(h.state().new_drawing.logo.is_empty());
+    assert!(logo(&h).is_empty(), "and loses it with Clear");
+    assert!(!h.state().is_dirty());
 }

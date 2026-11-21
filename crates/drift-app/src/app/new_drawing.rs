@@ -194,9 +194,30 @@ impl NewDrawing {
     /// Give `doc`, a new drawing, what new drawings start with.
     pub(crate) fn apply(&self, doc: &mut Document) {
         doc.set_units(self.units.units());
-        if !self.logo.is_empty() {
-            doc.set_logo(self.logo.clone());
+        doc.set_logo(self.logo.clone());
+    }
+}
+
+impl crate::DriftApp {
+    /// Whether the drawing open now is a new one nothing has been done to: no file, nothing
+    /// to save, nothing in it.
+    pub(crate) fn untouched_new_drawing(&self) -> bool {
+        let doc = &self.drawing.editor.doc;
+        self.drawing.file.path.is_none()
+            && !self.is_dirty()
+            && doc.is_empty()
+            && doc.texts().next().is_none()
+            && doc.underlays().next().is_none()
+    }
+
+    /// Give the drawing open now what new drawings start with, if it is an untouched new one
+    /// (it stays clean): after the choice changes, and for a blank drawing restored at start.
+    pub(crate) fn refresh_untouched_drawing(&mut self) {
+        if !self.untouched_new_drawing() {
+            return;
         }
+        self.new_drawing.apply(&mut self.drawing.editor.doc);
+        self.drawing.file.clean_revision = Some(self.drawing.editor.doc.revision());
     }
 }
 

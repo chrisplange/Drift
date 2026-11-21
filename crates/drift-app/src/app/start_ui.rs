@@ -705,6 +705,8 @@ impl DriftApp {
         ];
         if let Some(units) = theme::segmented(ui, self.new_drawing.units, &options) {
             self.new_drawing.units = units;
+            // A blank drawing nothing has been done to yet starts again in them.
+            self.refresh_untouched_drawing();
         }
         ui.label(
             egui::RichText::new(
@@ -747,6 +749,9 @@ impl DriftApp {
             self.new_drawing.logo = self.drawing.editor.doc.logo().to_owned();
         } else if clear {
             self.new_drawing.logo.clear();
+        }
+        if take || clear {
+            self.refresh_untouched_drawing();
         }
         ui.label(
             egui::RichText::new(

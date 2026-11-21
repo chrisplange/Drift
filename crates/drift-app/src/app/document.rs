@@ -441,6 +441,8 @@ impl DriftApp {
                     format!("{stem}.drift")
                 };
                 self.replace_document(doc, name, path, meta, !dirty);
+                // A blank drawing kept from last time starts as new ones do now.
+                self.refresh_untouched_drawing();
             }
             Err(e) => self.hold_session = self.keep_unrestored(text, &e, dir),
         }

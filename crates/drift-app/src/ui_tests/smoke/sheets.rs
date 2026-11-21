@@ -253,7 +253,7 @@ fn smoke_sheet_view_right_click_menu() {
     h.get_by_label("Delete view…").click();
     h.run();
     assert_eq!(view_count(&h), 1, "on a sheet, it asks first");
-    h.get_by_label("Delete it").click();
+    h.get_by_label("Delete view").click();
     h.run();
     assert_eq!(view_count(&h), 0, "the view is gone");
     assert!(placed(&h, sheet).is_empty(), "and off its sheet");

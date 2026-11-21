@@ -22,9 +22,11 @@ fn right_click(h: &mut Harness<'_, DriftApp>, at: Pos2) {
 /// Where the right-click menu's `label` item is: the picked view's buttons have the same
 /// names, further down; the menu opens at the pointer, `at`.
 fn menu_item(h: &Harness<'_, DriftApp>, label: &str, at: Pos2) -> Option<Pos2> {
-    h.get_all_by_label(label)
+    // (Its label starts with `label`: Place names the sheet, Delete may end in "…". A wide
+    // menu near the panel's edge opens to the left of the pointer.)
+    h.query_all_by(|n| n.label().is_some_and(|l| l.starts_with(label)))
         .map(|n| n.rect())
-        .filter(|r| r.left() >= at.x - 1.0 && r.top() < at.y + 80.0)
+        .filter(|r| r.top() >= at.y - 4.0 && r.top() < at.y + 300.0)
         .map(|r| r.center())
         .next()
 }
@@ -128,8 +130,10 @@ fn a_views_right_click_menu_zooms_places_and_deletes() {
     let at = h.get_all_by_label(&title).last().unwrap().rect().center();
     right_click(&mut h, at);
     save_png("drift_ui_sheets_view_menu.png", &mut h);
-    assert!(menu_item(&h, "Place again", at).is_some());
-    assert!(menu_item(&h, "Delete view", at).is_some());
+    // The Views list row: Place names the sheet; nothing that needs a sheet.
+    assert!(menu_item(&h, "Place again on ", at).is_some());
+    assert!(menu_item(&h, "Delete view\u{2026}", at).is_some());
+    assert!(menu_item(&h, "Remove from sheet", at).is_none());
     let item = menu_item(&h, "Zoom to view", at).unwrap();
     click_at(&mut h, item);
     h.run();
@@ -143,11 +147,39 @@ fn a_views_right_click_menu_zooms_places_and_deletes() {
     h.run();
     let at = h.get_all_by_label(&title).next().unwrap().rect().center();
     right_click(&mut h, at);
-    let item = menu_item(&h, "Delete view", at).unwrap();
+    save_png("drift_ui_sheets_nested_view_menu.png", &mut h);
+    // The one list of a view's actions, in the same order as the Inspector's: Remove sits
+    // by Delete.
+    for item in [
+        "Place again on ",
+        "Fit scale to frame",
+        "Fill drawing area",
+        "Zoom to view",
+        "Remove from sheet",
+    ] {
+        assert!(menu_item(&h, item, at).is_some(), "{item}");
+    }
+    let item = menu_item(&h, "Delete view\u{2026}", at).unwrap();
     click_at(&mut h, item);
     h.run();
     let view = h.state().drawing.editor.doc.views().next().unwrap().0;
     assert_eq!(h.state().drawing.confirm_delete_view, Some(view));
+    // Asked in a dialog, where you are; Esc keeps it.
+    save_png("drift_ui_delete_view_dialog.png", &mut h);
+    assert!(h.query_by_label("Cancel").is_some());
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert_eq!(h.state().drawing.confirm_delete_view, None);
+    assert_eq!(h.state().drawing.editor.doc.views().count(), 1);
+
+    // Remove from sheet, from the nested row: off the sheet, still in the model.
+    let at = h.get_all_by_label(&title).next().unwrap().rect().center();
+    right_click(&mut h, at);
+    let item = menu_item(&h, "Remove from sheet", at).unwrap();
+    click_at(&mut h, item);
+    h.run();
+    assert_eq!(h.state().drawing.editor.doc.views().count(), 1);
+    assert!(h.state().drawing.editor.doc.sheets_showing(view).is_empty());
 }
 
 #[test]
@@ -370,13 +402,13 @@ fn a_views_inspector_keeps_its_actions_in_the_title_menu() {
         assert!(h.query_by_label(item).is_some(), "{item} in the menu");
     }
     assert!(h.query_by_label_contains("Move to sheet").is_some());
-    // Delete asks first, under the title.
+    // Delete asks first, in the one dialog.
     h.get_by_label("Delete view\u{2026}").click();
     h.run();
-    assert!(h.query_by_label("Keep it").is_some());
-    h.get_by_label("Keep it").click();
+    assert!(h.query_by_label("Cancel").is_some());
+    h.get_by_label("Cancel").click();
     h.run();
-    assert!(h.query_by_label("Keep it").is_none());
+    assert!(h.query_by_label("Cancel").is_none());
 
     // Remove from sheet: off this sheet, still in the model.
     h.get_by_label("View actions").click();
@@ -385,4 +417,46 @@ fn a_views_inspector_keeps_its_actions_in_the_title_menu() {
     h.run();
     assert_eq!(views_on(&h, one), 0);
     assert_eq!(h.state().drawing.editor.doc.views().count(), 1);
+}
+
+#[test]
+fn deleting_a_sheet_with_views_asks_first_and_an_empty_one_goes_at_once() {
+    let Some(mut h) = harness() else { return };
+    sheet_with_a_view(&mut h);
+    let sheet = h.state().current_sheet().unwrap();
+    // An empty copy of it, for later.
+    h.state_mut().duplicate_sheet(sheet, false);
+    h.run();
+    let empty = h.state().current_sheet().unwrap();
+    assert_ne!(empty, sheet);
+    assert!(
+        h.state()
+            .drawing
+            .editor
+            .doc
+            .sheet(empty)
+            .unwrap()
+            .viewports
+            .is_empty()
+    );
+    // The same dialog as for a view: it says the views stay in the model.
+    h.state_mut().request_delete_sheet(sheet);
+    h.run();
+    save_png("drift_ui_delete_sheet_dialog.png", &mut h);
+    assert!(
+        h.state().drawing.editor.doc.sheet(sheet).is_some(),
+        "not yet"
+    );
+    assert!(h.query_by_label_contains("stays in the model").is_some());
+    h.get_by_label("Delete sheet").click();
+    h.run();
+    assert!(h.state().drawing.editor.doc.sheet(sheet).is_none());
+    assert_eq!(h.state().drawing.editor.doc.views().count(), 1);
+    assert_eq!(h.state().drawing.confirm_delete_sheet, None);
+
+    // Nothing on it: nothing to lose, so no question (undo still brings it back).
+    h.state_mut().request_delete_sheet(empty);
+    h.run();
+    assert!(h.state().drawing.editor.doc.sheet(empty).is_none());
+    assert!(h.query_by_label("Cancel").is_none());
 }

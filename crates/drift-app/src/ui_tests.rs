@@ -138,10 +138,12 @@ fn view_menu_item(h: &mut Harness<'_, DriftApp>, view: drift_core::ViewId, item:
         h.run();
     }
     // (The menu opens at the pointer.)
+    // (Its label starts with `item`: Place names the sheet, Delete may end in "…". A wide
+    // menu near the panel's edge opens to the left of the pointer.)
     let to = h
-        .get_all_by_label(item)
+        .query_all_by(|n| n.label().is_some_and(|l| l.starts_with(item)))
         .map(|n| n.rect())
-        .find(|r| r.left() >= at.x - 1.0 && r.top() < at.y + 80.0)
+        .find(|r| r.top() >= at.y - 4.0 && r.top() < at.y + 300.0)
         .unwrap_or_else(|| panic!("{item} on the view's menu"))
         .center();
     h.hover_at(to);
@@ -8577,7 +8579,7 @@ fn views_are_drawn_on_the_canvas_and_placed_on_sheets() {
     // (New sheet shows the sheet in the Inspector; the Views list is in the Sheets panel.)
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
-    view_menu_item(&mut h, id, "Place on sheet");
+    view_menu_item(&mut h, id, "Place on ");
     h.run();
     let on = placed(&h, sheet);
     assert_eq!(on.len(), 2);
@@ -8683,11 +8685,16 @@ fn views_are_drawn_on_the_canvas_and_placed_on_sheets() {
     // Deleting a view on sheets asks first, then takes it off them all; undo brings it back.
     h.state_mut().drawing.picked_view = Some(id);
     h.run();
-    view_menu_item(&mut h, id, "Delete view");
+    view_menu_item(&mut h, id, "Delete view\u{2026}");
     h.run();
     assert!(h.state().drawing.editor.doc.view(id).is_some(), "not yet");
     assert_eq!(h.state().drawing.confirm_delete_view, Some(id));
-    h.get_by_label("Delete it").click();
+    // (One dialog, wherever it was asked for.)
+    assert!(
+        h.query_by_label_contains("Deleting it takes it out of the model")
+            .is_some()
+    );
+    h.get_by_label("Delete view").click();
     h.run();
     assert!(h.state().drawing.editor.doc.view(id).is_none());
     assert!(h.state().drawing.editor.doc.sheets_showing(id).is_empty());
@@ -8965,7 +8972,7 @@ fn place_on_sheet_finds_free_paper() {
     h.state_mut().drawing.picked_view = Some(id);
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
-    view_menu_item(&mut h, id, "Place again");
+    view_menu_item(&mut h, id, "Place again on ");
     h.run();
     let on = placed(&h, sheet);
     assert_eq!(on.len(), 3);
@@ -9414,7 +9421,7 @@ fn a_section_mark_makes_its_view_and_reads_its_number() {
     h.state_mut().drawing.picked_view = Some(view);
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
-    view_menu_item(&mut h, view, "Place on sheet");
+    view_menu_item(&mut h, view, "Place on ");
     h.run();
     assert_eq!(reads(&h), ("2".to_owned(), "A-101".to_owned()));
     // The view's Inspector on the sheet lists the mark.

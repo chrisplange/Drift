@@ -364,6 +364,8 @@ struct Drawing {
     picked_view: Option<drift_core::ViewId>,
     /// A view placed on sheets that Delete was pressed for, waiting for a yes.
     confirm_delete_view: Option<drift_core::ViewId>,
+    /// A sheet with views on it that Delete sheet was chosen for, waiting for a yes.
+    confirm_delete_sheet: Option<drift_core::SheetId>,
     /// The Rename dialog (F2), while open.
     renaming: Option<app::rename_ui::Renaming>,
     /// The report of the last import, until it is closed.
@@ -525,6 +527,7 @@ impl Drawing {
             output_dialog: None,
             picked_view: None,
             confirm_delete_view: None,
+            confirm_delete_sheet: None,
             renaming: None,
             import_report: None,
             sketch_check: None,

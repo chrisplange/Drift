@@ -141,9 +141,9 @@ geometry itself (in the **Inspector**, or the top bar's **Stroke** menus).
   keeps its spot on the paper. Dragging a view from the **Views** list onto a sheet's row
   places it there.
 - **Views:** every view in the drawing and the sheets it's on, and **Add view** for the
-  sheet shown. Drag one onto the sheet, or use **Place on sheet** (or **Place again**),
-  **Zoom to view** or **Delete view** on its right-click
-  menu (here or under its sheet); double-click one to zoom to it. A view on no sheet yet has
+  sheet shown. Drag one onto the sheet, or use **Place on** (it names the open sheet),
+  **Zoom to view** or **Delete view** on its right-click menu; double-click one to zoom to
+  it. A view on no sheet yet has
   **Name** and **Scale** here; once it's placed, its settings are in the **Inspector** (pick
   it on the sheet), and in the top bar when its crop is picked in the model.
 
@@ -153,6 +153,14 @@ export or print one sheet, right-click it (in the list or on its tab) for **Expo
 
 Clicking in the Sheets panel (a sheet in the list, **New sheet**) keeps the panel in front;
 a view or the paper picked on the sheet brings the **Inspector** forward.
+
+A view has one list of actions, in the same order wherever you open it (under its sheet,
+in the Views list, in the Inspector's **⋯** menu, or right-clicking it on a sheet or in the
+model), less what doesn't apply there: **Place on** the open sheet, **Fit scale to frame**,
+**Fill drawing area**, **Zoom to view**, **Move to sheet**, then **Remove from sheet** and
+**Delete view**. An item ending in **…** asks first: deleting a view that's on a sheet, or
+a sheet with views on it, opens one small dialog (Esc or **Cancel** keeps it). Undo brings
+either back.
 
 A sheet's own settings (number, name, paper, title block, revisions, **Delete sheet**) are
 in the **Inspector** when you pick bare paper on the sheet. Pick a view there and the

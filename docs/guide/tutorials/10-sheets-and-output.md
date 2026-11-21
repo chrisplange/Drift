@@ -49,7 +49,8 @@ row for more:
   copies are views of their own, so you can change them without changing the first. The
   revisions stay with the original.
 - **Duplicate empty:** the same, without the views.
-- **Move earlier** / **Move later**, and **Delete sheet**.
+- **Move earlier** / **Move later**, and **Delete sheet**. With views on it, it asks
+  first (the views stay in the model); an empty sheet goes at once. Undo brings it back.
 
 ## 2. Set up the paper and title block
 
@@ -112,7 +113,7 @@ With the select tool:
   so a crop never gets in the way of picking a line.
 - **Drag a picked crop's grips** to reframe it, or **drag its edge or name** to move it.
 - **Esc**, or a click anywhere else, lets it go. **Delete** deletes the view. If it's on a
-  sheet, Drift asks first, in the Sheets panel.
+  sheet, Drift asks first, in a small dialog.
 
 ### Showing and hiding crops
 
@@ -133,23 +134,26 @@ views on it, under its name.
 
 - **Click** a view to pick it. Its crop shows on the canvas with its grips.
 - **Double-click** it, or right-click it for **Zoom to view**, to see its crop in the model.
-- **Right-click** it (in the Views list or under its sheet) for **Place on sheet** (or
-  **Place again**), **Zoom to view** and **Delete view**. Under a sheet, it also has
-  **Move to sheet**; dragging it onto another sheet's row does the same.
+- **Right-click** it for its actions. In the Views list: **Place on** the open sheet (the
+  item names it; **Place again on** if it's there already), **Zoom to view** and **Delete
+  view**. Under its sheet, the same list as everywhere else a view is on a sheet: **Fit
+  scale to frame**, **Fill drawing area**, **Zoom to view**, **Move to sheet**, **Remove
+  from sheet** and **Delete view…**. Dragging it onto another sheet's row moves it too.
 - **Referenced by** lists the section and elevation marks that point at the view. Click
   one to pick it in the model.
-- **Delete view** (on its right-click menu) deletes it. If it's on sheets, Drift asks first, and deleting takes it
-  off them all. Marks that pointed at it are unlinked in the same step. Undo brings it all
+- **Delete view** (on its right-click menu) deletes it. If it's on sheets, the item reads
+  **Delete view…**: Drift asks first, naming the sheets, and deleting takes it off them
+  all. Marks that pointed at it are unlinked in the same step. Undo brings it all
   back. With a view's crop picked on the canvas, the Delete key, the right-click menu's
   **Delete view…** and **Delete view…** in the command palette do the same.
-- On a sheet, right-click a view for **Remove from sheet** (it stays in the model, for
-  placing again) and **Delete view…**.
+- On a sheet, right-click a view for the same list, with **Remove from sheet** (it stays
+  in the model, for placing again) beside **Delete view…**.
 
 ## 5. Put the view on the sheet
 
 1. Click the sheet's tab, **A-101**.
 2. Drag **Detail A** from the **Views** list onto the sheet, and let go where it should go.
-   You can also right-click it for **Place on sheet**: Drift puts it beside the views already there.
+   You can also right-click it for **Place on A-101**: Drift puts it beside the views already there.
 
 **Add view** in the rail (or V on a sheet) does both steps from the sheet: the canvas
 shows the model with the **View** tool, you drag the crop, and the new view goes on the
@@ -174,7 +178,7 @@ On the sheet:
   views it touches), or Ctrl+A for every view on the sheet. Drag any one of them and they
   all move, keeping their places relative to each other, in one undo step. The arrow keys
   nudge the picked views a millimetre (ten with Shift). Delete takes them off the sheet;
-  the **Inspector** lists them, with **Remove from sheet** and **Delete views**. Handles
+  the **Inspector** lists them, with **Remove from sheet** and **Delete views…**. Handles
   for cropping show only with one view picked.
 
 Cropping or sliding a view changes it on every sheet it's on, and on the canvas.
@@ -187,8 +191,9 @@ Dashed guides show what lined up. Hold Ctrl to place freely.
 
 Pick a view by clicking it on the sheet, or under its sheet in the **Sheets** panel. The
 **Inspector**'s title names it and the sheets it's on ("A-101  Ground floor · also on
-A-104"). Its **⋯** menu holds what you can do with it: **Fit scale to frame**, **Fill drawing
-area**, **Move to sheet**, **Remove from sheet** and **Delete view…**. Below are two sections.
+A-104"). Its **⋯** menu holds what you can do with it, the same list as its right-click menu:
+**Fit scale to frame**, **Fill drawing area**, **Zoom to view**, **Move to sheet**, **Remove
+from sheet** and **Delete view…**. Below are two sections.
 **View** is the view itself, shared by every sheet it's on:
 
 - **Name:** its name, as the canvas and the marks show it.

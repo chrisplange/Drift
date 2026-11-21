@@ -439,11 +439,27 @@ impl SelectTool {
         if let Some(seed) = &mut ed.selected_region {
             *seed += grab.applied;
         }
+        // (On another layer it is only held there, with automatic relations: #428.)
         if let (Some(from), Some(into)) = (point, p.merge_point())
             && from != into
-            && ed.doc.merge_points(from, into).is_ok()
         {
-            ed.selection = [into].into();
+            if let Some(into) = join_target(ed, Some(from), into) {
+                if from != into && ed.doc.merge_points(from, into).is_ok() {
+                    ed.selection = [into].into();
+                }
+            } else if p.relations
+                && ed.doc.constraints_on(from).all(|c| {
+                    !matches!(
+                        ed.doc.constraint(c),
+                        Some(&Constraint::Coincident { a, b })
+                            if (a, b) == (from, into) || (a, b) == (into, from)
+                    )
+                })
+            {
+                let _ = ed
+                    .doc
+                    .add_constraint(Constraint::Coincident { a: from, b: into });
+            }
         }
         // Dropped on a midpoint: keep it there.
         if let (Some(from), Some(line)) = (point, p.midpoint_of())
@@ -511,6 +527,10 @@ impl Tool for SelectTool {
         self.grab
             .as_ref()
             .is_some_and(|g| g.by_mouse.is_some_and(|m| m.point.is_some()))
+    }
+
+    fn joins_from(&self) -> Option<EntityId> {
+        self.grab.as_ref()?.by_mouse.as_ref()?.point
     }
 
     fn kind(&self) -> ToolKind {

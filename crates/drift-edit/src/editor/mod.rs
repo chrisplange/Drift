@@ -55,7 +55,7 @@ pub(crate) use items::ItemLook;
 pub use items::TaggedItem;
 pub use items::contrast;
 pub use layers::PickedShapes;
-pub use layers::{LayerFlag, LayerMove};
+pub use layers::{LayerFlag, LayerMove, point_layers, point_on_layer, points_share_layer};
 pub use options::ConstraintOption;
 pub use outbox::{FilteredOut, Outbox};
 pub use pointer::{Anchor, Guide, GuideKind, Pointer};

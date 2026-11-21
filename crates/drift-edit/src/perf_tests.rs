@@ -2158,3 +2158,35 @@ fn perf_drag_tiles() {
         );
     }
 }
+
+/// #428: the Join marker's check on another layer's point (run every frame while the
+/// pointer is on one) with 200,000 points in the drawing: the stacked point is found
+/// through the index, not by scanning the document.
+#[test]
+#[ignore = "perf"]
+fn perf_join_marker_on_another_layers_point() {
+    use crate::tools::{LineTool, Tool};
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    for i in 0..100_000 {
+        let x = f64::from(i % 400) * 10.0;
+        let y = f64::from(i / 400) * 10.0;
+        let a = ed.doc.add_point(v(x, y));
+        let b = ed.doc.add_point(v(x + 5.0, y + 5.0));
+        ed.doc.add_line(a, b).unwrap();
+    }
+    assert!(ed.commit("Lines"));
+    let corner = ed
+        .doc
+        .iter()
+        .find(|(_, e)| e.kind.is_point())
+        .map(|(id, _)| id)
+        .unwrap();
+    let other = ed.add_layer("Other");
+    ed.set_current_layer(other);
+    let tool = LineTool::default();
+    let t = time(50, |_| {
+        assert!(!tool.would_join(&ed, corner));
+    });
+    report("Join marker on another layer's point (200k points)", t);
+}

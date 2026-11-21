@@ -94,8 +94,11 @@ version**: they ask you to update Drift. Keep a copy saved from Beta 1.6 if you 
   drop would join.
 - **Weld points.** Pick points and press **1** to weld them onto the one you picked last, or
   **Shift+1** to weld them at their centre.
+- **Layers never join.** Drawing or dropping onto another layer's geometry snaps to it, but
+  the two stay separate points, even with Auto merge on. With automatic relations on, a
+  Coincident relation holds them together. Welding points on different layers does the same.
 
-<!-- PRs: auto merge and weld (#493) -->
+<!-- PRs: auto merge and weld (#493), layers never join (#428) -->
 
 ## Tools
 

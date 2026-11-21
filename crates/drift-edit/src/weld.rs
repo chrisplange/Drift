@@ -1,8 +1,11 @@
 //! Weld: picked points made one point, at the active point (1) or at their centre (Shift+1).
+//! Points on different layers are held together by a Coincident relation instead (#428).
 
-use drift_core::{DVec2, EntityId};
+use std::collections::BTreeSet;
 
-use crate::editor::Editor;
+use drift_core::{Constraint, DVec2, EntityId, LayerId};
+
+use crate::editor::{Editor, point_layers};
 
 /// Where welded points end up.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,8 +50,10 @@ impl Editor {
     }
 
     /// Weld the picked points into one, at the active point or at their centre: every curve
-    /// that ended at one of them ends at the one point left, which stays picked. One undo
-    /// step; on failure nothing changes and the reason comes back.
+    /// that ended at one of them ends at the one point left, which stays picked. A point on
+    /// another layer than that one is moved onto it and held there by a Coincident relation,
+    /// not merged, and the outbox says so (#428). One undo step; on failure nothing changes
+    /// and the reason comes back.
     pub fn weld_points(&mut self, at: WeldAt) -> Result<EntityId, String> {
         let points = self.picked_points();
         if points.len() < 2 {
@@ -76,13 +81,46 @@ impl Editor {
                 return Err(e.to_string());
             }
         }
-        for &p in points.iter().filter(|p| **p != keep) {
-            if self.doc.merge_points(p, keep).is_err() {
+        // Points on the kept point's layer become it. A point on another layer is moved onto
+        // it and held there by a Coincident relation instead (#428), after becoming one with
+        // any other picked point on its own layer. Layers are judged as they were before the
+        // weld, so the order points were picked in doesn't change what joins.
+        let target = self.doc.point(keep).unwrap_or_default();
+        let layers: Vec<BTreeSet<LayerId>> =
+            points.iter().map(|p| point_layers(&self.doc, *p)).collect();
+        let keep_layers = point_layers(&self.doc, keep);
+        // (Each held point, with its layers as they were.)
+        let mut held: Vec<(EntityId, &BTreeSet<LayerId>)> = Vec::new();
+        for (&p, p_layers) in points.iter().zip(&layers).filter(|(p, _)| **p != keep) {
+            let into = if !p_layers.is_disjoint(&keep_layers) {
+                Some(keep)
+            } else {
+                held.iter()
+                    .find(|(_, h)| !p_layers.is_disjoint(h))
+                    .map(|(h, _)| *h)
+            };
+            let failed = match into {
+                Some(into) => self.doc.merge_points(p, into).err().map(|_| {
+                    "Can't weld the two ends of one line or arc: it would shrink to nothing"
+                        .to_owned()
+                }),
+                None => {
+                    held.push((p, p_layers));
+                    match self.doc.set_point(p, target) {
+                        Err(e) => Some(e.to_string()),
+                        Ok(()) if self.coincident(p, keep) => None,
+                        Ok(()) => self
+                            .doc
+                            .add_constraint(Constraint::Coincident { a: p, b: keep })
+                            .err()
+                            .map(|e| format!("Can't hold the points together: {e}")),
+                    }
+                }
+            };
+            if let Some(why) = failed {
                 self.doc.rollback();
                 self.sync();
-                return Err(
-                    "Can't weld the two ends of one line or arc: it would shrink to nothing".into(),
-                );
+                return Err(why);
             }
         }
         let label = match at {
@@ -98,7 +136,21 @@ impl Editor {
         }
         self.selection = [keep].into();
         self.set_active(Some(keep));
+        if !held.is_empty() {
+            self.out
+                .inform("On different layers: held together, not merged");
+        }
         Ok(keep)
+    }
+
+    /// Whether a Coincident relation holds `a` and `b` together already.
+    fn coincident(&self, a: EntityId, b: EntityId) -> bool {
+        self.doc.constraints_on(a).any(|c| {
+            matches!(
+                self.doc.constraint(c),
+                Some(&Constraint::Coincident { a: p, b: q }) if (p, q) == (a, b) || (p, q) == (b, a)
+            )
+        })
     }
 }
 
@@ -196,6 +248,50 @@ mod tests {
         // Onto the fixed point itself is fine.
         ed.set_active(Some(c));
         assert_eq!(ed.weld_points(WeldAt::Active), Ok(c));
+    }
+
+    /// #428: points on different layers are held together by a Coincident relation, not made
+    /// one point; points on the same layer still are.
+    #[test]
+    fn weld_across_layers_holds_the_points_together_without_merging() {
+        let (mut ed, [a, b, c, d]) = two_lines();
+        let other = ed.add_layer("Other");
+        let second = ed.doc.users_of(c).next().unwrap();
+        ed.selection = [second].into();
+        ed.move_selection_to_layer(other);
+        ed.selection = [b, c].into();
+        ed.set_active(Some(b));
+        assert_eq!(ed.weld_points(WeldAt::Active), Ok(b));
+        assert_eq!(point_count(&ed), 4, "nothing merged");
+        assert!(ed.doc.point(c).unwrap().distance(v(10.0, 0.0)) < 1e-9);
+        assert_eq!(ed.doc.point(b).unwrap(), v(10.0, 0.0));
+        assert!(ed.doc.constraints().any(|(_, k)| matches!(
+            *k,
+            drift_core::Constraint::Coincident { a: p, b: q }
+                if (p, q) == (c, b) || (p, q) == (b, c)
+        )));
+        assert_eq!(
+            ed.out.info.as_deref(),
+            Some("On different layers: held together, not merged")
+        );
+        assert!(ed.doc.contains(d) && ed.doc.contains(a));
+        assert!(ed.undo());
+        assert_eq!(ed.doc.point(c).unwrap(), v(12.0, 2.0));
+    }
+
+    #[test]
+    fn weld_at_centre_across_layers_meets_halfway_and_holds() {
+        let (mut ed, [_, b, c, _]) = two_lines();
+        let other = ed.add_layer("Other");
+        let second = ed.doc.users_of(c).next().unwrap();
+        ed.selection = [second].into();
+        ed.move_selection_to_layer(other);
+        ed.selection = [b, c].into();
+        ed.set_active(None);
+        ed.weld_points(WeldAt::Centre).unwrap();
+        assert_eq!(point_count(&ed), 4);
+        assert!(ed.doc.point(b).unwrap().distance(v(11.0, 1.0)) < 1e-9);
+        assert!(ed.doc.point(c).unwrap().distance(v(11.0, 1.0)) < 1e-9);
     }
 
     #[test]

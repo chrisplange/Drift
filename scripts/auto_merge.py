@@ -90,6 +90,22 @@ def gh(*args: str) -> str:
     return subprocess.check_output(["gh", *args], text=True)
 
 
+def close_fixed_issues(pr: str, repo: str) -> None:
+    """Close the issues the merged PR names; runs after the merge, so nothing here is fatal."""
+    try:
+        refs = json.loads(gh("pr", "view", pr, "-R", repo, "--json", "closingIssuesReferences",
+                             "--jq", ".closingIssuesReferences"))
+        numbers = issues_to_close(refs, repo)
+    except (subprocess.CalledProcessError, ValueError, KeyError, TypeError) as e:
+        print(f"PR #{pr}: could not read the issues it closes: {e}")
+        return
+    for n in numbers:
+        done = subprocess.run(["gh", "issue", "close", str(n), "-R", repo, "--reason", "completed",
+                               "--comment", f"Fixed by #{pr} (merged by the auto-merge job)."])
+        if done.returncode != 0:
+            print(f"PR #{pr}: could not close issue #{n}")
+
+
 def main() -> int:
     repo = os.environ["GITHUB_REPOSITORY"]
     owner = repo.split("/")[0]
@@ -126,17 +142,10 @@ def main() -> int:
     sha = info["headRefOid"]
     print(f"PR #{pr}: auto tier, every required check green; merging {sha}")
     subprocess.check_call(["gh", "pr", "merge", pr, "-R", repo, "--merge", "--match-head-commit", sha])
-    refs = json.loads(gh("pr", "view", pr, "-R", repo, "--json", "closingIssuesReferences",
-                         "--jq", ".closingIssuesReferences"))
-    for n in issues_to_close(refs, repo):
-        # The merge has happened; a failed close is reported, not fatal.
-        done = subprocess.run(["gh", "issue", "close", str(n), "-R", repo, "--reason", "completed",
-                               "--comment", f"Fixed by #{pr} (merged by the auto-merge job)."])
-        if done.returncode != 0:
-            print(f"PR #{pr}: could not close issue #{n}")
     subprocess.check_call(["gh", "workflow", "run", "ci.yml", "-R", repo, "--ref", "main"])
     if touches_website(files):
         subprocess.check_call(["gh", "workflow", "run", "website.yml", "-R", repo, "--ref", "main"])
+    close_fixed_issues(pr, repo)
     return 0
 
 

@@ -281,3 +281,37 @@ fn the_untouched_blank_follows_the_default_logo() {
     assert!(logo(&h).is_empty(), "and loses it with Clear");
     assert!(!h.state().is_dirty());
 }
+
+/// #429: undoing a logo choice puts back the default it replaced (redo makes it the default
+/// again), unless the default has been changed since.
+#[test]
+fn undoing_a_logo_choice_puts_the_default_back() {
+    let Some(mut h) = harness() else { return };
+    h.state_mut().set_logo(LOGO_SVG).unwrap();
+    h.state_mut().set_logo(OTHER_LOGO).unwrap();
+    assert_eq!(h.state().new_drawing.logo, OTHER_LOGO);
+    h.key_press_modifiers(EguiModifiers::COMMAND, Key::Z);
+    h.run();
+    assert_eq!(logo(&h), LOGO_SVG);
+    assert_eq!(h.state().new_drawing.logo, LOGO_SVG, "the one before");
+    h.state_mut().undo();
+    assert!(logo(&h).is_empty());
+    assert!(h.state().new_drawing.logo.is_empty(), "none before that");
+    h.state_mut().redo();
+    assert_eq!(h.state().new_drawing.logo, LOGO_SVG);
+    h.state_mut().redo();
+    assert_eq!(logo(&h), OTHER_LOGO);
+    assert_eq!(h.state().new_drawing.logo, OTHER_LOGO);
+    // Undoing an edit that isn't the choice (Remove, then undo it) leaves the default.
+    h.state_mut().drawing.editor.doc.begin();
+    h.state_mut().drawing.editor.doc.set_logo(String::new());
+    h.state_mut().drawing.editor.commit("Remove logo");
+    h.state_mut().undo();
+    assert_eq!(logo(&h), OTHER_LOGO);
+    assert_eq!(h.state().new_drawing.logo, OTHER_LOGO);
+    // A default changed since (Preferences → Clear) stays as it is set.
+    h.state_mut().new_drawing.set_logo(String::new());
+    h.state_mut().undo();
+    assert_eq!(logo(&h), LOGO_SVG);
+    assert!(h.state().new_drawing.logo.is_empty());
+}

@@ -746,9 +746,10 @@ impl DriftApp {
                     .clicked();
         });
         if take {
-            self.new_drawing.logo = self.drawing.editor.doc.logo().to_owned();
+            let logo = self.drawing.editor.doc.logo().to_owned();
+            self.new_drawing.set_logo(logo);
         } else if clear {
-            self.new_drawing.logo.clear();
+            self.new_drawing.set_logo(String::new());
         }
         if take || clear {
             self.refresh_untouched_drawing();

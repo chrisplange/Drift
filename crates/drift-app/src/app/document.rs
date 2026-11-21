@@ -965,7 +965,7 @@ impl DriftApp {
         self.drawing.editor.doc.set_logo(svg.to_owned());
         self.drawing.editor.commit("Title block logo");
         // New drawings start with it too (#429).
-        self.new_drawing.logo = svg.to_owned();
+        self.new_drawing.choose_logo(svg);
         Ok(())
     }
 
@@ -1130,12 +1130,12 @@ impl DriftApp {
 
     pub(crate) fn undo(&mut self) {
         self.abort_operation();
-        self.drawing.editor.undo();
+        self.step_history(true);
     }
 
     pub(crate) fn redo(&mut self) {
         self.abort_operation();
-        self.drawing.editor.redo();
+        self.step_history(false);
     }
 
     pub(crate) fn set_selection_style(&mut self, style: LineKind) {

@@ -169,6 +169,17 @@ pub(crate) struct NewDrawing {
     /// The title block logo, as SVG text ("" for none): the last one chosen for a drawing.
     /// Removing a drawing's logo leaves it; Preferences clears or replaces it.
     pub(crate) logo: String,
+    /// The logos chosen for drawings, newest last, and those whose choice was undone: undo
+    /// and redo of the choice take the default back and forth with it.
+    chosen: Vec<LogoChoice>,
+    undone: Vec<LogoChoice>,
+}
+
+/// A logo chosen for a drawing, and the default it replaced.
+#[derive(Clone, Debug, PartialEq)]
+struct LogoChoice {
+    before: String,
+    chosen: String,
 }
 
 impl NewDrawing {
@@ -183,7 +194,47 @@ impl NewDrawing {
             .get_string(KEY_LOGO)
             .filter(|svg| !svg.is_empty() && drift_draft::logo::parse(svg).is_ok())
             .unwrap_or_default();
-        Self { units, logo }
+        Self {
+            units,
+            logo,
+            ..Self::default()
+        }
+    }
+
+    /// A logo chosen for a drawing: new drawings start with it too.
+    pub(crate) fn choose_logo(&mut self, svg: &str) {
+        let before = std::mem::replace(&mut self.logo, svg.to_owned());
+        self.chosen.push(LogoChoice {
+            before,
+            chosen: svg.to_owned(),
+        });
+        self.undone.clear();
+    }
+
+    /// The default set in Preferences (cleared, or the open drawing's).
+    pub(crate) fn set_logo(&mut self, svg: String) {
+        self.logo = svg;
+        self.chosen.clear();
+        self.undone.clear();
+    }
+
+    /// An undo (or redo) changed the drawing's logo `from` one `to` another. Undoing a
+    /// choice puts back the default it replaced, if the default is still the logo undone;
+    /// redoing it makes it the default again, if that is still the one it replaced.
+    fn logo_stepped(&mut self, from: &str, to: &str, undo: bool) {
+        if undo {
+            if let Some(c) = self.chosen.pop_if(|c| c.chosen == from) {
+                if self.logo == c.chosen {
+                    self.logo = c.before.clone();
+                }
+                self.undone.push(c);
+            }
+        } else if let Some(c) = self.undone.pop_if(|c| c.chosen == to) {
+            if self.logo == c.before {
+                self.logo = c.chosen.clone();
+            }
+            self.chosen.push(c);
+        }
     }
 
     pub(crate) fn save(&self, storage: &mut dyn eframe::Storage) {
@@ -199,6 +250,22 @@ impl NewDrawing {
 }
 
 impl crate::DriftApp {
+    /// Undo (or redo) a step; one that changed the logo chosen for the drawing takes the
+    /// default with it (see [`NewDrawing::logo_stepped`]).
+    pub(crate) fn step_history(&mut self, undo: bool) {
+        let before = self.drawing.editor.doc.logo().to_owned();
+        if undo {
+            self.drawing.editor.undo();
+        } else {
+            self.drawing.editor.redo();
+        }
+        let after = self.drawing.editor.doc.logo();
+        if after != before {
+            let after = after.to_owned();
+            self.new_drawing.logo_stepped(&before, &after, undo);
+        }
+    }
+
     /// Whether the drawing open now is a new one nothing has been done to: no file, nothing
     /// to save, nothing in it.
     pub(crate) fn untouched_new_drawing(&self) -> bool {

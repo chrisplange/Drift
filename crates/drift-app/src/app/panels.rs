@@ -2330,7 +2330,7 @@ impl DriftApp {
                         Glyph::AutoMerge,
                         "Auto merge",
                         &mut self.drawing.editor.prefs.auto_merge,
-                        "Auto merge: a point dropped on another point joins it, and lines and arcs drawn on a point share it. Off: only placed there. Ctrl flips it for one drop · Shift+Alt+M",
+                        "Auto merge: a point dropped on another point joins it, and lines and arcs drawn on a point share it (on the same layer only). Off: only placed there. Ctrl flips it for one drop · Shift+Alt+M",
                     );
                     // Angle snapping sits with grid snapping: a click opens its steps.
                     let angle_snap = &mut self.angle_snap;

@@ -183,8 +183,8 @@ fn smoke_sheet_with_a_view_title_block_and_export() {
         h.state().drawing.output_dialog.is_some(),
         "Print asks for the sheets"
     );
-    // (The Sheets panel stays in front, with its own Print… button.)
-    assert!(h.get_all_by_label("Print…").count() >= 2);
+    // (The dialog's own Print…; the Sheets panel has none: Print is in the File menu.)
+    assert_eq!(h.get_all_by_label("Print…").count(), 1);
     h.get_by_label("Cancel").click();
     h.run();
     assert!(h.state().drawing.output_dialog.is_none());
@@ -253,7 +253,7 @@ fn smoke_sheet_view_right_click_menu() {
     h.get_by_label("Delete view…").click();
     h.run();
     assert_eq!(view_count(&h), 1, "on a sheet, it asks first");
-    h.get_by_label("Delete it").click();
+    h.get_by_label("Delete view").click();
     h.run();
     assert_eq!(view_count(&h), 0, "the view is gone");
     assert!(placed(&h, sheet).is_empty(), "and off its sheet");
@@ -407,7 +407,6 @@ fn smoke_sheet_views_list_is_left_justified() {
         .map(|(_, v)| v.title().to_owned())
         .collect();
     assert_eq!(names.len(), 2);
-    let pad = h.ctx.global_style().spacing.button_padding.x;
     for name in &names {
         let row = h
             .get_all_by_label_contains(name)
@@ -428,8 +427,9 @@ fn smoke_sheet_views_list_is_left_justified() {
                 _ => None,
             })
             .unwrap_or_else(|| panic!("the text of {name}"));
+        // (After the view glyph; under a sheet, a step in, below the sheet's name.)
         assert!(
-            (text_left - (row.left() + pad)).abs() < 1.5,
+            text_left > row.left() && text_left - row.left() < 80.0,
             "{name}: text at {text_left}, row from {}",
             row.left()
         );
@@ -592,10 +592,31 @@ fn smoke_sheet_view_settings_in_one_place() {
     }
     h.run();
     h.run();
-    for label in ["Name", "Scale", "Crop", "Title", "Border"] {
+    for label in [
+        "Name",
+        "Scale",
+        "Show crop",
+        "Title",
+        "Border",
+        "View actions",
+    ] {
         assert!(
             h.query_by_label(label).is_some(),
             "the Inspector has {label}"
+        );
+    }
+    // All settings: no list of the sheet's views, no action buttons, no empty Referenced by
+    // (the actions are in the title's menu).
+    for label in [
+        "Fit",
+        "Fill drawing area",
+        "Remove from sheet",
+        "Views on this sheet",
+        "No marks",
+    ] {
+        assert!(
+            h.query_by_label_contains(label).is_none(),
+            "{label} isn't in the view's Inspector"
         );
     }
     // Its two sections, painted headers: the view itself (name to crop), then this sheet's
@@ -614,7 +635,7 @@ fn smoke_sheet_view_settings_in_one_place() {
     };
     let y = |h: &Harness<'_, DriftApp>, label: &str| h.get_by_label(label).rect().top();
     let (view_at, sheet_at) = (header(&h, "View"), header(&h, "On this sheet"));
-    assert!(view_at < y(&h, "Name") && y(&h, "Crop") < sheet_at);
+    assert!(view_at < y(&h, "Name") && y(&h, "Show crop") < sheet_at);
     assert!(sheet_at < y(&h, "Title") && sheet_at < y(&h, "Border"));
     save_png("drift_smoke_sheet_view_inspector.png", &mut h);
     // The crop's switch is the view's own, and undoes.
@@ -628,19 +649,19 @@ fn smoke_sheet_view_settings_in_one_place() {
             .crop_visible
     };
     let was = crop(&h);
-    h.get_by_label("Crop").click();
+    h.get_by_label("Show crop").click();
     h.run();
     h.run();
     assert_eq!(crop(&h), !was, "Crop sets the view's crop");
     h.state_mut().undo();
     h.run();
     assert_eq!(crop(&h), was);
-    // The Sheets panel's Views list: the view picked, its actions, and no second set of fields.
+    // The Sheets panel's Views list: the view picked, and no second set of fields.
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
     h.run();
-    assert!(h.query_by_label("Zoom to view").is_some());
-    for label in ["Name", "Scale", "Crop"] {
+    assert_eq!(h.state().drawing.picked_view, Some(view));
+    for label in ["Name", "Scale", "Show crop"] {
         assert!(
             h.query_by_label(label).is_none(),
             "no {label} in the Sheets panel"

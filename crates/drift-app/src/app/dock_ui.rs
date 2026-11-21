@@ -103,7 +103,7 @@ fn front_title(ui: &mut egui::Ui, front: Panel) {
 }
 
 /// A small icon button drawn at `rect`.
-fn icon_at(
+pub(crate) fn icon_at(
     ui: &mut egui::Ui,
     rect: egui::Rect,
     id: egui::Id,

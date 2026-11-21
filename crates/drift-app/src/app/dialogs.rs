@@ -28,6 +28,9 @@ impl DriftApp {
         self.pending.is_some()
             || self.drawing.editor.out.pending_driven.is_some()
             || self.drawing.renaming.is_some()
+            || self.drawing.confirm_delete_view.is_some()
+            || self.drawing.confirm_delete_set
+            || self.drawing.confirm_delete_sheet.is_some()
             || self.pending_import.is_some()
             || self.dropped.is_some()
             || self.lossy_save_open()
@@ -186,6 +189,7 @@ impl DriftApp {
         self.drawing_settings_window(ctx);
         self.relation_pie(ctx);
         self.rename_dialog(ctx);
+        self.delete_confirm_dialog(ctx);
         self.import_report_window(ctx);
         #[cfg(not(feature = "demo"))]
         self.output_window(ctx);

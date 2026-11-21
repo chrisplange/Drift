@@ -241,20 +241,30 @@ pub(crate) struct PlacePrompt {
     pub(crate) choice: PdfPlacement,
 }
 
-/// What the output dialog makes.
-#[cfg(not(feature = "demo"))]
+/// What the output dialog (or a sheet's right-click menu) makes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Output {
     Pdf,
     Print,
 }
 
-/// A sheet's row in the Sheets tab: the sheet glyph, its number in the tertiary tone and its
-/// name; the open sheet in the selected row's look. `label` is what it is called (as its tab
-/// is).
+/// How far in from a sheet row's left edge its glyph sits: the room on its left holds the
+/// chevron that opens and closes the views on it.
+const TREE_INDENT: f32 = 18.0;
+
+/// Whether a click on a sheet row at `x` landed on its chevron.
+fn on_chevron(row: egui::Rect, x: f32) -> bool {
+    x < row.left() + TREE_INDENT
+}
+
+/// A sheet's row in the Sheets tab: the chevron (when views are on it, `open` says whether
+/// they show beneath), the sheet glyph, its number in the tertiary tone and its name; the open
+/// sheet in the selected row's look. `label` is what it is called (as its tab is).
 fn sheet_row(
     ui: &mut egui::Ui,
+    shown: bool,
     selected: bool,
+    open: Option<bool>,
     label: &str,
     number: &str,
     name: &str,
@@ -263,21 +273,34 @@ fn sheet_row(
         egui::vec2(ui.available_width(), theme::LIST_ROW),
         egui::Sense::click(),
     );
+    // (Read as selected while it's the sheet shown, filled or not.)
     response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, label)
+        egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, shown, label)
     });
     let dark = ui.visuals().dark_mode;
     let n = theme::neutrals(dark);
     theme::paint_row(ui, rect, selected, response.hovered());
+    if let Some(open) = open {
+        let chevron = egui::Rect::from_center_size(
+            egui::pos2(rect.left() + TREE_INDENT / 2.0 + 1.0, rect.center().y),
+            egui::Vec2::splat(12.0),
+        );
+        let glyph = if open {
+            crate::icons::Glyph::ChevronDown
+        } else {
+            crate::icons::Glyph::ChevronRight
+        };
+        crate::icons::glyph(ui.painter(), chevron, glyph, n.tertiary);
+    }
     let icon = egui::Rect::from_center_size(
-        egui::pos2(rect.left() + 15.0, rect.center().y),
+        egui::pos2(rect.left() + TREE_INDENT + 9.0, rect.center().y),
         egui::Vec2::splat(14.0),
     );
     crate::icons::glyph(
         ui.painter(),
         icon,
         crate::icons::Glyph::Sheets,
-        if selected {
+        if shown {
             theme::accent(dark)
         } else {
             n.secondary
@@ -286,7 +309,7 @@ fn sheet_row(
     let painter = ui
         .painter()
         .with_clip_rect(rect.shrink2(egui::vec2(6.0, 0.0)));
-    let mut x = rect.left() + 30.0;
+    let mut x = rect.left() + TREE_INDENT + 24.0;
     if !number.is_empty() {
         let r = painter.text(
             egui::pos2(x, rect.center().y),
@@ -297,7 +320,7 @@ fn sheet_row(
         );
         x = r.right() + 8.0;
     }
-    let family = if selected {
+    let family = if shown {
         theme::bold()
     } else {
         egui::FontFamily::Proportional
@@ -310,6 +333,186 @@ fn sheet_row(
         n.text,
     );
     response
+}
+
+/// A view's row: under its sheet in the Sheets list (`nested`), or in the Views list. The
+/// view glyph, its name, then `detail` (its scale, and where it is placed) in the tertiary
+/// tone; the picked view in the selected row's look.
+fn view_row(
+    ui: &mut egui::Ui,
+    selected: bool,
+    nested: bool,
+    name: &str,
+    detail: &str,
+) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), theme::LIST_ROW),
+        egui::Sense::click_and_drag(),
+    );
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, name)
+    });
+    let dark = ui.visuals().dark_mode;
+    let n = theme::neutrals(dark);
+    theme::paint_row(ui, rect, selected, response.hovered());
+    // Nested, the glyph sits under its sheet's name, a step in from the sheet's own glyph.
+    let left = rect.left() + if nested { TREE_INDENT + 24.0 } else { 6.0 };
+    let icon = egui::Rect::from_center_size(
+        egui::pos2(left + 9.0, rect.center().y),
+        egui::Vec2::splat(14.0),
+    );
+    crate::icons::glyph(
+        ui.painter(),
+        icon,
+        crate::icons::Glyph::View,
+        if selected {
+            theme::accent(dark)
+        } else {
+            n.secondary
+        },
+    );
+    let painter = ui
+        .painter()
+        .with_clip_rect(rect.shrink2(egui::vec2(6.0, 0.0)));
+    let r = painter.text(
+        egui::pos2(left + 24.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        name,
+        egui::FontId::proportional(theme::size::BODY),
+        n.text,
+    );
+    painter.text(
+        egui::pos2(r.right() + 8.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        detail,
+        egui::FontId::proportional(theme::size::LABEL),
+        n.tertiary,
+    );
+    response
+}
+
+/// One of a view's actions, as its menus offer them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum ViewAction {
+    /// Place it on this sheet (again, if it is already there).
+    Place(SheetId),
+    /// Fit scale to frame.
+    Fit,
+    /// Fill drawing area.
+    Fill,
+    Zoom,
+    /// Move it, from the sheet it is picked on, to this one.
+    MoveTo(SheetId),
+    /// Take it off the sheet it is picked on.
+    Remove,
+    /// Delete it from the model.
+    Delete,
+}
+
+/// Which of a view's actions a menu offers. Every menu of a view (its rows in the Sheets
+/// panel, the Inspector's ⋯, the right-click on a sheet or on the model) is this one list, in
+/// this order, less what doesn't apply there.
+#[derive(Default)]
+pub(crate) struct ViewActions {
+    /// The sheet it would be placed on (its label), and whether it is already there.
+    pub(crate) place: Option<(SheetId, String, bool)>,
+    /// Fit scale to frame and Fill drawing area (a view on a sheet).
+    pub(crate) frame: bool,
+    pub(crate) zoom: bool,
+    /// The other sheets it can move to (a view on a sheet).
+    pub(crate) moves: Vec<(SheetId, String)>,
+    /// Remove from sheet (a view on a sheet).
+    pub(crate) remove: bool,
+    /// Delete view, and whether that asks first (it does for a view on a sheet, and the item
+    /// then ends in "…").
+    pub(crate) delete: Option<bool>,
+    /// Several views picked: Remove and Delete act on them all.
+    pub(crate) several: bool,
+}
+
+/// A view's menu: the actions `a` offers, in the one order. Returns the one chosen.
+pub(crate) fn view_actions(ui: &mut egui::Ui, a: &ViewActions) -> Option<ViewAction> {
+    let mut chose = None;
+    if let Some((sheet, label, here)) = &a.place {
+        let text = if *here {
+            format!("Place again on {label}")
+        } else {
+            format!("Place on {label}")
+        };
+        if ui.button(text).clicked() {
+            chose = Some(ViewAction::Place(*sheet));
+        }
+    }
+    if a.frame {
+        if ui
+            .button("Fit scale to frame")
+            .on_hover_text("Center the drawing in the view at the largest scale that fits")
+            .clicked()
+        {
+            chose = Some(ViewAction::Fit);
+        }
+        if ui
+            .button("Fill drawing area")
+            .on_hover_text(
+                "Frame it to the sheet's whole drawing area, cropping more or less of the model",
+            )
+            .clicked()
+        {
+            chose = Some(ViewAction::Fill);
+        }
+    }
+    if a.zoom
+        && ui
+            .button("Zoom to view")
+            .on_hover_text("Show its crop on the model canvas")
+            .clicked()
+    {
+        chose = Some(ViewAction::Zoom);
+    }
+    if !a.moves.is_empty() {
+        ui.menu_button("Move to sheet", |ui| {
+            for (sheet, label) in &a.moves {
+                if ui.button(label).clicked() {
+                    chose = Some(ViewAction::MoveTo(*sheet));
+                }
+            }
+        });
+    }
+    let above = a.place.is_some() || a.frame || a.zoom || !a.moves.is_empty();
+    if above && (a.remove || a.delete.is_some()) {
+        ui.separator();
+    }
+    if a.remove
+        && ui
+            .button("Remove from sheet")
+            .on_hover_text("Take it off this sheet; it stays in the model, for placing again")
+            .clicked()
+    {
+        chose = Some(ViewAction::Remove);
+    }
+    if let Some(asks) = a.delete {
+        let label = match (a.several, asks) {
+            (true, _) => "Delete views\u{2026}",
+            (false, true) => "Delete view\u{2026}",
+            (false, false) => "Delete view",
+        };
+        if ui
+            .button(label)
+            .on_hover_text("Delete it from the model, and so from every sheet it is on")
+            .clicked()
+        {
+            chose = Some(ViewAction::Delete);
+        }
+    }
+    chose
+}
+
+/// A placed view being dragged from under its sheet in the Sheets list: dropped on another
+/// sheet's row, it moves there.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct PlacedDrag {
+    pub(crate) sheet: SheetId,
+    pub(crate) index: usize,
 }
 
 impl DriftApp {
@@ -935,6 +1138,36 @@ impl DriftApp {
     }
 
     #[cfg(not(feature = "demo"))]
+    /// Export one sheet as a PDF, or print it, from its right-click menu: no dialog, since the
+    /// sheet is chosen.
+    pub(crate) fn output_sheet(&mut self, painter: &egui::Painter, id: SheetId, kind: Output) {
+        let bytes = self.sheet_pdf_bytes(painter, id);
+        let name = format!("{}.pdf", self.file_stem());
+        match kind {
+            Output::Pdf => self.files.export(&name, PDF_FILE, bytes),
+            Output::Print => self.files.open_externally(&name, &bytes),
+        }
+    }
+
+    #[cfg(not(feature = "demo"))]
+    /// One sheet as a PDF (keeping its number in the set). The others are left out of this
+    /// one only: the PDF dialog's choice stays as it was.
+    pub(crate) fn sheet_pdf_bytes(&mut self, painter: &egui::Painter, id: SheetId) -> Vec<u8> {
+        let others = self
+            .drawing
+            .editor
+            .doc
+            .sheets()
+            .map(|(s, _)| s)
+            .filter(|s| *s != id)
+            .collect();
+        let kept = std::mem::replace(&mut self.drawing.pdf_left_out, others);
+        let bytes = self.placed_pdf_bytes(painter, PdfPlacement::Fit);
+        self.drawing.pdf_left_out = kept;
+        bytes
+    }
+
+    #[cfg(not(feature = "demo"))]
     /// Open the chosen sheets as a PDF in the system viewer (a browser tab on the web) to
     /// print.
     fn open_to_print(&mut self, painter: &egui::Painter, placement: PdfPlacement) {
@@ -971,6 +1204,14 @@ impl DriftApp {
     #[cfg(feature = "demo")]
     pub(crate) fn print(&mut self, _: &egui::Painter) {
         self.not_in_demo("Printing");
+    }
+
+    #[cfg(feature = "demo")]
+    pub(crate) fn output_sheet(&mut self, _: &egui::Painter, _: SheetId, kind: Output) {
+        self.not_in_demo(match kind {
+            Output::Pdf => "Exporting a PDF",
+            Output::Print => "Printing",
+        });
     }
 
     /// Say what an import brought in; what it left out or changed stays up in a report.
@@ -1120,7 +1361,64 @@ impl DriftApp {
 
     // ----- The Sheets tab --------------------------------------------------------------------
 
+    /// While a view is dragged from the Sheets panel (from under its sheet, or from the Views
+    /// list), its name follows the pointer, so you can see what you're carrying.
+    fn view_drag_label(&self, ctx: &egui::Context) {
+        let doc = &self.drawing.editor.doc;
+        let view = match egui::DragAndDrop::payload::<PlacedDrag>(ctx) {
+            Some(d) => doc
+                .sheet(d.sheet)
+                .and_then(|s| s.viewports.get(d.index))
+                .map(|p| p.view),
+            None => egui::DragAndDrop::payload::<ViewId>(ctx).map(|v| *v),
+        };
+        let (Some(view), Some(at)) = (view.and_then(|v| doc.view(v)), ctx.pointer_latest_pos())
+        else {
+            return;
+        };
+        let style = ctx.style_of(ctx.theme());
+        let dark = style.visuals.dark_mode;
+        let n = theme::neutrals(dark);
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Tooltip,
+            egui::Id::new("view_drag_label"),
+        ));
+        let galley = painter.layout_no_wrap(
+            view.title().to_owned(),
+            egui::FontId::proportional(theme::size::BODY),
+            n.text,
+        );
+        let pad = egui::vec2(8.0, 4.0);
+        let rect = egui::Rect::from_min_size(
+            at + egui::vec2(14.0, 12.0),
+            egui::vec2(galley.size().x + 22.0, galley.size().y) + pad * 2.0,
+        );
+        painter.rect(
+            rect,
+            4.0,
+            style.visuals.window_fill,
+            style.visuals.window_stroke,
+            egui::StrokeKind::Inside,
+        );
+        let icon = egui::Rect::from_center_size(
+            egui::pos2(rect.left() + pad.x + 7.0, rect.center().y),
+            egui::Vec2::splat(14.0),
+        );
+        crate::icons::glyph(
+            &painter,
+            icon,
+            crate::icons::Glyph::View,
+            theme::accent(dark),
+        );
+        painter.galley(
+            egui::pos2(rect.left() + pad.x + 22.0, rect.top() + pad.y),
+            galley,
+            n.text,
+        );
+    }
+
     pub(crate) fn sheets_panel(&mut self, ui: &mut egui::Ui) {
+        self.view_drag_label(ui.ctx());
         let area = egui::ScrollArea::vertical().auto_shrink([false, false]);
         let output = theme::pane_scroll(ui, area, |ui| self.sheets_contents(ui));
         self.panel_scrolled(ui, crate::dock::Panel::Sheets, &output);
@@ -1157,9 +1455,65 @@ impl DriftApp {
         use crate::app::sheet_editor::{SheetMenu, drop_index, gap_at, sheet_menu};
         let mut spots = Vec::new();
         let (mut dragging, mut dropped, mut chose) = (None, None, None);
+        // (A view picked under a sheet: the sheet, the view's index on it, the view.)
+        let (mut pick_placed, mut view_chose) = (None, None);
+        // (A view moved from one sheet to another: from, its index there, to. A view of the
+        // Views list dropped on a sheet: it, the sheet.)
+        let (mut move_to, mut place_on) = (None, None);
         for (k, (id, label, number, name)) in sheets.iter().enumerate() {
             let shown = self.drawing.view.sheet_preview && current == Some(*id);
-            let row = sheet_row(ui, shown, label, number, name).interact(egui::Sense::drag());
+            // The views on it, as they nest under its row (as in a project browser).
+            let doc = &self.drawing.editor.doc;
+            let placed: Vec<(usize, ViewId, String, String)> = doc
+                .sheet(*id)
+                .map(|s| {
+                    s.viewports
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, port)| {
+                            let v = doc.view(port.view)?;
+                            let scale = scale_label(v.scale, self.imperial());
+                            Some((i, port.view, v.title().to_owned(), scale))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let open_id = ui.id().with(("sheet_open", *id));
+            let open = ui.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(true);
+            // The sheet shown is bold; it's filled only while it is what's picked (not a
+            // view on it, whose own row is filled then), so one row reads as the selection.
+            let on_view = self.drawing.view.sheet_pick == crate::app::sheet_editor::SheetPick::View;
+            let row = sheet_row(
+                ui,
+                shown,
+                shown && !on_view,
+                (!placed.is_empty()).then_some(open),
+                label,
+                number,
+                name,
+            )
+            .interact(egui::Sense::drag());
+            // A view dragged onto the row: one from under another sheet moves here, one from
+            // the Views list is placed here.
+            let moving = row
+                .dnd_hover_payload::<PlacedDrag>()
+                .is_some_and(|d| d.sheet != *id);
+            if moving || row.dnd_hover_payload::<ViewId>().is_some() {
+                ui.painter().rect_stroke(
+                    row.rect,
+                    theme::radius::CONTROL,
+                    egui::Stroke::new(1.5, theme::accent(ui.visuals().dark_mode)),
+                    egui::StrokeKind::Inside,
+                );
+            }
+            if let Some(d) = row.dnd_release_payload::<PlacedDrag>()
+                && d.sheet != *id
+            {
+                move_to = Some((d.sheet, d.index, *id));
+            }
+            if let Some(view) = row.dnd_release_payload::<ViewId>() {
+                place_on = Some((*view, *id));
+            }
             spots.push((*id, row.rect.top(), row.rect.bottom()));
             if row.dragged() {
                 dragging = Some(*id);
@@ -1167,16 +1521,77 @@ impl DriftApp {
             if row.drag_stopped() {
                 dropped = Some(*id);
             }
-            if row.clicked() {
+            let on_chevron = !placed.is_empty()
+                && row
+                    .interact_pointer_pos()
+                    .is_some_and(|p| on_chevron(row.rect, p.x));
+            if row.clicked() && on_chevron {
+                ui.data_mut(|d| d.insert_temp(open_id, !open));
+            } else if row.clicked() {
                 self.show_sheet(Some(*id));
                 self.show_panel(crate::dock::Panel::Inspector);
             }
-            row.on_hover_text("Drag to reorder; right-click for more")
-                .context_menu(|ui| {
-                    if let Some(m) = sheet_menu(ui, k, sheets.len()) {
-                        chose = Some((*id, m));
+            row.context_menu(|ui| {
+                if let Some(m) = sheet_menu(ui, k, sheets.len(), !placed.is_empty()) {
+                    chose = Some((*id, m));
+                }
+            });
+            if !open {
+                continue;
+            }
+            for (index, view, title, scale) in &placed {
+                let picked = shown
+                    && self.drawing.view.sheet_pick == crate::app::sheet_editor::SheetPick::View
+                    && self.drawing.view.sheet_view == *index;
+                let response = view_row(ui, picked, true, title, scale);
+                response.dnd_set_drag_payload(PlacedDrag {
+                    sheet: *id,
+                    index: *index,
+                });
+                if response.clicked() {
+                    pick_placed = Some((*id, *index, *view));
+                }
+                let actions = ViewActions {
+                    place: self.place_target(*view),
+                    frame: true,
+                    zoom: true,
+                    moves: sheets
+                        .iter()
+                        .filter(|(s, ..)| s != id)
+                        .map(|(s, label, ..)| (*s, label.clone()))
+                        .collect(),
+                    remove: true,
+                    delete: Some(true),
+                    several: false,
+                };
+                response.context_menu(|ui| {
+                    if let Some(a) = view_actions(ui, &actions) {
+                        view_chose = Some((*id, *index, *view, a));
                     }
                 });
+            }
+        }
+        if let Some((sheet, index, view)) = pick_placed {
+            self.pick_placed_view(sheet, index, view);
+            self.show_panel(crate::dock::Panel::Inspector);
+        }
+        if let Some((sheet, index, view, a)) = view_chose {
+            // (What acts on it where it is picks it there first; placing and zooming don't.)
+            let on = match a {
+                ViewAction::Place(_) | ViewAction::Zoom => None,
+                _ => {
+                    self.pick_placed_view(sheet, index, view);
+                    Some(sheet)
+                }
+            };
+            self.run_view_action(view, on, a);
+        }
+        if let Some((from, index, to)) = move_to {
+            self.move_view_to_sheet(from, index, to);
+        }
+        if let Some((view, sheet)) = place_on {
+            self.place_view(sheet, view, None);
+            self.show_sheet(Some(sheet));
         }
         if let (Some(id), Some(p)) = (dragging.or(dropped), ui.ctx().pointer_interact_pos()) {
             let to = drop_index(&spots, id, p.y);
@@ -1196,37 +1611,229 @@ impl DriftApp {
         match chose {
             Some((id, SheetMenu::Duplicate(views))) => self.duplicate_sheet(id, views),
             Some((id, SheetMenu::Move(to))) => self.move_sheet(id, to),
-            Some((id, SheetMenu::Delete)) => self.delete_sheet(id),
+            Some((id, SheetMenu::Delete)) => self.request_delete_sheet(id),
+            Some((id, SheetMenu::Output(kind))) => {
+                let painter = ui.painter().clone();
+                self.output_sheet(&painter, id, kind);
+            }
             None => {}
         }
         ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            if ui.button("New sheet").clicked() {
-                self.new_sheet();
-            }
-            if let Some(id) = current
-                && ui
-                    .button("Add view")
-                    .on_hover_text(
-                        "Drag a rectangle round what the view shows, in the model; it goes on \
-                         the sheet",
-                    )
-                    .clicked()
-            {
-                self.start_add_view(id);
-            }
-        });
-        ui.label(
-            egui::RichText::new(
-                "The tabs in the top bar switch between the model and each sheet. Pick a view \
-                 or the paper there to set it up in the Inspector.",
-            )
-            .small()
-            .weak(),
-        );
+        if ui.button("New sheet").clicked() {
+            self.new_sheet();
+        }
+        // (Export and Print are in the File menu, as in other drawing apps.)
         self.model_views_section(ui, current);
-        theme::section(ui, "Output");
-        self.output_buttons(ui);
+    }
+
+    /// Where a view's menu would place it: the open sheet (named), and whether it is on it
+    /// already. None with no sheets.
+    pub(crate) fn place_target(&self, view: ViewId) -> Option<(SheetId, String, bool)> {
+        let sheet = self.current_sheet()?;
+        let doc = &self.drawing.editor.doc;
+        let label = crate::app::sheet_editor::sheet_label(doc.sheet(sheet)?);
+        Some((sheet, label, doc.sheets_showing(view).contains(&sheet)))
+    }
+
+    /// Pick the view at `index` on sheet `sheet`, showing the sheet.
+    pub(crate) fn pick_placed_view(&mut self, sheet: SheetId, index: usize, view: ViewId) {
+        self.show_sheet(Some(sheet));
+        self.drawing.view.sheet_view = index;
+        self.drawing.picked_view = Some(view);
+        self.drawing.view.sheet_pick = crate::app::sheet_editor::SheetPick::View;
+        self.drawing.view.view_set = None;
+    }
+
+    /// Do what a view's menu chose. `on` is the sheet it is picked on, for what acts on it
+    /// there (fitting, moving, removing; deleting then takes every picked view).
+    pub(crate) fn run_view_action(&mut self, view: ViewId, on: Option<SheetId>, a: ViewAction) {
+        match a {
+            ViewAction::Place(sheet) => {
+                self.place_view(sheet, view, None);
+                self.drawing.view.sheet_preview = true;
+            }
+            ViewAction::Zoom => self.zoom_to_view(view),
+            ViewAction::Fit | ViewAction::Fill => {
+                if let Some(id) = on {
+                    self.frame_picked_view(id, a == ViewAction::Fill);
+                }
+            }
+            ViewAction::MoveTo(to) => {
+                if let Some(id) = on
+                    && let Some(sheet) = self.drawing.editor.doc.sheet(id)
+                {
+                    let index = self.current_view(sheet);
+                    self.move_view_to_sheet(id, index, to);
+                }
+            }
+            ViewAction::Remove => {
+                if let Some(id) = on {
+                    self.remove_picked_views(id);
+                    self.drawing.view.sheet_pick = crate::app::sheet_editor::SheetPick::Paper;
+                }
+            }
+            ViewAction::Delete => match on {
+                Some(_) => self.delete_picked_view(view),
+                None => self.request_delete_view(view),
+            },
+        }
+    }
+
+    /// Fit the picked view on sheet `id` to its frame (the largest scale that shows the whole
+    /// drawing), or with `fill`, frame it to the sheet's whole drawing area.
+    pub(crate) fn frame_picked_view(&mut self, id: SheetId, fill: bool) {
+        let Some(sheet) = self.drawing.editor.doc.sheet(id).cloned() else {
+            return;
+        };
+        let index = self.current_view(&sheet);
+        let Some(mut view) = self
+            .drawing
+            .editor
+            .doc
+            .placed_views(&sheet)
+            .get(index)
+            .cloned()
+        else {
+            return;
+        };
+        if fill {
+            let area = drift_draft::sheet::drawing_area(&sheet);
+            view.frame = ViewFrame {
+                at: area.center(),
+                size: area.size(),
+            };
+        } else {
+            crate::output::fit_view(self.fit_bounds(), &mut view, self.imperial());
+        }
+        self.update_sheet(id, sheet, Some((index, view)), false);
+    }
+
+    /// Delete a view, asking first (in the one confirmation) if it is on a sheet.
+    pub(crate) fn request_delete_view(&mut self, view: ViewId) {
+        if self.drawing.editor.doc.sheets_showing(view).is_empty() {
+            self.delete_view(view);
+        } else {
+            self.drawing.confirm_delete_view = Some(view);
+        }
+    }
+
+    /// Delete a sheet, asking first if views are on it.
+    pub(crate) fn request_delete_sheet(&mut self, id: SheetId) {
+        if self
+            .drawing
+            .editor
+            .doc
+            .sheet(id)
+            .is_some_and(|s| !s.viewports.is_empty())
+        {
+            self.drawing.confirm_delete_sheet = Some(id);
+        } else {
+            self.delete_sheet(id);
+        }
+    }
+
+    /// The one confirmation for deleting views and sheets, wherever it was asked for: a small
+    /// dialog over everything, so it shows where you are. Esc or Cancel keeps them.
+    pub(crate) fn delete_confirm_dialog(&mut self, ctx: &egui::Context) {
+        enum What {
+            View(ViewId),
+            Views,
+            Sheet(SheetId),
+        }
+        let what = if let Some(v) = self.drawing.confirm_delete_view {
+            What::View(v)
+        } else if self.drawing.confirm_delete_set {
+            What::Views
+        } else if let Some(s) = self.drawing.confirm_delete_sheet {
+            What::Sheet(s)
+        } else {
+            return;
+        };
+        let doc = &self.drawing.editor.doc;
+        let label_of = |s: SheetId| {
+            doc.sheet(s)
+                .map(crate::app::sheet_editor::sheet_label)
+                .unwrap_or_default()
+        };
+        let (title, body, button) = match &what {
+            What::View(v) => {
+                let name = doc
+                    .view(*v)
+                    .map(|v| v.title().to_owned())
+                    .unwrap_or_default();
+                let on: Vec<String> = doc.sheets_showing(*v).into_iter().map(label_of).collect();
+                (
+                    format!("Delete \u{201c}{name}\u{201d}?"),
+                    format!(
+                        "It\u{2019}s on {}. Deleting it takes it out of the model and off {}.",
+                        on.join(", "),
+                        if on.len() == 1 {
+                            "that sheet"
+                        } else {
+                            "all of them"
+                        }
+                    ),
+                    "Delete view",
+                )
+            }
+            What::Views => {
+                let n = self
+                    .current_sheet()
+                    .and_then(|id| doc.sheet(id))
+                    .map_or(0, |s| self.picked_views(s).len());
+                (
+                    format!("Delete {n} views?"),
+                    "Deleting them takes them out of the model and off every sheet they\u{2019}re \
+                     on."
+                    .to_owned(),
+                    "Delete views",
+                )
+            }
+            What::Sheet(s) => {
+                let n = doc.sheet(*s).map_or(0, |s| s.viewports.len());
+                (
+                    format!("Delete {}?", label_of(*s)),
+                    if n == 1 {
+                        "Its view stays in the model, for placing on another sheet.".to_owned()
+                    } else {
+                        format!("Its {n} views stay in the model, for placing on another sheet.")
+                    },
+                    "Delete sheet",
+                )
+            }
+        };
+        let (mut yes, mut no) = (false, false);
+        let modal = egui::Modal::new(egui::Id::new("confirm_delete"))
+            .frame(theme::dialog_frame(&ctx.style_of(ctx.theme())))
+            .show(ctx, |ui| {
+                ui.set_width(360.0);
+                theme::dialog_title(ui, &title, false);
+                ui.label(body);
+                ui.label(egui::RichText::new("Undo brings it back.").weak());
+                theme::dialog_buttons(ui, |ui| {
+                    if ui.button("Cancel").clicked() {
+                        no = true;
+                    }
+                    if theme::danger_button(ui, button).clicked() {
+                        yes = true;
+                    }
+                });
+            });
+        if modal.should_close() && !yes {
+            no = true;
+        }
+        if yes {
+            match what {
+                What::View(v) => self.delete_view(v),
+                What::Views => self.delete_picked_views(),
+                What::Sheet(s) => self.delete_sheet(s),
+            }
+        }
+        if yes || no {
+            self.drawing.confirm_delete_view = None;
+            self.drawing.confirm_delete_set = false;
+            self.drawing.confirm_delete_sheet = None;
+        }
     }
 
     /// Drawing settings → Project: what every sheet's title block shares. Typing merges into
@@ -1522,66 +2129,8 @@ impl DriftApp {
         typing
     }
 
-    fn output_buttons(&mut self, ui: &mut egui::Ui) {
-        let painter = ui.painter().clone();
-        ui.horizontal_wrapped(|ui| {
-            if ui
-                .button("PDF…")
-                .on_hover_text("The sheets you choose, at true scale")
-                .clicked()
-            {
-                self.export_pdf(&painter);
-            }
-            if ui
-                .button("SVG…")
-                .on_hover_text("This sheet, at true scale")
-                .clicked()
-            {
-                self.export_svg(&painter);
-            }
-            if ui
-                .button("DWG / DXF…")
-                .on_hover_text("The model at full size, with its layers, for CAD")
-                .clicked()
-            {
-                self.export_dxf(&painter);
-            }
-            if ui.button("Print…").clicked() {
-                self.print(&painter);
-            }
-        });
-        ui.label(egui::RichText::new("Model at 1 : 1").weak());
-        ui.horizontal_wrapped(|ui| self.model_export_buttons(ui, &painter));
-    }
-
-    /// Model as SVG and PDF, and whether they carry dimensions and notes.
-    pub(crate) fn model_export_buttons(&mut self, ui: &mut egui::Ui, painter: &egui::Painter) {
-        let scope = if self.model_scope().is_some() {
-            "The selection"
-        } else {
-            "Everything that prints"
-        };
-        if ui
-            .button("Model as SVG…")
-            .on_hover_text(format!(
-                "{scope}, at true size on a page fitted to it, a group per layer"
-            ))
-            .clicked()
-        {
-            self.export_model(painter, false);
-        }
-        if ui
-            .button("Model as PDF…")
-            .on_hover_text(format!("{scope}, at true size on a page fitted to it"))
-            .clicked()
-        {
-            self.export_model(painter, true);
-        }
-        crate::theme::checkbox(ui, &mut self.model_annotations, "Dimensions and notes")
-            .on_hover_text("Model exports include dimensions and notes");
-    }
-
     /// What a model export is limited to: the pick, if anything is picked.
+    #[cfg(not(feature = "demo"))]
     fn model_scope(&self) -> Option<crate::output::Scope> {
         let dimension = self.drawing.selected_constraint.filter(|id| {
             self.drawing
@@ -1696,18 +2245,44 @@ impl DriftApp {
         {
             self.note_model_annotation_at(&painter, rect, &sheet, pos);
         }
-        if self.drawing.view.sheet_pick == crate::app::sheet_editor::SheetPick::View {
+        if self.drawing.view.sheet_pick == crate::app::sheet_editor::SheetPick::View
+            && let Some(picked) = views.get(self.current_view(&sheet)).map(|v| v.id)
+        {
+            let several = self.picked_views(&sheet).len() > 1;
+            let actions = if several {
+                ViewActions {
+                    remove: true,
+                    delete: Some(true),
+                    several: true,
+                    ..Default::default()
+                }
+            } else {
+                ViewActions {
+                    frame: true,
+                    zoom: true,
+                    moves: self
+                        .drawing
+                        .editor
+                        .doc
+                        .sheets()
+                        .filter(|(s, _)| *s != id)
+                        .map(|(s, sh)| (s, crate::app::sheet_editor::sheet_label(sh)))
+                        .collect(),
+                    remove: true,
+                    delete: Some(true),
+                    ..Default::default()
+                }
+            };
+            let mut chose = None;
             response.context_menu(|ui| {
                 ui.set_min_width(210.0);
                 self.bring_menu(ui);
-                self.command_items(
-                    ui,
-                    &[
-                        Some(crate::commands::Command::RemoveFromSheet),
-                        Some(crate::commands::Command::DeleteView),
-                    ],
-                );
+                ui.separator();
+                chose = view_actions(ui, &actions);
             });
+            if let Some(a) = chose {
+                self.run_view_action(picked, Some(id), a);
+            }
         }
 
         let zoom = self.drawing.view.preview.zoom;
@@ -2354,6 +2929,42 @@ impl DriftApp {
         Some(index)
     }
 
+    /// Move the view at `index` on sheet `from` to sheet `to`, as one undo step: same view,
+    /// scale and settings, at the same spot on the paper (slid inside the new sheet's drawing
+    /// area if it falls outside it). Notes and dimensions placed on the old sheet stay there,
+    /// as when a view is removed from a sheet. The new sheet is shown, with the view picked.
+    pub(crate) fn move_view_to_sheet(&mut self, from: SheetId, index: usize, to: SheetId) {
+        let doc = &self.drawing.editor.doc;
+        let (Some(mut source), Some(mut target)) =
+            (doc.sheet(from).cloned(), doc.sheet(to).cloned())
+        else {
+            return;
+        };
+        if from == to || index >= source.viewports.len() {
+            return;
+        }
+        let mut port = source.viewports.remove(index);
+        // (Its id named it to the old sheet's annotations.)
+        port.id = None;
+        if let Some(size) = doc.view(port.view).map(|v| v.paper_size()) {
+            let area = drift_draft::sheet::drawing_area(&target);
+            let half = size.min(area.size()) * 0.5;
+            port.at = port.at.max(area.min + half).min(area.max - half);
+        }
+        let view = port.view;
+        target.viewports.push(port);
+        let index = target.viewports.len() - 1;
+        self.drawing.editor.doc.begin();
+        self.drawing.editor.doc.set_sheet(from, source);
+        self.drawing.editor.doc.set_sheet(to, target);
+        self.drawing.editor.commit("Move view to sheet");
+        self.show_sheet(Some(to));
+        self.drawing.view.sheet_view = index;
+        self.drawing.picked_view = Some(view);
+        self.drawing.view.sheet_pick = crate::app::sheet_editor::SheetPick::View;
+        self.drawing.view.view_set = None;
+    }
+
     /// Take the picked view off a sheet. The view stays in the model, for placing again.
     pub(crate) fn remove_viewport(&mut self, id: SheetId) {
         let Some(mut sheet) = self.drawing.editor.doc.sheet(id).cloned() else {
@@ -2433,19 +3044,13 @@ impl DriftApp {
             );
         }
         let mut zoom = None;
+        let mut chose = None;
         for (id, name, detail) in &rows {
-            let picked = self.drawing.picked_view == Some(*id);
-            let text = egui::RichText::new(format!("{name}\n{detail}"));
-            // (The space after the text grows: it sits at the left, as in the other lists.)
-            let response = ui
-                .add_sized(
-                    [ui.available_width(), 34.0],
-                    egui::Button::selectable(picked, (text, egui::Atom::grow()))
-                        .sense(egui::Sense::click_and_drag()),
-                )
-                .on_hover_text(
-                    "Double-click to zoom to it in the model; drag it onto the sheet to place it",
-                );
+            // (A view picked on the sheet shown is filled under its sheet, not here too.)
+            let on_sheet = self.drawing.view.sheet_preview
+                && self.drawing.view.sheet_pick == crate::app::sheet_editor::SheetPick::View;
+            let picked = self.drawing.picked_view == Some(*id) && !on_sheet;
+            let response = view_row(ui, picked, false, name, detail);
             response.dnd_set_drag_payload(*id);
             if response.clicked() || response.drag_started() {
                 self.drawing.picked_view = Some(*id);
@@ -2453,9 +3058,29 @@ impl DriftApp {
             if response.double_clicked() {
                 zoom = Some(*id);
             }
+            let actions = ViewActions {
+                place: self.place_target(*id),
+                zoom: true,
+                delete: Some(!self.drawing.editor.doc.sheets_showing(*id).is_empty()),
+                ..Default::default()
+            };
+            response.context_menu(|ui| {
+                if let Some(a) = view_actions(ui, &actions) {
+                    chose = Some((*id, a));
+                }
+            });
         }
         if let Some(id) = zoom {
             self.zoom_to_view(id);
+        }
+        if let Some((id, a)) = chose {
+            self.run_view_action(id, None, a);
+        }
+        if let Some(id) = current {
+            ui.add_space(4.0);
+            if ui.button("Add view").clicked() {
+                self.start_add_view(id);
+            }
         }
         let Some(view_id) = self
             .drawing
@@ -2488,56 +3113,7 @@ impl DriftApp {
             self.update_view(view_id, view, typing);
         }
         self.referenced_by(ui, view_id);
-        ui.horizontal_wrapped(|ui| {
-            if let Some(sheet) = current {
-                let here = placed.contains(&sheet);
-                if ui
-                    .button(if here {
-                        "Place again"
-                    } else {
-                        "Place on sheet"
-                    })
-                    .on_hover_text("Put it on the current sheet, where there is room")
-                    .clicked()
-                {
-                    self.place_view(sheet, view_id, None);
-                    self.drawing.view.sheet_preview = true;
-                }
-            }
-            if ui
-                .button("Zoom to view")
-                .on_hover_text("Show its crop in the model")
-                .clicked()
-            {
-                self.zoom_to_view(view_id);
-            }
-            if ui.button("Delete view").clicked() {
-                if placed.is_empty() {
-                    self.delete_view(view_id);
-                } else {
-                    self.drawing.confirm_delete_view = Some(view_id);
-                }
-            }
-        });
-        if self.drawing.confirm_delete_view == Some(view_id) {
-            let n = placed.len();
-            ui.label(
-                egui::RichText::new(format!(
-                    "It is on {n} sheet{}: deleting it takes it off {}.",
-                    if n == 1 { "" } else { "s" },
-                    if n == 1 { "that sheet" } else { "them all" }
-                ))
-                .color(crate::theme::error_color(ui.visuals().dark_mode)),
-            );
-            ui.horizontal(|ui| {
-                if ui.button("Delete it").clicked() {
-                    self.delete_view(view_id);
-                }
-                if ui.button("Keep it").clicked() {
-                    self.drawing.confirm_delete_view = None;
-                }
-            });
-        }
+        // (Placing, zooming to and deleting it are on its right-click menu.)
     }
 
     /// A scale menu: the one scale list, the drawing's units' scales first, and a typed
@@ -2546,9 +3122,10 @@ impl DriftApp {
         crate::app::scale_menu::scale_menu(ui, id, scale, self.imperial(), 110.0);
     }
 
-    /// The Sheets panel's section for the views on the current sheet, and the picked one's
-    /// settings. Its edits come back in `edited` (its index and new state). Returns true if
-    /// text was typed (so the edits merge into one undo step).
+    /// The picked view's settings in the Inspector, on a sheet: the view's own (shared by every
+    /// sheet it is on), then how this sheet shows it. Its edits come back in `edited` (its
+    /// index and new state). Returns true if text was typed (so the edits merge into one undo
+    /// step).
     pub(crate) fn views_section(
         &mut self,
         ui: &mut egui::Ui,
@@ -2556,41 +3133,21 @@ impl DriftApp {
         edited: &mut Option<(usize, PlacedView)>,
     ) -> bool {
         let mut typing = false;
-        let imperial = self.imperial();
-        theme::section(ui, "Views on this sheet");
+        // (The views on the sheet are picked on the canvas or in the Sheets panel, not here.)
         let views = self.drawing.editor.doc.placed_views(sheet);
         let picked = self.current_view(sheet);
-        for (i, v) in views.iter().enumerate() {
-            let text = format!(
-                "{}  {}  ·  {}",
-                i + 1,
-                v.title(),
-                scale_label(v.scale, self.imperial())
-            );
-            if theme::list_row(ui, picked == i, &text).clicked() {
-                self.drawing.view.sheet_view = i;
-                self.drawing.picked_view = Some(v.id);
-            }
-        }
-        let picked = self.current_view(sheet);
-        let bounds = self.fit_bounds();
-        let area = drift_draft::sheet::drawing_area(sheet);
         if let Some(original) = views.get(picked) {
             let mut view = original.clone();
-            let mut fit = false;
-            let mut fill = false;
             // The view itself: what every sheet it is on shows (#425). The crop's switch on
             // the model canvas is the view's too, though it never prints.
             let model_view = self.drawing.editor.doc.view(original.id).cloned();
             let mut crop_visible = model_view.as_ref().is_some_and(|v| v.crop_visible);
             theme::section(ui, "View");
-            let on = self.drawing.editor.doc.sheets_showing(original.id).len();
-            if on > 1 {
-                ui.label(
-                    egui::RichText::new(format!("On {on} sheets: a change here shows on each."))
-                        .weak(),
-                );
-            }
+            ui.label(
+                egui::RichText::new("Shared by every sheet it’s on")
+                    .size(theme::size::CAPTION)
+                    .color(ui.visuals().weak_text_color()),
+            );
             theme::row(ui, "Name", |ui| {
                 typing |= ui
                     .add(
@@ -2602,17 +3159,13 @@ impl DriftApp {
             });
             theme::row(ui, "Scale", |ui| {
                 self.scale_menu(ui, "sheet_scale", &mut view.scale);
-                fit = ui
-                    .button("Fit")
-                    .on_hover_text("Center the drawing in the view at the largest scale that fits")
-                    .clicked();
             });
             // A new scale keeps the crop in the model: the frame on the paper grows or shrinks.
             if view.scale != original.scale {
                 view.frame.size = original.frame.size * original.scale / view.scale;
             }
-            // What the view shows, in two even columns.
-            theme::row(ui, "Show", |ui| {
+            // What the view draws, in two even columns.
+            theme::row(ui, "Shows", |ui| {
                 egui::Grid::new("view_show")
                     .num_columns(2)
                     .spacing([16.0, 4.0])
@@ -2624,43 +3177,16 @@ impl DriftApp {
                         ui.end_row();
                         crate::theme::checkbox(ui, &mut view.construction, "Construction")
                             .on_hover_text(CONSTRUCTION_TIP);
-                        ui.add_enabled(
-                            model_view.is_some(),
-                            egui::Checkbox::new(&mut crop_visible, "Crop"),
-                        )
-                        .on_hover_text("Its crop and name on the model canvas (they never print)");
                         ui.end_row();
                     });
             });
-            // The layers drawn in this view; one hidden in the model is off everywhere.
-            let layers: Vec<(drift_core::LayerId, String, bool)> = self
-                .drawing
-                .editor
-                .doc
-                .layers()
-                .map(|(id, l)| (id, l.name.clone(), l.visible && l.printable))
-                .collect();
-            theme::row(ui, "Layers", |ui| {
-                ui.vertical(|ui| {
-                    for (id, name, drawn) in layers {
-                        let mut on = drawn && !view.hidden_layers.contains(&id);
-                        let r = ui.add_enabled(drawn, crate::theme::Checkbox::new(&mut on, name));
-                        let r = if drawn {
-                            r.on_hover_text("Draw this layer in this view")
-                        } else {
-                            r.on_disabled_hover_text(
-                                "Hidden or not printed in the model (Layers panel)",
-                            )
-                        };
-                        if r.changed() {
-                            if on {
-                                view.hidden_layers.remove(&id);
-                            } else {
-                                view.hidden_layers.insert(id);
-                            }
-                        }
-                    }
-                });
+            self.view_layers_row(ui, &mut view);
+            theme::row(ui, "Model canvas", |ui| {
+                ui.add_enabled(
+                    model_view.is_some(),
+                    crate::theme::Checkbox::new(&mut crop_visible, "Show crop"),
+                )
+                .on_hover_text("Its crop and name on the model canvas (they never print)");
             });
             self.referenced_by(ui, original.id);
             if let Some(v) = model_view
@@ -2668,18 +3194,9 @@ impl DriftApp {
             {
                 self.update_view(original.id, drift_core::View { crop_visible, ..v }, false);
             }
-            // Where and how this sheet shows it.
+            // How this sheet shows it.
             theme::section(ui, "On this sheet");
-            theme::row(ui, "Frame", |ui| {
-                fill = ui
-                    .button("Fill drawing area")
-                    .on_hover_text(
-                        "Frame it to the sheet's whole drawing area (after changing the paper \
-                         size, say), cropping more or less of the model",
-                    )
-                    .clicked();
-            });
-            theme::row(ui, "Show", |ui| {
+            theme::row(ui, "Prints", |ui| {
                 egui::Grid::new("placed_view_show")
                     .num_columns(2)
                     .spacing([16.0, 4.0])
@@ -2691,15 +3208,6 @@ impl DriftApp {
                         ui.end_row();
                     });
             });
-            if fit {
-                crate::output::fit_view(bounds, &mut view, imperial);
-            }
-            if fill {
-                view.frame = ViewFrame {
-                    at: area.center(),
-                    size: area.size(),
-                };
-            }
             if views.len() > 1 {
                 let mut all = views.clone();
                 all[picked] = view.clone();
@@ -2720,6 +3228,95 @@ impl DriftApp {
             );
         }
         typing
+    }
+
+    /// The layers a view draws, as one row: a summary ("All layers", "3 of 12 layers") that
+    /// opens a checklist, with All and None and, past a handful, a search. A layer hidden or
+    /// not printed in the model is off in every view, and can't be ticked here.
+    fn view_layers_row(&mut self, ui: &mut egui::Ui, view: &mut PlacedView) {
+        let layers: Vec<(drift_core::LayerId, String, bool)> = self
+            .drawing
+            .editor
+            .doc
+            .layers()
+            .map(|(id, l)| (id, l.name.clone(), l.visible && l.printable))
+            .collect();
+        let drawn = layers.iter().filter(|(_, _, d)| *d).count();
+        let shown = layers
+            .iter()
+            .filter(|(id, _, d)| *d && !view.hidden_layers.contains(id))
+            .count();
+        // (A layer hidden or not printed in the Layers panel is off in every view: the
+        // summary is what this view leaves out.)
+        let summary = if shown == layers.len() {
+            "All layers".to_owned()
+        } else if shown == drawn && shown > 0 {
+            "All visible layers".to_owned()
+        } else if shown == 0 {
+            "No layers".to_owned()
+        } else {
+            format!("{shown} of {drawn} layers")
+        };
+        theme::row(ui, "Layers", |ui| {
+            let id = ui.id().with("view_layers");
+            let search_id = id.with("search");
+            egui::ComboBox::from_id_salt(id)
+                .icon(crate::theme::combo_icon)
+                .selected_text(summary)
+                .width(ui.available_width())
+                .height(420.0)
+                // (Ticking several in a row keeps it open.)
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                .show_ui(ui, |ui| {
+                    ui.set_min_width(200.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("All").clicked() {
+                            view.hidden_layers.clear();
+                        }
+                        if ui.button("None").clicked() {
+                            view.hidden_layers = layers.iter().map(|(id, ..)| *id).collect();
+                        }
+                    });
+                    let mut search: String = ui
+                        .data(|d| d.get_temp::<String>(search_id))
+                        .unwrap_or_default();
+                    if layers.len() > 8 {
+                        crate::theme::field(
+                            ui,
+                            egui::TextEdit::singleline(&mut search)
+                                .hint_text("Find a layer")
+                                .desired_width(ui.available_width()),
+                        );
+                    }
+                    let needle = search.to_lowercase();
+                    ui.separator();
+                    for (layer, name, drawn) in &layers {
+                        if !needle.is_empty() && !name.to_lowercase().contains(&needle) {
+                            continue;
+                        }
+                        let mut on = *drawn && !view.hidden_layers.contains(layer);
+                        let r = ui.add_enabled(
+                            *drawn,
+                            crate::theme::Checkbox::new(&mut on, name.as_str()),
+                        );
+                        let r = if *drawn {
+                            r.on_hover_text("Draw this layer in this view")
+                        } else {
+                            r.on_disabled_hover_text(
+                                "Hidden or not printed in the model (Layers panel)",
+                            )
+                        };
+                        if r.changed() {
+                            if on {
+                                view.hidden_layers.remove(layer);
+                            } else {
+                                view.hidden_layers.insert(*layer);
+                            }
+                        }
+                    }
+                    ui.data_mut(|d| d.insert_temp(search_id, search));
+                });
+        });
     }
 
     /// Align the picked view with another: frame edges and middles, or lining the drawings

@@ -459,10 +459,9 @@ impl DriftApp {
         self.drawing.editor.delete_selection_with(&picked);
     }
 
-    /// A picked view goes, from the model and its sheets. One on sheets asks first, in the
-    /// Sheets tab.
+    /// A picked view goes, from the model and its sheets. One on sheets asks first.
     pub(crate) fn delete_picked_view(&mut self, view: drift_core::ViewId) {
-        // Several picked on a sheet: they go together, after a yes in the Inspector.
+        // Several picked on a sheet: they go together, after a yes.
         if self.drawing.view.sheet_preview
             && let Some(sheet) = self
                 .current_sheet()
@@ -470,15 +469,9 @@ impl DriftApp {
             && self.picked_views(sheet).len() > 1
         {
             self.drawing.confirm_delete_set = true;
-            self.show_panel(crate::dock::Panel::Inspector);
             return;
         }
-        if self.drawing.editor.doc.sheets_showing(view).is_empty() {
-            self.delete_view(view);
-        } else {
-            self.drawing.confirm_delete_view = Some(view);
-            self.show_panel(crate::dock::Panel::Sheets);
-        }
+        self.request_delete_view(view);
     }
 
     /// Change tool, continuing a polyline / tangent-arc chain across the switch.

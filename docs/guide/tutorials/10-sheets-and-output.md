@@ -49,7 +49,8 @@ row for more:
   copies are views of their own, so you can change them without changing the first. The
   revisions stay with the original.
 - **Duplicate empty:** the same, without the views.
-- **Move earlier** / **Move later**, and **Delete sheet**.
+- **Move earlier** / **Move later**, and **Delete sheet**. With views on it, it asks
+  first (the views stay in the model); an empty sheet goes at once. Undo brings it back.
 
 ## 2. Set up the paper and title block
 
@@ -112,14 +113,15 @@ With the select tool:
   so a crop never gets in the way of picking a line.
 - **Drag a picked crop's grips** to reframe it, or **drag its edge or name** to move it.
 - **Esc**, or a click anywhere else, lets it go. **Delete** deletes the view. If it's on a
-  sheet, Drift asks first, in the Sheets panel.
+  sheet, Drift asks first, in a small dialog.
 
 ### Showing and hiding crops
 
 Crops and their names are for working on the canvas. They never print or export.
 
 - **View → View crops** (Shift+Alt+B) shows or hides every crop.
-- A view's own **Crop** switch (in the top bar, or in the Inspector once it's on a sheet)
+- A view's own **Crop** switch (in the top bar, or **Show crop** in the Inspector once it's
+  on a sheet)
   hides just that one,
   like Revit's **Crop Region Visible**. A hidden crop can't be picked on the canvas, but you
   can still pick its view in the list. Its crop then shows faintly while picked.
@@ -127,24 +129,31 @@ Crops and their names are for working on the canvas. They never print or export.
 ## 4. The Views list
 
 The **Views** section of the Sheets panel lists every view in the drawing, with its scale
-and the sheets it's on (or **not placed**).
+and the sheets it's on (or **not placed**). Each sheet in the list above also shows the
+views on it, under its name.
 
 - **Click** a view to pick it. Its crop shows on the canvas with its grips.
-- **Double-click** it, or click **Zoom to view**, to see its crop in the model.
+- **Double-click** it, or right-click it for **Zoom to view**, to see its crop in the model.
+- **Right-click** it for its actions. In the Views list: **Place on** the open sheet (the
+  item names it; **Place again on** if it's there already), **Zoom to view** and **Delete
+  view**. Under its sheet, the same list as everywhere else a view is on a sheet: **Fit
+  scale to frame**, **Fill drawing area**, **Zoom to view**, **Move to sheet**, **Remove
+  from sheet** and **Delete view…**. Dragging it onto another sheet's row moves it too.
 - **Referenced by** lists the section and elevation marks that point at the view. Click
   one to pick it in the model.
-- **Delete view** deletes it. If it's on sheets, Drift asks first, and deleting takes it
-  off them all. Marks that pointed at it are unlinked in the same step. Undo brings it all
+- **Delete view** (on its right-click menu) deletes it. If it's on sheets, the item reads
+  **Delete view…**: Drift asks first, naming the sheets, and deleting takes it off them
+  all. Marks that pointed at it are unlinked in the same step. Undo brings it all
   back. With a view's crop picked on the canvas, the Delete key, the right-click menu's
   **Delete view…** and **Delete view…** in the command palette do the same.
-- On a sheet, right-click a view for **Remove from sheet** (it stays in the model, for
-  placing again) and **Delete view…**.
+- On a sheet, right-click a view for the same list, with **Remove from sheet** (it stays
+  in the model, for placing again) beside **Delete view…**.
 
 ## 5. Put the view on the sheet
 
 1. Click the sheet's tab, **A-101**.
 2. Drag **Detail A** from the **Views** list onto the sheet, and let go where it should go.
-   You can also click **Place on sheet**: Drift puts it beside the views already there.
+   You can also right-click it for **Place on A-101**: Drift puts it beside the views already there.
 
 **Add view** in the rail (or V on a sheet) does both steps from the sheet: the canvas
 shows the model with the **View** tool, you drag the crop, and the new view goes on the
@@ -169,7 +178,7 @@ On the sheet:
   views it touches), or Ctrl+A for every view on the sheet. Drag any one of them and they
   all move, keeping their places relative to each other, in one undo step. The arrow keys
   nudge the picked views a millimetre (ten with Shift). Delete takes them off the sheet;
-  the **Inspector** lists them, with **Remove from sheet** and **Delete views**. Handles
+  the **Inspector** lists them, with **Remove from sheet** and **Delete views…**. Handles
   for cropping show only with one view picked.
 
 Cropping or sliding a view changes it on every sheet it's on, and on the canvas.
@@ -180,9 +189,12 @@ Dashed guides show what lined up. Hold Ctrl to place freely.
 
 ### The views on a sheet
 
-Pick a view by clicking it on the sheet. The **Inspector** shows the views on the sheet
-(**Views on this sheet**), and for the picked one two sections. **View** is the view itself,
-the same on every sheet it's on (with several, it says so):
+Pick a view by clicking it on the sheet, or under its sheet in the **Sheets** panel. The
+**Inspector**'s title names it and the sheets it's on ("A-101  Ground floor · also on
+A-104"). Its **⋯** menu holds what you can do with it, the same list as its right-click menu:
+**Fit scale to frame**, **Fill drawing area**, **Zoom to view**, **Move to sheet**, **Remove
+from sheet** and **Delete view…**. Below are two sections.
+**View** is the view itself, shared by every sheet it's on:
 
 - **Name:** its name, as the canvas and the marks show it.
 - **Scale:** choose from the menu, or type one under **Custom** at its foot (`1:75`,
@@ -192,28 +204,34 @@ the same on every sheet it's on (with several, it says so):
   (1" = 1") through 6" = 1'-0" down to 1/32" = 1'-0", and engineering scales (1" = 10' to
   1" = 200'), with your drawing's units first. See
   [Sheet scales](../reference/units.md#sheet-scales).
-- **Fit:** the largest scale at which the whole drawing fits the frame, centred. The frame
-  stays as it is on the paper, and the crop changes to suit.
-- **Show:** **Dimensions**, **Notes**, **Construction** and **Crop** (its crop on the model
-  canvas, which never prints). **Construction** puts the view's construction geometry on the sheet as thin, light grey
+- **Shows:** **Dimensions**, **Notes** and **Construction**. **Construction** puts the view's construction geometry on the sheet as thin, light grey
   dashed lines (off to start with). It prints and exports to PDF and SVG as the preview
   shows it, in the sheet's **Colours**. Points and an import's fill edges stay out.
-- **Referenced by:** the marks that point at the view.
-- **Layers:** untick a layer to leave it out of this view, wherever the view is placed:
-  a setting-out layer in the plan but not in the details, say. Dimensions and notes on
-  nothing but that layer's geometry go with it. A layer hidden or set not to print in the
-  **Layers** panel is greyed out here: it's off in every view.
+- **Layers:** reads **All layers** (**All visible layers** when some are hidden in the
+  **Layers** panel), or how many of those it draws ("3 of 12 layers"). Open it and
+  untick a layer to leave it out of this view, wherever the view is placed: a setting-out
+  layer in the plan but not in the details, say. **All** and **None** set them all, and with
+  many layers a search box finds one. Dimensions and notes on nothing but that layer's
+  geometry go with it. A layer hidden or set not to print in the **Layers** panel is greyed
+  out here: it's off in every view.
+- **Model canvas:** **Show crop** shows its crop and name on the model canvas (they never
+  print).
+- **Referenced by:** the marks that point at the view, when there are any.
 
 **On this sheet** is how this sheet shows it:
 
-- **Fill drawing area:** frames the view to the sheet's whole drawing area, after a change
-  of paper size, say.
-- **Show:** **Title** prints its name, with the scale beneath it, under the view;
+- **Prints:** **Title** prints its name, with the scale beneath it, under the view;
   **Border** prints the frame's outline.
+
+In the **⋯** menu, **Fit scale to frame** picks the largest scale at which the whole drawing
+fits the frame, centred (the frame stays as it is on the paper, and the crop changes to
+suit), and **Fill drawing area** frames the view to the sheet's whole drawing area, after a
+change of paper size, say.
 
 If the views on a sheet have different scales, the title block's scale reads **As shown**.
 
-A view's number on a sheet is its place in **Views on this sheet**, from 1. A section or
+A view's number on a sheet is its place among the views under that sheet in the
+**Sheets** panel, from 1. A section or
 elevation mark linked to the view reads that number over the sheet's number (`2 / A-101`),
 on the canvas and in print. When a view is on several sheets, marks read the first one.
 See [Annotation](09-annotation.md) for **Make view**.
@@ -221,7 +239,8 @@ See [Annotation](09-annotation.md) for **Make view**.
 **Align with** lines the picked view up with another one: **Left**, **Centre**, **Right**,
 **Top**, **Middle**, **Bottom**, **Drawings level** or **Drawings in line**.
 
-**Remove from sheet** (in the Inspector, or Delete on the sheet) takes the picked view off
+**Remove from sheet** (in the Inspector's **⋯** menu, or Delete on the sheet) takes the
+picked view off
 the sheet. The view
 stays in the drawing, in the **Views** list, to place again. A sheet can be empty.
 
@@ -305,12 +324,13 @@ dimension is a reference).
 
 In drawings made before views came in, each view a sheet held becomes a view of its own.
 It's named after its title, or its sheet. Every sheet prints as it did. A view that filled a
-sheet keeps its crop if you change the paper size. Click **Fill drawing area** to frame it
-to the new paper.
+sheet keeps its crop if you change the paper size. Choose **Fill drawing area** in its **⋯** menu
+to frame it to the new paper.
 
 ## 6. Output
 
-From the **Sheets** panel's **Output** section, or **File → Export** (and **File → Print…**):
+From **File → Export** and **File → Print…** (or the command palette). For one sheet,
+right-click it in the Sheets list or on its tab for **Export PDF…** or **Print…**:
 
 | Output | What you get |
 |---|---|
@@ -326,8 +346,8 @@ Exporting never replaces your `.drift` file.
 ### The model at 1 : 1
 
 **Model as SVG…** and **Model as PDF…** are for flat shapes that go on to another program:
-laser cutting, signage, patterns, profiles. They're in **File → Export**, under **Model at
-1 : 1** in the Output section, and in the command palette (**Export model as SVG…**).
+laser cutting, signage, patterns, profiles. They're in **File → Export** and in the command
+palette (**Export model as SVG…**).
 
 - **What goes out:** with nothing picked, everything that prints. With curves, copies of
   blocks, text or fills picked, only those, with the dimensions and notes picked or on the

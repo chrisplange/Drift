@@ -124,7 +124,8 @@ impl DriftApp {
         self.show_panel(crate::dock::Panel::Inspector);
     }
 
-    /// The marks that point at a view, as rows that pick them in the model.
+    /// The marks that point at a view, as rows that pick them in the model; nothing when none
+    /// do.
     pub(crate) fn referenced_by(&mut self, ui: &mut egui::Ui, view: ViewId) {
         let doc = &self.drawing.editor.doc;
         let marks: Vec<(AnnotationId, String)> = doc
@@ -135,15 +136,12 @@ impl DriftApp {
                 Some((id, format!("{} mark", mark_view_name(a))))
             })
             .collect();
+        // (Shown only when something points at it: an empty row says nothing.)
+        if marks.is_empty() {
+            return;
+        }
         theme::row(ui, "Referenced by", |ui| {
             ui.vertical(|ui| {
-                if marks.is_empty() {
-                    ui.label(egui::RichText::new("No marks").weak())
-                        .on_hover_text(
-                            "Link a section or elevation mark to this view in the mark's \
-                             Inspector, or right-click a mark: Make view",
-                        );
-                }
                 for (id, text) in marks {
                     if ui
                         .link(text)

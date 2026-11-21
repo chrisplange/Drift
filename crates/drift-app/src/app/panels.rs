@@ -161,41 +161,94 @@ pub(crate) fn shortcut(key: &str, shift: bool) -> String {
 
 /// An inspector's title: the thing's icon on a soft tile, its name, and a line of detail.
 pub(crate) fn title(ui: &mut egui::Ui, icon: Option<ToolKind>, name: &str, detail: &str) {
+    let glyph = |painter: &egui::Painter, rect: egui::Rect, color: egui::Color32| match icon {
+        Some(kind) => icons::tool(painter, rect, kind, color),
+        None => icons::glyph(painter, rect, Glyph::Inspector, color),
+    };
+    title_card(ui, &glyph, name, detail, None);
+}
+
+/// [`title`] with the object's own glyph and, at the right, a "…" button whose menu holds
+/// the object's actions (`menu`), so the panel below is all settings. `tip` names the menu.
+pub(crate) fn title_with_actions(
+    ui: &mut egui::Ui,
+    glyph: Glyph,
+    name: &str,
+    detail: &str,
+    tip: &str,
+    menu: &mut dyn FnMut(&mut egui::Ui),
+) {
+    let paint = |painter: &egui::Painter, rect: egui::Rect, color: egui::Color32| {
+        icons::glyph(painter, rect, glyph, color);
+    };
+    title_card(ui, &paint, name, detail, Some((tip, menu)));
+}
+
+type GlyphPaint<'a> = &'a dyn Fn(&egui::Painter, egui::Rect, egui::Color32);
+
+/// A title's actions menu: the button's tip, and what draws the menu.
+type TitleMenu<'a> = (&'a str, &'a mut dyn FnMut(&mut egui::Ui));
+
+fn title_card(
+    ui: &mut egui::Ui,
+    glyph: GlyphPaint<'_>,
+    name: &str,
+    detail: &str,
+    menu: Option<TitleMenu<'_>>,
+) {
+    const MORE: f32 = 24.0;
     ui.add_space(6.0);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 10.0;
         let accent = theme::accent(ui.visuals().dark_mode);
-        let glyph = theme::icon_tile(ui, 28.0);
-        match icon {
-            Some(kind) => icons::tool(ui.painter(), glyph, kind, accent),
-            None => icons::glyph(ui.painter(), glyph, Glyph::Inspector, accent),
-        }
-        ui.vertical(|ui| {
-            ui.spacing_mut().item_spacing.y = 0.0;
-            // (One line alone sits in the middle of the tile.)
-            if detail.is_empty() {
-                ui.add_space(4.0);
-            }
-            ui.add(
-                egui::Label::new(
-                    egui::RichText::new(name)
-                        .family(theme::bold())
-                        .size(theme::size::TITLE)
-                        .color(ui.visuals().strong_text_color()),
-                )
-                .truncate(),
-            );
-            if !detail.is_empty() {
+        let tile = theme::icon_tile(ui, 28.0);
+        glyph(ui.painter(), tile, accent);
+        // (Room at the right for the actions button, so a long name truncates before it.)
+        let room = if menu.is_some() { MORE + 6.0 } else { 0.0 };
+        let text_width = (ui.available_width() - room).max(40.0);
+        ui.allocate_ui(egui::vec2(text_width, 34.0), |ui| {
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                // (One line alone sits in the middle of the tile.)
+                if detail.is_empty() {
+                    ui.add_space(4.0);
+                }
                 ui.add(
                     egui::Label::new(
-                        egui::RichText::new(detail)
-                            .size(theme::size::CAPTION)
-                            .color(ui.visuals().weak_text_color()),
+                        egui::RichText::new(name)
+                            .family(theme::bold())
+                            .size(theme::size::TITLE)
+                            .color(ui.visuals().strong_text_color()),
                     )
                     .truncate(),
                 );
-            }
+                if !detail.is_empty() {
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(detail)
+                                .size(theme::size::CAPTION)
+                                .color(ui.visuals().weak_text_color()),
+                        )
+                        .truncate(),
+                    );
+                }
+            });
         });
+        if let Some((tip, menu)) = menu {
+            let right = ui.max_rect().right();
+            let rect = egui::Rect::from_center_size(
+                egui::pos2(right - MORE / 2.0, tile.center().y),
+                egui::Vec2::splat(MORE),
+            );
+            let more = crate::app::dock_ui::icon_at(
+                ui,
+                rect,
+                ui.id().with("title_actions"),
+                Glyph::More,
+                tip,
+            );
+            egui::Popup::menu(&more).show(|ui| menu(ui));
+        }
     });
     ui.add_space(4.0);
 }

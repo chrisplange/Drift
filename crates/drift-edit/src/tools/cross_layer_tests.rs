@@ -411,3 +411,91 @@ fn a_three_point_arc_from_another_layers_point_has_its_own_point() {
         "held together: {held:?}"
     );
 }
+
+/// A point only placed on another layer's point (no relation) is found through the index,
+/// and, drawn onto with automatic relations, it is joined and tied to that point (#428).
+#[test]
+fn a_twin_only_placed_there_is_joined_and_held_with_relations() {
+    let (mut ed, corner, own) = held_vertex(false);
+    assert!(coincidents(&ed).is_empty());
+    assert_eq!(ed.layer_twin(corner, |q| q == own), Some(own));
+    ed.prefs.auto_relations = true;
+    let mut tool = LineTool::default();
+    click_onto(&mut ed, &mut tool, v(10.1, 0.1), corner);
+    click(&mut ed, &mut tool, v(20.0, 10.0));
+    tool.handle(Input::Finish, &mut ed);
+    assert_eq!(ends(&ed, last_line(&ed)).0, own);
+    let held = coincidents(&ed);
+    assert!(
+        held.contains(&(own, corner)) || held.contains(&(corner, own)),
+        "now held: {held:?}"
+    );
+}
+
+/// While a block is edited in place, a point outside it is never the one joined (snapping
+/// doesn't see it either).
+#[test]
+fn a_twin_outside_a_block_being_edited_is_not_joined() {
+    let mut ed = Editor::default();
+    ed.prefs.auto_relations = true;
+    let mut tool = LineTool::default();
+    click(&mut ed, &mut tool, v(0.0, 0.0));
+    click(&mut ed, &mut tool, v(10.0, 0.0));
+    tool.handle(Input::Finish, &mut ed);
+    ed.selection = [last_line(&ed)].into();
+    let copy = ed.make_block("Bar").unwrap();
+    // A loose point of another layer where the block's end will be, outside the block.
+    let other = ed.add_layer("Other");
+    ed.set_current_layer(other);
+    ed.doc.begin();
+    let loose = ed.doc.add_point(v(10.0, 0.0));
+    assert!(ed.commit("Point"));
+    ed.set_current_layer(LayerId::DEFAULT);
+    ed.edit_block(copy);
+    ed.set_current_layer(other);
+    let line = last_line(&ed);
+    let (_, corner) = ends(&ed, line);
+    assert!(ed.doc.point(corner).unwrap().distance(v(10.0, 0.0)) < 1e-9);
+    assert_ne!(ed.doc.get(line).unwrap().layer, other);
+    let mut tool = LineTool::default();
+    click_onto(&mut ed, &mut tool, v(10.1, 0.1), corner);
+    click(&mut ed, &mut tool, v(10.0, 10.0));
+    tool.handle(Input::Finish, &mut ed);
+    let (start, _) = ends(&ed, last_line(&ed));
+    assert_ne!(start, loose, "not the point outside the block");
+    assert_ne!(start, corner);
+}
+
+/// A wall's generated corner is never the point joined, even on the layer drawn on.
+#[test]
+fn a_walls_generated_corner_is_not_joined() {
+    let mut ed = Editor::default();
+    ed.prefs.auto_relations = false;
+    ed.prefs.wall_thickness = 10.0;
+    let mut line = LineTool::default();
+    click(&mut ed, &mut line, v(100.0, 50.0));
+    click(&mut ed, &mut line, v(100.0, 5.0));
+    line.handle(Input::Finish, &mut ed);
+    let first = last_line(&ed);
+    let (_, corner) = ends(&ed, first);
+    let other = ed.add_layer("Walls");
+    ed.set_current_layer(other);
+    let mut wall = ToolKind::Wall.create();
+    click(&mut ed, wall.as_mut(), v(0.0, 0.0));
+    click(&mut ed, wall.as_mut(), v(100.0, 0.0));
+    wall.handle(Input::Finish, &mut ed);
+    let owners = ed.wall_owners();
+    assert!(
+        ed.doc.iter().any(|(id, e)| e.kind.is_point()
+            && owners.generated(id)
+            && ed.doc.point(id).unwrap().distance(v(100.0, 5.0)) < 1e-9),
+        "a face corner lies on the line's end"
+    );
+    let mut tool = LineTool::default();
+    click_onto(&mut ed, &mut tool, v(100.1, 5.1), corner);
+    click(&mut ed, &mut tool, v(150.0, 5.0));
+    tool.handle(Input::Finish, &mut ed);
+    let (start, _) = ends(&ed, last_line(&ed));
+    assert!(!ed.wall_owners().generated(start), "its own point");
+    assert_ne!(start, corner);
+}

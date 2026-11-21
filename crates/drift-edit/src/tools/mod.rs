@@ -655,16 +655,15 @@ fn exact(p: &Pointer, at: DVec2) -> Pointer {
 /// point of that layer held to it or placed on it, else none: a point on another layer is
 /// only snapped to (#428).
 pub(crate) fn join_target(ed: &Editor, from: Option<EntityId>, onto: EntityId) -> Option<EntityId> {
-    let doc = &ed.doc;
-    let layer = doc.current_layer();
+    let layer = ed.doc.current_layer();
     let ours = |q: EntityId| match from {
-        Some(from) => q != from && crate::editor::points_share_layer(doc, from, q),
-        None => crate::editor::point_on_layer(doc, q, layer),
+        Some(from) => q != from && ed.points_share_a_layer(from, q),
+        None => ed.is_point_on_layer(q, layer),
     };
     if ours(onto) || from == Some(onto) {
         return Some(onto);
     }
-    crate::editor::layer_twin(doc, onto, ours)
+    ed.layer_twin(onto, ours)
 }
 
 /// Add the automatic relation `relation` (from a snap or guide) to `line`, a segment a tool

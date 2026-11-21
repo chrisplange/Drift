@@ -211,55 +211,69 @@ impl Anchor {
     pub fn own(&self, doc: &mut Document) -> EntityId {
         doc.add_point(self.pos)
     }
+}
 
-    /// The point entity for this anchor, creating it if needed (with its Midpoint or On curve
+impl Editor {
+    /// The point entity for `anchor`, creating it if needed (with its Midpoint or On curve
     /// relation, if it was snapped to a midpoint or curve): lines and arcs drawn from a
-    /// point continue from it. A point on another layer than the one drawn on isn't shared:
-    /// a new one goes on it, held to it with automatic relations (#428). Call inside a
-    /// transaction.
-    pub fn resolve(&self, doc: &mut Document) -> EntityId {
-        match self.existing {
-            Some(id) if doc.contains(id) => {
-                let layer = doc.current_layer();
-                own_or_held(doc, id, self.pos, layer, self.hold)
+    /// point continue from it. A point on another layer than the one drawn on isn't shared
+    /// (see [`own_or_held`](Self::own_or_held), #428). Call inside a transaction.
+    pub fn resolve_anchor(&mut self, anchor: &Anchor) -> EntityId {
+        match anchor.existing {
+            Some(id) if self.doc.contains(id) => {
+                let layer = self.doc.current_layer();
+                self.own_or_held(id, anchor.pos, layer, anchor.hold)
             }
             _ => {
-                let point = doc.add_point(self.pos);
-                if let Some(line) = self.midpoint_of {
+                let doc = &mut self.doc;
+                let point = doc.add_point(anchor.pos);
+                if let Some(line) = anchor.midpoint_of {
                     let _ = doc.add_constraint(Constraint::Midpoint { point, line });
-                } else if let Some(curve) = self.on_curve {
+                } else if let Some(curve) = anchor.on_curve {
                     let _ = doc.add_constraint(Constraint::PointOnCurve { point, curve });
                 }
                 point
             }
         }
     }
+
+    /// `point` itself if it is on `layer`; else the point of `layer` already held to it or
+    /// placed on it (see [`layer_twin`](Self::layer_twin)), tied to it now if `hold` and it
+    /// wasn't; else a new point at `pos` (where it was snapped to), held to `point` by a
+    /// Coincident relation when `hold` (automatic relations): geometry on one layer is
+    /// snapped to, never joined to, geometry on another (#428). Call inside a transaction.
+    pub fn own_or_held(
+        &mut self,
+        point: EntityId,
+        pos: DVec2,
+        layer: drift_core::LayerId,
+        hold: bool,
+    ) -> EntityId {
+        if self.is_point_on_layer(point, layer) {
+            return point;
+        }
+        let own = match self.layer_twin(point, |q| self.is_point_on_layer(q, layer)) {
+            Some(twin) => twin,
+            None => {
+                let at = self.doc.point(point).unwrap_or(pos);
+                self.doc.add_point(at)
+            }
+        };
+        if hold && !coincident(&self.doc, own, point) {
+            let _ = self
+                .doc
+                .add_constraint(Constraint::Coincident { a: own, b: point });
+        }
+        own
+    }
 }
 
-/// `point` itself if it is on `layer`; else the point of `layer` already held to it or
-/// placed on it (see [`layer_twin`](super::layers::layer_twin)); else a new point at `pos`
-/// (where it was snapped to), held to `point` by a Coincident relation when `hold`
-/// (automatic relations): geometry on one layer is snapped to, never joined to, geometry on
-/// another (#428). Call inside a transaction.
-pub fn own_or_held(
-    doc: &mut Document,
-    point: EntityId,
-    pos: DVec2,
-    layer: drift_core::LayerId,
-    hold: bool,
-) -> EntityId {
-    if super::layers::point_on_layer(doc, point, layer) {
-        return point;
-    }
-    if let Some(twin) =
-        super::layers::layer_twin(doc, point, |q| super::layers::point_on_layer(doc, q, layer))
-    {
-        return twin;
-    }
-    let at = doc.point(point).unwrap_or(pos);
-    let own = doc.add_point(at);
-    if hold {
-        let _ = doc.add_constraint(Constraint::Coincident { a: own, b: point });
-    }
-    own
+/// Whether a Coincident relation holds `a` and `b` together already.
+fn coincident(doc: &Document, a: EntityId, b: EntityId) -> bool {
+    doc.constraints_on(a).any(|c| {
+        matches!(
+            doc.constraint(c),
+            Some(&Constraint::Coincident { a: p, b: q }) if (p, q) == (a, b) || (p, q) == (b, a)
+        )
+    })
 }

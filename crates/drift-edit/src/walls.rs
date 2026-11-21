@@ -518,8 +518,11 @@ impl Editor {
             }
             // Walls on different layers join by where they are, never by one point (#428):
             // with automatic relations, a Coincident relation holds the corner together.
+            // Only for an end made now (the Wall tool's): a hold taken off later isn't put back
+            // by the next edit there.
             let across = !crate::editor::points_share_layer(&self.doc, a, b);
-            if across && !self.prefs.auto_relations {
+            let made = |id: EntityId| self.doc.entity_before_transaction(id).is_none();
+            if across && !(self.prefs.auto_relations && (made(a) || made(b))) {
                 continue;
             }
             let (Some(&(wa, Some((pa, qa)))), Some(&(wb, Some((pb, qb))))) =
@@ -537,9 +540,12 @@ impl Editor {
             if x.distance(pa) > reach || x.distance(pb) > reach {
                 continue;
             }
-            let _ = self.doc.set_point(a, x);
-            let _ = self.doc.set_point(b, x);
             if across {
+                let moved = [a, b]
+                    .iter()
+                    .any(|p| self.doc.point(*p).is_ok_and(|q| q != x));
+                let _ = self.doc.set_point(a, x);
+                let _ = self.doc.set_point(b, x);
                 let held = self.doc.constraints_on(a).any(|c| {
                     matches!(
                         self.doc.constraint(c),
@@ -547,14 +553,16 @@ impl Editor {
                             if (p, q) == (a, b) || (p, q) == (b, a)
                     )
                 });
-                if !held {
-                    let _ = self
+                let added = !held
+                    && self
                         .doc
-                        .add_constraint(drift_core::Constraint::Coincident { a, b });
-                }
-                any = true;
+                        .add_constraint(drift_core::Constraint::Coincident { a, b })
+                        .is_ok();
+                any |= moved || added;
                 continue;
             }
+            let _ = self.doc.set_point(a, x);
+            let _ = self.doc.set_point(b, x);
             if self.doc.merge_points(b, a).is_err() {
                 continue;
             }

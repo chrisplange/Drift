@@ -181,7 +181,7 @@ impl TangentArcTool {
         ed.doc.begin();
         let point = start_point(ed, point, from);
         let c = ed.doc.add_point(center);
-        let e = end.resolve(&mut ed.doc);
+        let e = ed.resolve_anchor(&end);
         let (first, last) = if swapped { (e, point) } else { (point, e) };
         let Ok(arc) = ed.doc.add_arc(c, first, last) else {
             ed.doc.rollback();
@@ -240,7 +240,7 @@ impl TangentArcTool {
         ed.doc.begin();
         let point = start_point(ed, point, from);
         let c = ed.doc.add_point(center);
-        let e = anchor.resolve(&mut ed.doc);
+        let e = ed.resolve_anchor(&anchor);
         let (first, last) = if left { (point, e) } else { (e, point) };
         let Ok(arc) = ed.doc.add_arc(c, first, last) else {
             ed.doc.rollback();
@@ -269,7 +269,8 @@ impl TangentArcTool {
 /// a transaction.
 fn start_point(ed: &mut Editor, point: EntityId, from: DVec2) -> EntityId {
     let layer = ed.doc.current_layer();
-    crate::editor::own_or_held(&mut ed.doc, point, from, layer, ed.prefs.auto_relations)
+    let hold = ed.prefs.auto_relations;
+    ed.own_or_held(point, from, layer, hold)
 }
 
 impl Tool for TangentArcTool {

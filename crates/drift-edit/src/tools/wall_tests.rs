@@ -234,6 +234,37 @@ fn walls_across_layers_are_held_at_their_corner_with_relations() {
     );
 }
 
+/// #428: a corner hold across layers taken off stays off: a later edit there doesn't put it
+/// back.
+#[test]
+fn a_corner_hold_taken_off_stays_off() {
+    let mut ed = editor();
+    ed.prefs.auto_relations = true;
+    run(&mut ed, &[v(0.0, 0.0), v(100.0, 0.0)]);
+    let other = ed.add_layer("Other");
+    ed.set_current_layer(other);
+    run(&mut ed, &[v(100.0, 0.0), v(100.0, 100.0)]);
+    let hold = |ed: &Editor| {
+        ed.doc
+            .constraints()
+            .find(|(_, c)| matches!(c, drift_core::Constraint::Coincident { .. }))
+            .map(|(id, _)| id)
+    };
+    let id = hold(&ed).expect("held");
+    ed.remove_constraint(id);
+    assert!(hold(&ed).is_none());
+    // Nudge the second wall's corner end a little: still joined there by where it is.
+    let pts = centre_points(&ed);
+    let end = *pts[1]
+        .iter()
+        .find(|p| ed.doc.point(**p).unwrap().distance(v(100.0, 0.0)) < 1e-6)
+        .unwrap();
+    ed.doc.begin();
+    assert!(ed.drag(&[end], v(0.0, 1.0), &[]));
+    ed.commit("Drag");
+    assert!(hold(&ed).is_none(), "not put back");
+}
+
 #[test]
 fn a_wall_ending_on_a_line_stops_against_it() {
     let mut ed = editor();

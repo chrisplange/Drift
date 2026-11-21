@@ -37,38 +37,6 @@ pub fn points_share_layer(doc: &drift_core::Document, a: EntityId, b: EntityId) 
     !point_layers(doc, a).is_disjoint(&point_layers(doc, b))
 }
 
-/// A point other than `point` that `accept` takes and that stands in for it: one a
-/// Coincident relation ties to it, else one exactly where it is (the lowest id). Where a
-/// point on another layer was snapped to, the point of the layer drawn on that is held to
-/// it (or only placed on it) is the one to join, so strokes on one layer still meet in one
-/// point however the snap picked between the two (#428).
-pub fn layer_twin(
-    doc: &drift_core::Document,
-    point: EntityId,
-    accept: impl Fn(EntityId) -> bool,
-) -> Option<EntityId> {
-    let at = doc.point(point).ok()?;
-    let tied = doc
-        .constraints_on(point)
-        .find_map(|c| match doc.constraint(c) {
-            Some(&drift_core::Constraint::Coincident { a, b }) => {
-                let other = if a == point { b } else { a };
-                (other != point && accept(other)).then_some(other)
-            }
-            _ => None,
-        });
-    if tied.is_some() {
-        return tied;
-    }
-    let reach = 1e-9 * at.abs().max_element().max(1.0);
-    doc.iter()
-        .filter(|(id, e)| *id != point && e.kind.is_point())
-        .filter(|(id, _)| doc.point(*id).is_ok_and(|q| q.distance(at) <= reach))
-        .map(|(id, _)| id)
-        .filter(|id| accept(*id))
-        .min()
-}
-
 /// Filled shapes picked as objects: their fills, and the curves of their outlines.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PickedShapes {
@@ -88,6 +56,83 @@ pub struct LayerMove {
 }
 
 impl Editor {
+    /// The layers `point` is on (see [`point_on_layer`]), from the scene index's users when
+    /// it is current (the document scans every entity for them).
+    pub fn layers_of_point(&self, point: EntityId) -> BTreeSet<LayerId> {
+        if !self.index.is_current(&self.doc) {
+            return point_layers(&self.doc, point);
+        }
+        let doc = &self.doc;
+        doc.get(point)
+            .map(|e| e.layer)
+            .into_iter()
+            .chain(
+                self.index
+                    .users_of(point)
+                    .filter_map(|u| doc.get(u).map(|e| e.layer)),
+            )
+            .collect()
+    }
+
+    /// [`point_on_layer`], through the scene index when it is current.
+    pub fn is_point_on_layer(&self, point: EntityId, layer: LayerId) -> bool {
+        self.layers_of_point(point).contains(&layer)
+    }
+
+    /// [`points_share_layer`], through the scene index when it is current.
+    pub fn points_share_a_layer(&self, a: EntityId, b: EntityId) -> bool {
+        !self
+            .layers_of_point(a)
+            .is_disjoint(&self.layers_of_point(b))
+    }
+
+    /// A point other than `point` that `accept` takes and that stands in for it: one a
+    /// Coincident relation ties to it, else one exactly where it is (the lowest id), found
+    /// through the scene index. Where a point on another layer was snapped to, the point of
+    /// the layer drawn on that is held to it (or only placed on it) is the one to join, so
+    /// strokes on one layer still meet in one point however the snap picked between the two
+    /// (#428). Only a point snapping could reach counts: none outside a block edited in
+    /// place, no wall's generated face corner, no hidden centreline point.
+    pub fn layer_twin(
+        &self,
+        point: EntityId,
+        accept: impl Fn(EntityId) -> bool,
+    ) -> Option<EntityId> {
+        let doc = &self.doc;
+        let at = doc.point(point).ok()?;
+        let scope = self.snap_scope();
+        let owners = doc.has_walls().then(|| self.wall_owners());
+        let reachable = |q: EntityId| {
+            q != point
+                && accept(q)
+                && scope.as_ref().is_none_or(|s| s.contains(&q))
+                && owners.as_ref().is_none_or(|o| {
+                    !o.generated(q)
+                        && (o.wall(q).is_none() || !self.hidden_centrelines().contains(&q))
+                })
+        };
+        let tied = doc
+            .constraints_on(point)
+            .find_map(|c| match doc.constraint(c) {
+                Some(&drift_core::Constraint::Coincident { a, b }) => {
+                    let other = if a == point { b } else { a };
+                    reachable(other).then_some(other)
+                }
+                _ => None,
+            });
+        if tied.is_some() {
+            return tied;
+        }
+        let reach = 1e-9 * at.abs().max_element().max(1.0);
+        let near = drift_core::Bounds::from_center_half_size(at, drift_core::DVec2::splat(reach));
+        self.index
+            .query(near)
+            .filter(|q| doc.get(*q).is_some_and(|e| e.kind.is_point()))
+            .filter(|q| doc.point(*q).is_ok_and(|p| p.distance(at) <= reach))
+            .filter(|q| reachable(*q))
+            .min()
+    }
+
     /// The filled shapes in the selection: picked fills of shapes, and shapes whose whole
     /// outline is picked (a group of them, say).
     pub fn shapes_in_selection(&self) -> PickedShapes {

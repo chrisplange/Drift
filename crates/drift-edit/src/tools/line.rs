@@ -56,8 +56,8 @@ impl LineTool {
             return;
         }
         ed.doc.begin();
-        let a = last.resolve(&mut ed.doc);
-        let b = anchor.resolve(&mut ed.doc);
+        let a = ed.resolve_anchor(&last);
+        let b = ed.resolve_anchor(&anchor);
         let Ok(line) = ed.doc.add_line(a, b) else {
             ed.doc.rollback();
             ed.sync();

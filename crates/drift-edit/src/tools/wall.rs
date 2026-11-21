@@ -113,7 +113,9 @@ impl WallTool {
             && let Ok(pos) = ed.doc.point(pt)
         {
             if !on_layer(ed, pt) {
-                return (Anchor::at(pos), None);
+                // (Held there, if it is another wall's end: see the corner below.)
+                let hold = ed.prefs.auto_relations;
+                return (Anchor::at(pos).held(hold), None);
             }
             return (Anchor::existing(pos, pt), None);
         }

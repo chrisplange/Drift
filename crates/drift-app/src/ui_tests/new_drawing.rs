@@ -95,6 +95,34 @@ fn keep_session(storage: &mut MemoryStorage, doc: &drift_core::Document, path: O
     storage.set_string(crate::KEY_DIRTY, "0".into());
 }
 
+/// A drawing kept from last time that isn't an untouched new one (something in it, or a file
+/// of its own) keeps its own units and logo, whatever new drawings start with now.
+#[test]
+fn a_kept_drawing_keeps_its_units_and_logo() {
+    let mut storage = MemoryStorage::default();
+    storage.set_string("drift.new_units", "imperial".into());
+    storage.set_string("drift.default_logo", LOGO_SVG.into());
+    let mut drawn = drift_core::Document::new();
+    drawn.begin();
+    drawn.add_point(DVec2::new(5.0, 5.0));
+    let _ = drawn.commit("Point");
+    let path = std::env::temp_dir().join("drift-tests").join("Kept.drift");
+    let path = path.to_string_lossy().into_owned();
+    for (doc, path) in [
+        (drawn, None),
+        (drift_core::Document::new(), Some(path.as_str())),
+    ] {
+        keep_session(&mut storage, &doc, path);
+        let Some(mut h) = harness() else { return };
+        h.state_mut().restore_session(&storage);
+        h.run();
+        assert_eq!(h.state().new_drawing.units, NewUnits::Imperial);
+        assert_eq!(units(&h), Units::metric(), "{path:?}");
+        assert!(logo(&h).is_empty(), "{path:?}");
+        assert!(!h.state().is_dirty());
+    }
+}
+
 /// The start screen's Metric / Imperial switch sets the blank drawing's units and the
 /// preference, so the next new drawing starts in them too.
 #[test]

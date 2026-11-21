@@ -16,8 +16,11 @@ when all of these hold:
   updated by its session, since a push made with this job's token wouldn't start CI).
 
 A merge made with GITHUB_TOKEN doesn't fire `push` workflows, so afterwards it dispatches CI
-on main, and the website build when the PR touched what the website is built from.
-Needs GH_TOKEN with contents, pull-requests and actions write, and PR (number) or HEAD_SHA.
+on main, and the website build when the PR touched what the website is built from. Nor does
+GitHub close the issues a PR names with "Fixes #N" when GITHUB_TOKEN merges it, so the job
+closes them itself.
+Needs GH_TOKEN with contents, pull-requests, issues and actions write, and PR (number) or
+HEAD_SHA.
 """
 
 from __future__ import annotations
@@ -72,8 +75,35 @@ def touches_website(files: list[str]) -> bool:
     return any(f.startswith(WEBSITE_PREFIXES) for f in files)
 
 
+def issues_to_close(refs: list[dict], repo: str) -> list[int]:
+    """The issue numbers in a PR's closingIssuesReferences that live in `repo`."""
+    owner, name = repo.split("/")
+    out = []
+    for r in refs or []:
+        rr = r.get("repository") or {}
+        if rr.get("name") == name and (rr.get("owner") or {}).get("login") == owner:
+            out.append(int(r["number"]))
+    return sorted(set(out))
+
+
 def gh(*args: str) -> str:
     return subprocess.check_output(["gh", *args], text=True)
+
+
+def close_fixed_issues(pr: str, repo: str) -> None:
+    """Close the issues the merged PR names; runs after the merge, so nothing here is fatal."""
+    try:
+        refs = json.loads(gh("pr", "view", pr, "-R", repo, "--json", "closingIssuesReferences",
+                             "--jq", ".closingIssuesReferences"))
+        numbers = issues_to_close(refs, repo)
+    except (subprocess.CalledProcessError, ValueError, KeyError, TypeError) as e:
+        print(f"PR #{pr}: could not read the issues it closes: {e}")
+        return
+    for n in numbers:
+        done = subprocess.run(["gh", "issue", "close", str(n), "-R", repo, "--reason", "completed",
+                               "--comment", f"Fixed by #{pr} (merged by the auto-merge job)."])
+        if done.returncode != 0:
+            print(f"PR #{pr}: could not close issue #{n}")
 
 
 def main() -> int:
@@ -115,6 +145,7 @@ def main() -> int:
     subprocess.check_call(["gh", "workflow", "run", "ci.yml", "-R", repo, "--ref", "main"])
     if touches_website(files):
         subprocess.check_call(["gh", "workflow", "run", "website.yml", "-R", repo, "--ref", "main"])
+    close_fixed_issues(pr, repo)
     return 0
 
 

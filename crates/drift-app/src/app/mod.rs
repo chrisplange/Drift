@@ -23,6 +23,7 @@ mod keyboard;
 #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
 pub(crate) mod link_ui;
 pub(crate) mod mark_views;
+pub(crate) mod new_drawing;
 pub(crate) mod note_ui;
 pub(crate) mod offset_ui;
 pub(crate) mod opening_ui;

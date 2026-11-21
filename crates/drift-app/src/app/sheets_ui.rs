@@ -1989,13 +1989,22 @@ impl DriftApp {
                 .button(if has { "Replace…" } else { "Choose SVG…" })
                 .on_hover_text(
                     "A logo for every sheet's title block, from an SVG file (with its text \
-                     converted to outlines). It is kept in the drawing's file.",
+                     converted to outlines). It is kept in the drawing's file, and new \
+                     drawings start with it.",
                 )
                 .clicked()
             {
                 self.pick_file(crate::app::document::Picking::Logo);
             }
-            if has && ui.button("Remove").clicked() {
+            if has
+                && ui
+                    .button("Remove")
+                    .on_hover_text(
+                        "Remove the logo from this drawing. New drawings still start with it \
+                         (Preferences → General clears that).",
+                    )
+                    .clicked()
+            {
                 self.drawing.editor.doc.begin();
                 self.drawing.editor.doc.set_logo(String::new());
                 self.drawing.editor.commit("Remove logo");

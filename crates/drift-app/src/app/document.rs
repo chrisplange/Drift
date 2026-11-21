@@ -150,6 +150,7 @@ impl DriftApp {
     ) {
         self.tool_cancel();
         self.tool = ToolKind::Select.create();
+        self.drawing_from_new = self.next_from_new.take();
         // A file from before drawings kept their rules had this computer's.
         if meta.older_rules {
             doc.set_rules(self.new_rules);
@@ -351,6 +352,7 @@ impl DriftApp {
         if let Some(prefs) = storage.get_string(KEY_VIEW) {
             self.apply_view_prefs(&prefs);
         }
+        self.new_drawing = app::new_drawing::NewDrawing::load(storage);
         self.start_with_new_rules();
         if let Some(recent) = storage.get_string(KEY_RECENT) {
             self.recent = recent
@@ -440,24 +442,31 @@ impl DriftApp {
                     format!("{stem}.drift")
                 };
                 self.replace_document(doc, name, path, meta, !dirty);
+                // A blank drawing kept from last time starts as new ones do now.
+                self.kept_blank_restored();
             }
             Err(e) => self.hold_session = self.keep_unrestored(text, &e, dir),
         }
     }
 
-    /// A new, empty drawing, with the rules new drawings start with on this computer. Every
-    /// new drawing starts here: File → New, a file opened as a new drawing, and the
-    /// assistant's `new_drawing`. (The example is a drawing of its own, opened as it is.)
+    /// A new, empty drawing, with the rules, units and logo new drawings start with on this
+    /// computer. The app's new drawings start here: File → New and a file imported as a new
+    /// drawing. (The example is a drawing of its own, opened as it is. The assistant's
+    /// `new_drawing` makes its own, with this computer's rules and the units it asks for.)
     pub(crate) fn new_document(&self) -> Document {
         let mut doc = Document::new();
         doc.set_rules(self.new_rules);
+        self.new_drawing.apply(&mut doc);
+        self.next_from_new.set(true);
         doc
     }
 
-    /// Give the drawing open now (a new, untouched one) the rules new drawings start with.
+    /// Give the drawing open now (a new, untouched one) the rules, units and logo new
+    /// drawings start with.
     pub(crate) fn start_with_new_rules(&mut self) {
         let clean = !self.is_dirty();
         self.drawing.editor.doc.set_rules(self.new_rules);
+        self.new_drawing.apply(&mut self.drawing.editor.doc);
         if clean {
             self.drawing.file.clean_revision = Some(self.drawing.editor.doc.revision());
         }
@@ -795,7 +804,7 @@ impl DriftApp {
         let done = match what {
             Picking::Logo => self
                 .set_logo(&String::from_utf8_lossy(&contents))
-                .map(|()| format!("{name} is now the title block logo")),
+                .map(|()| format!("{name} is now the title block logo, for new drawings too")),
             Picking::Font => self.drawing.editor.add_font_file(contents).map(|family| {
                 format!("{family} is now kept in this drawing: pick it in a font menu")
             }),
@@ -955,9 +964,12 @@ impl DriftApp {
     /// Make an SVG the title blocks' logo (one undo step), if it can be read.
     pub(crate) fn set_logo(&mut self, svg: &str) -> Result<(), String> {
         drift_draft::logo::parse(svg)?;
+        let had = self.drawing.editor.doc.logo() == svg;
         self.drawing.editor.doc.begin();
         self.drawing.editor.doc.set_logo(svg.to_owned());
         self.drawing.editor.commit("Title block logo");
+        // New drawings start with it too (#429).
+        self.new_drawing.choose_logo(svg, had);
         Ok(())
     }
 
@@ -1122,12 +1134,12 @@ impl DriftApp {
 
     pub(crate) fn undo(&mut self) {
         self.abort_operation();
-        self.drawing.editor.undo();
+        self.step_history(true);
     }
 
     pub(crate) fn redo(&mut self) {
         self.abort_operation();
-        self.drawing.editor.redo();
+        self.step_history(false);
     }
 
     pub(crate) fn set_selection_style(&mut self, style: LineKind) {

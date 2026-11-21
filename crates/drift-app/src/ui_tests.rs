@@ -1769,8 +1769,8 @@ fn a_floating_panel_moved_into_the_canvas_edge_keeps_its_size() {
         "the size changed: {before:?} → {after:?}"
     );
     assert!(
-        after.bottom() <= canvas.bottom() + 0.5,
-        "{after:?} in {canvas:?}"
+        after.bottom() <= canvas.bottom() + 0.5 && after.bottom() >= canvas.bottom() - 2.0,
+        "the panel should stop at the canvas bottom: {after:?} in {canvas:?}"
     );
     assert!(
         (after.left() - (before.left() - 80.0)).abs() < 2.0,

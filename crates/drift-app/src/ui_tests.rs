@@ -1696,6 +1696,88 @@ fn a_floating_panel_resized_past_the_canvas_edge_keeps_its_left_edge() {
         after.right() <= canvas.right() + 0.5 && after.right() >= canvas.right() - 2.0,
         "the right edge should stop at the canvas edge: {after:?} in {canvas:?}"
     );
+    // The size it stopped at is the one kept: a later frame doesn't grow it back.
+    h.run_steps(6);
+    let (_, later) = h.state().floating_rects(Panel::Layers).unwrap();
+    assert!(
+        (later.width() - after.width()).abs() < 1.0,
+        "{after:?} → {later:?}"
+    );
+}
+
+/// #505: the bottom edge dragged on past the canvas stops there; the top edge stays put.
+#[test]
+fn a_floating_panel_resized_past_the_canvas_bottom_keeps_its_top_edge() {
+    let Some(mut h) = harness() else { return };
+    h.state_mut()
+        .layout
+        .move_to(Panel::Layers, Place::Float, None);
+    h.run_steps(6);
+    let canvas = h.state().drawing.view.canvas_rect;
+    let (_, before) = h.state().floating_rects(Panel::Layers).unwrap();
+    let grab = egui::pos2(before.center().x, before.bottom() - 1.0);
+    h.hover_at(grab);
+    h.run_steps(2);
+    button(&h, grab, true);
+    h.run_steps(2);
+    let end = canvas.bottom() + 300.0;
+    for i in 1..=30 {
+        let y = grab.y + (end - grab.y) * i as f32 / 30.0;
+        h.hover_at(egui::pos2(grab.x, y));
+        h.run_steps(1);
+    }
+    for _ in 0..20 {
+        h.hover_at(egui::pos2(grab.x, end));
+        h.run_steps(1);
+    }
+    button(&h, egui::pos2(grab.x, end), false);
+    h.run_steps(6);
+    let (_, after) = h.state().floating_rects(Panel::Layers).unwrap();
+    assert!(
+        (after.top() - before.top()).abs() < 1.0,
+        "the top edge moved: {before:?} → {after:?} (canvas {canvas:?})"
+    );
+    assert!(
+        after.bottom() <= canvas.bottom() + 0.5 && after.bottom() >= canvas.bottom() - 2.0,
+        "the bottom edge should stop at the canvas edge: {after:?} in {canvas:?}"
+    );
+    assert!(
+        (after.width() - before.width()).abs() < 1.0,
+        "{before:?} → {after:?}"
+    );
+}
+
+/// #505: a whole panel moved by its header on past the canvas's bottom stops at the edge
+/// with its size unchanged.
+#[test]
+fn a_floating_panel_moved_into_the_canvas_edge_keeps_its_size() {
+    let Some(mut h) = harness() else { return };
+    h.state_mut()
+        .layout
+        .move_to(Panel::Layers, Place::Float, None);
+    h.run_steps(6);
+    let canvas = h.state().drawing.view.canvas_rect;
+    let (_, before) = h.state().floating_rects(Panel::Layers).unwrap();
+    let header = h.state().header_rect(Panel::Layers).unwrap();
+    let from = header.left_center() + egui::vec2(60.0, 0.0);
+    // Down and a little left, well past the canvas's bottom.
+    let to = from + egui::vec2(-80.0, canvas.height());
+    drag_steps(&mut h, from, to, 20, None);
+    h.run_steps(4);
+    assert_eq!(h.state().layout.floating, [vec![Panel::Layers]]);
+    let (_, after) = h.state().floating_rects(Panel::Layers).unwrap();
+    assert!(
+        (after.size() - before.size()).length() < 1.0,
+        "the size changed: {before:?} → {after:?}"
+    );
+    assert!(
+        after.bottom() <= canvas.bottom() + 0.5 && after.bottom() >= canvas.bottom() - 2.0,
+        "the panel should stop at the canvas bottom: {after:?} in {canvas:?}"
+    );
+    assert!(
+        (after.left() - (before.left() - 80.0)).abs() < 2.0,
+        "{before:?} → {after:?}"
+    );
 }
 
 #[test]

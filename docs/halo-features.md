@@ -6,7 +6,6 @@ Nothing here is scheduled. Each idea becomes a GitHub issue with a Done when bef
 Every idea builds on something Drift already has, so none needs a new subsystem. None of them was in `FEATURES.md` or the code on main when this list was written (2026-11-21).
 
 **Starting point (owner, 2026-11-21): 2 and 4.** Both make the solver easier to read and work with rather than adding a feature area, so they fit the usability focus.
-
 ## 1. Suggest dimensions to finish the sketch
 One command proposes the smallest clean set of dimensions and relations that would fully define the sketch. They appear as ghosts you can accept, drop one by one, or swap for another.
 - **Why it stands out:** SolidWorks has "Fully Define Sketch", but its choices are messy. Drift's version would prefer baseline-style schemes that respect symmetry and could go straight onto a sheet.
@@ -28,9 +27,10 @@ Hold a modifier and drag a dimension label, and its value scrubs the way the Par
 ## 4. Animate solves instead of snapping (starting point)
 When a typed value, a new relation or an undo re-solves the sketch, the geometry eases into place over about 120 ms instead of jumping.
 - **Why it stands out:** it makes the solver's moves easy to follow and Drift more fun to draw in, at little risk.
+- **Preference (owner, 2026-11-21):** it can be turned on or off in Preferences. When it's off, Drift behaves as it does today.
 - **Shape:** display only. The model updates at once, and only drawing interpolates. Picking, snapping and readouts always use the real geometry.
 - **Watch:** never during a drag or a slider scrub, which already move every frame. Skip it when the change is large, or start it from the current on-screen position when a new solve lands mid-animation. Respect the operating system's reduced-motion setting. Keep the canvas idle (no CPU use) once the animation ends.
-- **Open questions for the Done when:** duration and easing curve; whether a preference can turn it off; whether fills, hatches and dimensions animate with the geometry or appear at the end.
+- **Open questions for the Done when:** duration and easing curve; the preference's default; whether fills, hatches and dimensions animate with the geometry or appear at the end.
 
 ## 5. A sheet of variants (a design table)
 Pick a variable range, or load a CSV with one row per variant. Drift lays every version out on one sheet, or makes one sheet per row, with labelled views.

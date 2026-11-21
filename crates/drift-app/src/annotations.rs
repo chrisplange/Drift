@@ -2762,6 +2762,106 @@ mod tests {
         assert!(rounded.contains('~'), "{rounded}");
     }
 
+    /// #486, through the editor: set dimensions exactly (as typed in their box) and the
+    /// dimensions that follow from them, driven or driving, show no `~`; a genuinely rounded
+    /// one keeps it.
+    #[test]
+    fn setting_a_dimension_exactly_leaves_no_tilde_on_the_ones_it_drives() {
+        use drift_edit::editor::Editor;
+        let mut doc = Document::new();
+        // A rough right triangle off the axes, and beside it a rough square corner whose
+        // sides are equal: the solve after each typed value leaves round-off everywhere.
+        let a = doc.add_point(DVec2::new(3.1, 1.7));
+        let b = doc.add_point(DVec2::new(29.0, 19.0));
+        let c = doc.add_point(DVec2::new(7.0, 47.0));
+        let ab = doc.add_line(a, b).unwrap();
+        let bc = doc.add_line(b, c).unwrap();
+        let ca = doc.add_line(c, a).unwrap();
+        doc.add_constraint(Constraint::Fix {
+            point: a,
+            at: DVec2::new(3.1, 1.7),
+        })
+        .unwrap();
+        doc.add_constraint(Constraint::Perpendicular { a: ab, b: bc })
+            .unwrap();
+        let p = doc.add_point(DVec2::new(60.3, 2.9));
+        let q = doc.add_point(DVec2::new(81.0, 9.0));
+        let r = doc.add_point(DVec2::new(74.0, 31.0));
+        let pq = doc.add_line(p, q).unwrap();
+        let qr = doc.add_line(q, r).unwrap();
+        doc.add_constraint(Constraint::Fix {
+            point: p,
+            at: DVec2::new(60.3, 2.9),
+        })
+        .unwrap();
+        doc.add_constraint(Constraint::Perpendicular { a: pq, b: qr })
+            .unwrap();
+        doc.add_constraint(Constraint::Equal { a: pq, b: qr })
+            .unwrap();
+        let mut ed = Editor::new(doc);
+        let driving = |ed: &mut Editor, a, b| {
+            ed.add_dimension(Constraint::Distance { a, b, value: 1.0 }, None)
+                .unwrap()
+        };
+        let width = driving(&mut ed, a, b);
+        let height = driving(&mut ed, b, c);
+        let side = driving(&mut ed, p, q);
+        let driven = |ed: &mut Editor, c: Constraint| ed.add_driven_dimension(c, None).unwrap();
+        let hyp = driven(
+            &mut ed,
+            Constraint::Distance {
+                a: c,
+                b: a,
+                value: 1.0,
+            },
+        );
+        let right = driven(
+            &mut ed,
+            Constraint::Angle {
+                a: ab,
+                b: bc,
+                degrees: 1.0,
+            },
+        );
+        let rounded = driven(
+            &mut ed,
+            Constraint::Angle {
+                a: ab,
+                b: ca,
+                degrees: 1.0,
+            },
+        );
+        let other_side = driven(
+            &mut ed,
+            Constraint::Distance {
+                a: q,
+                b: r,
+                value: 1.0,
+            },
+        );
+        // Typed exactly, one after another.
+        ed.set_dimension_text(width, "30").unwrap();
+        ed.set_dimension_text(height, "40").unwrap();
+        ed.set_dimension_text(side, "25.4").unwrap();
+        let label = |id| {
+            let c = *ed.doc.constraint(id).unwrap();
+            dimension_label(&ed.doc, Some(id), &c).plain()
+        };
+        for (id, shows) in [
+            (width, "30"),
+            (height, "40"),
+            (hyp, "50"),
+            (right, "90°"),
+            (side, "25.4"),
+            (other_side, "25.4"),
+        ] {
+            let text = label(id);
+            assert!(text.contains(shows) && !text.contains('~'), "{text}");
+        }
+        // atan(4/3) = 53.1301...°: rounded, so still marked.
+        assert!(label(rounded).contains('~'), "{}", label(rounded));
+    }
+
     #[test]
     fn labels_carry_notes_tolerances_and_alternate_units() {
         use drift_core::{DimNote, LengthFormat};

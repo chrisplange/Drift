@@ -448,9 +448,10 @@ impl DriftApp {
         }
     }
 
-    /// A new, empty drawing, with the rules new drawings start with on this computer. Every
-    /// new drawing starts here: File → New, a file opened as a new drawing, and the
-    /// assistant's `new_drawing`. (The example is a drawing of its own, opened as it is.)
+    /// A new, empty drawing, with the rules, units and logo new drawings start with on this
+    /// computer. The app's new drawings start here: File → New and a file imported as a new
+    /// drawing. (The example is a drawing of its own, opened as it is. The assistant's
+    /// `new_drawing` makes its own, with this computer's rules and the units it asks for.)
     pub(crate) fn new_document(&self) -> Document {
         let mut doc = Document::new();
         doc.set_rules(self.new_rules);

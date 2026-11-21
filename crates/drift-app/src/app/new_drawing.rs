@@ -61,18 +61,104 @@ impl NewUnits {
         }
     }
 
-    /// The first run's choice: by the system's locale, from the first of `LC_ALL`,
-    /// `LC_MEASUREMENT`, `LC_MESSAGES` and `LANG` that is set; metric when none is (Windows
-    /// and the browser set none). Tests always start metric, whatever machine they run on.
+    /// The first run's choice (only asked when no choice is kept): by the system's settings.
+    /// Windows: the Region setting's measurement system, else its locale; macOS: the
+    /// measurement units, else the locale; then the first of `LC_ALL`, `LC_MEASUREMENT`,
+    /// `LC_MESSAGES` and `LANG` that is set. Metric when nothing says (and in the browser).
+    /// Tests always start metric, whatever machine they run on.
     fn by_locale() -> Self {
         if cfg!(test) {
             return NewUnits::Metric;
         }
+        Self::by_system()
+            .or_else(Self::by_env)
+            .unwrap_or(NewUnits::Metric)
+    }
+
+    fn by_env() -> Option<Self> {
         ["LC_ALL", "LC_MEASUREMENT", "LC_MESSAGES", "LANG"]
             .iter()
             .filter_map(|k| std::env::var(k).ok())
             .find(|v| !v.trim().is_empty())
-            .map_or(NewUnits::Metric, |v| Self::from_locale(&v))
+            .map(|v| Self::from_locale(&v))
+    }
+
+    /// Windows: `reg query "HKCU\Control Panel\International"`, for `iMeasure` (0 metric, 1
+    /// US) or else `LocaleName`.
+    #[cfg(windows)]
+    fn by_system() -> Option<Self> {
+        use std::os::windows::process::CommandExt as _;
+        // Without a console window flashing up.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let query = |name: &str| {
+            std::process::Command::new("reg")
+                .args(["query", r"HKCU\Control Panel\International", "/v", name])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .and_then(|o| reg_value(&String::from_utf8_lossy(&o.stdout), name))
+        };
+        query("iMeasure")
+            .and_then(|v| from_imeasure(&v))
+            .or_else(|| query("LocaleName").map(|v| Self::from_locale(&v)))
+    }
+
+    /// macOS: `defaults read -g AppleMeasurementUnits` (Inches or Centimeters), or else
+    /// `AppleLocale`.
+    #[cfg(target_os = "macos")]
+    fn by_system() -> Option<Self> {
+        let read = |name: &str| {
+            std::process::Command::new("defaults")
+                .args(["read", "-g", name])
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+                .filter(|v| !v.is_empty())
+        };
+        read("AppleMeasurementUnits")
+            .and_then(|v| from_apple_units(&v))
+            .or_else(|| read("AppleLocale").map(|v| Self::from_locale(&v)))
+    }
+
+    /// Elsewhere the locale's environment variables say (the browser has none: metric).
+    #[cfg(not(any(windows, target_os = "macos")))]
+    fn by_system() -> Option<Self> {
+        None
+    }
+}
+
+/// The value of `name` in `reg query` output (a line `    name    REG_SZ    value`).
+#[cfg(any(windows, test))]
+fn reg_value(output: &str, name: &str) -> Option<String> {
+    output.lines().find_map(|line| {
+        let mut words = line.split_whitespace();
+        if !words.next()?.eq_ignore_ascii_case(name) || !words.next()?.starts_with("REG_") {
+            return None;
+        }
+        let value = words.collect::<Vec<_>>().join(" ");
+        (!value.is_empty()).then_some(value)
+    })
+}
+
+/// Windows' `iMeasure`: 0 metric, 1 US.
+#[cfg(any(windows, test))]
+fn from_imeasure(value: &str) -> Option<NewUnits> {
+    match value.trim() {
+        "0" => Some(NewUnits::Metric),
+        "1" => Some(NewUnits::Imperial),
+        _ => None,
+    }
+}
+
+/// macOS's `AppleMeasurementUnits`.
+#[cfg(any(target_os = "macos", test))]
+fn from_apple_units(value: &str) -> Option<NewUnits> {
+    match value.trim() {
+        "Inches" => Some(NewUnits::Imperial),
+        "Centimeters" => Some(NewUnits::Metric),
+        _ => None,
     }
 }
 
@@ -142,6 +228,59 @@ mod tests {
         ] {
             assert_eq!(NewUnits::from_locale(name), NewUnits::Metric, "{name}");
         }
+    }
+
+    /// Windows' `reg query` output, as it prints it.
+    #[test]
+    fn windows_region_settings_are_read() {
+        let out = |name: &str, kind: &str, value: &str| {
+            format!(
+                "\r\nHKEY_CURRENT_USER\\Control Panel\\International\r\n    {name}    {kind}    \
+                 {value}\r\n\r\n"
+            )
+        };
+        let us = out("iMeasure", "REG_SZ", "1");
+        assert_eq!(reg_value(&us, "iMeasure").as_deref(), Some("1"));
+        assert_eq!(
+            reg_value(&us, "iMeasure").and_then(|v| from_imeasure(&v)),
+            Some(NewUnits::Imperial)
+        );
+        let metric = out("iMeasure", "REG_SZ", "0");
+        assert_eq!(
+            reg_value(&metric, "iMeasure").and_then(|v| from_imeasure(&v)),
+            Some(NewUnits::Metric)
+        );
+        assert_eq!(from_imeasure("2"), None);
+        let locale = out("LocaleName", "REG_SZ", "en-US");
+        assert_eq!(
+            reg_value(&locale, "LocaleName").map(|v| NewUnits::from_locale(&v)),
+            Some(NewUnits::Imperial)
+        );
+        let locale = out("LocaleName", "REG_SZ", "en-GB");
+        assert_eq!(
+            reg_value(&locale, "LocaleName").map(|v| NewUnits::from_locale(&v)),
+            Some(NewUnits::Metric)
+        );
+        // Another value, an empty one, or an error message: nothing read.
+        assert_eq!(reg_value(&locale, "iMeasure"), None);
+        assert_eq!(reg_value(&out("iMeasure", "REG_SZ", ""), "iMeasure"), None);
+        assert_eq!(
+            reg_value(
+                "ERROR: The system was unable to find the specified registry key or value.",
+                "iMeasure"
+            ),
+            None
+        );
+    }
+
+    /// macOS's `defaults read -g` output.
+    #[test]
+    fn macos_measurement_units_are_read() {
+        assert_eq!(from_apple_units("Inches\n"), Some(NewUnits::Imperial));
+        assert_eq!(from_apple_units("Centimeters\n"), Some(NewUnits::Metric));
+        assert_eq!(from_apple_units(""), None);
+        assert_eq!(NewUnits::from_locale("en_US\n"), NewUnits::Imperial);
+        assert_eq!(NewUnits::from_locale("fr_FR"), NewUnits::Metric);
     }
 
     #[test]

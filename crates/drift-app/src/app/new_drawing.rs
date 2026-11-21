@@ -90,8 +90,16 @@ impl NewUnits {
         use std::os::windows::process::CommandExt as _;
         // Without a console window flashing up.
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        // Windows' own reg.exe, not whichever `reg` comes first on the search path.
+        let reg = std::path::PathBuf::from(
+            std::env::var_os("SystemRoot")
+                .filter(|r| !r.is_empty())
+                .unwrap_or_else(|| r"C:\Windows".into()),
+        )
+        .join("System32")
+        .join("reg.exe");
         let query = |name: &str| {
-            std::process::Command::new("reg")
+            std::process::Command::new(&reg)
                 .args(["query", r"HKCU\Control Panel\International", "/v", name])
                 .creation_flags(CREATE_NO_WINDOW)
                 .output()

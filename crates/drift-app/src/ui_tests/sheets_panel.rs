@@ -294,10 +294,11 @@ fn a_view_moves_to_another_sheet_from_its_right_click_menu() {
     let at = h.get_all_by_label(&title).next().unwrap().rect().center();
     right_click(&mut h, at);
     // (A submenu's button carries its arrow in its label.)
+    // (A wide menu near the panel's edge opens to the left of the pointer: find it by height.)
     let item = h
         .get_all_by_label_contains("Move to sheet")
         .map(|n| n.rect())
-        .find(|r| r.left() >= at.x - 1.0)
+        .find(|r| r.top() >= at.y - 4.0 && r.top() < at.y + 300.0)
         .expect("Move to sheet on a placed view")
         .center();
     h.hover_at(item);
@@ -311,7 +312,7 @@ fn a_view_moves_to_another_sheet_from_its_right_click_menu() {
     let to = h
         .get_all_by_label(&label)
         .map(|n| n.rect())
-        .filter(|r| r.width() < 200.0 && r.left() > at.x - 200.0)
+        .filter(|r| r.width() < 200.0 && r.top() >= at.y - 4.0)
         .map(|r| r.center())
         .next()
         .expect("the other sheet in the submenu");

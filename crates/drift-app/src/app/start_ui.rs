@@ -1,6 +1,7 @@
 //! The start panel over an empty sketch (new, open, recent files, a few tips), the About
 //! window, and Preferences.
 
+use crate::app::new_drawing::NewUnits;
 use crate::*;
 
 /// The graphics backend as people know it ("DirectX 12" for wgpu's `Dx12`).
@@ -248,6 +249,9 @@ impl DriftApp {
                                             self.drawing.file.clean_revision =
                                                 Some(self.drawing.editor.doc.revision());
                                         }
+                                        // And the next new drawings start in them too.
+                                        self.new_drawing.units =
+                                            NewUnits::of(self.drawing.editor.doc.units());
                                     }
                                     ui.label(
                                         egui::RichText::new(if units.length.is_metric() {
@@ -686,9 +690,30 @@ impl DriftApp {
     fn general_prefs(&mut self, ui: &mut egui::Ui) {
         theme::section(ui, "Appearance");
         theme::appearance(ui);
+        self.new_drawing_prefs(ui);
         theme::section(ui, "Crosshair");
         self.crosshair_prefs(ui);
         self.mouse_prefs(ui);
+    }
+
+    /// Preferences → General → New drawings: what a new drawing starts with (#495).
+    fn new_drawing_prefs(&mut self, ui: &mut egui::Ui) {
+        theme::section(ui, "New drawings use");
+        let options = [
+            (NewUnits::Metric, "Metric (mm)"),
+            (NewUnits::Imperial, "Imperial (ft-in)"),
+        ];
+        if let Some(units) = theme::segmented(ui, self.new_drawing.units, &options) {
+            self.new_drawing.units = units;
+        }
+        ui.label(
+            egui::RichText::new(
+                "Opening a file keeps its own units. One drawing's units are in File → \
+                 Drawing settings.",
+            )
+            .small()
+            .weak(),
+        );
     }
 
     /// Preferences → Layers: what picking an object does to the layers (drift-releases#19).

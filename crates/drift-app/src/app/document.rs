@@ -351,6 +351,7 @@ impl DriftApp {
         if let Some(prefs) = storage.get_string(KEY_VIEW) {
             self.apply_view_prefs(&prefs);
         }
+        self.new_drawing = app::new_drawing::NewDrawing::load(storage);
         self.start_with_new_rules();
         if let Some(recent) = storage.get_string(KEY_RECENT) {
             self.recent = recent
@@ -451,13 +452,16 @@ impl DriftApp {
     pub(crate) fn new_document(&self) -> Document {
         let mut doc = Document::new();
         doc.set_rules(self.new_rules);
+        self.new_drawing.apply(&mut doc);
         doc
     }
 
-    /// Give the drawing open now (a new, untouched one) the rules new drawings start with.
+    /// Give the drawing open now (a new, untouched one) the rules and units new drawings
+    /// start with.
     pub(crate) fn start_with_new_rules(&mut self) {
         let clean = !self.is_dirty();
         self.drawing.editor.doc.set_rules(self.new_rules);
+        self.new_drawing.apply(&mut self.drawing.editor.doc);
         if clean {
             self.drawing.file.clean_revision = Some(self.drawing.editor.doc.revision());
         }

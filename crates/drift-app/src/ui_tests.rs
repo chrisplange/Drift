@@ -41,6 +41,8 @@ mod layer_toggles;
 mod link;
 /// Kept corners and fillet centres drawn as muted crosses (#501).
 mod muted_points;
+/// What new drawings start with: Preferences → New drawings use (#495).
+mod new_drawing;
 /// Notes typed live on the canvas, as in a design app (#431).
 #[cfg(not(feature = "demo"))]
 mod note_typing;

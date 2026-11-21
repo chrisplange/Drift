@@ -706,6 +706,8 @@ pub struct DriftApp {
     /// The rules a new drawing starts with (how its areas and fills behave, its gap
     /// tolerance), and those an older file is given: kept on this computer.
     new_rules: drift_core::DrawingRules,
+    /// The units new drawings start in (Preferences → New drawings use): kept on this computer.
+    new_drawing: app::new_drawing::NewDrawing,
     /// The View menu's switches as of the last frame, to say in the status bar when one
     /// changes (by a key, a menu, the status bar or the palette).
     view_seen: Option<[bool; app::document::VIEW_FLAGS]>,
@@ -903,6 +905,7 @@ impl DriftApp {
             show_quick_bar: true,
             layer_on_pick: Default::default(),
             new_rules: drift_core::DrawingRules::default(),
+            new_drawing: Default::default(),
             view_seen: None,
             relations_seen: None,
             new_block_name: String::new(),
@@ -1374,6 +1377,7 @@ impl eframe::App for DriftApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         storage.set_string(KEY_VIEW, self.view_prefs());
         storage.set_string(KEY_DARK_LOOK, theme::dark_look().key().into());
+        self.new_drawing.save(storage);
         let recent: Vec<String> = self
             .recent
             .iter()

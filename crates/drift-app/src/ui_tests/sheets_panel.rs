@@ -347,6 +347,10 @@ fn a_view_dragged_onto_another_sheet_moves_there() {
         h.hover_at(from + (to - from) * (k as f32 / 8.0));
         h.run();
     }
+    // (Its name follows the pointer, on top: see the render.)
+    assert!(egui::DragAndDrop::has_payload_of_type::<
+        crate::app::sheets_ui::PlacedDrag,
+    >(&h.ctx));
     save_png("drift_ui_sheets_view_drag.png", &mut h);
     button(&h, to, false);
     h.run();
@@ -459,4 +463,56 @@ fn deleting_a_sheet_with_views_asks_first_and_an_empty_one_goes_at_once() {
     h.run();
     assert!(h.state().drawing.editor.doc.sheet(empty).is_none());
     assert!(h.query_by_label("Cancel").is_none());
+}
+
+/// How many rows labelled `label` read as selected (egui gives a selectable row's state to
+/// AccessKit as toggled).
+fn selected_rows(h: &Harness<'_, DriftApp>, label: &str) -> usize {
+    h.query_all_by(|n| {
+        n.label().as_deref() == Some(label) && format!("{:?}", n.toggled()) == "Some(True)"
+    })
+    .count()
+}
+
+#[test]
+fn one_row_reads_as_picked_when_a_view_under_the_sheet_is() {
+    let Some(mut h) = harness() else { return };
+    let title = sheet_with_a_view(&mut h);
+    let sheet = h.state().current_sheet().unwrap();
+    // Pick the view under its sheet: its row is the selection. The sheet stays shown (bold,
+    // still read as the open one) without its fill, and the Views list doesn't fill it again.
+    let at = h.get_all_by_label(&title).next().unwrap().rect().center();
+    click_at(&mut h, at);
+    h.state_mut().show_panel(Panel::Sheets);
+    h.run();
+    save_png("drift_ui_sheets_one_selection.png", &mut h);
+    assert_eq!(
+        h.state().drawing.view.sheet_pick,
+        crate::app::sheet_editor::SheetPick::View
+    );
+    assert_eq!(
+        selected_rows(&h, &title),
+        1,
+        "the nested row is picked, not the Views list's row too"
+    );
+    let label =
+        crate::app::sheet_editor::sheet_label(h.state().drawing.editor.doc.sheet(sheet).unwrap());
+    assert_eq!(
+        selected_rows(&h, &label),
+        2,
+        "the sheet still reads as the open one (its row, and its tab)"
+    );
+}
+
+#[test]
+fn a_layer_hidden_in_the_model_isnt_counted_as_left_out_of_the_view() {
+    let Some(mut h) = harness() else { return };
+    let (one, ..) = two_sheets(&mut h);
+    let id = h.state_mut().drawing.editor.add_layer("Hidden");
+    let mut layer = h.state().drawing.editor.doc.layer(id).cloned().unwrap();
+    layer.visible = false;
+    h.state_mut().drawing.editor.update_layer(id, layer);
+    view_inspector(&mut h, one);
+    // The view leaves nothing out: every layer that can show, shows.
+    assert!(h.query_by_value("All visible layers").is_some());
 }

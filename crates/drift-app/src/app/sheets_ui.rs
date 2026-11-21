@@ -262,6 +262,7 @@ fn on_chevron(row: egui::Rect, x: f32) -> bool {
 /// sheet in the selected row's look. `label` is what it is called (as its tab is).
 fn sheet_row(
     ui: &mut egui::Ui,
+    shown: bool,
     selected: bool,
     open: Option<bool>,
     label: &str,
@@ -272,8 +273,9 @@ fn sheet_row(
         egui::vec2(ui.available_width(), theme::LIST_ROW),
         egui::Sense::click(),
     );
+    // (Read as selected while it's the sheet shown, filled or not.)
     response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, label)
+        egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, shown, label)
     });
     let dark = ui.visuals().dark_mode;
     let n = theme::neutrals(dark);
@@ -298,7 +300,7 @@ fn sheet_row(
         ui.painter(),
         icon,
         crate::icons::Glyph::Sheets,
-        if selected {
+        if shown {
             theme::accent(dark)
         } else {
             n.secondary
@@ -318,7 +320,7 @@ fn sheet_row(
         );
         x = r.right() + 8.0;
     }
-    let family = if selected {
+    let family = if shown {
         theme::bold()
     } else {
         egui::FontFamily::Proportional
@@ -1359,7 +1361,64 @@ impl DriftApp {
 
     // ----- The Sheets tab --------------------------------------------------------------------
 
+    /// While a view is dragged from the Sheets panel (from under its sheet, or from the Views
+    /// list), its name follows the pointer, so you can see what you're carrying.
+    fn view_drag_label(&self, ctx: &egui::Context) {
+        let doc = &self.drawing.editor.doc;
+        let view = match egui::DragAndDrop::payload::<PlacedDrag>(ctx) {
+            Some(d) => doc
+                .sheet(d.sheet)
+                .and_then(|s| s.viewports.get(d.index))
+                .map(|p| p.view),
+            None => egui::DragAndDrop::payload::<ViewId>(ctx).map(|v| *v),
+        };
+        let (Some(view), Some(at)) = (view.and_then(|v| doc.view(v)), ctx.pointer_latest_pos())
+        else {
+            return;
+        };
+        let style = ctx.style_of(ctx.theme());
+        let dark = style.visuals.dark_mode;
+        let n = theme::neutrals(dark);
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Tooltip,
+            egui::Id::new("view_drag_label"),
+        ));
+        let galley = painter.layout_no_wrap(
+            view.title().to_owned(),
+            egui::FontId::proportional(theme::size::BODY),
+            n.text,
+        );
+        let pad = egui::vec2(8.0, 4.0);
+        let rect = egui::Rect::from_min_size(
+            at + egui::vec2(14.0, 12.0),
+            egui::vec2(galley.size().x + 22.0, galley.size().y) + pad * 2.0,
+        );
+        painter.rect(
+            rect,
+            4.0,
+            style.visuals.window_fill,
+            style.visuals.window_stroke,
+            egui::StrokeKind::Inside,
+        );
+        let icon = egui::Rect::from_center_size(
+            egui::pos2(rect.left() + pad.x + 7.0, rect.center().y),
+            egui::Vec2::splat(14.0),
+        );
+        crate::icons::glyph(
+            &painter,
+            icon,
+            crate::icons::Glyph::View,
+            theme::accent(dark),
+        );
+        painter.galley(
+            egui::pos2(rect.left() + pad.x + 22.0, rect.top() + pad.y),
+            galley,
+            n.text,
+        );
+    }
+
     pub(crate) fn sheets_panel(&mut self, ui: &mut egui::Ui) {
+        self.view_drag_label(ui.ctx());
         let area = egui::ScrollArea::vertical().auto_shrink([false, false]);
         let output = theme::pane_scroll(ui, area, |ui| self.sheets_contents(ui));
         self.panel_scrolled(ui, crate::dock::Panel::Sheets, &output);
@@ -1421,9 +1480,13 @@ impl DriftApp {
                 .unwrap_or_default();
             let open_id = ui.id().with(("sheet_open", *id));
             let open = ui.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(true);
+            // The sheet shown is bold; it's filled only while it is what's picked (not a
+            // view on it, whose own row is filled then), so one row reads as the selection.
+            let on_view = self.drawing.view.sheet_pick == crate::app::sheet_editor::SheetPick::View;
             let row = sheet_row(
                 ui,
                 shown,
+                shown && !on_view,
                 (!placed.is_empty()).then_some(open),
                 label,
                 number,
@@ -2983,7 +3046,10 @@ impl DriftApp {
         let mut zoom = None;
         let mut chose = None;
         for (id, name, detail) in &rows {
-            let picked = self.drawing.picked_view == Some(*id);
+            // (A view picked on the sheet shown is filled under its sheet, not here too.)
+            let on_sheet = self.drawing.view.sheet_preview
+                && self.drawing.view.sheet_pick == crate::app::sheet_editor::SheetPick::View;
+            let picked = self.drawing.picked_view == Some(*id) && !on_sheet;
             let response = view_row(ui, picked, false, name, detail);
             response.dnd_set_drag_payload(*id);
             if response.clicked() || response.drag_started() {
@@ -3180,12 +3246,16 @@ impl DriftApp {
             .iter()
             .filter(|(id, _, d)| *d && !view.hidden_layers.contains(id))
             .count();
-        let summary = if shown == drawn && drawn == layers.len() {
+        // (A layer hidden or not printed in the Layers panel is off in every view: the
+        // summary is what this view leaves out.)
+        let summary = if shown == layers.len() {
             "All layers".to_owned()
+        } else if shown == drawn && shown > 0 {
+            "All visible layers".to_owned()
         } else if shown == 0 {
             "No layers".to_owned()
         } else {
-            format!("{shown} of {} layers", layers.len())
+            format!("{shown} of {drawn} layers")
         };
         theme::row(ui, "Layers", |ui| {
             let id = ui.id().with("view_layers");

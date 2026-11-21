@@ -207,7 +207,8 @@ from sheet** and **Delete view…**. Below are two sections.
 - **Shows:** **Dimensions**, **Notes** and **Construction**. **Construction** puts the view's construction geometry on the sheet as thin, light grey
   dashed lines (off to start with). It prints and exports to PDF and SVG as the preview
   shows it, in the sheet's **Colours**. Points and an import's fill edges stay out.
-- **Layers:** reads **All layers**, or how many it draws ("3 of 12 layers"). Open it and
+- **Layers:** reads **All layers** (**All visible layers** when some are hidden in the
+  **Layers** panel), or how many of those it draws ("3 of 12 layers"). Open it and
   untick a layer to leave it out of this view, wherever the view is placed: a setting-out
   layer in the plan but not in the details, say. **All** and **None** set them all, and with
   many layers a search box finds one. Dimensions and notes on nothing but that layer's

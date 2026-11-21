@@ -801,7 +801,7 @@ impl DriftApp {
         let done = match what {
             Picking::Logo => self
                 .set_logo(&String::from_utf8_lossy(&contents))
-                .map(|()| format!("{name} is now the title block logo")),
+                .map(|()| format!("{name} is now the title block logo, for new drawings too")),
             Picking::Font => self.drawing.editor.add_font_file(contents).map(|family| {
                 format!("{family} is now kept in this drawing: pick it in a font menu")
             }),

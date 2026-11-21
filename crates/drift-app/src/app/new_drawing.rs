@@ -1,10 +1,13 @@
 //! What a new drawing starts with on this computer, beyond its rules: its units (Preferences →
-//! New drawings use, #495). Kept in eframe's storage with the app's other settings.
+//! New drawings use, #495) and its title block logo (#429). Kept in eframe's storage with the
+//! app's other settings.
 
 use drift_core::{Document, Units};
 
 /// Which units new drawings start in ("metric" or "imperial").
 const KEY_UNITS: &str = "drift.new_units";
+/// The title block logo new drawings start with, as SVG text ("" for none).
+const KEY_LOGO: &str = "drift.default_logo";
 
 /// The units a new drawing starts in: millimetres, or architectural feet and inches.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -77,6 +80,9 @@ impl NewUnits {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct NewDrawing {
     pub(crate) units: NewUnits,
+    /// The title block logo, as SVG text ("" for none): the last one chosen for a drawing.
+    /// Removing a drawing's logo leaves it; Preferences clears or replaces it.
+    pub(crate) logo: String,
 }
 
 impl NewDrawing {
@@ -86,16 +92,25 @@ impl NewDrawing {
             .get_string(KEY_UNITS)
             .and_then(|v| NewUnits::parse(&v))
             .unwrap_or_else(NewUnits::by_locale);
-        Self { units }
+        // (One this Drift can't read is dropped rather than given to every new drawing.)
+        let logo = storage
+            .get_string(KEY_LOGO)
+            .filter(|svg| !svg.is_empty() && drift_draft::logo::parse(svg).is_ok())
+            .unwrap_or_default();
+        Self { units, logo }
     }
 
     pub(crate) fn save(&self, storage: &mut dyn eframe::Storage) {
         storage.set_string(KEY_UNITS, self.units.key().into());
+        storage.set_string(KEY_LOGO, self.logo.clone());
     }
 
     /// Give `doc`, a new drawing, what new drawings start with.
     pub(crate) fn apply(&self, doc: &mut Document) {
         doc.set_units(self.units.units());
+        if !self.logo.is_empty() {
+            doc.set_logo(self.logo.clone());
+        }
     }
 }
 

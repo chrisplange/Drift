@@ -714,6 +714,48 @@ impl DriftApp {
             .small()
             .weak(),
         );
+        // The title block logo (#429): the last one chosen for a drawing, until cleared here.
+        let doc_logo = self.drawing.editor.doc.logo();
+        let has = !self.new_drawing.logo.is_empty();
+        let same = self.new_drawing.logo == doc_logo;
+        let (mut take, mut clear) = (false, false);
+        theme::row(ui, "Logo", |ui| {
+            ui.label(
+                egui::RichText::new(match (has, same) {
+                    (false, _) => "None",
+                    (true, true) => "This drawing's",
+                    (true, false) => "Chosen earlier",
+                })
+                .weak(),
+            );
+            take = ui
+                .add_enabled(
+                    !doc_logo.is_empty() && !same,
+                    egui::Button::new("Use this drawing's"),
+                )
+                .on_hover_text("Start new drawings with this drawing's title block logo")
+                .clicked();
+            clear = has
+                && ui
+                    .button("Clear")
+                    .on_hover_text(
+                        "Start new drawings without a logo (drawings that have one keep it)",
+                    )
+                    .clicked();
+        });
+        if take {
+            self.new_drawing.logo = self.drawing.editor.doc.logo().to_owned();
+        } else if clear {
+            self.new_drawing.logo.clear();
+        }
+        ui.label(
+            egui::RichText::new(
+                "A logo chosen for a sheet's title block is kept for new drawings. Removing \
+                 it from a drawing leaves it here.",
+            )
+            .small()
+            .weak(),
+        );
     }
 
     /// Preferences → Layers: what picking an object does to the layers (drift-releases#19).

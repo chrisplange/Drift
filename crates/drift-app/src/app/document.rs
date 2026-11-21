@@ -456,8 +456,8 @@ impl DriftApp {
         doc
     }
 
-    /// Give the drawing open now (a new, untouched one) the rules and units new drawings
-    /// start with.
+    /// Give the drawing open now (a new, untouched one) the rules, units and logo new
+    /// drawings start with.
     pub(crate) fn start_with_new_rules(&mut self) {
         let clean = !self.is_dirty();
         self.drawing.editor.doc.set_rules(self.new_rules);
@@ -962,6 +962,8 @@ impl DriftApp {
         self.drawing.editor.doc.begin();
         self.drawing.editor.doc.set_logo(svg.to_owned());
         self.drawing.editor.commit("Title block logo");
+        // New drawings start with it too (#429).
+        self.new_drawing.logo = svg.to_owned();
         Ok(())
     }
 

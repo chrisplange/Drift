@@ -706,7 +706,7 @@ pub struct DriftApp {
     /// The rules a new drawing starts with (how its areas and fills behave, its gap
     /// tolerance), and those an older file is given: kept on this computer.
     new_rules: drift_core::DrawingRules,
-    /// The units new drawings start in (Preferences → New drawings use): kept on this computer.
+    /// The units and title block logo new drawings start with: kept on this computer.
     new_drawing: app::new_drawing::NewDrawing,
     /// The View menu's switches as of the last frame, to say in the status bar when one
     /// changes (by a key, a menu, the status bar or the palette).

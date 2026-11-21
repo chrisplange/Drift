@@ -536,11 +536,7 @@ pub trait Tool {
     /// point on the same layer is joined; one on another layer is snapped to and held there
     /// (#428).
     fn would_join(&self, ed: &Editor, onto: EntityId) -> bool {
-        self.joins_points()
-            && match self.joins_from() {
-                Some(from) => crate::editor::points_share_layer(&ed.doc, from, onto),
-                None => crate::editor::point_on_layer(&ed.doc, onto, ed.doc.current_layer()),
-            }
+        self.joins_points() && join_target(ed, self.joins_from(), onto).is_some()
     }
 
     /// Entities that must not be snapped to (e.g. the geometry being dragged).
@@ -652,6 +648,23 @@ fn any_typed(typed: [Option<f64>; 2]) -> bool {
 /// A pointer at an exact location, without snaps (typed input creates new points).
 fn exact(p: &Pointer, at: DVec2) -> Pointer {
     Pointer::new(at, p.tolerance)
+}
+
+/// The point a click or drop on point `onto` joins (with Auto merge): `onto` itself if it is
+/// on the layer of `from` (the point dropped; else the current layer, drawn on), else the
+/// point of that layer held to it or placed on it, else none: a point on another layer is
+/// only snapped to (#428).
+pub(crate) fn join_target(ed: &Editor, from: Option<EntityId>, onto: EntityId) -> Option<EntityId> {
+    let doc = &ed.doc;
+    let layer = doc.current_layer();
+    let ours = |q: EntityId| match from {
+        Some(from) => q != from && crate::editor::points_share_layer(doc, from, q),
+        None => crate::editor::point_on_layer(doc, q, layer),
+    };
+    if ours(onto) || from == Some(onto) {
+        return Some(onto);
+    }
+    crate::editor::layer_twin(doc, onto, ours)
 }
 
 /// Add the automatic relation `relation` (from a snap or guide) to `line`, a segment a tool

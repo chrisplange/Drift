@@ -19,17 +19,54 @@ pub fn point_on_layer(doc: &drift_core::Document, point: EntityId, layer: LayerI
             .any(|u| doc.get(u).is_some_and(|e| e.layer == layer))
 }
 
+/// The layers `point` is on (see [`point_on_layer`]).
+pub fn point_layers(doc: &drift_core::Document, point: EntityId) -> BTreeSet<LayerId> {
+    doc.get(point)
+        .map(|e| e.layer)
+        .into_iter()
+        .chain(
+            doc.users_of(point)
+                .filter_map(|u| doc.get(u).map(|e| e.layer)),
+        )
+        .collect()
+}
+
 /// Whether points `a` and `b` share a layer (see [`point_on_layer`]): only then may they
 /// become one point.
 pub fn points_share_layer(doc: &drift_core::Document, a: EntityId, b: EntityId) -> bool {
-    let layers = |p: EntityId| {
-        doc.get(p)
-            .map(|e| e.layer)
-            .into_iter()
-            .chain(doc.users_of(p).filter_map(|u| doc.get(u).map(|e| e.layer)))
-            .collect::<BTreeSet<LayerId>>()
-    };
-    !layers(a).is_disjoint(&layers(b))
+    !point_layers(doc, a).is_disjoint(&point_layers(doc, b))
+}
+
+/// A point other than `point` that `accept` takes and that stands in for it: one a
+/// Coincident relation ties to it, else one exactly where it is (the lowest id). Where a
+/// point on another layer was snapped to, the point of the layer drawn on that is held to
+/// it (or only placed on it) is the one to join, so strokes on one layer still meet in one
+/// point however the snap picked between the two (#428).
+pub fn layer_twin(
+    doc: &drift_core::Document,
+    point: EntityId,
+    accept: impl Fn(EntityId) -> bool,
+) -> Option<EntityId> {
+    let at = doc.point(point).ok()?;
+    let tied = doc
+        .constraints_on(point)
+        .find_map(|c| match doc.constraint(c) {
+            Some(&drift_core::Constraint::Coincident { a, b }) => {
+                let other = if a == point { b } else { a };
+                (other != point && accept(other)).then_some(other)
+            }
+            _ => None,
+        });
+    if tied.is_some() {
+        return tied;
+    }
+    let reach = 1e-9 * at.abs().max_element().max(1.0);
+    doc.iter()
+        .filter(|(id, e)| *id != point && e.kind.is_point())
+        .filter(|(id, _)| doc.point(*id).is_ok_and(|q| q.distance(at) <= reach))
+        .map(|(id, _)| id)
+        .filter(|id| accept(*id))
+        .min()
 }
 
 /// Filled shapes picked as objects: their fills, and the curves of their outlines.

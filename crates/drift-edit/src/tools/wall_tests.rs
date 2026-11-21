@@ -178,6 +178,62 @@ fn a_wall_ending_on_another_layers_wall_keeps_its_own_point() {
     assert!(corner(0) && corner(1), "both still end at the corner");
 }
 
+/// #428: with automatic relations, walls meeting at a corner across layers are held there
+/// by a Coincident relation: the pochés meet as before, and moving one wall takes the
+/// corner along.
+#[test]
+fn walls_across_layers_are_held_at_their_corner_with_relations() {
+    let mut ed = editor();
+    ed.prefs.auto_relations = true;
+    run(&mut ed, &[v(0.0, 0.0), v(100.0, 0.0)]);
+    let other = ed.add_layer("Other");
+    ed.set_current_layer(other);
+    run(&mut ed, &[v(100.0, 0.0), v(100.0, 100.0)]);
+    let pts = centre_points(&ed);
+    assert!(
+        pts[0].iter().all(|p| !pts[1].contains(p)),
+        "no shared corner"
+    );
+    // (A poché per layer, as walls on two layers always had, meeting cleanly.)
+    assert_eq!(ed.doc.fills().count(), 2);
+    assert!((poche_area(&mut ed) - 2000.0).abs() < 1e-6);
+    let held = ed.doc.constraints().any(|(_, c)| {
+        matches!(*c, drift_core::Constraint::Coincident { a, b }
+            if (pts[0].contains(&a) && pts[1].contains(&b))
+                || (pts[0].contains(&b) && pts[1].contains(&a)))
+    });
+    assert!(held, "held by a Coincident relation");
+    // Move the first wall down: the second wall's end comes along.
+    let w0 = ed.doc.walls().next().unwrap().0;
+    let curves = ed.wall_curves(w0);
+    // (Dragged whole, as the Select tool moves it.)
+    let dragged: Vec<Param> = ed
+        .doc
+        .defining_points(curves.iter().copied())
+        .iter()
+        .copied()
+        .flat_map(Param::point)
+        .collect();
+    ed.doc.begin();
+    assert!(ed.drag(&curves, v(0.0, -20.0), &dragged));
+    ed.commit("Move");
+    let pts = centre_points(&ed);
+    let at = |p: &EntityId| ed.doc.point(*p).unwrap();
+    assert!(
+        pts[1]
+            .iter()
+            .any(|p| at(p).distance(v(100.0, -20.0)) < 1e-6),
+        "the corner stays closed: {:?}",
+        pts[1].iter().map(at).collect::<Vec<_>>()
+    );
+    assert_eq!(ed.doc.fills().count(), 2);
+    // (The second wall is 20 longer now.)
+    assert!(
+        (poche_area(&mut ed) - 2200.0).abs() < 1e-6,
+        "the corner stays clean"
+    );
+}
+
 #[test]
 fn a_wall_ending_on_a_line_stops_against_it() {
     let mut ed = editor();

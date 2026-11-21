@@ -443,8 +443,8 @@ impl SelectTool {
         if let (Some(from), Some(into)) = (point, p.merge_point())
             && from != into
         {
-            if crate::editor::points_share_layer(&ed.doc, from, into) {
-                if ed.doc.merge_points(from, into).is_ok() {
+            if let Some(into) = join_target(ed, Some(from), into) {
+                if from != into && ed.doc.merge_points(from, into).is_ok() {
                     ed.selection = [into].into();
                 }
             } else if p.relations

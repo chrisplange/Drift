@@ -161,12 +161,16 @@ impl Editor {
             .collect();
 
         // Gaps: pairs of open ends within the tolerance, the closest first, each end in one
-        // pair. Two ends of the same curve are its length, not a gap.
+        // pair. Two ends of the same curve are its length, not a gap; ends on different
+        // layers are never joined, so they aren't one either (#428).
         let mut pairs: Vec<(f64, usize, usize)> = Vec::new();
         for i in 0..open.len() {
             for j in i + 1..open.len() {
                 let d = open[i].2.distance(open[j].2);
-                if d <= tolerance && open[i].1 != open[j].1 {
+                if d <= tolerance
+                    && open[i].1 != open[j].1
+                    && crate::editor::points_share_layer(doc, open[i].0, open[j].0)
+                {
                     pairs.push((d, i, j));
                 }
             }
@@ -264,7 +268,10 @@ impl Editor {
     fn try_fix(&mut self, issue: &Issue, merge: bool) -> bool {
         self.doc.begin();
         let applied = match *issue {
-            Issue::Gap { keep, join, .. } => self.doc.merge_points(join, keep).is_ok(),
+            Issue::Gap { keep, join, .. } => {
+                crate::editor::points_share_layer(&self.doc, keep, join)
+                    && self.doc.merge_points(join, keep).is_ok()
+            }
             Issue::Short { point, curve, .. } => {
                 self.doc.contains(point)
                     && self.doc.contains(curve)
@@ -493,5 +500,36 @@ mod tests {
         // The two lines now share their corner.
         assert_eq!(ed.doc.users_of(pts[1]).count(), 2);
         assert!(ed.check_sketch(DEFAULT_TOLERANCE).is_empty());
+    }
+
+    /// #428: an end placed on another layer's end isn't a gap to close (points on two
+    /// layers are never joined).
+    #[test]
+    fn ends_on_different_layers_are_not_a_gap() {
+        let mut ed = Editor::default();
+        ed.doc.begin();
+        let a = ed.doc.add_point(v(0.0, 0.0));
+        let b = ed.doc.add_point(v(10.0, 0.0));
+        ed.doc.add_line(a, b).unwrap();
+        ed.commit("Line");
+        let other = ed.add_layer("Other");
+        ed.set_current_layer(other);
+        ed.doc.begin();
+        let c = ed.doc.add_point(v(10.0, 0.0));
+        let d = ed.doc.add_point(v(10.0, 10.0));
+        ed.doc.add_line(c, d).unwrap();
+        ed.commit("Line");
+        let issues = ed.check_sketch(DEFAULT_TOLERANCE);
+        assert!(
+            !issues.iter().any(|i| matches!(i, Issue::Gap { .. })),
+            "{issues:?}"
+        );
+        // Even asked to, a fix doesn't merge them.
+        assert!(!ed.fix_issue(&Issue::Gap {
+            keep: b,
+            join: c,
+            distance: 0.0
+        }));
+        assert!(ed.doc.contains(b) && ed.doc.contains(c));
     }
 }

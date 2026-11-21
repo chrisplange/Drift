@@ -1,9 +1,11 @@
 //! Weld: picked points made one point, at the active point (1) or at their centre (Shift+1).
 //! Points on different layers are held together by a Coincident relation instead (#428).
 
-use drift_core::{Constraint, DVec2, EntityId};
+use std::collections::BTreeSet;
 
-use crate::editor::{Editor, points_share_layer};
+use drift_core::{Constraint, DVec2, EntityId, LayerId};
+
+use crate::editor::{Editor, point_layers};
 
 /// Where welded points end up.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -81,35 +83,44 @@ impl Editor {
         }
         // Points on the kept point's layer become it. A point on another layer is moved onto
         // it and held there by a Coincident relation instead (#428), after becoming one with
-        // any other picked point on its own layer.
+        // any other picked point on its own layer. Layers are judged as they were before the
+        // weld, so the order points were picked in doesn't change what joins.
         let target = self.doc.point(keep).unwrap_or_default();
-        let mut held: Vec<EntityId> = Vec::new();
-        for &p in points.iter().filter(|p| **p != keep) {
-            let into = if points_share_layer(&self.doc, p, keep) {
+        let layers: Vec<BTreeSet<LayerId>> =
+            points.iter().map(|p| point_layers(&self.doc, *p)).collect();
+        let keep_layers = point_layers(&self.doc, keep);
+        // (Each held point, with its layers as they were.)
+        let mut held: Vec<(EntityId, &BTreeSet<LayerId>)> = Vec::new();
+        for (&p, p_layers) in points.iter().zip(&layers).filter(|(p, _)| **p != keep) {
+            let into = if !p_layers.is_disjoint(&keep_layers) {
                 Some(keep)
             } else {
                 held.iter()
-                    .copied()
-                    .find(|h| points_share_layer(&self.doc, p, *h))
+                    .find(|(_, h)| !p_layers.is_disjoint(h))
+                    .map(|(h, _)| *h)
             };
-            let merged = match into {
-                Some(into) => self.doc.merge_points(p, into).is_ok(),
+            let failed = match into {
+                Some(into) => self.doc.merge_points(p, into).err().map(|_| {
+                    "Can't weld the two ends of one line or arc: it would shrink to nothing"
+                        .to_owned()
+                }),
                 None => {
-                    held.push(p);
-                    self.doc.set_point(p, target).is_ok()
-                        && (self.coincident(p, keep)
-                            || self
-                                .doc
-                                .add_constraint(Constraint::Coincident { a: p, b: keep })
-                                .is_ok())
+                    held.push((p, p_layers));
+                    match self.doc.set_point(p, target) {
+                        Err(e) => Some(e.to_string()),
+                        Ok(()) if self.coincident(p, keep) => None,
+                        Ok(()) => self
+                            .doc
+                            .add_constraint(Constraint::Coincident { a: p, b: keep })
+                            .err()
+                            .map(|e| format!("Can't hold the points together: {e}")),
+                    }
                 }
             };
-            if !merged {
+            if let Some(why) = failed {
                 self.doc.rollback();
                 self.sync();
-                return Err(
-                    "Can't weld the two ends of one line or arc: it would shrink to nothing".into(),
-                );
+                return Err(why);
             }
         }
         let label = match at {

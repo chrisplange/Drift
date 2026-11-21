@@ -516,8 +516,10 @@ impl Editor {
             if !(touched(a) || touched(b)) || !self.doc.contains(a) || !self.doc.contains(b) {
                 continue;
             }
-            // Walls on different layers join by where they are, never by one point (#428).
-            if !crate::editor::points_share_layer(&self.doc, a, b) {
+            // Walls on different layers join by where they are, never by one point (#428):
+            // with automatic relations, a Coincident relation holds the corner together.
+            let across = !crate::editor::points_share_layer(&self.doc, a, b);
+            if across && !self.prefs.auto_relations {
                 continue;
             }
             let (Some(&(wa, Some((pa, qa)))), Some(&(wb, Some((pb, qb))))) =
@@ -537,6 +539,22 @@ impl Editor {
             }
             let _ = self.doc.set_point(a, x);
             let _ = self.doc.set_point(b, x);
+            if across {
+                let held = self.doc.constraints_on(a).any(|c| {
+                    matches!(
+                        self.doc.constraint(c),
+                        Some(&drift_core::Constraint::Coincident { a: p, b: q })
+                            if (p, q) == (a, b) || (p, q) == (b, a)
+                    )
+                });
+                if !held {
+                    let _ = self
+                        .doc
+                        .add_constraint(drift_core::Constraint::Coincident { a, b });
+                }
+                any = true;
+                continue;
+            }
             if self.doc.merge_points(b, a).is_err() {
                 continue;
             }

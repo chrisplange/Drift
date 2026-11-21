@@ -152,7 +152,12 @@ impl WallTool {
                 Some(&(_, pt, pos, true)) if on_layer(ed, pt) => {
                     return (Anchor::existing(pos, pt), None);
                 }
-                Some(&(_, _, pos, true)) => return (Anchor::at(pos), Some(Join::Corner)),
+                // Another layer's corner: joined by where it is, held there by a Coincident
+                // relation with automatic relations (made when the walls are, #428).
+                Some(&(_, _, pos, true)) => {
+                    let hold = ed.prefs.auto_relations;
+                    return (Anchor::at(pos).held(hold), Some(Join::Corner));
+                }
                 Some(_) => return (Anchor::at(on), Some(Join::Corner)),
                 None => {}
             }
@@ -238,6 +243,8 @@ impl WallTool {
         relation: Option<GuideKind>,
     ) {
         let first = self.corners[0];
+        // (Landing on another layer's corner, to be held there: #428.)
+        let held = to.hold;
         let gap = ed.doc.rules().gap_tolerance;
         let closes = self.corners.len() >= 2
             && join.is_none()
@@ -280,7 +287,7 @@ impl WallTool {
         };
         ed.doc.set_style(curve, LineKind::Construction);
         if matches!(seg, Seg::Line { .. }) {
-            auto_relation(ed, relation, curve, closes || to.existing == Some(b));
+            auto_relation(ed, relation, curve, closes || to.existing.is_some() || held);
         }
         let end = |j: Option<Join>| drift_core::WallEnd {
             join: true,

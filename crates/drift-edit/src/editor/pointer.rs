@@ -187,8 +187,14 @@ impl Anchor {
             existing: None,
             midpoint_of: None,
             on_curve: None,
-            hold: true,
+            hold: false,
         }
+    }
+
+    /// The same anchor, holding a point on another layer it lands on with a Coincident
+    /// relation when `hold` (pass the automatic relations preference).
+    pub fn held(self, hold: bool) -> Self {
+        Self { hold, ..self }
     }
 
     /// An existing point, at `pos`.
@@ -230,10 +236,11 @@ impl Anchor {
     }
 }
 
-/// `point` itself if it is on `layer`; else a new point at `pos` (where it was snapped to),
-/// held to `point` by a Coincident relation when `hold` (automatic relations): geometry on
-/// one layer is snapped to, never joined to, geometry on another (#428). Call inside a
-/// transaction.
+/// `point` itself if it is on `layer`; else the point of `layer` already held to it or
+/// placed on it (see [`layer_twin`](super::layers::layer_twin)); else a new point at `pos`
+/// (where it was snapped to), held to `point` by a Coincident relation when `hold`
+/// (automatic relations): geometry on one layer is snapped to, never joined to, geometry on
+/// another (#428). Call inside a transaction.
 pub fn own_or_held(
     doc: &mut Document,
     point: EntityId,
@@ -243,6 +250,11 @@ pub fn own_or_held(
 ) -> EntityId {
     if super::layers::point_on_layer(doc, point, layer) {
         return point;
+    }
+    if let Some(twin) =
+        super::layers::layer_twin(doc, point, |q| super::layers::point_on_layer(doc, q, layer))
+    {
+        return twin;
     }
     let at = doc.point(point).unwrap_or(pos);
     let own = doc.add_point(at);

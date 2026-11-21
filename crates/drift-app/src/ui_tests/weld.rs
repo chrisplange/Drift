@@ -70,3 +70,28 @@ fn typing_a_one_into_a_tools_field_does_not_weld() {
     h.run();
     assert_eq!(points(&h), 4, "nothing welded");
 }
+
+/// #428: 1 on points on different layers holds them together without merging, and the
+/// status bar says so.
+#[test]
+fn one_across_layers_holds_the_points_and_says_so() {
+    let Some(mut h) = harness() else { return };
+    let [b, c] = two_ends(&mut h);
+    let ed = &mut h.state_mut().drawing.editor;
+    let other = ed.add_layer("Other");
+    let second = ed.doc.users_of(c).next().unwrap();
+    ed.selection = [second].into();
+    ed.move_selection_to_layer(other);
+    ed.selection = [b, c].into();
+    ed.set_active(Some(c));
+    h.key_press(Key::Num1);
+    h.run();
+    assert_eq!(points(&h), 4, "nothing merged");
+    let doc = &h.state().drawing.editor.doc;
+    assert!(doc.point(b).unwrap().distance(DVec2::new(12.0, 2.0)) < 1e-9);
+    let status = h.state().status.as_ref().map(|s| s.text.clone());
+    assert_eq!(
+        status.as_deref(),
+        Some("On different layers: held together, not merged")
+    );
+}

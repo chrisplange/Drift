@@ -516,6 +516,10 @@ impl Editor {
             if !(touched(a) || touched(b)) || !self.doc.contains(a) || !self.doc.contains(b) {
                 continue;
             }
+            // Walls on different layers join by where they are, never by one point (#428).
+            if !crate::editor::points_share_layer(&self.doc, a, b) {
+                continue;
+            }
             let (Some(&(wa, Some((pa, qa)))), Some(&(wb, Some((pb, qb))))) =
                 (ends.get(&a), ends.get(&b))
             else {

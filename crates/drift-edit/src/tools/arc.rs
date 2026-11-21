@@ -103,6 +103,7 @@ impl ArcTool {
                 }),
             midpoint_of: None,
             on_curve: None,
+            hold: p.relations,
         };
         ed.doc.begin();
         let c = center.resolve(&mut ed.doc);

@@ -1537,8 +1537,11 @@ impl DriftApp {
             if let Some(snap) = p.snap {
                 overlay::snap_marker(&painter, &map, &snap, colors.snap);
                 let mut label = snap.kind.label().to_owned();
-                // A click or drop here joins the point: say so, and fill the marker.
-                if p.merge_point().is_some() && self.tool.joins_points() {
+                // A click or drop here joins the point: say so, and fill the marker. (Not a
+                // point on another layer: that is only snapped to, #428.)
+                if let Some(onto) = p.merge_point()
+                    && self.tool.would_join(&self.drawing.editor, onto)
+                {
                     overlay::join_marker(&painter, &map, &snap, colors.snap);
                     label = format!("{label} · Join");
                 }

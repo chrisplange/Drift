@@ -10,6 +10,28 @@ use drift_core::{
 
 use super::Editor;
 
+/// Whether `point` is on `layer`: its own layer is, or a curve using it is. A point on
+/// other layers only is snapped to but never shared or merged with (#428).
+pub fn point_on_layer(doc: &drift_core::Document, point: EntityId, layer: LayerId) -> bool {
+    doc.get(point).is_some_and(|e| e.layer == layer)
+        || doc
+            .users_of(point)
+            .any(|u| doc.get(u).is_some_and(|e| e.layer == layer))
+}
+
+/// Whether points `a` and `b` share a layer (see [`point_on_layer`]): only then may they
+/// become one point.
+pub fn points_share_layer(doc: &drift_core::Document, a: EntityId, b: EntityId) -> bool {
+    let layers = |p: EntityId| {
+        doc.get(p)
+            .map(|e| e.layer)
+            .into_iter()
+            .chain(doc.users_of(p).filter_map(|u| doc.get(u).map(|e| e.layer)))
+            .collect::<BTreeSet<LayerId>>()
+    };
+    !layers(a).is_disjoint(&layers(b))
+}
+
 /// Filled shapes picked as objects: their fills, and the curves of their outlines.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PickedShapes {

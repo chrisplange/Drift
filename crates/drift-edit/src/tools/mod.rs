@@ -21,6 +21,8 @@ mod arc;
 mod base_point;
 mod circle;
 pub mod corners;
+#[cfg(test)]
+mod cross_layer_tests;
 mod curve_ops;
 mod dimension;
 mod ellipse;
@@ -522,6 +524,23 @@ pub trait Tool {
     /// the snap marker then shows a join.
     fn joins_points(&self) -> bool {
         false
+    }
+
+    /// The point a drop would join to another (the one being dragged), if any: else what
+    /// is drawn joins, on the current layer.
+    fn joins_from(&self) -> Option<EntityId> {
+        None
+    }
+
+    /// Whether a click or drop now would join the point `onto` (with Auto merge on): only a
+    /// point on the same layer is joined; one on another layer is snapped to and held there
+    /// (#428).
+    fn would_join(&self, ed: &Editor, onto: EntityId) -> bool {
+        self.joins_points()
+            && match self.joins_from() {
+                Some(from) => crate::editor::points_share_layer(&ed.doc, from, onto),
+                None => crate::editor::point_on_layer(&ed.doc, onto, ed.doc.current_layer()),
+            }
     }
 
     /// Entities that must not be snapped to (e.g. the geometry being dragged).

@@ -104,10 +104,17 @@ impl WallTool {
     /// it, it closes; along it, a T into itself), except its last segment.
     fn join_at(&self, ed: &mut Editor, p: &Pointer, at: DVec2) -> (Anchor, Option<Join>) {
         let owners = ed.wall_owners();
+        // A point on another layer is only snapped to, not taken (#428).
+        let layer = ed.doc.current_layer();
+        let on_layer =
+            |ed: &Editor, pt: EntityId| crate::editor::point_on_layer(&ed.doc, pt, layer);
         if let Some(pt) = p.snapped_point()
             && !owners.generated(pt)
             && let Ok(pos) = ed.doc.point(pt)
         {
+            if !on_layer(ed, pt) {
+                return (Anchor::at(pos), None);
+            }
             return (Anchor::existing(pos, pt), None);
         }
         let probe = p
@@ -142,7 +149,10 @@ impl WallTool {
             }
             corners.sort_by(|a, b| a.0.total_cmp(&b.0));
             match corners.first() {
-                Some(&(_, pt, pos, true)) => return (Anchor::existing(pos, pt), None),
+                Some(&(_, pt, pos, true)) if on_layer(ed, pt) => {
+                    return (Anchor::existing(pos, pt), None);
+                }
+                Some(&(_, _, pos, true)) => return (Anchor::at(pos), Some(Join::Corner)),
                 Some(_) => return (Anchor::at(on), Some(Join::Corner)),
                 None => {}
             }

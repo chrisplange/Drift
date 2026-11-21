@@ -147,6 +147,37 @@ fn a_wall_ending_on_anothers_end_shares_its_point() {
     assert!((poche_area(&mut ed) - (2000.0)).abs() < 1e-6);
 }
 
+/// The centreline points of each wall, in wall order.
+fn centre_points(ed: &Editor) -> Vec<Vec<EntityId>> {
+    ed.doc
+        .walls()
+        .map(|(_, w)| drift_geom::walls::regen::centreline(&ed.doc, w).unwrap().1)
+        .collect()
+}
+
+/// #428: a wall ending on the end of a wall on another layer doesn't take its point (they
+/// still join by where they are); on the same layer it does.
+#[test]
+fn a_wall_ending_on_another_layers_wall_keeps_its_own_point() {
+    let mut ed = editor();
+    run(&mut ed, &[v(0.0, 0.0), v(100.0, 0.0)]);
+    let other = ed.add_layer("Other");
+    ed.set_current_layer(other);
+    run(&mut ed, &[v(100.0, 0.0), v(100.0, 100.0)]);
+    assert_eq!(ed.doc.walls().count(), 2);
+    let pts = centre_points(&ed);
+    assert!(
+        pts[0].iter().all(|p| !pts[1].contains(p)),
+        "no shared corner: {pts:?}"
+    );
+    let corner = |i: usize| {
+        pts[i]
+            .iter()
+            .any(|p| ed.doc.point(*p).unwrap().distance(v(100.0, 0.0)) < 1e-6)
+    };
+    assert!(corner(0) && corner(1), "both still end at the corner");
+}
+
 #[test]
 fn a_wall_ending_on_a_line_stops_against_it() {
     let mut ed = editor();

@@ -731,7 +731,7 @@ impl DriftApp {
             "Join points dropped on points",
         )
         .on_hover_text(
-            "Auto merge: a dragged point dropped on another, or a line or arc drawn on another shape's point, shares it. Ctrl flips it for one drop · Shift+Alt+M",
+            "Auto merge: a dragged point dropped on another, or a line or arc drawn on another shape's point, shares it (on the same layer only). Ctrl flips it for one drop · Shift+Alt+M",
         );
         crate::theme::checkbox(
             ui,

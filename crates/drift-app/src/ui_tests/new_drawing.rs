@@ -315,3 +315,26 @@ fn undoing_a_logo_choice_puts_the_default_back() {
     assert_eq!(logo(&h), LOGO_SVG);
     assert!(h.state().new_drawing.logo.is_empty());
 }
+
+/// #429: choosing the logo the drawing already has makes no undo step, and no choice to undo:
+/// the next undo still takes back the real choice, and the default with it.
+#[test]
+fn choosing_the_same_logo_again_leaves_undo_as_it_was() {
+    let Some(mut h) = harness() else { return };
+    h.state_mut().set_logo(LOGO_SVG).unwrap();
+    let steps = h.state().drawing.editor.history.recorded();
+    h.state_mut().set_logo(LOGO_SVG).unwrap();
+    assert_eq!(
+        h.state().drawing.editor.history.recorded(),
+        steps,
+        "no step"
+    );
+    h.state_mut().undo();
+    assert!(logo(&h).is_empty());
+    assert!(
+        h.state().new_drawing.logo.is_empty(),
+        "the default goes with it"
+    );
+    h.state_mut().redo();
+    assert_eq!(h.state().new_drawing.logo, LOGO_SVG);
+}

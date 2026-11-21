@@ -201,9 +201,13 @@ impl NewDrawing {
         }
     }
 
-    /// A logo chosen for a drawing: new drawings start with it too.
-    pub(crate) fn choose_logo(&mut self, svg: &str) {
+    /// A logo chosen for a drawing: new drawings start with it too. One the drawing `had`
+    /// already makes no undo step, so there is no choice to undo either.
+    pub(crate) fn choose_logo(&mut self, svg: &str, had: bool) {
         let before = std::mem::replace(&mut self.logo, svg.to_owned());
+        if had {
+            return;
+        }
         self.chosen.push(LogoChoice {
             before,
             chosen: svg.to_owned(),

@@ -962,11 +962,12 @@ impl DriftApp {
     /// Make an SVG the title blocks' logo (one undo step), if it can be read.
     pub(crate) fn set_logo(&mut self, svg: &str) -> Result<(), String> {
         drift_draft::logo::parse(svg)?;
+        let had = self.drawing.editor.doc.logo() == svg;
         self.drawing.editor.doc.begin();
         self.drawing.editor.doc.set_logo(svg.to_owned());
         self.drawing.editor.commit("Title block logo");
         // New drawings start with it too (#429).
-        self.new_drawing.choose_logo(svg);
+        self.new_drawing.choose_logo(svg, had);
         Ok(())
     }
 

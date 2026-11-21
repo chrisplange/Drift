@@ -16,8 +16,11 @@ when all of these hold:
   updated by its session, since a push made with this job's token wouldn't start CI).
 
 A merge made with GITHUB_TOKEN doesn't fire `push` workflows, so afterwards it dispatches CI
-on main, and the website build when the PR touched what the website is built from.
-Needs GH_TOKEN with contents, pull-requests and actions write, and PR (number) or HEAD_SHA.
+on main, and the website build when the PR touched what the website is built from. Nor does
+GitHub close the issues a PR names with "Fixes #N" when GITHUB_TOKEN merges it, so the job
+closes them itself.
+Needs GH_TOKEN with contents, pull-requests, issues and actions write, and PR (number) or
+HEAD_SHA.
 """
 
 from __future__ import annotations
@@ -72,6 +75,17 @@ def touches_website(files: list[str]) -> bool:
     return any(f.startswith(WEBSITE_PREFIXES) for f in files)
 
 
+def issues_to_close(refs: list[dict], repo: str) -> list[int]:
+    """The issue numbers in a PR's closingIssuesReferences that live in `repo`."""
+    owner, name = repo.split("/")
+    out = []
+    for r in refs or []:
+        rr = r.get("repository") or {}
+        if rr.get("name") == name and (rr.get("owner") or {}).get("login") == owner:
+            out.append(int(r["number"]))
+    return sorted(set(out))
+
+
 def gh(*args: str) -> str:
     return subprocess.check_output(["gh", *args], text=True)
 
@@ -112,6 +126,14 @@ def main() -> int:
     sha = info["headRefOid"]
     print(f"PR #{pr}: auto tier, every required check green; merging {sha}")
     subprocess.check_call(["gh", "pr", "merge", pr, "-R", repo, "--merge", "--match-head-commit", sha])
+    refs = json.loads(gh("pr", "view", pr, "-R", repo, "--json", "closingIssuesReferences",
+                         "--jq", ".closingIssuesReferences"))
+    for n in issues_to_close(refs, repo):
+        # The merge has happened; a failed close is reported, not fatal.
+        done = subprocess.run(["gh", "issue", "close", str(n), "-R", repo, "--reason", "completed",
+                               "--comment", f"Fixed by #{pr} (merged by the auto-merge job)."])
+        if done.returncode != 0:
+            print(f"PR #{pr}: could not close issue #{n}")
     subprocess.check_call(["gh", "workflow", "run", "ci.yml", "-R", repo, "--ref", "main"])
     if touches_website(files):
         subprocess.check_call(["gh", "workflow", "run", "website.yml", "-R", repo, "--ref", "main"])

@@ -270,15 +270,25 @@ impl crate::DriftApp {
         }
     }
 
-    /// Whether the drawing open now is a new one nothing has been done to: no file, nothing
-    /// to save, nothing in it.
+    /// Whether the drawing open now is a new one nothing has been done to: started as new
+    /// (not opened or restored), no file, nothing to save, nothing in it.
     pub(crate) fn untouched_new_drawing(&self) -> bool {
         let doc = &self.drawing.editor.doc;
-        self.drawing.file.path.is_none()
+        self.drawing_from_new
+            && self.drawing.file.path.is_none()
             && !self.is_dirty()
             && doc.is_empty()
             && doc.texts().next().is_none()
             && doc.underlays().next().is_none()
+    }
+
+    /// A drawing kept from last time was just restored. The session doesn't say whether it was
+    /// started as a new one: one still named Untitled, with no file, nothing to save and
+    /// nothing in it, was (an opened file keeps its own name, also in the browser, where it
+    /// has no path). That one starts as new drawings do now.
+    pub(crate) fn kept_blank_restored(&mut self) {
+        self.drawing_from_new = self.drawing.file.name == crate::UNTITLED;
+        self.refresh_untouched_drawing();
     }
 
     /// Give the drawing open now what new drawings start with, if it is an untouched new one

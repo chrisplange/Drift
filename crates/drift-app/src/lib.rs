@@ -708,6 +708,12 @@ pub struct DriftApp {
     new_rules: drift_core::DrawingRules,
     /// The units and title block logo new drawings start with: kept on this computer.
     new_drawing: app::new_drawing::NewDrawing,
+    /// Whether the drawing open now was started as a new one (File → New, an import as a new
+    /// drawing, the blank one at start), not opened or restored: only such a drawing, while
+    /// nothing has been done to it, follows a change to what new drawings start with.
+    drawing_from_new: bool,
+    /// Set by `new_document`, taken by `replace_document`: the drawing it installs is new.
+    next_from_new: std::cell::Cell<bool>,
     /// The View menu's switches as of the last frame, to say in the status bar when one
     /// changes (by a key, a menu, the status bar or the palette).
     view_seen: Option<[bool; app::document::VIEW_FLAGS]>,
@@ -906,6 +912,8 @@ impl DriftApp {
             layer_on_pick: Default::default(),
             new_rules: drift_core::DrawingRules::default(),
             new_drawing: Default::default(),
+            drawing_from_new: true,
+            next_from_new: Default::default(),
             view_seen: None,
             relations_seen: None,
             new_block_name: String::new(),

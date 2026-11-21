@@ -150,6 +150,7 @@ impl DriftApp {
     ) {
         self.tool_cancel();
         self.tool = ToolKind::Select.create();
+        self.drawing_from_new = self.next_from_new.take();
         // A file from before drawings kept their rules had this computer's.
         if meta.older_rules {
             doc.set_rules(self.new_rules);
@@ -442,7 +443,7 @@ impl DriftApp {
                 };
                 self.replace_document(doc, name, path, meta, !dirty);
                 // A blank drawing kept from last time starts as new ones do now.
-                self.refresh_untouched_drawing();
+                self.kept_blank_restored();
             }
             Err(e) => self.hold_session = self.keep_unrestored(text, &e, dir),
         }
@@ -456,6 +457,7 @@ impl DriftApp {
         let mut doc = Document::new();
         doc.set_rules(self.new_rules);
         self.new_drawing.apply(&mut doc);
+        self.next_from_new.set(true);
         doc
     }
 

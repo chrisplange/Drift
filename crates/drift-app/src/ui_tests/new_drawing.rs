@@ -64,7 +64,12 @@ fn imperial_new_drawings_from_preferences() {
     let Some(mut fresh) = harness() else { return };
     fresh.state_mut().restore_session(&MemoryStorage::default());
     assert_eq!(fresh.state().new_drawing.units, NewUnits::Metric);
-    keep_session(&mut storage, &drift_core::Document::new(), None);
+    keep_session(
+        &mut storage,
+        &drift_core::Document::new(),
+        crate::UNTITLED,
+        None,
+    );
     fresh.state_mut().restore_session(&storage);
     fresh.run();
     assert_eq!(fresh.state().new_drawing.units, NewUnits::Imperial);
@@ -84,13 +89,18 @@ fn draw_a_point(h: &mut Harness<'_, DriftApp>) {
     h.run();
 }
 
-/// Keep `doc` in `storage` as last session's drawing, clean, from `path` (or none).
-fn keep_session(storage: &mut MemoryStorage, doc: &drift_core::Document, path: Option<&str>) {
+/// Keep `doc` in `storage` as last session's drawing `name`, clean, from `path` (or none).
+fn keep_session(
+    storage: &mut MemoryStorage,
+    doc: &drift_core::Document,
+    name: &str,
+    path: Option<&str>,
+) {
     storage.set_string(
         crate::KEY_DOCUMENT,
         drift_io::save(doc, &Default::default()),
     );
-    storage.set_string(crate::KEY_NAME, "Kept.drift".into());
+    storage.set_string(crate::KEY_NAME, name.into());
     storage.set_string(crate::KEY_PATH, path.unwrap_or_default().into());
     storage.set_string(crate::KEY_DIRTY, "0".into());
 }
@@ -112,7 +122,7 @@ fn a_kept_drawing_keeps_its_units_and_logo() {
         (drawn, None),
         (drift_core::Document::new(), Some(path.as_str())),
     ] {
-        keep_session(&mut storage, &doc, path);
+        keep_session(&mut storage, &doc, crate::UNTITLED, path);
         let Some(mut h) = harness() else { return };
         h.state_mut().restore_session(&storage);
         h.run();
@@ -266,7 +276,12 @@ fn the_default_logo_is_cleared_or_replaced_in_preferences() {
 fn the_untouched_blank_follows_the_default_logo() {
     let mut storage = MemoryStorage::default();
     storage.set_string("drift.default_logo", LOGO_SVG.into());
-    keep_session(&mut storage, &drift_core::Document::new(), None);
+    keep_session(
+        &mut storage,
+        &drift_core::Document::new(),
+        crate::UNTITLED,
+        None,
+    );
     let Some(mut h) = harness() else { return };
     h.state_mut().restore_session(&storage);
     h.run();
@@ -337,4 +352,43 @@ fn choosing_the_same_logo_again_leaves_undo_as_it_was() {
     );
     h.state_mut().redo();
     assert_eq!(h.state().new_drawing.logo, LOGO_SVG);
+}
+
+/// A drawing opened, not started as new, is left alone by a change to what new drawings start
+/// with, even with no path (as in the browser), clean and empty: a template of sheets, units
+/// and a logo keeps them. The same after a restart, when the session kept it under its name.
+#[test]
+fn an_opened_empty_drawing_keeps_its_units_and_logo() {
+    let Some(mut h) = harness() else { return };
+    let mut doc = drift_core::Document::new();
+    doc.set_logo(OTHER_LOGO.into());
+    h.state_mut()
+        .replace_document(doc, "Template.drift".into(), None, Default::default(), true);
+    h.state_mut().show_settings = true;
+    h.run();
+    h.run();
+    h.get_by_label("Imperial (ft-in)").click();
+    h.run();
+    h.get_by_label("Use this drawing's").click();
+    h.run();
+    h.get_by_label("Clear").click();
+    h.run();
+    assert_eq!(h.state().new_drawing.units, NewUnits::Imperial);
+    assert!(h.state().new_drawing.logo.is_empty());
+    assert_eq!(units(&h), Units::metric(), "its own units");
+    assert_eq!(logo(&h), OTHER_LOGO, "its own logo");
+    assert!(!h.state().is_dirty());
+
+    // Kept as last session's drawing under its own name: restored as it was.
+    let mut storage = MemoryStorage::default();
+    eframe::App::save(h.state_mut(), &mut storage);
+    assert_eq!(
+        storage.get_string(crate::KEY_NAME).as_deref(),
+        Some("Template.drift")
+    );
+    let Some(mut next) = harness() else { return };
+    next.state_mut().restore_session(&storage);
+    next.run();
+    assert_eq!(units(&next), Units::metric());
+    assert_eq!(logo(&next), OTHER_LOGO);
 }

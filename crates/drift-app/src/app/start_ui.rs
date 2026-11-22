@@ -694,6 +694,19 @@ impl DriftApp {
         theme::section(ui, "Crosshair");
         self.crosshair_prefs(ui);
         self.mouse_prefs(ui);
+        theme::section(ui, "Motion");
+        crate::theme::checkbox(ui, &mut self.animate_solves, "Animate solves").on_hover_text(
+            "When a typed value, a new relation, an undo or a redo moves geometry, it eases              into place instead of jumping. Only the drawing moves: picking and readouts use              where things are at once. Never while dragging",
+        );
+        if drift_platform::reduce_motion() {
+            ui.label(
+                egui::RichText::new(
+                    "Your system asks for reduced motion, so nothing animates whatever this says.",
+                )
+                .small()
+                .weak(),
+            );
+        }
     }
 
     /// Preferences → General → New drawings: what a new drawing starts with (#495).

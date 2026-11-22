@@ -19,6 +19,33 @@ pub mod fonts;
 pub mod log_file;
 pub mod memory;
 
+/// Whether the system asks apps to keep motion down (an accessibility setting): the browser's
+/// `prefers-reduced-motion`. Native builds answer no for now (reading Windows' and macOS's
+/// settings needs a system crate: #514's follow-up).
+pub fn reduce_motion() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use wasm_bindgen::JsCast as _;
+        let global = js_sys::global();
+        let Some(match_media) = js_sys::Reflect::get(&global, &"matchMedia".into())
+            .ok()
+            .and_then(|f| f.dyn_into::<js_sys::Function>().ok())
+        else {
+            return false;
+        };
+        match_media
+            .call1(&global, &"(prefers-reduced-motion: reduce)".into())
+            .ok()
+            .and_then(|list| js_sys::Reflect::get(&list, &"matches".into()).ok())
+            .and_then(|m| m.as_bool())
+            .unwrap_or(false)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        false
+    }
+}
+
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};

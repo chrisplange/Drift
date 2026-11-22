@@ -482,19 +482,16 @@ first group:
 Grouping Inputs / Layers / Results makes the table explain itself. The status bar chip
 gives variants a home without a pane. Compare ghosts over the live drawing are easy to read.
 
-## 10. Decisions for the owner
+## 10. Decided (owner, 2026-11-22)
 
-1. **Where the table lives:** the bottom drawer (recommended), a floating window, or a
-   Variants tab.
-2. **The name in the UI:** "Variants" (recommended), keep "Options", or "Configurations".
-3. **Whole-sketch options:** keep them as *Snapshots* at the foot of the table
-   (recommended), move them somewhere else (e.g. File ▸ Snapshots), or retire new ones.
-4. **Layer columns:** shown/hidden only (recommended), or a real "suppress": hidden
-   geometry drops out of the solve. That's a solver change.
-5. **Driving dimensions:** always promoted to a variable when added to the table
-   (recommended), or allowed as their own column kind.
-6. **Shortcut:** Shift+V, or another.
-7. **Store the active row in the file** (`active_option`): yes (recommended) or keep it
-   derived only.
-8. **Scope of the first build:** PRs 1–5 (table, MCP, failures, CSV), with gallery and
-   halo #5 sheets after (recommended), or include halo #5 from the start.
+The owner took every recommended default.
+
+1. **Where the table lives:** the bottom drawer under the canvas.
+2. **The name in the UI:** "Variants".
+3. **Whole-sketch options:** they become *Snapshots* at the foot of the table.
+4. **Layer columns:** shown/hidden only. No solver suppress.
+5. **Driving dimensions:** always promoted to a variable when added to the table.
+6. **Shortcut:** Shift+V.
+7. **Active row:** stored in the file (`active_option`).
+8. **Scope of the first build:** PRs 1–5 (table, MCP, failures, CSV). Gallery and halo #5
+   sheets come after.

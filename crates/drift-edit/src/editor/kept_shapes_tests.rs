@@ -298,3 +298,95 @@ fn a_typed_angle_turns_the_free_side_whichever_is_named_first() {
         );
     }
 }
+
+/// An open or closed run of lines through `at`.
+fn lines_through(ed: &mut Editor, at: &[DVec2], closed: bool) -> (Vec<EntityId>, Vec<EntityId>) {
+    ed.doc.begin();
+    let points: Vec<EntityId> = at.iter().map(|p| ed.doc.add_point(*p)).collect();
+    let n = if closed {
+        points.len()
+    } else {
+        points.len() - 1
+    };
+    let lines = (0..n)
+        .map(|i| {
+            ed.doc
+                .add_line(points[i], points[(i + 1) % points.len()])
+                .unwrap()
+        })
+        .collect();
+    ed.commit("Lines");
+    (points, lines)
+}
+
+/// An angle between `a` and `b` at the value it measures.
+fn measured_angle(ed: &mut Editor, a: EntityId, b: EntityId) -> ConstraintId {
+    let probe = Constraint::Angle { a, b, degrees: 0.0 };
+    let degrees = drift_solver::measure(&ed.doc, &probe).unwrap();
+    ed.add_constraints("Angle", &[Constraint::Angle { a, b, degrees }])
+        .unwrap()[0]
+}
+
+/// Where a typed angle doesn't stretch the line it turns, the sketch stays square as before
+/// (a second fix released the neighbours' directions on every angle: a rectangle's top
+/// tilted 12.8° at 135°, a zigzag's third run 11.6°).
+#[test]
+fn a_typed_angle_that_stretches_nothing_keeps_the_rest_square() {
+    let mut ed = Editor::default();
+    let (p, l) = lines_through(
+        &mut ed,
+        &[v(0.0, 0.0), v(100.0, 0.0), v(100.0, 50.0), v(0.0, 50.0)],
+        true,
+    );
+    let angle = measured_angle(&mut ed, l[0], l[1]);
+    ed.set_dimension(angle, 135.0).unwrap();
+    let (c, d) = (ed.doc.point(p[2]).unwrap(), ed.doc.point(p[3]).unwrap());
+    assert!((c.y - d.y).abs() < 1e-6, "top tilted: {c:?} {d:?}");
+
+    let mut ed = Editor::default();
+    let (p, l) = lines_through(
+        &mut ed,
+        &[v(0.0, 0.0), v(50.0, 0.0), v(50.0, 40.0), v(100.0, 40.0)],
+        false,
+    );
+    let angle = measured_angle(&mut ed, l[0], l[1]);
+    ed.set_dimension(angle, 135.0).unwrap();
+    let (c, d) = (ed.doc.point(p[2]).unwrap(), ed.doc.point(p[3]).unwrap());
+    assert!((c.y - d.y).abs() < 1e-6, "third run tilted: {c:?} {d:?}");
+}
+
+/// An angle changed by more than 90° keeps the side it was on: 145° then 54° is a true
+/// 54° (the turn the short way met it mirrored across the upright, its corner showing
+/// 126°), and back to 90° the triangle is as it was.
+#[test]
+fn a_typed_angle_keeps_its_side_past_ninety_degrees() {
+    let mut t = triangle(false);
+    t.ed.set_dimension(t.angle, 145.0).unwrap();
+    t.ed.set_dimension(t.angle, 54.0).unwrap();
+    let at = t.ed.doc.point(t.free).unwrap();
+    assert!(at.distance(turned_top(54.0)) < 1e-6, "{at:?}");
+    t.ed.set_dimension(t.angle, 90.0).unwrap();
+    let at = t.ed.doc.point(t.free).unwrap();
+    assert!(at.distance(v(188.0, 77.0)) < 1e-6, "{at:?}");
+    // Down to 30° and up to 119°: the closing side more than triples, and the turn stands.
+    let mut t = triangle(false);
+    t.ed.set_dimension(t.angle, 30.0).unwrap();
+    t.ed.set_dimension(t.angle, 119.0).unwrap();
+    let at = t.ed.doc.point(t.free).unwrap();
+    assert!(at.distance(turned_top(119.0)) < 1e-6, "{at:?}");
+}
+
+/// A line hanging off the turned side's free end keeps its direction as well as its
+/// length (a second fix swung it from 35.7° to -15.4°).
+#[test]
+fn a_typed_angle_carries_a_hanging_line_at_its_direction() {
+    let mut t = triangle(false);
+    t.ed.doc.begin();
+    let end = t.ed.doc.add_point(v(220.0, 100.0));
+    t.ed.doc.add_line(t.free, end).unwrap();
+    t.ed.commit("Tail");
+    let before = t.ed.doc.point(end).unwrap() - t.ed.doc.point(t.free).unwrap();
+    t.ed.set_dimension(t.angle, 145.0).unwrap();
+    let now = t.ed.doc.point(end).unwrap() - t.ed.doc.point(t.free).unwrap();
+    assert!(now.distance(before) < 1e-6, "{before:?} -> {now:?}");
+}

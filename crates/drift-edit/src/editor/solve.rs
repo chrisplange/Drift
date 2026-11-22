@@ -224,33 +224,61 @@ impl Editor {
 
     /// [`kept_shapes`](Self::kept_shapes), but the lines in `turning` turn rather than
     /// stretch: they keep their lengths at a line's usual rank (not below it), and the
-    /// lines joined to their moving ends (a point of theirs that `keep`, held in place,
-    /// doesn't define) give up their directions, which are what a turned line would
-    /// otherwise stretch to meet. Nothing ranks above a radius or another direction.
+    /// lines [released](Self::released_by_turning) by them give up their directions, which
+    /// are what a turned line would otherwise stretch to meet. Nothing ranks above a radius
+    /// or another direction.
     pub(crate) fn kept_shapes_turned(
         &self,
         turning: &HashSet<EntityId>,
         keep: Option<EntityId>,
     ) -> KeptShapes {
         let mut kept = self.kept_shapes(turning);
+        for id in turning {
+            if kept.lengths.contains_key(id) {
+                kept.length_ranks.insert(*id, LENGTH_YIELD);
+            }
+        }
+        let released = self.released_by_turning(turning, keep);
+        kept.directions.retain(|id, _| !released.contains(id));
+        kept
+    }
+
+    /// The lines that give up their directions for the lines in `turning` to turn: those
+    /// joined to a moving end of one (a point of it that `keep`, held in place, doesn't
+    /// define), not themselves turning, and not hanging from it (a line whose other end
+    /// nothing else uses or relates is carried along at its direction instead).
+    pub(crate) fn released_by_turning(
+        &self,
+        turning: &HashSet<EntityId>,
+        keep: Option<EntityId>,
+    ) -> HashSet<EntityId> {
         let held: HashSet<EntityId> = keep
             .map(|k| self.doc.defining_points([k]).into_iter().collect())
             .unwrap_or_default();
-        let mut moving: HashSet<EntityId> = HashSet::new();
-        for id in turning {
-            if let Some(EntityKind::Line { a, b }) = self.doc.get(*id).map(|e| e.kind) {
-                if kept.lengths.contains_key(id) {
-                    kept.length_ranks.insert(*id, LENGTH_YIELD);
+        let moving: HashSet<EntityId> = turning
+            .iter()
+            .filter_map(|id| match self.doc.get(*id)?.kind {
+                EntityKind::Line { a, b } => Some([a, b]),
+                _ => None,
+            })
+            .flatten()
+            .filter(|p| !held.contains(p))
+            .collect();
+        let hangs = |p: EntityId| {
+            self.doc.users_of(p).count() == 1 && self.doc.constraints_on(p).next().is_none()
+        };
+        moving
+            .iter()
+            .flat_map(|p| self.doc.users_of(*p).collect::<Vec<_>>())
+            .filter(|line| !turning.contains(line))
+            .filter(|line| match self.doc.get(*line).map(|e| e.kind) {
+                Some(EntityKind::Line { a, b }) => {
+                    let other = if moving.contains(&a) { b } else { a };
+                    !hangs(other)
                 }
-                moving.extend([a, b].into_iter().filter(|p| !held.contains(p)));
-            }
-        }
-        kept.directions.retain(|id, _| {
-            turning.contains(id)
-                || !matches!(self.doc.get(*id).map(|e| e.kind),
-                    Some(EntityKind::Line { a, b }) if moving.contains(&a) || moving.contains(&b))
-        });
-        kept
+                _ => false,
+            })
+            .collect()
     }
 
     /// What the driving relations reach through shared points and relations: all an edit's

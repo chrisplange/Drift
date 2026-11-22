@@ -1608,6 +1608,7 @@ pub fn measure(doc: &Document, constraint: &Constraint) -> Option<f64> {
         Constraint::Distance { a, b, .. } => Some(point(a)?.distance(point(b)?)),
         Constraint::Radius { curve, .. } => radius_of(doc, curve),
         Constraint::Diameter { curve, .. } => radius_of(doc, curve).map(|r| 2.0 * r),
+        Constraint::RadialGap { a, b, .. } => Some((radius_of(doc, a)? - radius_of(doc, b)?).abs()),
         Constraint::HorizontalDistance { a, b, .. } => Some((point(b)?.x - point(a)?.x).abs()),
         Constraint::VerticalDistance { a, b, .. } => Some((point(b)?.y - point(a)?.y).abs()),
         Constraint::PointLineDistance {

@@ -8635,3 +8635,80 @@ fn space_from_the_default_centre_steps_to_left_then_right_then_centre() {
     assert_eq!(seen, [Justify::Left, Justify::Right, Justify::Centre]);
     tool.handle(Input::Finish, &mut ed);
 }
+
+/// Two concentric circles take a gap dimension across the ring: picked one then the other,
+/// it measures the difference of their radii, and typed it sets it. Circles round different
+/// centres don't.
+#[test]
+fn two_concentric_circles_take_a_gap_dimension() {
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let c = ed.doc.add_point(v(0.0, 0.0));
+    let inner = ed.doc.add_circle(c, 40.0).unwrap();
+    let outer = ed.doc.add_circle(c, 65.0).unwrap();
+    let off = ed.doc.add_point(v(200.0, 0.0));
+    let apart = ed.doc.add_circle(off, 20.0).unwrap();
+    ed.commit("Rings");
+    let mut dim = DimensionTool::default();
+    click(&mut ed, &mut dim, v(40.0, 0.0));
+    click(&mut ed, &mut dim, v(65.0, 0.0));
+    assert_eq!(dim.base, Some(dimension::DimBase::RadialGap(inner, outer)));
+    click(&mut ed, &mut dim, v(52.0, 10.0));
+    let (id, c) = ed
+        .doc
+        .constraints()
+        .find(|(_, c)| matches!(c, Constraint::RadialGap { .. }))
+        .map(|(id, c)| (id, *c))
+        .expect("gap dimension");
+    assert!((c.value().unwrap() - 25.0).abs() < 1e-9, "{c:?}");
+    ed.set_dimension(id, 30.0).unwrap();
+    let r = |id| drift_solver::radius_of(&ed.doc, id).unwrap();
+    assert!(
+        (r(outer) - r(inner) - 30.0).abs() < 1e-8,
+        "{} {}",
+        r(inner),
+        r(outer)
+    );
+    // (Round different centres: no gap.)
+    assert_eq!(
+        DimensionTool::pair(
+            &ed,
+            picking::Target::Entity(inner),
+            picking::Target::Entity(apart),
+        ),
+        None
+    );
+}
+
+/// A gap typed across a ring with its inner circle sized moves the outer circle alone.
+#[test]
+fn a_typed_gap_moves_the_circle_its_size_leaves_free() {
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let c = ed.doc.add_point(v(0.0, 0.0));
+    let inner = ed.doc.add_circle(c, 40.0).unwrap();
+    let outer = ed.doc.add_circle(c, 65.0).unwrap();
+    ed.commit("Rings");
+    ed.add_constraints(
+        "Diameter",
+        &[Constraint::Diameter {
+            curve: inner,
+            value: 80.0,
+        }],
+    )
+    .unwrap();
+    let gap = ed
+        .add_constraints(
+            "Gap",
+            &[Constraint::RadialGap {
+                a: inner,
+                b: outer,
+                value: 25.0,
+            }],
+        )
+        .unwrap()[0];
+    ed.set_dimension(gap, 30.0).unwrap();
+    let r = |id| drift_solver::radius_of(&ed.doc, id).unwrap();
+    assert!((r(inner) - 40.0).abs() < 1e-8, "inner {}", r(inner));
+    assert!((r(outer) - 70.0).abs() < 1e-8, "outer {}", r(outer));
+}

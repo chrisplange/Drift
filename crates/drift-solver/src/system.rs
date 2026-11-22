@@ -680,6 +680,23 @@ impl System {
                     source: Some(cid),
                     owner: None,
                 }),
+                // The larger radius less the smaller, whichever is larger as drawn (equal: `a`).
+                Constraint::RadialGap { a, b, value } => {
+                    let (ra, rb) = (
+                        crate::radius_of(doc, a).unwrap_or(0.0),
+                        crate::radius_of(doc, b).unwrap_or(0.0),
+                    );
+                    let (big, small) = if ra >= rb { (a, b) } else { (b, a) };
+                    rows.push(Row {
+                        equation: Equation::LengthGap {
+                            a: radius(big),
+                            b: radius(small),
+                            value,
+                        },
+                        source: Some(cid),
+                        owner: None,
+                    });
+                }
                 Constraint::Concentric { a, b } | Constraint::Coradial { a, b } => {
                     let (ca, cb) = (center(a), center(b));
                     equalities.push((x(ca), x(cb)));

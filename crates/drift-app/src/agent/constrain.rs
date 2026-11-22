@@ -184,6 +184,23 @@ fn dimension(doc: &Document, d: &Value) -> Result<Constraint, String> {
             curve: e("curve")?,
             value: 1.0,
         },
+        "radial_gap" => {
+            let (a, b) = (e("a")?, e("b")?);
+            let together = |id| match doc.get(id).map(|x| x.kind) {
+                Some(EntityKind::Circle { center, .. } | EntityKind::Arc { center, .. }) => {
+                    doc.point(center).ok()
+                }
+                _ => None,
+            };
+            match (together(a), together(b)) {
+                (Some(ca), Some(cb)) if ca.distance(cb) <= drift_core::tolerance::NEAR => {}
+                (Some(_), Some(_)) => {
+                    return Err("radial_gap needs two concentric circles or arcs: relate them concentric first".into());
+                }
+                _ => return Err("radial_gap measures between two circles or arcs".into()),
+            }
+            Constraint::RadialGap { a, b, value: 1.0 }
+        }
         "angle" => Constraint::Angle {
             a: e("a")?,
             b: e("b")?,

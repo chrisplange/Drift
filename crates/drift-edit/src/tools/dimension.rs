@@ -12,6 +12,8 @@ pub(super) enum DimBase {
     Circular(EntityId, bool),
     Angle(EntityId, EntityId),
     PointLine(EntityId, EntityId),
+    /// Two concentric circles or arcs: the gap between them.
+    RadialGap(EntityId, EntityId),
 }
 
 /// What a row of dimensions goes from and to: a point (or a line's midpoint), or a line
@@ -122,6 +124,29 @@ fn alongside(ed: &Editor, l1: EntityId, l2: EntityId) -> bool {
     }
 }
 
+/// Whether `a` and `b` are two circles or arcs of different sizes round one centre (the
+/// same point, or centres drawn or held together): what a gap dimension measures across.
+fn concentric(ed: &Editor, a: EntityId, b: EntityId) -> bool {
+    let center = |id: EntityId| match ed.doc.get(id)?.kind {
+        EntityKind::Circle { center, .. } | EntityKind::Arc { center, .. } => {
+            ed.doc.point(center).ok()
+        }
+        _ => None,
+    };
+    let (Some(ca), Some(cb)) = (center(a), center(b)) else {
+        return false;
+    };
+    let (Some(ra), Some(rb)) = (
+        drift_solver::radius_of(&ed.doc, a),
+        drift_solver::radius_of(&ed.doc, b),
+    ) else {
+        return false;
+    };
+    let extent = ca.abs().max_element().max(cb.abs().max_element()) + ra.max(rb);
+    let near = drift_core::tolerance::same(extent);
+    a != b && ca.distance(cb) <= near && (ra - rb).abs() > near
+}
+
 impl DimensionTool {
     /// The base implied by clicking one thing alone (a midpoint needs a second pick).
     pub(super) fn single(ed: &Editor, t: Target) -> Option<DimBase> {
@@ -148,6 +173,11 @@ impl DimensionTool {
             },
             Target::Midpoint(_) => None,
         };
+        if let (Target::Entity(a), Target::Entity(b)) = (first, second)
+            && concentric(ed, a, b)
+        {
+            return Some(DimBase::RadialGap(a, b));
+        }
         match (
             first.point_ref(ed),
             second.point_ref(ed),
@@ -203,6 +233,7 @@ impl DimensionTool {
                 line,
                 value: 0.0,
             },
+            DimBase::RadialGap(a, b) => Constraint::RadialGap { a, b, value: 0.0 },
         };
         let value = drift_solver::measure(&ed.doc, &c)?;
         Some(c.with_value(value))
@@ -559,6 +590,8 @@ impl Tool for DimensionTool {
                 "Click a line, circle or arc, or two points / lines / a point and a line".into()
             }
             (Some(_), None) => "Click a second point or line".into(),
+            (_, Some(DimBase::Circular(..))) => "Click to place the dimension, or a concentric                                                  circle or arc for the gap between them"
+                .into(),
             _ => "Click to place the dimension, or click another entity to change it".into(),
         }
     }

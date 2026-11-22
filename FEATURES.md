@@ -68,6 +68,7 @@ Seeded 2026-11-09 from the command registry, importers/exporters, agent schema a
 - Metric and imperial units. `crates/drift-core/src/units.rs`
 - Options: saved variants (values only or whole sketch). `crates/drift-core/src/params.rs`
 - Curvature combs. `crates/drift-app/src/commands.rs`
+- Solves ease into place (typed values, new relations, undo, redo) over 120 ms; display only, never while dragging; Preferences → General → Animate solves (on by default), and reduced motion in the browser turns it off. `crates/drift-app/src/motion.rs`
 
 ## Walls and openings
 - Wall tool with thickness. `crates/drift-edit/src/tools/wall.rs`

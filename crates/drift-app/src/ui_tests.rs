@@ -69,6 +69,8 @@ mod shell;
 /// The regression smoke suite (`cargo test -p drift-app smoke_`): docs/regression-checklist.md.
 #[cfg(not(feature = "demo"))]
 mod smoke;
+/// Solves that ease into place, and the preference that turns it off (#514).
+mod solve_motion;
 /// Print matches the screen: one stacking order for the canvas and the exports.
 #[cfg(not(feature = "demo"))]
 mod stacking;
@@ -7271,10 +7273,13 @@ fn check_sketch_finds_and_fixes_gaps() {
         1,
         "only the closer one"
     );
-    // (Laid out again with one row fewer before the Close button is found.)
-    h.run();
+    // (Laid out again with one row fewer before the Close button is found. Frames are
+    // stepped, not run to idle: the fix's message may be fading, which repaints each frame.)
+    h.step();
+    h.step();
     h.get_by_label("Close").click();
-    h.run();
+    h.step();
+    h.step();
     assert!(h.state().drawing.sketch_check.is_none());
 }
 

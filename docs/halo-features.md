@@ -12,7 +12,7 @@ One command proposes the smallest clean set of dimensions and relations that wou
 - **Builds on:** `drift_solver::free_directions`, `crates/drift-app/src/agent/analyze.rs`.
 - **Best demo:** a half-defined sketch goes black in one click.
 
-## 2. "Why won't this move?" (starting point)
+## 2. "Why won't this move?" (starting point, #513)
 Click or try to drag a point that is held and Drift lights up the relations and dimensions holding it. It also names the one constraint whose removal would let it move the way you tried to drag it.
 - **Why it stands out:** the red "N conflicting" pill already explains conflicts. This explains the more common case: a sketch that is fully defined, just not the way you wanted.
 - **Builds on:** `drift_solver::free_directions` and the solver's conflict and redundancy reporting (`crates/drift-solver/src/lib.rs`). Shows on the canvas the same way as the conflict pill (`crates/drift-app/src/app/panels.rs`).
@@ -24,7 +24,7 @@ Hold a modifier and drag a dimension label, and its value scrubs the way the Par
 - **Why it stands out:** the most direct way to show that dimensions drive the drawing.
 - **Builds on:** the variable scrub transaction (`editor.scrub_variable`, `crates/drift-app/src/parameters.rs`).
 
-## 4. Animate solves instead of snapping (starting point)
+## 4. Animate solves instead of snapping (starting point, #514)
 When a typed value, a new relation or an undo re-solves the sketch, the geometry eases into place over about 120 ms instead of jumping.
 - **Why it stands out:** it makes the solver's moves easy to follow and Drift more fun to draw in, at little risk.
 - **Preference (owner, 2026-11-21):** it can be turned on or off in Preferences. When it's off, Drift behaves as it does today.

@@ -146,3 +146,42 @@ fn a_relation_beside_a_circle_keeps_its_radius() {
         circle_radius(&ed, circle)
     );
 }
+
+/// An angle typed on a triangle's corner, 90° to 145° between its upright side and its top
+/// side, with the top side closed back to the upright's foot by a third. Keeping the third
+/// side's direction put the top side's free end where that direction meets the turned top
+/// side: nearly parallel at 145°, so 460 mm out on a 52 mm side, flung far from the
+/// drawing. Now the top side turns about the corner and keeps its length; the third follows.
+#[test]
+fn a_typed_angle_turns_a_triangle_side_instead_of_flinging_it() {
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let corner = ed.doc.add_point(v(136.0, 77.0));
+    let foot = ed.doc.add_point(v(136.0, 14.0));
+    let free = ed.doc.add_point(v(188.0, 77.0));
+    let upright = ed.doc.add_line(corner, foot).unwrap();
+    let top = ed.doc.add_line(corner, free).unwrap();
+    ed.doc.add_line(free, foot).unwrap();
+    ed.commit("Triangle");
+    let angle = ed
+        .add_constraints(
+            "Angle",
+            &[Constraint::Angle {
+                a: upright,
+                b: top,
+                degrees: 90.0,
+            }],
+        )
+        .unwrap()[0];
+    ed.set_dimension(angle, 145.0).unwrap();
+    assert!((length(&ed, corner, free) - 52.0).abs() < 1e-4);
+    let turned = 145f64.to_radians();
+    let expected = v(136.0 + 52.0 * turned.sin(), 77.0 - 52.0 * turned.cos());
+    let at = ed.doc.point(free).unwrap();
+    assert!(
+        at.distance(expected) < 1e-4,
+        "{at:?}, expected {expected:?}"
+    );
+    assert!(ed.doc.point(corner).unwrap().distance(v(136.0, 77.0)) < 1e-9);
+    assert!(ed.doc.point(foot).unwrap().distance(v(136.0, 14.0)) < 1e-9);
+}

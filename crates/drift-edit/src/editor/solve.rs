@@ -222,6 +222,21 @@ impl Editor {
         kept
     }
 
+    /// [`kept_shapes`](Self::kept_shapes), but the lines in `turning` keep their lengths
+    /// above every direction: they turn rather than stretch to meet the rest's directions.
+    /// (Ranked well above, as the ranks are weights: a turned 52 mm side then lands within
+    /// nanometres of its length, not micrometres that show in its dimension.)
+    pub(crate) fn kept_shapes_turned(&self, turning: &HashSet<EntityId>) -> KeptShapes {
+        let mut kept = self.kept_shapes(turning);
+        for id in turning {
+            if kept.lengths.contains_key(id) {
+                kept.length_ranks
+                    .insert(*id, 1.0 / (LENGTH_YIELD * LENGTH_YIELD));
+            }
+        }
+        kept
+    }
+
     /// What the driving relations reach through shared points and relations: all an edit's
     /// solve can move. Kept while the sketch's make-up is the same (moves don't change it).
     fn related_reach(&self) -> std::rc::Rc<HashSet<EntityId>> {

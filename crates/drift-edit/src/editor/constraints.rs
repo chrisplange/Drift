@@ -10,7 +10,16 @@ enum Shapes {
     /// As before: the rest's directions and radii only, nothing of what the relations name
     /// ([`Editor::kept_shapes_as_before`]).
     AsBefore,
+    /// As [`Kept`](Self::Kept), but the lines the relations name keep their lengths above
+    /// the rest's directions: they turn rather than stretch. Only for a typed size that
+    /// keeping shapes flung (see [`Editor::solve_typed_size`]).
+    Turned,
 }
+
+/// How many times its length a line may grow in a typed size's solve before it counts as
+/// flung, and the solve is tried again with the named lines turning instead
+/// ([`Shapes::Turned`]).
+const FLUNG: f64 = 3.0;
 
 impl Editor {
     /// Add constraints as one undoable step. Refused if they conflict with the existing ones
@@ -423,6 +432,7 @@ impl Editor {
         let kept = match shapes {
             Shapes::Kept => self.kept_shapes(&named),
             Shapes::AsBefore => self.kept_shapes_as_before(&named),
+            Shapes::Turned => self.kept_shapes_turned(&named),
         };
         // (Relations on walls' faces take up the change on the centrelines they lower to.)
         let lowering = self.lowering();
@@ -886,10 +896,87 @@ impl Editor {
         let report =
             self.solve_typed_size_keeping(id, named, keep, degenerate_before, &start, Shapes::Kept);
         if !self.left_a_sliver(&start) {
+            if self.flung(&start) {
+                return self.solve_typed_size_turned(
+                    id,
+                    named,
+                    keep,
+                    degenerate_before,
+                    &start,
+                    report,
+                );
+            }
             return report;
         }
         self.restore_geometry(&start);
         self.solve_typed_size_keeping(id, named, keep, degenerate_before, &start, Shapes::AsBefore)
+    }
+
+    /// A typed size whose solve keeping shapes flung a line out (see [`Self::flung`]): an
+    /// angle typed between a line and one that closes a triangle back to it, where the
+    /// third side keeping its direction meets the turned line only far out along it. Tried
+    /// again with the named lines turning rather than stretching ([`Shapes::Turned`]); that
+    /// solve is taken if it lands cleanly and moves the geometry less, else the first stands.
+    /// `kept`: the first solve's report, its geometry in the document.
+    fn solve_typed_size_turned(
+        &mut self,
+        id: ConstraintId,
+        named: &HashSet<EntityId>,
+        keep: Option<EntityId>,
+        degenerate_before: &[EntityId],
+        start: &Geometry,
+        kept: SolveReport,
+    ) -> SolveReport {
+        let first = self.points_and_circles();
+        let first_moved = self.moved_from(start);
+        self.restore_geometry(start);
+        let report = self.solve_typed_size_keeping(
+            id,
+            named,
+            keep,
+            degenerate_before,
+            start,
+            Shapes::Turned,
+        );
+        let better = !self.new_conflicts(&report)
+            && !self.unfinished(&report)
+            && !self.new_degeneracy(degenerate_before)
+            && !self.left_a_sliver(start)
+            && self.moved_from(start) < first_moved;
+        if better {
+            return report;
+        }
+        self.restore_geometry(&first);
+        kept
+    }
+
+    /// Whether a line grew past [`FLUNG`] times the length it had in `start`.
+    fn flung(&self, start: &Geometry) -> bool {
+        let was: HashMap<EntityId, DVec2> = start.points.iter().copied().collect();
+        self.doc.iter().any(|(_, e)| {
+            let EntityKind::Line { a, b } = e.kind else {
+                return false;
+            };
+            let (Some(a0), Some(b0), Ok(a1), Ok(b1)) = (
+                was.get(&a),
+                was.get(&b),
+                self.doc.point(a),
+                self.doc.point(b),
+            ) else {
+                return false;
+            };
+            let before = a0.distance(*b0);
+            before > 0.0 && a1.distance(b1) > FLUNG * before
+        })
+    }
+
+    /// The farthest any point has moved from where it was in `start`.
+    fn moved_from(&self, start: &Geometry) -> f64 {
+        start
+            .points
+            .iter()
+            .filter_map(|(id, p)| self.doc.point(*id).ok().map(|q| q.distance(*p)))
+            .fold(0.0, f64::max)
     }
 
     /// [`solve_typed_size`](Self::solve_typed_size) keeping `shapes`. `start`: the geometry
@@ -907,7 +994,7 @@ impl Editor {
             self.keep_in_place(&[id], named, k, degenerate_before, start, shapes);
         }
         match shapes {
-            Shapes::Kept => self.solve_commit(),
+            Shapes::Kept | Shapes::Turned => self.solve_commit(),
             Shapes::AsBefore => self.solve(&[]),
         }
     }

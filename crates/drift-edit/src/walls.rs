@@ -516,6 +516,15 @@ impl Editor {
             if !(touched(a) || touched(b)) || !self.doc.contains(a) || !self.doc.contains(b) {
                 continue;
             }
+            // Walls on different layers join by where they are, never by one point (#428):
+            // with automatic relations, a Coincident relation holds the corner together.
+            // Only for an end made now (the Wall tool's): a hold taken off later isn't put back
+            // by the next edit there.
+            let across = !crate::editor::points_share_layer(&self.doc, a, b);
+            let made = |id: EntityId| self.doc.entity_before_transaction(id).is_none();
+            if across && !(self.prefs.auto_relations && (made(a) || made(b))) {
+                continue;
+            }
             let (Some(&(wa, Some((pa, qa)))), Some(&(wb, Some((pb, qb))))) =
                 (ends.get(&a), ends.get(&b))
             else {
@@ -529,6 +538,27 @@ impl Editor {
             let thick = |w: WallId| self.doc.wall(w).map_or(0.0, |w| w.thickness);
             let reach = thick(wa).max(thick(wb)) + drift_geom::walls::regen::snap(&self.doc);
             if x.distance(pa) > reach || x.distance(pb) > reach {
+                continue;
+            }
+            if across {
+                let moved = [a, b]
+                    .iter()
+                    .any(|p| self.doc.point(*p).is_ok_and(|q| q != x));
+                let _ = self.doc.set_point(a, x);
+                let _ = self.doc.set_point(b, x);
+                let held = self.doc.constraints_on(a).any(|c| {
+                    matches!(
+                        self.doc.constraint(c),
+                        Some(&drift_core::Constraint::Coincident { a: p, b: q })
+                            if (p, q) == (a, b) || (p, q) == (b, a)
+                    )
+                });
+                let added = !held
+                    && self
+                        .doc
+                        .add_constraint(drift_core::Constraint::Coincident { a, b })
+                        .is_ok();
+                any |= moved || added;
                 continue;
             }
             let _ = self.doc.set_point(a, x);

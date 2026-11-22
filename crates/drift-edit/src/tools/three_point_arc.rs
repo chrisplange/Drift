@@ -89,8 +89,8 @@ impl ThreePointArcTool {
         let through = p.snapped_point().filter(|_| radius.is_none());
         ed.doc.begin();
         let c = ed.doc.add_point(center);
-        let s = start.resolve(&mut ed.doc);
-        let e = end.resolve(&mut ed.doc);
+        let s = ed.resolve_anchor(&start);
+        let e = ed.resolve_anchor(&end);
         let (first, last) = if swapped { (e, s) } else { (s, e) };
         match ed.doc.add_arc(c, first, last) {
             Ok(arc) => {

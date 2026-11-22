@@ -104,10 +104,19 @@ impl WallTool {
     /// it, it closes; along it, a T into itself), except its last segment.
     fn join_at(&self, ed: &mut Editor, p: &Pointer, at: DVec2) -> (Anchor, Option<Join>) {
         let owners = ed.wall_owners();
+        // A point on another layer is only snapped to, not taken (#428).
+        let layer = ed.doc.current_layer();
+        let on_layer =
+            |ed: &Editor, pt: EntityId| crate::editor::point_on_layer(&ed.doc, pt, layer);
         if let Some(pt) = p.snapped_point()
             && !owners.generated(pt)
             && let Ok(pos) = ed.doc.point(pt)
         {
+            if !on_layer(ed, pt) {
+                // (Held there, if it is another wall's end: see the corner below.)
+                let hold = ed.prefs.auto_relations;
+                return (Anchor::at(pos).held(hold), None);
+            }
             return (Anchor::existing(pos, pt), None);
         }
         let probe = p
@@ -142,7 +151,15 @@ impl WallTool {
             }
             corners.sort_by(|a, b| a.0.total_cmp(&b.0));
             match corners.first() {
-                Some(&(_, pt, pos, true)) => return (Anchor::existing(pos, pt), None),
+                Some(&(_, pt, pos, true)) if on_layer(ed, pt) => {
+                    return (Anchor::existing(pos, pt), None);
+                }
+                // Another layer's corner: joined by where it is, held there by a Coincident
+                // relation with automatic relations (made when the walls are, #428).
+                Some(&(_, _, pos, true)) => {
+                    let hold = ed.prefs.auto_relations;
+                    return (Anchor::at(pos).held(hold), Some(Join::Corner));
+                }
                 Some(_) => return (Anchor::at(on), Some(Join::Corner)),
                 None => {}
             }
@@ -228,6 +245,8 @@ impl WallTool {
         relation: Option<GuideKind>,
     ) {
         let first = self.corners[0];
+        // (Landing on another layer's corner, to be held there: #428.)
+        let held = to.hold;
         let gap = ed.doc.rules().gap_tolerance;
         let closes = self.corners.len() >= 2
             && join.is_none()
@@ -270,7 +289,7 @@ impl WallTool {
         };
         ed.doc.set_style(curve, LineKind::Construction);
         if matches!(seg, Seg::Line { .. }) {
-            auto_relation(ed, relation, curve, closes || to.existing == Some(b));
+            auto_relation(ed, relation, curve, closes || to.existing.is_some() || held);
         }
         let end = |j: Option<Join>| drift_core::WallEnd {
             join: true,

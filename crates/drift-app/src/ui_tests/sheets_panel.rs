@@ -51,6 +51,8 @@ fn sheet_with_a_view(h: &mut Harness<'_, DriftApp>) -> String {
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
     h.get_all_by_label("New sheet").next().unwrap().click();
+    h.run();
+    h.state_mut().show_newest_sheet();
     whole_view(h);
     h.state_mut().status = None;
     h.state_mut().show_panel(Panel::Sheets);
@@ -188,6 +190,8 @@ fn a_sheets_right_click_menu_exports_or_prints_just_that_sheet() {
     sheet_with_a_view(&mut h);
     h.get_all_by_label("New sheet").next().unwrap().click();
     h.run();
+    h.state_mut().show_newest_sheet();
+    h.run();
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
     let sheets: Vec<drift_core::SheetId> = h
@@ -236,6 +240,8 @@ fn a_sheets_right_click_menu_exports_or_prints_just_that_sheet() {
 fn two_sheets(h: &mut Harness<'_, DriftApp>) -> (drift_core::SheetId, drift_core::SheetId, String) {
     let title = sheet_with_a_view(h);
     h.get_all_by_label("New sheet").next().unwrap().click();
+    h.run();
+    h.state_mut().show_newest_sheet();
     h.run();
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
@@ -516,4 +522,33 @@ fn a_layer_hidden_in_the_model_isnt_counted_as_left_out_of_the_view() {
     view_inspector(&mut h, one);
     // The view leaves nothing out: every layer that can show, shows.
     assert!(h.query_by_value("All visible layers").is_some());
+}
+
+/// A new sheet, from the panel or the top bar's +, is added without leaving the canvas: on
+/// the model it stays on the model, and on a sheet it stays on that sheet.
+#[test]
+fn a_new_sheet_leaves_the_canvas_where_it_is() {
+    let Some(mut h) = harness() else { return };
+    h.state_mut().show_panel(Panel::Sheets);
+    h.run();
+    h.get_by_label("New sheet").click();
+    h.run();
+    h.run();
+    assert_eq!(h.state().drawing.editor.doc.sheets().count(), 1);
+    assert!(!h.state().drawing.view.sheet_preview, "still on the model");
+    h.get_by_label("Add a sheet").click();
+    h.run();
+    h.run();
+    assert_eq!(h.state().drawing.editor.doc.sheets().count(), 2);
+    assert!(!h.state().drawing.view.sheet_preview, "still on the model");
+    // On the first sheet, a new one leaves it showing.
+    let first = h.state().drawing.editor.doc.sheets().next().map(|(id, _)| id);
+    h.state_mut().show_sheet(first);
+    h.run();
+    h.get_by_label("Add a sheet").click();
+    h.run();
+    h.run();
+    assert_eq!(h.state().drawing.editor.doc.sheets().count(), 3);
+    assert!(h.state().drawing.view.sheet_preview);
+    assert_eq!(h.state().current_sheet(), first, "still on the first sheet");
 }

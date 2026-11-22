@@ -269,10 +269,30 @@ impl DriftApp {
         }
     }
 
-    /// A new sheet, numbered after the last, shown with its settings in the Inspector.
+    /// A new sheet, numbered after the last, added to the Sheets list and the top bar while
+    /// the canvas stays where it is: on the model, or on the sheet already shown.
     pub(crate) fn new_sheet(&mut self) {
-        let id = self.add_sheet();
-        self.show_sheet(Some(id));
+        let (shown, view) = (self.drawing.view.active_sheet, self.drawing.view.sheet_view);
+        self.add_sheet();
+        if self.drawing.view.sheet_preview {
+            self.drawing.view.active_sheet = shown;
+            self.drawing.view.sheet_view = view;
+        }
+    }
+
+    /// A new sheet, shown with its settings in the Inspector.
+    #[cfg(test)]
+    pub(crate) fn new_sheet_shown(&mut self) {
+        self.add_sheet();
+        self.show_newest_sheet();
+    }
+
+    /// Show the last sheet with its settings in the Inspector, as a sheet just made from the
+    /// panel or the top bar used to open.
+    #[cfg(test)]
+    pub(crate) fn show_newest_sheet(&mut self) {
+        let id = self.drawing.editor.doc.sheets().last().map(|(id, _)| id);
+        self.show_sheet(id);
         self.drawing.view.sheet_pick = SheetPick::Paper;
         self.show_panel(crate::dock::Panel::Inspector);
     }

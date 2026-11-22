@@ -11,6 +11,8 @@ fn a_sheet(h: &mut Harness<'_, DriftApp>) -> drift_core::SheetId {
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
     h.get_by_label("New sheet").click();
+    h.run();
+    h.state_mut().show_newest_sheet();
     whole_view(h);
     h.run();
     h.run();
@@ -174,6 +176,8 @@ fn smoke_sheet_with_a_view_title_block_and_export() {
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
     h.get_by_label("New sheet").click();
+    h.run();
+    h.state_mut().show_newest_sheet();
     h.run();
     h.run();
     h.key_press_modifiers(EguiModifiers::COMMAND, Key::P);
@@ -367,6 +371,8 @@ fn smoke_sheet_a_new_sheet_is_empty() {
     h.run();
     h.get_by_label("New sheet").click();
     h.run();
+    h.state_mut().show_newest_sheet();
+    h.run();
     h.run();
     let id = h.state().current_sheet().expect("a sheet");
     assert!(placed(&h, id).is_empty(), "nothing on it");
@@ -542,6 +548,12 @@ fn smoke_sheet_panel_clicks_keep_it_in_front() {
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
     h.get_by_label("New sheet").click();
+    h.run();
+    h.run();
+    assert_eq!(h.state().current_sheet(), Some(first), "a new sheet stays off screen");
+    assert_eq!(front(&h), Some(Panel::Sheets), "New sheet keeps the list");
+    let newest = h.state().drawing.editor.doc.sheets().last().map(|(id, _)| id);
+    h.state_mut().show_sheet(newest);
     h.run();
     h.run();
     let second = h.state().current_sheet().expect("the new sheet");

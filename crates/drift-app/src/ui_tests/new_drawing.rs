@@ -194,6 +194,8 @@ fn a_chosen_logo_is_kept_for_new_drawings() {
     h.run();
     h.get_by_label("New sheet").click();
     h.run();
+    h.state_mut().show_newest_sheet();
+    h.run();
     h.run();
     h.state_mut().show_panel(Panel::Inspector);
     h.run();

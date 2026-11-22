@@ -222,18 +222,34 @@ impl Editor {
         kept
     }
 
-    /// [`kept_shapes`](Self::kept_shapes), but the lines in `turning` keep their lengths
-    /// above every direction: they turn rather than stretch to meet the rest's directions.
-    /// (Ranked well above, as the ranks are weights: a turned 52 mm side then lands within
-    /// nanometres of its length, not micrometres that show in its dimension.)
-    pub(crate) fn kept_shapes_turned(&self, turning: &HashSet<EntityId>) -> KeptShapes {
+    /// [`kept_shapes`](Self::kept_shapes), but the lines in `turning` turn rather than
+    /// stretch: they keep their lengths at a line's usual rank (not below it), and the
+    /// lines joined to their moving ends (a point of theirs that `keep`, held in place,
+    /// doesn't define) give up their directions, which are what a turned line would
+    /// otherwise stretch to meet. Nothing ranks above a radius or another direction.
+    pub(crate) fn kept_shapes_turned(
+        &self,
+        turning: &HashSet<EntityId>,
+        keep: Option<EntityId>,
+    ) -> KeptShapes {
         let mut kept = self.kept_shapes(turning);
+        let held: HashSet<EntityId> = keep
+            .map(|k| self.doc.defining_points([k]).into_iter().collect())
+            .unwrap_or_default();
+        let mut moving: HashSet<EntityId> = HashSet::new();
         for id in turning {
-            if kept.lengths.contains_key(id) {
-                kept.length_ranks
-                    .insert(*id, 1.0 / (LENGTH_YIELD * LENGTH_YIELD));
+            if let Some(EntityKind::Line { a, b }) = self.doc.get(*id).map(|e| e.kind) {
+                if kept.lengths.contains_key(id) {
+                    kept.length_ranks.insert(*id, LENGTH_YIELD);
+                }
+                moving.extend([a, b].into_iter().filter(|p| !held.contains(p)));
             }
         }
+        kept.directions.retain(|id, _| {
+            turning.contains(id)
+                || !matches!(self.doc.get(*id).map(|e| e.kind),
+                    Some(EntityKind::Line { a, b }) if moving.contains(&a) || moving.contains(&b))
+        });
         kept
     }
 

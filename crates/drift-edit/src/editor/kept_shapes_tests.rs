@@ -147,13 +147,18 @@ fn a_relation_beside_a_circle_keeps_its_radius() {
     );
 }
 
-/// An angle typed on a triangle's corner, 90° to 145° between its upright side and its top
-/// side, with the top side closed back to the upright's foot by a third. Keeping the third
-/// side's direction put the top side's free end where that direction meets the turned top
-/// side: nearly parallel at 145°, so 460 mm out on a 52 mm side, flung far from the
-/// drawing. Now the top side turns about the corner and keeps its length; the third follows.
-#[test]
-fn a_typed_angle_turns_a_triangle_side_instead_of_flinging_it() {
+/// A triangle: an upright side (corner to foot), a top side (corner to a free end, 52 mm)
+/// square to it, and a third side closing the free end back to the foot; the angle between
+/// the upright and the top dimensioned at 90° (`swap`: named top first, at 270°).
+struct Triangle {
+    ed: Editor,
+    corner: EntityId,
+    foot: EntityId,
+    free: EntityId,
+    angle: ConstraintId,
+}
+
+fn triangle(swap: bool) -> Triangle {
     let mut ed = Editor::default();
     ed.doc.begin();
     let corner = ed.doc.add_point(v(136.0, 77.0));
@@ -163,25 +168,133 @@ fn a_typed_angle_turns_a_triangle_side_instead_of_flinging_it() {
     let top = ed.doc.add_line(corner, free).unwrap();
     ed.doc.add_line(free, foot).unwrap();
     ed.commit("Triangle");
+    let (a, b, degrees) = if swap {
+        (top, upright, 270.0)
+    } else {
+        (upright, top, 90.0)
+    };
     let angle = ed
-        .add_constraints(
-            "Angle",
-            &[Constraint::Angle {
-                a: upright,
-                b: top,
-                degrees: 90.0,
-            }],
-        )
+        .add_constraints("Angle", &[Constraint::Angle { a, b, degrees }])
         .unwrap()[0];
-    ed.set_dimension(angle, 145.0).unwrap();
-    assert!((length(&ed, corner, free) - 52.0).abs() < 1e-4);
-    let turned = 145f64.to_radians();
-    let expected = v(136.0 + 52.0 * turned.sin(), 77.0 - 52.0 * turned.cos());
-    let at = ed.doc.point(free).unwrap();
-    assert!(
-        at.distance(expected) < 1e-4,
-        "{at:?}, expected {expected:?}"
-    );
-    assert!(ed.doc.point(corner).unwrap().distance(v(136.0, 77.0)) < 1e-9);
-    assert!(ed.doc.point(foot).unwrap().distance(v(136.0, 14.0)) < 1e-9);
+    Triangle {
+        ed,
+        corner,
+        foot,
+        free,
+        angle,
+    }
+}
+
+/// Where the top side's free end is with the top turned `degrees` from the upright about
+/// the corner, at its 52 mm.
+fn turned_top(degrees: f64) -> DVec2 {
+    let t = degrees.to_radians();
+    v(136.0 + 52.0 * t.sin(), 77.0 - 52.0 * t.cos())
+}
+
+/// The angle typed 90° to 145°. Keeping the third side's direction put the free end where
+/// that direction meets the turned top side: nearly parallel at 145°, so 460 mm out on a
+/// 52 mm side, flung far from the drawing. Now the top side turns about the corner and
+/// keeps its length, and the third follows.
+#[test]
+fn a_typed_angle_turns_a_triangle_side_instead_of_flinging_it() {
+    let mut t = triangle(false);
+    t.ed.set_dimension(t.angle, 145.0).unwrap();
+    let at = t.ed.doc.point(t.free).unwrap();
+    assert!(at.distance(turned_top(145.0)) < 1e-6, "{at:?}");
+    assert!((length(&t.ed, t.corner, t.free) - 52.0).abs() < 1e-6);
+    assert!(t.ed.doc.point(t.corner).unwrap().distance(v(136.0, 77.0)) < 1e-9);
+    assert!(t.ed.doc.point(t.foot).unwrap().distance(v(136.0, 14.0)) < 1e-9);
+}
+
+/// Every angle turns the top the same way, with no jump between near values (a first
+/// fix took the turn only past a 3× stretch: 125° flung the end to (259, 163), 126° put it
+/// at (178, 108)); typed in steps it lands where typed at once, and typed back to 90° the
+/// triangle is as it was.
+#[test]
+fn every_typed_angle_turns_the_side_alike() {
+    for degrees in [95.0, 120.0, 125.0, 126.0, 160.0, 179.0, 60.0, 30.0] {
+        let mut t = triangle(false);
+        t.ed.set_dimension(t.angle, degrees).unwrap();
+        let at = t.ed.doc.point(t.free).unwrap();
+        assert!(
+            at.distance(turned_top(degrees)) < 1e-6,
+            "{degrees}°: {at:?}"
+        );
+    }
+    let mut t = triangle(false);
+    for degrees in (19..=29).map(|k| f64::from(k) * 5.0) {
+        t.ed.set_dimension(t.angle, degrees).unwrap();
+    }
+    let at = t.ed.doc.point(t.free).unwrap();
+    assert!(at.distance(turned_top(145.0)) < 1e-6, "in steps: {at:?}");
+    t.ed.set_dimension(t.angle, 90.0).unwrap();
+    let at = t.ed.doc.point(t.free).unwrap();
+    assert!(at.distance(v(188.0, 77.0)) < 1e-6, "back: {at:?}");
+}
+
+/// A fillet at the foot keeps its radius while the top turns (a first fix ranked the
+/// turned side's length above the radii: R8 grew to 17.11 at 160°).
+#[test]
+fn a_typed_angle_turning_a_side_grows_no_fillet() {
+    let mut t = triangle(false);
+    let arc = t.ed.fillet(t.foot, 8.0).unwrap();
+    t.ed.set_dimension(t.angle, 160.0).unwrap();
+    let r = drift_solver::radius_of(&t.ed.doc, arc).unwrap();
+    assert!((r - 8.0).abs() < 1e-6, "R {r}");
+    let at = t.ed.doc.point(t.free).unwrap();
+    assert!(at.distance(turned_top(160.0)) < 1e-6, "{at:?}");
+}
+
+/// A line hanging off the free end is carried along at its length (a first fix shortened
+/// a 39.4 mm one by 2.2 mm at 155°; keeping shapes alone left a sliver, and the solve as
+/// before then flung the top to 507 mm).
+#[test]
+fn a_typed_angle_carries_a_line_hanging_off_the_turned_side() {
+    for degrees in [145.0, 155.0] {
+        let mut t = triangle(false);
+        t.ed.doc.begin();
+        let end = t.ed.doc.add_point(v(220.0, 100.0));
+        t.ed.doc.add_line(t.free, end).unwrap();
+        t.ed.commit("Tail");
+        let tail = length(&t.ed, t.free, end);
+        t.ed.set_dimension(t.angle, degrees).unwrap();
+        assert!(
+            (length(&t.ed, t.free, end) - tail).abs() < 1e-6,
+            "{degrees}°"
+        );
+        let at = t.ed.doc.point(t.free).unwrap();
+        assert!(
+            at.distance(turned_top(degrees)) < 1e-6,
+            "{degrees}°: {at:?}"
+        );
+    }
+}
+
+/// With the top side fixed, the upright turns at its length about the corner, whichever
+/// line the angle names first (the first fix only turned a line it could keep the other
+/// in place for: named upright first, the upright stretched from 63 to 200.8 mm).
+#[test]
+fn a_typed_angle_turns_the_free_side_whichever_is_named_first() {
+    for swap in [false, true] {
+        let mut t = triangle(swap);
+        let fixes = [
+            Constraint::Fix {
+                point: t.corner,
+                at: v(136.0, 77.0),
+            },
+            Constraint::Fix {
+                point: t.free,
+                at: v(188.0, 77.0),
+            },
+        ];
+        t.ed.add_constraints("Fix", &fixes).unwrap();
+        t.ed.set_dimension(t.angle, if swap { 215.0 } else { 145.0 })
+            .unwrap();
+        assert!(
+            (length(&t.ed, t.corner, t.foot) - 63.0).abs() < 1e-6,
+            "swap {swap}: upright {}",
+            length(&t.ed, t.corner, t.foot)
+        );
+    }
 }

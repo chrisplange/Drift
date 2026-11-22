@@ -10,15 +10,16 @@ enum Shapes {
     /// As before: the rest's directions and radii only, nothing of what the relations name
     /// ([`Editor::kept_shapes_as_before`]).
     AsBefore,
-    /// As [`Kept`](Self::Kept), but the lines the relations name keep their lengths above
-    /// the rest's directions: they turn rather than stretch. Only for a typed size that
-    /// keeping shapes flung (see [`Editor::solve_typed_size`]).
+    /// As [`Kept`](Self::Kept), but the lines the relations name turn rather than stretch:
+    /// they keep their lengths, and the lines joined to their moving ends give up their
+    /// directions to let them (see [`Editor::kept_shapes_turned`]). Only for a typed size,
+    /// tried after the first solve (see [`Editor::solve_typed_size`]).
     Turned,
 }
 
-/// How many times its length a line may grow in a typed size's solve before it counts as
-/// flung, and the solve is tried again with the named lines turning instead
-/// ([`Shapes::Turned`]).
+/// How many times its length a line may grow (or shrink) in a typed size's solve turning
+/// its named lines ([`Shapes::Turned`]) before that solve counts as flung, or collapsed,
+/// and the first solve stands.
 const FLUNG: f64 = 3.0;
 
 impl Editor {
@@ -432,7 +433,7 @@ impl Editor {
         let kept = match shapes {
             Shapes::Kept => self.kept_shapes(&named),
             Shapes::AsBefore => self.kept_shapes_as_before(&named),
-            Shapes::Turned => self.kept_shapes_turned(&named),
+            Shapes::Turned => self.kept_shapes_turned(&named, keep),
         };
         // (Relations on walls' faces take up the change on the centrelines they lower to.)
         let lowering = self.lowering();
@@ -884,7 +885,10 @@ impl Editor {
     /// one end, `keep`, stays where it is if it can (#348); else, or then, a solve that
     /// keeps shapes (from where the kept one landed, it takes no step). Where keeping
     /// shapes leaves a sliver, solved as before from the geometry as it was (see
-    /// [`check_new_constraints`](Self::check_new_constraints)).
+    /// [`check_new_constraints`](Self::check_new_constraints)). Where the size turns a
+    /// line (an angle's), solved again with that line turning instead of stretching, and
+    /// that taken where it is clearly better (see
+    /// [`solve_typed_size_turned`](Self::solve_typed_size_turned)).
     fn solve_typed_size(
         &mut self,
         id: ConstraintId,
@@ -893,31 +897,46 @@ impl Editor {
         degenerate_before: &[EntityId],
     ) -> SolveReport {
         let start = self.points_and_circles();
-        let report =
+        let mut report =
             self.solve_typed_size_keeping(id, named, keep, degenerate_before, &start, Shapes::Kept);
-        if !self.left_a_sliver(&start) {
-            if self.flung(&start) {
-                return self.solve_typed_size_turned(
-                    id,
-                    named,
-                    keep,
-                    degenerate_before,
-                    &start,
-                    report,
-                );
-            }
-            return report;
+        if self.left_a_sliver(&start) {
+            self.restore_geometry(&start);
+            report = self.solve_typed_size_keeping(
+                id,
+                named,
+                keep,
+                degenerate_before,
+                &start,
+                Shapes::AsBefore,
+            );
         }
-        self.restore_geometry(&start);
-        self.solve_typed_size_keeping(id, named, keep, degenerate_before, &start, Shapes::AsBefore)
+        if self.turns_a_line(named, keep) {
+            report =
+                self.solve_typed_size_turned(id, named, keep, degenerate_before, &start, report);
+        }
+        report
     }
 
-    /// A typed size whose solve keeping shapes flung a line out (see [`Self::flung`]): an
-    /// angle typed between a line and one that closes a triangle back to it, where the
-    /// third side keeping its direction meets the turned line only far out along it. Tried
-    /// again with the named lines turning rather than stretching ([`Shapes::Turned`]); that
-    /// solve is taken if it lands cleanly and moves the geometry less, else the first stands.
-    /// `kept`: the first solve's report, its geometry in the document.
+    /// Whether a typed size naming `named` turns a line: one of them, not `keep`, whose
+    /// length the solve keeps (an angle's line; a distance names points, a radius a round).
+    fn turns_a_line(&self, named: &HashSet<EntityId>, keep: Option<EntityId>) -> bool {
+        let mut turning = named.clone();
+        if let Some(k) = keep {
+            turning.remove(&k);
+        }
+        let kept = self.kept_shapes(&turning);
+        turning.iter().any(|e| kept.lengths.contains_key(e))
+    }
+
+    /// A typed size that turns a line, solved again with that line turning rather than
+    /// stretching ([`Shapes::Turned`]). Keeping every other line's direction can meet the
+    /// turned line only far out along it: an angle typed on a triangle's corner, where the
+    /// third side, kept square, crosses the turned side nearly parallel (90° to 145° flung
+    /// a 52 mm side out to 460 mm). The named line keeping its length is what #350 meant
+    /// ("a line made parallel turns, and neither stretches"), so this is taken wherever it
+    /// lands cleanly and flings, collapses or flips nothing and grows no radius; else the
+    /// first stands exactly as it landed. (Not by which moves less: that left a jump where
+    /// the two cross.) `first`: the first solve's report, its geometry in the document.
     fn solve_typed_size_turned(
         &mut self,
         id: ConstraintId,
@@ -925,10 +944,9 @@ impl Editor {
         keep: Option<EntityId>,
         degenerate_before: &[EntityId],
         start: &Geometry,
-        kept: SolveReport,
+        first: SolveReport,
     ) -> SolveReport {
-        let first = self.points_and_circles();
-        let first_moved = self.moved_from(start);
+        let landed = self.points_and_circles();
         self.restore_geometry(start);
         let report = self.solve_typed_size_keeping(
             id,
@@ -942,45 +960,46 @@ impl Editor {
             && !self.unfinished(&report)
             && !self.new_degeneracy(degenerate_before)
             && !self.left_a_sliver(start)
-            && self.moved_from(start) < first_moved;
+            && !self.reshaped(start, named);
         if better {
             return report;
         }
-        self.restore_geometry(&first);
-        kept
+        self.restore_geometry(&landed);
+        first
     }
 
-    /// Whether a line grew past [`FLUNG`] times the length it had in `start`.
-    fn flung(&self, start: &Geometry) -> bool {
+    /// Whether, against `start`, a line grew or shrank past [`FLUNG`] times its length, a
+    /// line not in `named` turned end for end, or a radius grew (radii are never grown).
+    fn reshaped(&self, start: &Geometry, named: &HashSet<EntityId>) -> bool {
         let was: HashMap<EntityId, DVec2> = start.points.iter().copied().collect();
-        self.doc.iter().any(|(_, e)| {
-            let EntityKind::Line { a, b } = e.kind else {
-                return false;
-            };
-            let (Some(a0), Some(b0), Ok(a1), Ok(b1)) = (
-                was.get(&a),
-                was.get(&b),
-                self.doc.point(a),
-                self.doc.point(b),
-            ) else {
-                return false;
-            };
-            let before = a0.distance(*b0);
-            before > 0.0 && a1.distance(b1) > FLUNG * before
+        let radius_was: HashMap<EntityId, f64> = start.circles.iter().copied().collect();
+        let span = |a: EntityId, b: EntityId| -> Option<(DVec2, DVec2)> {
+            let (a0, b0) = (was.get(&a)?, was.get(&b)?);
+            let (a1, b1) = (self.doc.point(a).ok()?, self.doc.point(b).ok()?);
+            Some((*b0 - *a0, b1 - a1))
+        };
+        let grew = |before: f64, now: f64| now > before * (1.0 + 1e-6) + 1e-9;
+        self.doc.iter().any(|(id, e)| match e.kind {
+            EntityKind::Line { a, b } => span(a, b).is_some_and(|(before, now)| {
+                let (l0, l1) = (before.length(), now.length());
+                l0 > 0.0
+                    && (l1 > FLUNG * l0
+                        || l1 < l0 / FLUNG
+                        || (!named.contains(&id) && before.dot(now) < 0.0))
+            }),
+            EntityKind::Arc { center, start, .. } => {
+                span(center, start).is_some_and(|(before, now)| grew(before.length(), now.length()))
+            }
+            EntityKind::Circle { radius, .. } => {
+                radius_was.get(&id).is_some_and(|&r0| grew(r0, radius))
+            }
+            _ => false,
         })
     }
 
-    /// The farthest any point has moved from where it was in `start`.
-    fn moved_from(&self, start: &Geometry) -> f64 {
-        start
-            .points
-            .iter()
-            .filter_map(|(id, p)| self.doc.point(*id).ok().map(|q| q.distance(*p)))
-            .fold(0.0, f64::max)
-    }
-
     /// [`solve_typed_size`](Self::solve_typed_size) keeping `shapes`. `start`: the geometry
-    /// as the edit found it.
+    /// as the edit found it. Turning ([`Shapes::Turned`]) with nothing kept in place, or
+    /// where it can't stay, the named lines turn from where they were.
     fn solve_typed_size_keeping(
         &mut self,
         id: ConstraintId,
@@ -990,10 +1009,13 @@ impl Editor {
         start: &Geometry,
         shapes: Shapes,
     ) -> SolveReport {
-        if let Some(k) = keep {
-            self.keep_in_place(&[id], named, k, degenerate_before, start, shapes);
-        }
+        let kept = keep
+            .is_some_and(|k| self.keep_in_place(&[id], named, k, degenerate_before, start, shapes));
         match shapes {
+            Shapes::Turned if !kept => {
+                self.solve_new_constraints(&[id], named.clone(), None, Shapes::Turned);
+                self.solve_commit()
+            }
             Shapes::Kept | Shapes::Turned => self.solve_commit(),
             Shapes::AsBefore => self.solve(&[]),
         }

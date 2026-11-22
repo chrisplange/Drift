@@ -550,9 +550,20 @@ fn smoke_sheet_panel_clicks_keep_it_in_front() {
     h.get_by_label("New sheet").click();
     h.run();
     h.run();
-    assert_eq!(h.state().current_sheet(), Some(first), "a new sheet stays off screen");
+    assert_eq!(
+        h.state().current_sheet(),
+        Some(first),
+        "a new sheet stays off screen"
+    );
     assert_eq!(front(&h), Some(Panel::Sheets), "New sheet keeps the list");
-    let newest = h.state().drawing.editor.doc.sheets().last().map(|(id, _)| id);
+    let newest = h
+        .state()
+        .drawing
+        .editor
+        .doc
+        .sheets()
+        .last()
+        .map(|(id, _)| id);
     h.state_mut().show_sheet(newest);
     h.run();
     h.run();

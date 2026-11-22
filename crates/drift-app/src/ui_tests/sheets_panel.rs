@@ -542,7 +542,14 @@ fn a_new_sheet_leaves_the_canvas_where_it_is() {
     assert_eq!(h.state().drawing.editor.doc.sheets().count(), 2);
     assert!(!h.state().drawing.view.sheet_preview, "still on the model");
     // On the first sheet, a new one leaves it showing.
-    let first = h.state().drawing.editor.doc.sheets().next().map(|(id, _)| id);
+    let first = h
+        .state()
+        .drawing
+        .editor
+        .doc
+        .sheets()
+        .next()
+        .map(|(id, _)| id);
     h.state_mut().show_sheet(first);
     h.run();
     h.get_by_label("Add a sheet").click();

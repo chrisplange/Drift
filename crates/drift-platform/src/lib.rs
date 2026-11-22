@@ -21,7 +21,7 @@ pub mod memory;
 
 /// Whether the system asks apps to keep motion down (an accessibility setting): the browser's
 /// `prefers-reduced-motion`. Native builds answer no for now (reading Windows' and macOS's
-/// settings needs a system crate: #514's follow-up).
+/// settings needs a system crate: #516).
 pub fn reduce_motion() -> bool {
     #[cfg(target_arch = "wasm32")]
     {

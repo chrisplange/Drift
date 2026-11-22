@@ -23,6 +23,7 @@ mod layers_ui;
 pub(crate) mod links;
 #[cfg(test)]
 mod mem_tests;
+mod motion;
 mod notes;
 pub mod output;
 mod overlay;
@@ -138,6 +139,8 @@ const KEY_DIRTY: &str = "drift.dirty";
 const KEY_RECENT: &str = "drift.recent";
 /// Which dark look (Midnight or Obsidian) is chosen.
 const KEY_DARK_LOOK: &str = "drift.dark_look";
+/// Preferences → General → Animate solves ("1" or "0").
+const KEY_ANIMATE_SOLVES: &str = "drift.animate_solves";
 /// How many recent files are remembered.
 const MAX_RECENT: usize = 10;
 
@@ -364,6 +367,8 @@ struct Drawing {
     picked_view: Option<drift_core::ViewId>,
     /// A view placed on sheets that Delete was pressed for, waiting for a yes.
     confirm_delete_view: Option<drift_core::ViewId>,
+    /// A sheet with views on it that Delete sheet was chosen for, waiting for a yes.
+    confirm_delete_sheet: Option<drift_core::SheetId>,
     /// The Rename dialog (F2), while open.
     renaming: Option<app::rename_ui::Renaming>,
     /// The report of the last import, until it is closed.
@@ -525,6 +530,7 @@ impl Drawing {
             output_dialog: None,
             picked_view: None,
             confirm_delete_view: None,
+            confirm_delete_sheet: None,
             renaming: None,
             import_report: None,
             sketch_check: None,
@@ -636,6 +642,11 @@ pub struct DriftApp {
     /// About → Licences: the third-party notices.
     show_licences: bool,
     show_settings: bool,
+    /// Preferences → General → Animate solves: geometry a solve moves eases into place
+    /// (#514). Kept with the app's settings, not in drawings.
+    animate_solves: bool,
+    /// The solves easing into place on the canvas.
+    solve_motion: motion::SolveMotion,
     /// File → Drawing settings: the units and drafting style saved with the drawing.
     show_drawing_settings: bool,
     /// What was last copied or cut here (for Edit → Paste).
@@ -703,6 +714,14 @@ pub struct DriftApp {
     /// The rules a new drawing starts with (how its areas and fills behave, its gap
     /// tolerance), and those an older file is given: kept on this computer.
     new_rules: drift_core::DrawingRules,
+    /// The units and title block logo new drawings start with: kept on this computer.
+    new_drawing: app::new_drawing::NewDrawing,
+    /// Whether the drawing open now was started as a new one (File → New, an import as a new
+    /// drawing, the blank one at start), not opened or restored: only such a drawing, while
+    /// nothing has been done to it, follows a change to what new drawings start with.
+    drawing_from_new: bool,
+    /// Set by `new_document`, taken by `replace_document`: the drawing it installs is new.
+    next_from_new: std::cell::Cell<bool>,
     /// The View menu's switches as of the last frame, to say in the status bar when one
     /// changes (by a key, a menu, the status bar or the palette).
     view_seen: Option<[bool; app::document::VIEW_FLAGS]>,
@@ -864,6 +883,8 @@ impl DriftApp {
             show_report: false,
             show_licences: false,
             show_settings: false,
+            animate_solves: true,
+            solve_motion: Default::default(),
             show_drawing_settings: false,
             clipboard: None,
             palette: None,
@@ -900,6 +921,9 @@ impl DriftApp {
             show_quick_bar: true,
             layer_on_pick: Default::default(),
             new_rules: drift_core::DrawingRules::default(),
+            new_drawing: Default::default(),
+            drawing_from_new: true,
+            next_from_new: Default::default(),
             view_seen: None,
             relations_seen: None,
             new_block_name: String::new(),
@@ -951,6 +975,9 @@ impl DriftApp {
             .and_then(|v| theme::DarkLook::parse(&v))
         {
             theme::set_dark_look(look);
+        }
+        if let Some(storage) = cc.storage {
+            app.load_motion_pref(storage);
         }
         theme::apply(&cc.egui_ctx);
         // The double-click time of the tool it starts with (see `sync_double_click`).
@@ -1371,6 +1398,8 @@ impl eframe::App for DriftApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         storage.set_string(KEY_VIEW, self.view_prefs());
         storage.set_string(KEY_DARK_LOOK, theme::dark_look().key().into());
+        self.new_drawing.save(storage);
+        self.save_motion_pref(storage);
         let recent: Vec<String> = self
             .recent
             .iter()
@@ -1405,6 +1434,22 @@ impl eframe::App for DriftApp {
 
     fn auto_save_interval(&self) -> std::time::Duration {
         std::time::Duration::from_secs(10)
+    }
+}
+
+impl DriftApp {
+    /// Preferences → General → Animate solves, as saved with the app's settings.
+    fn load_motion_pref(&mut self, storage: &dyn eframe::Storage) {
+        if let Some(on) = storage.get_string(KEY_ANIMATE_SOLVES) {
+            self.animate_solves = on != "0";
+        }
+    }
+
+    fn save_motion_pref(&self, storage: &mut dyn eframe::Storage) {
+        storage.set_string(
+            KEY_ANIMATE_SOLVES,
+            if self.animate_solves { "1" } else { "0" }.into(),
+        );
     }
 }
 

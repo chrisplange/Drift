@@ -928,7 +928,18 @@ impl DriftApp {
                 .map(|v| v.name.clone())
                 .unwrap_or_default();
             ui.label(egui::RichText::new(name).small().weak());
-            self.command_items(ui, &[Some(Command::DeleteView), None]);
+            // (The one list of a view's actions, less what needs it on a sheet.)
+            if let Some(view) = self.drawing.picked_view {
+                let actions = crate::app::sheets_ui::ViewActions {
+                    place: self.place_target(view),
+                    delete: Some(!self.drawing.editor.doc.sheets_showing(view).is_empty()),
+                    ..Default::default()
+                };
+                if let Some(a) = crate::app::sheets_ui::view_actions(ui, &actions) {
+                    self.run_view_action(view, None, a);
+                }
+            }
+            ui.separator();
         }
         // Picked dimensions and notes: where they show.
         let refs = self.picked_annotations();

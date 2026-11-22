@@ -179,8 +179,9 @@ impl TangentArcTool {
         };
         let through = p.snapped_point();
         ed.doc.begin();
+        let point = start_point(ed, point, from);
         let c = ed.doc.add_point(center);
-        let e = end.resolve(&mut ed.doc);
+        let e = ed.resolve_anchor(&end);
         let (first, last) = if swapped { (e, point) } else { (point, e) };
         let Ok(arc) = ed.doc.add_arc(c, first, last) else {
             ed.doc.rollback();
@@ -218,7 +219,7 @@ impl TangentArcTool {
         if self.mode == ArcMode::Free {
             return self.create_free(p, ed);
         }
-        let Some((point, _)) = self.start else {
+        let Some((point, from)) = self.start else {
             return;
         };
         let Some((curve, center, end, left)) = self.geometry(p) else {
@@ -237,8 +238,9 @@ impl TangentArcTool {
         };
         let radius = self.typed[0].map(f64::abs);
         ed.doc.begin();
+        let point = start_point(ed, point, from);
         let c = ed.doc.add_point(center);
-        let e = anchor.resolve(&mut ed.doc);
+        let e = ed.resolve_anchor(&anchor);
         let (first, last) = if left { (point, e) } else { (e, point) };
         let Ok(arc) = ed.doc.add_arc(c, first, last) else {
             ed.doc.rollback();
@@ -260,6 +262,15 @@ impl TangentArcTool {
         // Only the new arc counts as the curve to continue from.
         self.tangents.retain(|(id, _)| *id == arc);
     }
+}
+
+/// The point an arc starts from: the end it was begun on, or, where that end is on another
+/// layer, a point of its own there, held to it with automatic relations (#428). Call inside
+/// a transaction.
+fn start_point(ed: &mut Editor, point: EntityId, from: DVec2) -> EntityId {
+    let layer = ed.doc.current_layer();
+    let hold = ed.prefs.auto_relations;
+    ed.own_or_held(point, from, layer, hold)
 }
 
 impl Tool for TangentArcTool {

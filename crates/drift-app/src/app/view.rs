@@ -220,7 +220,17 @@ impl DriftApp {
         painter: &egui::Painter,
         map: &ScreenMap,
     ) -> Vec<DimLayout> {
-        let doc = &self.drawing.editor.doc;
+        self.layout_dimensions_in(&self.drawing.editor.doc, painter, map)
+    }
+
+    /// The dimensions laid out on `doc`: the drawing's own, or a solve's frame part-way into
+    /// place (#514), which is only drawn.
+    fn layout_dimensions_in(
+        &self,
+        doc: &drift_core::Document,
+        painter: &egui::Painter,
+        map: &ScreenMap,
+    ) -> Vec<DimLayout> {
         let space = self.anno_space(map);
         let mut out: Vec<DimLayout> = doc
             .constraints()
@@ -300,11 +310,20 @@ impl DriftApp {
     /// The relation symbols the canvas shows, where they are first laid out (before any are
     /// pushed off the transform handles): none, those of what is picked, or all.
     pub(crate) fn relation_glyphs(&self, map: &ScreenMap) -> Vec<annotations::GlyphLayout> {
+        self.relation_glyphs_in(&self.drawing.editor.doc, map)
+    }
+
+    /// The relation symbols laid out on `doc` (see [`Self::layout_dimensions_in`]).
+    fn relation_glyphs_in(
+        &self,
+        doc: &drift_core::Document,
+        map: &ScreenMap,
+    ) -> Vec<annotations::GlyphLayout> {
         if self.show_relations == ShowRelations::Off {
             return Vec::new();
         }
         let ed = &self.drawing.editor;
-        let mut glyphs = annotations::layout_glyphs(&ed.doc, map);
+        let mut glyphs = annotations::layout_glyphs(doc, map);
         // (Not on walls' centrelines unless the wall is picked.)
         if ed.doc.has_walls() {
             let hidden = ed.unpicked_centrelines();
@@ -1130,6 +1149,10 @@ impl DriftApp {
             ui.ctx().set_cursor_icon(icon);
         }
 
+        // A solve just landed eases into place (#514): what this frame draws while it does.
+        // (Everything above, which picks and snaps, has used the solved geometry.)
+        let motion = self.solve_frame(ui.ctx(), &response, rect);
+
         // Fills and hatches under the geometry (GPU).
         self.hatch_patterns
             .update(self.drawing.editor.doc.custom_patterns());
@@ -1144,7 +1167,7 @@ impl DriftApp {
             }
         };
         let dark = ui.visuals().dark_mode;
-        let fills = drift_edit::fills::fill_graphics(
+        let mut fills = drift_edit::fills::fill_graphics(
             &mut self.drawing.editor,
             &mut self.drawing.fill_meshes,
             &self.hatch_patterns,
@@ -1152,6 +1175,17 @@ impl DriftApp {
             self.drawing.view.camera.scale,
             dark,
         );
+        if let Some(frame) = &motion {
+            let shapes = self.drawing.editor.fill_shapes();
+            for g in &mut fills.groups {
+                if let drift_edit::stack::FillRef::Fill(id) = g.fill
+                    && let Some(shape) = shapes.get(&id)
+                    && let Some(map) = frame.fill_map(&self.drawing.editor.doc, &shape.curves)
+                {
+                    map.carry(&mut g.meshes, &mut g.lines);
+                }
+            }
+        }
         // Geometry (GPU): underlays under everything else.
         let underlays = self.drawing.editor.underlay_items(view, dark);
         let stacked = self.drawing.editor.doc.rules().stacked_fills;
@@ -1274,7 +1308,18 @@ impl DriftApp {
         }
         self.drawing.editor.preview_hidden.clear();
         let ppp = f64::from(ui.ctx().pixels_per_point());
-        let lists = self.drawing.sketch_items.lists();
+        // Part-way into place: the kept lists are copied to draw from (they stay as solved).
+        let eased_lists = motion.as_ref().map(|frame| {
+            frame.patch_items(&mut items);
+            let mut lists = self.drawing.sketch_items.lists().to_vec();
+            for list in &mut lists {
+                frame.patch_items(list);
+            }
+            lists
+        });
+        let lists = eased_lists
+            .as_deref()
+            .unwrap_or(self.drawing.sketch_items.lists());
         let group_refs: Vec<drift_render::DrawGroup<'_>> = groups
             .iter()
             .enumerate()
@@ -1430,7 +1475,30 @@ impl DriftApp {
         if let Some(region) = self.drawing.editor.region() {
             overlay::region_fill(&painter, &map, &region, colors.window.gamma_multiply(0.22));
         }
-        self.paint_annotations(&painter, &map, &dims, &shown_glyphs, ui.visuals().dark_mode);
+        // Part-way into place, dimensions and relation symbols are drawn where the geometry is
+        // shown; they pick where it is.
+        let eased = motion.map(|frame| {
+            let dims = if self.show_dimensions {
+                self.layout_dimensions_in(&frame.doc, &annotation_painter, &map)
+            } else {
+                Vec::new()
+            };
+            let mut glyphs = self.relation_glyphs_in(&frame.doc, &map);
+            annotations::push_glyphs_clear(&mut glyphs, &handles, map.rect);
+            (dims, glyphs)
+        });
+        let (painted_dims, painted_glyphs) = match &eased {
+            Some((d, g)) => (&d[..], &g[..]),
+            None => (&dims[..], &shown_glyphs[..]),
+        };
+        self.paint_annotations(
+            &painter,
+            &map,
+            painted_dims,
+            painted_glyphs,
+            ui.visuals().dark_mode,
+        );
+        drop(eased);
         self.paint_temp_dims(&painter, &map, &temps, ui.visuals().dark_mode);
         self.paint_view_crops(&painter, &map, ui.visuals().dark_mode);
         // A dragged dimension snapped level with another: a guide between them.
@@ -1537,8 +1605,11 @@ impl DriftApp {
             if let Some(snap) = p.snap {
                 overlay::snap_marker(&painter, &map, &snap, colors.snap);
                 let mut label = snap.kind.label().to_owned();
-                // A click or drop here joins the point: say so, and fill the marker.
-                if p.merge_point().is_some() && self.tool.joins_points() {
+                // A click or drop here joins the point: say so, and fill the marker. (Not a
+                // point on another layer: that is only snapped to, #428.)
+                if let Some(onto) = p.merge_point()
+                    && self.tool.would_join(&self.drawing.editor, onto)
+                {
                     overlay::join_marker(&painter, &map, &snap, colors.snap);
                     label = format!("{label} · Join");
                 }

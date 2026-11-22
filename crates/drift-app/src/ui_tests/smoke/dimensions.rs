@@ -449,3 +449,53 @@ fn smoke_dimensions_a_typed_distance_keeps_the_last_picked_point() {
     assert!(at(&h, p).distance(p1) < 1e-9, "{}", at(&h, p));
     assert!(at(&h, q).distance(v(45.0, 0.0)) < 1e-9, "{}", at(&h, q));
 }
+
+/// A typed value eases into place, undo and redo too, and the canvas is idle once each has
+/// landed; with Preferences → Animate solves off, a typed value lands in one frame (#514).
+#[test]
+fn smoke_dimensions_a_typed_value_eases_into_place() {
+    let Some(mut h) = harness() else { return };
+    view(&mut h, DVec2::new(-40.0, -30.0), DVec2::new(60.0, 40.0));
+    let line = chain(&mut h, &[DVec2::new(-20.0, 0.0), DVec2::new(20.0, 0.0)])[0];
+    h.key_press(Key::D);
+    h.run();
+    click_world(&mut h, DVec2::new(-10.0, 0.0));
+    click_world(&mut h, DVec2::new(5.0, 15.0));
+    type_text(&mut h, "30");
+    h.key_press(Key::Enter);
+    h.run();
+    h.key_press(Key::Escape);
+    h.run();
+    h.key_press(Key::S);
+    h.run();
+    let before = h.state().solve_motion.started;
+    // A double-click on its text, a new value: the document has it at once, the canvas
+    // eases it in.
+    let label = first_dimension(&h).text_rect.center();
+    double_click(&mut h, label);
+    h.key_press_modifiers(EguiModifiers::COMMAND, Key::A);
+    type_text(&mut h, "45");
+    h.key_press(Key::Enter);
+    h.step();
+    assert!((length(&h, line) - 45.0).abs() < 1e-9);
+    h.run();
+    assert_eq!(h.state().solve_motion.started, before + 1, "eased in");
+    assert!(!h.state().solve_motion.animating(), "and over");
+    h.key_press_modifiers(EguiModifiers::COMMAND, Key::Z);
+    h.run();
+    assert!((length(&h, line) - 30.0).abs() < 1e-9);
+    assert_eq!(h.state().solve_motion.started, before + 2, "undo eases too");
+    // Off: no frames between.
+    h.state_mut().animate_solves = false;
+    h.run();
+    let label = first_dimension(&h).text_rect.center();
+    double_click(&mut h, label);
+    h.key_press_modifiers(EguiModifiers::COMMAND, Key::A);
+    type_text(&mut h, "50");
+    h.key_press(Key::Enter);
+    h.step();
+    assert!(!h.state().solve_motion.animating());
+    h.run();
+    assert!((length(&h, line) - 50.0).abs() < 1e-9);
+    assert_eq!(h.state().solve_motion.started, before + 2);
+}

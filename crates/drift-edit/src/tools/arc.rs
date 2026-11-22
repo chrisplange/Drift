@@ -103,11 +103,12 @@ impl ArcTool {
                 }),
             midpoint_of: None,
             on_curve: None,
+            hold: p.relations,
         };
         ed.doc.begin();
-        let c = center.resolve(&mut ed.doc);
-        let st = start.resolve(&mut ed.doc);
-        let fr = free.resolve(&mut ed.doc);
+        let c = ed.resolve_anchor(&center);
+        let st = ed.resolve_anchor(&start);
+        let fr = ed.resolve_anchor(&free);
         let (first, last) = if clockwise { (fr, st) } else { (st, fr) };
         match ed.doc.add_arc(c, first, last) {
             Ok(arc) => {

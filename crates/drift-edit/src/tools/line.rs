@@ -56,8 +56,8 @@ impl LineTool {
             return;
         }
         ed.doc.begin();
-        let a = last.resolve(&mut ed.doc);
-        let b = anchor.resolve(&mut ed.doc);
+        let a = ed.resolve_anchor(&last);
+        let b = ed.resolve_anchor(&anchor);
         let Ok(line) = ed.doc.add_line(a, b) else {
             ed.doc.rollback();
             ed.sync();
@@ -66,7 +66,8 @@ impl LineTool {
         // A locked segment is drawn exactly along its axis either way; it is only kept there
         // by a relation when automatic relations are on.
         let relation = self.lock.map(Axis::relation).or(relation);
-        auto_relation(ed, relation, line, anchor.existing == Some(b));
+        // (Ending on a point: its own, or one held to another layer's, #428.)
+        auto_relation(ed, relation, line, anchor.existing.is_some());
         if let Some(value) = length {
             ed.add_typed_dimension(0, Constraint::Distance { a, b, value });
         }
@@ -83,7 +84,7 @@ impl LineTool {
             self.guides.clear();
         } else {
             let pos = ed.doc.point(b).unwrap_or(anchor.pos);
-            self.set_last(Anchor::existing(pos, b), ed);
+            self.set_last(Anchor::existing(pos, b).held(ed.prefs.auto_relations), ed);
         }
     }
 
@@ -226,7 +227,10 @@ impl Tool for LineTool {
 
     fn continue_from(&mut self, point: EntityId, ed: &mut Editor) {
         if let Ok(pos) = ed.doc.point(point) {
-            self.set_last(Anchor::existing(pos, point), ed);
+            self.set_last(
+                Anchor::existing(pos, point).held(ed.prefs.auto_relations),
+                ed,
+            );
             self.chain_start = None;
         }
     }

@@ -83,7 +83,7 @@ impl EllipseTool {
             let pn = ed.doc.add_point(c + (m - c).perp().normalize() * b);
             let ellipse = match ends {
                 Some((s, e)) => {
-                    let (ps, pe) = (s.resolve(&mut ed.doc), e.resolve(&mut ed.doc));
+                    let (ps, pe) = (ed.resolve_anchor(&s), ed.resolve_anchor(&e));
                     ed.doc.add_ellipse_arc(pc, pm, pn, ps, pe)?
                 }
                 None => ed.doc.add_ellipse(pc, pm, pn)?,

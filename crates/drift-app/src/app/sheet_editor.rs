@@ -66,11 +66,18 @@ pub(crate) enum SheetMenu {
     /// Move it to this position.
     Move(usize),
     Delete,
+    /// Export just it as a PDF, or print just it.
+    Output(crate::app::sheets_ui::Output),
 }
 
 /// The right-click menu of a sheet (a canvas tab or a row in the Sheets list), at position
-/// `at` of `count` sheets.
-pub(crate) fn sheet_menu(ui: &mut egui::Ui, at: usize, count: usize) -> Option<SheetMenu> {
+/// `at` of `count` sheets. `views`: views are on it (deleting it then asks first).
+pub(crate) fn sheet_menu(
+    ui: &mut egui::Ui,
+    at: usize,
+    count: usize,
+    views: bool,
+) -> Option<SheetMenu> {
     let mut chose = None;
     if ui
         .button("Duplicate with views")
@@ -100,7 +107,21 @@ pub(crate) fn sheet_menu(ui: &mut egui::Ui, at: usize, count: usize) -> Option<S
         chose = Some(SheetMenu::Move(at + 1));
     }
     ui.separator();
-    if ui.button("Delete sheet").clicked() {
+    if ui.button("Export PDF…").clicked() {
+        chose = Some(SheetMenu::Output(crate::app::sheets_ui::Output::Pdf));
+    }
+    if ui.button("Print…").clicked() {
+        chose = Some(SheetMenu::Output(crate::app::sheets_ui::Output::Print));
+    }
+    ui.separator();
+    if ui
+        .button(if views {
+            "Delete sheet\u{2026}"
+        } else {
+            "Delete sheet"
+        })
+        .clicked()
+    {
         chose = Some(SheetMenu::Delete);
     }
     if chose.is_some() {
@@ -368,6 +389,7 @@ impl DriftApp {
         let mut delete = None;
         let mut duplicate = None;
         let mut moved = None;
+        let mut output = None;
         // Sheet tabs (where each starts and ends), and a tab being dragged to a new place.
         let mut spots: Vec<(SheetId, f32, f32)> = Vec::new();
         let mut dragging = None;
@@ -452,14 +474,21 @@ impl DriftApp {
             }
             if let Some(sheet) = *id {
                 let at = k - 1;
+                let views = self
+                    .drawing
+                    .editor
+                    .doc
+                    .sheet(sheet)
+                    .is_some_and(|s| !s.viewports.is_empty());
                 response
                     .on_hover_text("Drag to reorder; right-click for more")
                     .context_menu(|ui| {
-                        if let Some(d) = sheet_menu(ui, at, count) {
+                        if let Some(d) = sheet_menu(ui, at, count, views) {
                             match d {
                                 SheetMenu::Duplicate(views) => duplicate = Some((sheet, views)),
                                 SheetMenu::Move(to) => moved = Some((sheet, to)),
                                 SheetMenu::Delete => delete = Some(sheet),
+                                SheetMenu::Output(kind) => output = Some((sheet, kind)),
                             }
                         }
                     });
@@ -554,13 +583,17 @@ impl DriftApp {
             self.show_sheet(id);
         }
         if let Some(id) = delete {
-            self.delete_sheet(id);
+            self.request_delete_sheet(id);
         }
         if let Some((id, views)) = duplicate {
             self.duplicate_sheet(id, views);
         }
         if let Some((id, to)) = moved {
             self.move_sheet(id, to);
+        }
+        if let Some((id, kind)) = output {
+            let painter = ui.painter().clone();
+            self.output_sheet(&painter, id, kind);
         }
     }
 
@@ -842,9 +875,10 @@ impl DriftApp {
         let label = sheet_label(&sheet);
         let mut remove_view = false;
         let mut delete = false;
-        let mut delete_views = false;
         let mut whole = false;
         let mut bring = None;
+        // (What the picked view's title menu chose: it, the action.)
+        let mut view_action = None;
         let placed = self.drawing.editor.doc.placed_views(&sheet);
         let pick = if placed.is_empty() {
             SheetPick::Paper
@@ -890,22 +924,7 @@ impl DriftApp {
                 remove_view = theme::danger_button(ui, "Remove from sheet")
                     .on_hover_text("Take the picked views off this sheet (they stay in the model)")
                     .clicked();
-                if self.drawing.confirm_delete_set {
-                    ui.label(
-                        egui::RichText::new(
-                            "Deleting them takes them out of the model and off every sheet.",
-                        )
-                        .color(crate::theme::error_color(ui.visuals().dark_mode)),
-                    );
-                    ui.horizontal(|ui| {
-                        if ui.button("Delete them").clicked() {
-                            delete_views = true;
-                        }
-                        if ui.button("Keep them").clicked() {
-                            self.drawing.confirm_delete_set = false;
-                        }
-                    });
-                } else if theme::danger_button(ui, "Delete views")
+                if theme::danger_button(ui, "Delete views\u{2026}")
                     .on_hover_text("Delete the picked views from the model and every sheet")
                     .clicked()
                 {
@@ -913,16 +932,49 @@ impl DriftApp {
                 }
             }
             SheetPick::View => {
-                let v = &placed[self.current_view(&sheet).min(placed.len() - 1)];
-                crate::app::panels::title(
+                let index = self.current_view(&sheet).min(placed.len() - 1);
+                let v = &placed[index];
+                // Where it is: this sheet, and the others that show it too.
+                let doc = &self.drawing.editor.doc;
+                let elsewhere: Vec<String> = doc
+                    .sheets_showing(v.id)
+                    .into_iter()
+                    .filter(|s| *s != id)
+                    .filter_map(|s| doc.sheet(s).map(sheet_label))
+                    .collect();
+                let detail = if elsewhere.is_empty() {
+                    label.clone()
+                } else {
+                    format!("{label} · also on {}", elsewhere.join(", "))
+                };
+                // Its actions, in the title's menu (the one list every menu of a view
+                // shows): the panel below is all settings.
+                let actions = crate::app::sheets_ui::ViewActions {
+                    frame: true,
+                    zoom: true,
+                    moves: doc
+                        .sheets()
+                        .filter(|(s, _)| *s != id)
+                        .map(|(s, sh)| (s, sheet_label(sh)))
+                        .collect(),
+                    remove: true,
+                    delete: Some(true),
+                    ..Default::default()
+                };
+                let mut chose = None;
+                crate::app::panels::title_with_actions(
                     ui,
-                    None,
+                    crate::icons::Glyph::View,
                     v.title(),
-                    &format!(
-                        "On {label} · {}",
-                        drift_core::sheets::scale_label(v.scale, self.imperial())
-                    ),
+                    &detail,
+                    "View actions",
+                    &mut |ui| {
+                        if let Some(a) = crate::app::sheets_ui::view_actions(ui, &actions) {
+                            chose = Some(a);
+                        }
+                    },
                 );
+                view_action = chose.map(|a| (v.id, a));
                 typing |= self.views_section(ui, &sheet, &mut view);
                 // The model's notes and dimensions this view shows, onto the sheet.
                 let count = self.view_annotation_count();
@@ -964,10 +1016,6 @@ impl DriftApp {
                         }
                     });
                 }
-                ui.add_space(16.0);
-                remove_view = theme::danger_button(ui, "Remove from sheet")
-                    .on_hover_text("Take the picked view off this sheet (it stays in the model)")
-                    .clicked();
             }
             SheetPick::Paper | SheetPick::Annotation => {
                 let orientation = if sheet.portrait {
@@ -1006,7 +1054,12 @@ impl DriftApp {
                 }
                 typing |= self.paper_settings(ui, &mut sheet);
                 ui.add_space(16.0);
-                delete = theme::danger_button(ui, "Delete sheet").clicked();
+                let label = if sheet.viewports.is_empty() {
+                    "Delete sheet"
+                } else {
+                    "Delete sheet\u{2026}"
+                };
+                delete = theme::danger_button(ui, label).clicked();
             }
         }
         self.update_sheet(id, sheet, view, typing);
@@ -1018,14 +1071,14 @@ impl DriftApp {
             self.remove_picked_views(id);
             self.drawing.view.sheet_pick = SheetPick::Paper;
         }
-        if delete_views {
-            self.delete_picked_views();
+        if let Some((v, a)) = view_action {
+            self.run_view_action(v, Some(id), a);
         }
         if whole {
             self.add_whole_view(id);
         }
         if delete {
-            self.delete_sheet(id);
+            self.request_delete_sheet(id);
         }
         ui.add_space(10.0);
     }

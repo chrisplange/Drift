@@ -163,6 +163,10 @@ drawn on a point share it, so the shapes move together. The snap marker fills in
 
 Hold **Ctrl** as you drop or click to do the opposite of the switch for that one time.
 
+Points on different layers never join. A line drawn onto another layer's point, or a point
+dropped on one, snaps there but stays its own point; with automatic relations on, a
+Coincident relation holds the two together.
+
 ### Weld points
 
 To join points that are already apart, pick them and weld them:
@@ -173,7 +177,8 @@ To join points that are already apart, pick them and weld them:
   are, and become one point.
 
 Either is one undo step. The two ends of one line or arc can't be welded, since the line
-would shrink to nothing.
+would shrink to nothing. Points on different layers aren't made one: they move together and
+a Coincident relation holds them there.
 
 ## Edit a dimension
 

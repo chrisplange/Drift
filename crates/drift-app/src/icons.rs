@@ -63,6 +63,10 @@ pub enum Glyph {
     Minus,
     Plus,
     ChevronDown,
+    /// A collapsed tree row: a chevron pointing right.
+    ChevronRight,
+    /// A view placed on a sheet: a frame with a line in it.
+    View,
     /// Back (from a sheet to the model): an arrow to the left.
     Back,
     /// The Selection filter is narrowed: a funnel.
@@ -770,6 +774,11 @@ pub fn glyph(painter: &egui::Painter, rect: Rect, glyph: Glyph, color: Color32) 
             p.line((10.0, 5.0), (10.0, 15.0));
         }
         Glyph::ChevronDown => p.poly(&[(5.5, 8.0), (10.0, 12.5), (14.5, 8.0)], false),
+        Glyph::ChevronRight => p.poly(&[(8.0, 5.5), (12.5, 10.0), (8.0, 14.5)], false),
+        Glyph::View => {
+            p.poly(&[(3.5, 5.0), (16.5, 5.0), (16.5, 15.0), (3.5, 15.0)], true);
+            p.line((6.5, 12.0), (12.5, 8.0));
+        }
         Glyph::Back => {
             p.line((4.0, 10.0), (16.0, 10.0));
             p.poly(&[(8.5, 5.5), (4.0, 10.0), (8.5, 14.5)], false);

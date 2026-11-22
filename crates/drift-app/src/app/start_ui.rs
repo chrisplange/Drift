@@ -1,6 +1,7 @@
 //! The start panel over an empty sketch (new, open, recent files, a few tips), the About
 //! window, and Preferences.
 
+use crate::app::new_drawing::NewUnits;
 use crate::*;
 
 /// The graphics backend as people know it ("DirectX 12" for wgpu's `Dx12`).
@@ -248,6 +249,9 @@ impl DriftApp {
                                             self.drawing.file.clean_revision =
                                                 Some(self.drawing.editor.doc.revision());
                                         }
+                                        // And the next new drawings start in them too.
+                                        self.new_drawing.units =
+                                            NewUnits::of(self.drawing.editor.doc.units());
                                     }
                                     ui.label(
                                         egui::RichText::new(if units.length.is_metric() {
@@ -686,9 +690,91 @@ impl DriftApp {
     fn general_prefs(&mut self, ui: &mut egui::Ui) {
         theme::section(ui, "Appearance");
         theme::appearance(ui);
+        self.new_drawing_prefs(ui);
         theme::section(ui, "Crosshair");
         self.crosshair_prefs(ui);
         self.mouse_prefs(ui);
+        theme::section(ui, "Motion");
+        crate::theme::checkbox(ui, &mut self.animate_solves, "Animate solves").on_hover_text(
+            "When a typed value, a new relation, an undo or a redo moves geometry, it eases              into place instead of jumping. Only the drawing moves: picking and readouts use              where things are at once. Never while dragging",
+        );
+        if drift_platform::reduce_motion() {
+            ui.label(
+                egui::RichText::new(
+                    "Your system asks for reduced motion, so nothing animates whatever this says.",
+                )
+                .small()
+                .weak(),
+            );
+        }
+    }
+
+    /// Preferences → General → New drawings: what a new drawing starts with (#495).
+    fn new_drawing_prefs(&mut self, ui: &mut egui::Ui) {
+        theme::section(ui, "New drawings use");
+        let options = [
+            (NewUnits::Metric, "Metric (mm)"),
+            (NewUnits::Imperial, "Imperial (ft-in)"),
+        ];
+        if let Some(units) = theme::segmented(ui, self.new_drawing.units, &options) {
+            self.new_drawing.units = units;
+            // A blank drawing nothing has been done to yet starts again in them.
+            self.refresh_untouched_drawing();
+        }
+        ui.label(
+            egui::RichText::new(
+                "Opening a file keeps its own units. One drawing's units are in File → \
+                 Drawing settings.",
+            )
+            .small()
+            .weak(),
+        );
+        // The title block logo (#429): the last one chosen for a drawing, until cleared here.
+        let doc_logo = self.drawing.editor.doc.logo();
+        let has = !self.new_drawing.logo.is_empty();
+        let same = self.new_drawing.logo == doc_logo;
+        let (mut take, mut clear) = (false, false);
+        theme::row(ui, "Logo", |ui| {
+            ui.label(
+                egui::RichText::new(match (has, same) {
+                    (false, _) => "None",
+                    (true, true) => "This drawing's",
+                    (true, false) => "Chosen earlier",
+                })
+                .weak(),
+            );
+            take = ui
+                .add_enabled(
+                    !doc_logo.is_empty() && !same,
+                    egui::Button::new("Use this drawing's"),
+                )
+                .on_hover_text("Start new drawings with this drawing's title block logo")
+                .clicked();
+            clear = has
+                && ui
+                    .button("Clear")
+                    .on_hover_text(
+                        "Start new drawings without a logo (drawings that have one keep it)",
+                    )
+                    .clicked();
+        });
+        if take {
+            let logo = self.drawing.editor.doc.logo().to_owned();
+            self.new_drawing.set_logo(logo);
+        } else if clear {
+            self.new_drawing.set_logo(String::new());
+        }
+        if take || clear {
+            self.refresh_untouched_drawing();
+        }
+        ui.label(
+            egui::RichText::new(
+                "A logo chosen for a sheet's title block is kept for new drawings. Removing \
+                 it from a drawing leaves it here.",
+            )
+            .small()
+            .weak(),
+        );
     }
 
     /// Preferences → Layers: what picking an object does to the layers (drift-releases#19).
@@ -731,7 +817,7 @@ impl DriftApp {
             "Join points dropped on points",
         )
         .on_hover_text(
-            "Auto merge: a dragged point dropped on another, or a line or arc drawn on another shape's point, shares it. Ctrl flips it for one drop · Shift+Alt+M",
+            "Auto merge: a dragged point dropped on another, or a line or arc drawn on another shape's point, shares it (on the same layer only). Ctrl flips it for one drop · Shift+Alt+M",
         );
         crate::theme::checkbox(
             ui,

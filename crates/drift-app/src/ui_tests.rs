@@ -41,6 +41,8 @@ mod layer_toggles;
 mod link;
 /// Kept corners and fillet centres drawn as muted crosses (#501).
 mod muted_points;
+/// What new drawings start with: Preferences → New drawings use (#495).
+mod new_drawing;
 /// Notes typed live on the canvas, as in a design app (#431).
 #[cfg(not(feature = "demo"))]
 mod note_typing;
@@ -59,12 +61,16 @@ mod shapes;
 /// A sheet's own notes and dimensions: placed, picked, moved, edited and deleted (#432).
 #[cfg(not(feature = "demo"))]
 mod sheet_annotations;
+#[cfg(not(feature = "demo"))]
+mod sheets_panel;
 /// The frame: the top bar, the options bar and the status bar.
 #[cfg(not(feature = "demo"))]
 mod shell;
 /// The regression smoke suite (`cargo test -p drift-app smoke_`): docs/regression-checklist.md.
 #[cfg(not(feature = "demo"))]
 mod smoke;
+/// Solves that ease into place, and the preference that turns it off (#514).
+mod solve_motion;
 /// Print matches the screen: one stacking order for the canvas and the exports.
 #[cfg(not(feature = "demo"))]
 mod stacking;
@@ -107,6 +113,49 @@ fn button(h: &Harness<'_, DriftApp>, pos: Pos2, pressed: bool) {
         pressed,
         modifiers: EguiModifiers::NONE,
     });
+}
+
+/// Choose `item` on a view's right-click menu, from its row in the Sheets panel's Views list
+/// (the last row with its name: rows under the sheets come first).
+fn view_menu_item(h: &mut Harness<'_, DriftApp>, view: drift_core::ViewId, item: &str) {
+    let title = h
+        .state()
+        .drawing
+        .editor
+        .doc
+        .view(view)
+        .unwrap()
+        .title()
+        .to_owned();
+    h.get_all_by_label(&title).last().unwrap().scroll_to_me();
+    h.run();
+    let at = h.get_all_by_label(&title).last().unwrap().rect().center();
+    h.hover_at(at);
+    h.run();
+    for pressed in [true, false] {
+        h.event(Event::PointerButton {
+            pos: at,
+            button: PointerButton::Secondary,
+            pressed,
+            modifiers: EguiModifiers::NONE,
+        });
+        h.run();
+    }
+    // (The menu opens at the pointer.)
+    // (Its label starts with `item`: Place names the sheet, Delete may end in "…". A wide
+    // menu near the panel's edge opens to the left of the pointer.)
+    let to = h
+        .query_all_by(|n| n.label().is_some_and(|l| l.starts_with(item)))
+        .map(|n| n.rect())
+        .find(|r| r.top() >= at.y - 4.0 && r.top() < at.y + 300.0)
+        .unwrap_or_else(|| panic!("{item} on the view's menu"))
+        .center();
+    h.hover_at(to);
+    h.run();
+    button(h, to, true);
+    h.run();
+    button(h, to, false);
+    h.run();
 }
 
 /// The example shown with room round the plate, whatever the canvas's shape: for tests that
@@ -1648,6 +1697,88 @@ fn a_floating_panel_resized_past_the_canvas_edge_keeps_its_left_edge() {
     assert!(
         after.right() <= canvas.right() + 0.5 && after.right() >= canvas.right() - 2.0,
         "the right edge should stop at the canvas edge: {after:?} in {canvas:?}"
+    );
+    // The size it stopped at is the one kept: a later frame doesn't grow it back.
+    h.run_steps(6);
+    let (_, later) = h.state().floating_rects(Panel::Layers).unwrap();
+    assert!(
+        (later.width() - after.width()).abs() < 1.0,
+        "{after:?} → {later:?}"
+    );
+}
+
+/// #505: the bottom edge dragged on past the canvas stops there; the top edge stays put.
+#[test]
+fn a_floating_panel_resized_past_the_canvas_bottom_keeps_its_top_edge() {
+    let Some(mut h) = harness() else { return };
+    h.state_mut()
+        .layout
+        .move_to(Panel::Layers, Place::Float, None);
+    h.run_steps(6);
+    let canvas = h.state().drawing.view.canvas_rect;
+    let (_, before) = h.state().floating_rects(Panel::Layers).unwrap();
+    let grab = egui::pos2(before.center().x, before.bottom() - 1.0);
+    h.hover_at(grab);
+    h.run_steps(2);
+    button(&h, grab, true);
+    h.run_steps(2);
+    let end = canvas.bottom() + 300.0;
+    for i in 1..=30 {
+        let y = grab.y + (end - grab.y) * i as f32 / 30.0;
+        h.hover_at(egui::pos2(grab.x, y));
+        h.run_steps(1);
+    }
+    for _ in 0..20 {
+        h.hover_at(egui::pos2(grab.x, end));
+        h.run_steps(1);
+    }
+    button(&h, egui::pos2(grab.x, end), false);
+    h.run_steps(6);
+    let (_, after) = h.state().floating_rects(Panel::Layers).unwrap();
+    assert!(
+        (after.top() - before.top()).abs() < 1.0,
+        "the top edge moved: {before:?} → {after:?} (canvas {canvas:?})"
+    );
+    assert!(
+        after.bottom() <= canvas.bottom() + 0.5 && after.bottom() >= canvas.bottom() - 2.0,
+        "the bottom edge should stop at the canvas edge: {after:?} in {canvas:?}"
+    );
+    assert!(
+        (after.width() - before.width()).abs() < 1.0,
+        "{before:?} → {after:?}"
+    );
+}
+
+/// #505: a whole panel moved by its header on past the canvas's bottom stops at the edge
+/// with its size unchanged.
+#[test]
+fn a_floating_panel_moved_into_the_canvas_edge_keeps_its_size() {
+    let Some(mut h) = harness() else { return };
+    h.state_mut()
+        .layout
+        .move_to(Panel::Layers, Place::Float, None);
+    h.run_steps(6);
+    let canvas = h.state().drawing.view.canvas_rect;
+    let (_, before) = h.state().floating_rects(Panel::Layers).unwrap();
+    let header = h.state().header_rect(Panel::Layers).unwrap();
+    let from = header.left_center() + egui::vec2(60.0, 0.0);
+    // Down and a little left, well past the canvas's bottom.
+    let to = from + egui::vec2(-80.0, canvas.height());
+    drag_steps(&mut h, from, to, 20, None);
+    h.run_steps(4);
+    assert_eq!(h.state().layout.floating, [vec![Panel::Layers]]);
+    let (_, after) = h.state().floating_rects(Panel::Layers).unwrap();
+    assert!(
+        (after.size() - before.size()).length() < 1.0,
+        "the size changed: {before:?} → {after:?}"
+    );
+    assert!(
+        after.bottom() <= canvas.bottom() + 0.5 && after.bottom() >= canvas.bottom() - 2.0,
+        "the panel should stop at the canvas bottom: {after:?} in {canvas:?}"
+    );
+    assert!(
+        (after.left() - (before.left() - 80.0)).abs() < 2.0,
+        "{before:?} → {after:?}"
     );
 }
 
@@ -7142,10 +7273,13 @@ fn check_sketch_finds_and_fixes_gaps() {
         1,
         "only the closer one"
     );
-    // (Laid out again with one row fewer before the Close button is found.)
-    h.run();
+    // (Laid out again with one row fewer before the Close button is found. Frames are
+    // stepped, not run to idle: the fix's message may be fading, which repaints each frame.)
+    h.step();
+    h.step();
     h.get_by_label("Close").click();
-    h.run();
+    h.step();
+    h.step();
     assert!(h.state().drawing.sketch_check.is_none());
 }
 
@@ -8534,9 +8668,7 @@ fn views_are_drawn_on_the_canvas_and_placed_on_sheets() {
     // (New sheet shows the sheet in the Inspector; the Views list is in the Sheets panel.)
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
-    h.get_by_label("Place on sheet").scroll_to_me();
-    h.run();
-    h.get_by_label("Place on sheet").click();
+    view_menu_item(&mut h, id, "Place on ");
     h.run();
     let on = placed(&h, sheet);
     assert_eq!(on.len(), 2);
@@ -8556,12 +8688,15 @@ fn views_are_drawn_on_the_canvas_and_placed_on_sheets() {
     );
     h.run();
     // (Sheets by number and name.)
-    let row = format!(
-        "View 1\n{} · on A-101  Sheet 1, A-102  Sheet 2",
+    let detail = format!(
+        "{} · on A-101  Sheet 1, A-102  Sheet 2",
         scale_label(view.scale, false)
     );
     assert!(
-        h.query_by_label(&row).is_some(),
+        h.output().shapes.iter().any(|c| matches!(
+            &c.shape,
+            egui::Shape::Text(t) if t.galley.job.text == detail
+        )),
         "the Views list says where"
     );
 
@@ -8603,10 +8738,11 @@ fn views_are_drawn_on_the_canvas_and_placed_on_sheets() {
             .sheets_showing(two)
             .contains(&other)
     );
-    let rows = h.get_by_label_contains("View 2\n");
+    // (Its row in the Views list, after the sheets' nested rows.)
+    let rows = h.get_all_by_label("View 2").last().unwrap();
     rows.scroll_to_me();
     h.run();
-    let from = h.get_by_label_contains("View 2\n").rect().center();
+    let from = h.get_all_by_label("View 2").last().unwrap().rect().center();
     let rect = h.state().drawing.view.canvas_rect;
     let to = rect.center() + egui::vec2(-120.0, 60.0);
     h.hover_at(from);
@@ -8638,13 +8774,16 @@ fn views_are_drawn_on_the_canvas_and_placed_on_sheets() {
     // Deleting a view on sheets asks first, then takes it off them all; undo brings it back.
     h.state_mut().drawing.picked_view = Some(id);
     h.run();
-    h.get_by_label("Delete view").scroll_to_me();
-    h.run();
-    h.get_by_label("Delete view").click();
+    view_menu_item(&mut h, id, "Delete view\u{2026}");
     h.run();
     assert!(h.state().drawing.editor.doc.view(id).is_some(), "not yet");
     assert_eq!(h.state().drawing.confirm_delete_view, Some(id));
-    h.get_by_label("Delete it").click();
+    // (One dialog, wherever it was asked for.)
+    assert!(
+        h.query_by_label_contains("Deleting it takes it out of the model")
+            .is_some()
+    );
+    h.get_by_label("Delete view").click();
     h.run();
     assert!(h.state().drawing.editor.doc.view(id).is_none());
     assert!(h.state().drawing.editor.doc.sheets_showing(id).is_empty());
@@ -8922,9 +9061,7 @@ fn place_on_sheet_finds_free_paper() {
     h.state_mut().drawing.picked_view = Some(id);
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
-    h.get_by_label("Place again").scroll_to_me();
-    h.run();
-    h.get_by_label("Place again").click();
+    view_menu_item(&mut h, id, "Place again on ");
     h.run();
     let on = placed(&h, sheet);
     assert_eq!(on.len(), 3);
@@ -8993,8 +9130,11 @@ fn a_view_leaves_out_the_layers_it_hides() {
     assert!(on_layer(&before) > 0 && dimension(&before));
     save_png("drift_ui_view_layers_on.png", &mut h);
 
-    // Off in the view's Inspector: gone from the sheet, dimension and all, as one step.
-    h.get_by_label("Setting out").scroll_to_me();
+    // Off in the view's Inspector (its Layers menu): gone from the sheet, dimension and all,
+    // as one step.
+    h.get_by_value("All layers").scroll_to_me();
+    h.get_by_value("All layers").click();
+    h.run();
     h.get_by_label("Setting out").click();
     h.run();
     h.run();
@@ -9106,7 +9246,7 @@ fn a_view_can_show_construction_geometry() {
     h.run();
     h.run();
     assert!(
-        h.query_by_label("Zoom to view").is_some(),
+        h.state().drawing.picked_view.is_some(),
         "the view, picked in the list"
     );
     assert!(h.query_by_label("Construction").is_none());
@@ -9245,7 +9385,7 @@ fn sheets_reorder_duplicate_and_choose_for_pdf() {
         ["A-103  Sheet 1 copy", "A-102  Sheet 2", "A-101  Sheet 1"]
     );
 
-    // PDF… with several sheets asks which: all, or just the one shown.
+    // Export PDF with several sheets asks which: all, or just the one shown.
     let painter = h.ctx.layer_painter(egui::LayerId::background());
     let pages = |h: &mut Harness<'_, DriftApp>| {
         let pdf = h.state_mut().pdf_bytes(&painter);
@@ -9254,7 +9394,7 @@ fn sheets_reorder_duplicate_and_choose_for_pdf() {
             .count()
     };
     assert_eq!(pages(&mut h), 3);
-    h.get_by_label("PDF…").click();
+    h.state_mut().export_pdf(&painter);
     h.run();
     h.run();
     assert_eq!(
@@ -9350,7 +9490,7 @@ fn a_section_mark_makes_its_view_and_reads_its_number() {
         assert!(doc.sheets_showing(view).is_empty());
     }
     assert_eq!(h.state().drawing.picked_view, Some(view));
-    assert!(h.query_by_label("Zoom to view").is_some());
+    assert!(h.query_by_label_contains("Referenced by").is_some());
     assert_eq!(reads(&h), ("–".to_owned(), "–".to_owned()));
     // One undo step.
     h.state_mut().undo();
@@ -9370,9 +9510,7 @@ fn a_section_mark_makes_its_view_and_reads_its_number() {
     h.state_mut().drawing.picked_view = Some(view);
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
-    h.get_by_label("Place on sheet").scroll_to_me();
-    h.run();
-    h.get_by_label("Place on sheet").click();
+    view_menu_item(&mut h, view, "Place on ");
     h.run();
     assert_eq!(reads(&h), ("2".to_owned(), "A-101".to_owned()));
     // The view's Inspector on the sheet lists the mark.

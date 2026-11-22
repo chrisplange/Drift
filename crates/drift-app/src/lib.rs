@@ -706,6 +706,14 @@ pub struct DriftApp {
     /// The rules a new drawing starts with (how its areas and fills behave, its gap
     /// tolerance), and those an older file is given: kept on this computer.
     new_rules: drift_core::DrawingRules,
+    /// The units and title block logo new drawings start with: kept on this computer.
+    new_drawing: app::new_drawing::NewDrawing,
+    /// Whether the drawing open now was started as a new one (File → New, an import as a new
+    /// drawing, the blank one at start), not opened or restored: only such a drawing, while
+    /// nothing has been done to it, follows a change to what new drawings start with.
+    drawing_from_new: bool,
+    /// Set by `new_document`, taken by `replace_document`: the drawing it installs is new.
+    next_from_new: std::cell::Cell<bool>,
     /// The View menu's switches as of the last frame, to say in the status bar when one
     /// changes (by a key, a menu, the status bar or the palette).
     view_seen: Option<[bool; app::document::VIEW_FLAGS]>,
@@ -903,6 +911,9 @@ impl DriftApp {
             show_quick_bar: true,
             layer_on_pick: Default::default(),
             new_rules: drift_core::DrawingRules::default(),
+            new_drawing: Default::default(),
+            drawing_from_new: true,
+            next_from_new: Default::default(),
             view_seen: None,
             relations_seen: None,
             new_block_name: String::new(),
@@ -1374,6 +1385,7 @@ impl eframe::App for DriftApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         storage.set_string(KEY_VIEW, self.view_prefs());
         storage.set_string(KEY_DARK_LOOK, theme::dark_look().key().into());
+        self.new_drawing.save(storage);
         let recent: Vec<String> = self
             .recent
             .iter()

@@ -211,6 +211,11 @@ fn smoke_sheet_logo_chosen_as_svg_is_the_logo() {
         "nothing drawn"
     );
     assert!(h.query_by_label("Replace…").is_some());
+    // Said, with that new drawings start with it too (#429).
+    assert_eq!(
+        h.state().status.as_ref().map(|s| s.text.as_str()),
+        Some("logo.svg is now the title block logo, for new drawings too")
+    );
     save_png("drift_smoke_sheet_logo.png", &mut h);
     let _ = std::fs::remove_file(&path);
 }

@@ -186,6 +186,14 @@ class AutoMergeTests(unittest.TestCase):
         self.assertTrue(auto_merge.touches_website(["crates/drift-app/src/lib.rs"]))
         self.assertFalse(auto_merge.touches_website(["PAPERCUTS.md", "integrations/blender/x.py"]))
 
+    def test_closes_only_this_repos_issues(self):
+        def ref(n, owner="chrisplange", name="Drift"):
+            return {"number": n, "repository": {"name": name, "owner": {"login": owner}}}
+        refs = [ref(497), ref(501), ref(497), ref(12, name="drift-releases"), ref(9, owner="x")]
+        self.assertEqual(auto_merge.issues_to_close(refs, "chrisplange/Drift"), [497, 501])
+        self.assertEqual(auto_merge.issues_to_close([], "chrisplange/Drift"), [])
+        self.assertEqual(auto_merge.issues_to_close(None, "chrisplange/Drift"), [])
+
 
 if __name__ == "__main__":
     unittest.main()

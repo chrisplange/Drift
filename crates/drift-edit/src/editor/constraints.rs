@@ -910,7 +910,9 @@ impl Editor {
                 Shapes::AsBefore,
             );
         }
-        if !self.new_conflicts(&report) && self.stretched_a_turning_line(named, &start) {
+        if !self.new_conflicts(&report)
+            && (self.stretched_a_turning_line(named, &start) || !self.keeps_its_sense(id, &start))
+        {
             report =
                 self.solve_typed_size_turned(id, named, keep, degenerate_before, &start, report);
         }
@@ -998,7 +1000,8 @@ impl Editor {
     /// third side, kept square, crosses the turned side nearly parallel (90° to 145° flung
     /// a 52 mm side out to 460 mm). The named line keeping its length is what #350 meant
     /// ("a line made parallel turns, and neither stretches"), so this is tried only where
-    /// the first solve stretched one (where it didn't, the sketch stays square as before),
+    /// the first solve stretched one or met the angle the other way round (where it did
+    /// neither, the sketch stays square as before),
     /// and taken where it lands cleanly with the named lines at their lengths, `keep`
     /// where the first solve kept it, the dimension reading its value (not met mirrored),
     /// and nothing else flung, collapsed or flipped and no radius grown; else the first
@@ -1021,33 +1024,46 @@ impl Editor {
             held.iter().map(|p| ed.doc.point(*p).ok()).collect()
         };
         let first_at = at(self);
-        self.restore_geometry(start);
-        let kept_was = at(self);
         // From the named line already turned to the angle, the way round it was: a solve
         // from where it was turns it the short way, which past 90° is the other way round.
-        self.turn_to(id, keep);
-        let turned = self.points_and_circles();
-        let report = self.solve_typed_size_keeping(
-            id,
-            named,
-            keep,
-            degenerate_before,
-            &turned,
-            Shapes::Turned,
-        );
-        // (The lines that gave up their directions turn and stretch freely: judged by the
-        // rest. Released as with nothing kept, the most a turning solve releases.)
-        let released = self.released_by_turning(named, None);
-        let better = !self.new_conflicts(&report)
-            && !self.unfinished(&report)
-            && !self.new_degeneracy(degenerate_before)
-            && !self.left_a_sliver(start)
-            && !self.stretched_a_turning_line(named, start)
-            && (first_at != kept_was || at(self) == kept_was)
-            && self.keeps_its_sense(id, start)
-            && !self.reshaped(start, named, &released);
-        if better {
-            return report;
+        // The line that turns is the one not kept; if that one can't (a relation holds it
+        // level, say), the other.
+        for turn_a in [false, true] {
+            self.restore_geometry(start);
+            let kept_was = at(self);
+            self.turn_to(id, keep, turn_a);
+            let turned = self.points_and_circles();
+            let report = self.solve_typed_size_keeping(
+                id,
+                named,
+                keep,
+                degenerate_before,
+                &turned,
+                Shapes::Turned,
+            );
+            // (The lines that gave up their directions turn and stretch freely: judged by
+            // the rest.)
+            // (With nothing kept, nothing to hold: held.)
+            let held = at(self) == kept_was;
+            let released = match keep.filter(|_| held) {
+                Some(k) => {
+                    let mut turning = named.clone();
+                    turning.remove(&k);
+                    self.released_by_turning(&turning, Some(k))
+                }
+                None => self.released_by_turning(named, None),
+            };
+            let better = !self.new_conflicts(&report)
+                && !self.unfinished(&report)
+                && !self.new_degeneracy(degenerate_before)
+                && !self.left_a_sliver(start)
+                && !self.stretched_a_turning_line(named, start)
+                && (first_at != kept_was || held)
+                && self.keeps_its_sense(id, start)
+                && !self.reshaped(start, named, &released);
+            if better {
+                return report;
+            }
         }
         self.restore_geometry(&landed);
         first
@@ -1057,8 +1073,10 @@ impl Editor {
     /// to the angle's value, the way round the angle was (see
     /// [`keeps_its_sense`](Self::keeps_its_sense)): rigidly, about the point the two lines
     /// share, else the turning line's end `keep` holds, else its middle. Only a start for
-    /// a solve: what is joined to it is put right by the solve.
-    fn turn_to(&mut self, id: ConstraintId, keep: Option<EntityId>) {
+    /// a solve: what is joined to it is put right by the solve. `turn_a`: turn the angle's
+    /// first line instead (the one that turns can be held by a relation, or fixed). Points
+    /// made Coincident count as one, and move together.
+    fn turn_to(&mut self, id: ConstraintId, keep: Option<EntityId>, turn_a: bool) {
         let Some(Constraint::Angle { a, b, degrees }) = self.doc.constraint(id).copied() else {
             return;
         };
@@ -1087,16 +1105,21 @@ impl Editor {
         if delta > 180.0 {
             delta -= 360.0;
         }
-        // Turning `a` instead turns the angle the other way.
-        let (line, (p0, p1), turn) = if keep == Some(b) {
+        // The second line turns, unless it is the one kept or `turn_a` asks for the first:
+        // turning `a` turns the angle the other way.
+        let (line, (p0, p1), turn) = if turn_a || keep == Some(b) {
             (a, (a0, a1), -delta)
         } else {
             (b, (b0, b1), delta)
         };
         let held: HashSet<EntityId> = keep
-            .map(|k| self.doc.defining_points([k]).into_iter().collect())
+            .filter(|k| *k != line)
+            .map(|k| self.joined(self.doc.defining_points([k])))
             .unwrap_or_default();
-        let shared = [a0, a1].into_iter().find(|p| *p == b0 || *p == b1);
+        let shared = [a0, a1]
+            .into_iter()
+            .find(|p| self.joined([*p]).iter().any(|q| *q == b0 || *q == b1));
+        let shared_group = shared.map(|s| self.joined([s])).unwrap_or_default();
         let pivot = shared
             .or_else(|| [p0, p1].into_iter().find(|p| held.contains(p)))
             .and_then(at)
@@ -1104,22 +1127,25 @@ impl Editor {
         let rot = DVec2::from_angle(turn.to_radians());
         let mut moves: Vec<(EntityId, DVec2)> = Vec::new();
         for p in [p0, p1] {
-            if Some(p) == shared || held.contains(&p) {
+            if shared_group.contains(&p) || held.contains(&p) {
                 continue;
             }
             let Some(q) = at(p) else { continue };
             let to = pivot + rot.rotate(q - pivot);
-            moves.push((p, to));
-            // A line hanging from it is carried along as it is: the shapes the solve
-            // keeps are read from where this leaves things.
-            for user in self.doc.users_of(p).filter(|u| *u != line) {
-                if let Some(EntityKind::Line { a: u0, b: u1 }) = self.doc.get(user).map(|e| e.kind)
-                {
-                    let other = if u0 == p { u1 } else { u0 };
-                    let hangs = self.doc.users_of(other).count() == 1
-                        && self.doc.constraints_on(other).next().is_none();
-                    if hangs && let Some(o) = at(other) {
-                        moves.push((other, o + (to - q)));
+            for m in self.joined([p]) {
+                moves.push((m, to));
+                // A line hanging from it is carried along as it is: the shapes the solve
+                // keeps are read from where this leaves things.
+                for user in self.doc.users_of(m).filter(|u| *u != line) {
+                    if let Some(EntityKind::Line { a: u0, b: u1 }) =
+                        self.doc.get(user).map(|e| e.kind)
+                    {
+                        let other = if u0 == m { u1 } else { u0 };
+                        if self.hangs(other)
+                            && let Some(o) = at(other)
+                        {
+                            moves.push((other, o + (to - q)));
+                        }
                     }
                 }
             }

@@ -390,3 +390,106 @@ fn a_typed_angle_carries_a_hanging_line_at_its_direction() {
     let now = t.ed.doc.point(end).unwrap() - t.ed.doc.point(t.free).unwrap();
     assert!(now.distance(before) < 1e-6, "{before:?} -> {now:?}");
 }
+
+/// A triangle of three separate lines joined by Coincident relations turns like one that
+/// shares its points (the third side wasn't seen as joined to the turned end: flung to
+/// 459 mm, as before the fix).
+#[test]
+fn a_typed_angle_turns_a_side_joined_by_coincident_relations() {
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let line = |ed: &mut Editor, a: DVec2, b: DVec2| {
+        let (pa, pb) = (ed.doc.add_point(a), ed.doc.add_point(b));
+        (ed.doc.add_line(pa, pb).unwrap(), pa, pb)
+    };
+    let (upright, corner, foot) = line(&mut ed, v(136.0, 77.0), v(136.0, 14.0));
+    let (top, corner2, free) = line(&mut ed, v(136.0, 77.0), v(188.0, 77.0));
+    let (_, free2, foot2) = line(&mut ed, v(188.0, 77.0), v(136.0, 14.0));
+    ed.commit("Lines");
+    ed.add_constraints(
+        "Coincident",
+        &[
+            Constraint::Coincident {
+                a: corner,
+                b: corner2,
+            },
+            Constraint::Coincident { a: free, b: free2 },
+            Constraint::Coincident { a: foot, b: foot2 },
+        ],
+    )
+    .unwrap();
+    let angle = measured_angle(&mut ed, upright, top);
+    ed.set_dimension(angle, 145.0).unwrap();
+    let at = ed.doc.point(free).unwrap();
+    assert!(at.distance(turned_top(145.0)) < 1e-6, "{at:?}");
+}
+
+/// Where the line that would turn can't, the other one does: the top held level, 145°
+/// turns the upright (keeping the top turning shrank it from 52 to 7 mm, the upright met
+/// mirrored); the top fixed in place, 145° then 35° turns the upright at its 63 mm.
+#[test]
+fn a_typed_angle_turns_the_other_line_where_one_is_held() {
+    let mut t = triangle(false);
+    let top =
+        t.ed.doc
+            .users_of(t.free)
+            .find(|u| {
+                matches!(t.ed.doc.get(*u).map(|e| e.kind),
+                Some(EntityKind::Line { a, .. }) if a == t.corner)
+            })
+            .unwrap();
+    t.ed.add_constraints("Horizontal", &[Constraint::Horizontal { line: top }])
+        .unwrap();
+    t.ed.set_dimension(t.angle, 145.0).unwrap();
+    assert!((length(&t.ed, t.corner, t.free) - 52.0).abs() < 1e-6);
+    assert!((length(&t.ed, t.corner, t.foot) - 63.0).abs() < 1e-6);
+    let m = drift_solver::measure(&t.ed.doc, t.ed.doc.constraint(t.angle).unwrap()).unwrap();
+    assert!((m - 145.0).abs() < 1e-6, "reads {m}");
+
+    let mut t = triangle(false);
+    let fixes = [
+        Constraint::Fix {
+            point: t.corner,
+            at: v(136.0, 77.0),
+        },
+        Constraint::Fix {
+            point: t.free,
+            at: v(188.0, 77.0),
+        },
+    ];
+    t.ed.add_constraints("Fix", &fixes).unwrap();
+    for degrees in [145.0, 35.0] {
+        t.ed.set_dimension(t.angle, degrees).unwrap();
+        assert!(
+            (length(&t.ed, t.corner, t.foot) - 63.0).abs() < 1e-6,
+            "{degrees}°: upright {}",
+            length(&t.ed, t.corner, t.foot)
+        );
+        let foot = t.ed.doc.point(t.foot).unwrap();
+        // The foot below the top: the angle not met mirrored above it.
+        assert!(foot.y < 77.0, "{degrees}°: foot {foot:?}");
+    }
+}
+
+/// Two lines sharing an end and nothing else: 145° then 30° is a true 30°, not met
+/// mirrored (the visible corner 150°), though nothing stretched. (The lines' rays,
+/// first to second, start at 270° for the 90° the dimension reads: they stay on that
+/// half, at the value plus 180°.)
+#[test]
+fn a_typed_angle_on_an_open_corner_keeps_its_side() {
+    let mut ed = Editor::default();
+    let (p, l) = lines_through(&mut ed, &[v(0.0, -60.0), v(0.0, 0.0), v(50.0, 0.0)], false);
+    let angle = measured_angle(&mut ed, l[0], l[1]);
+    for degrees in [145.0, 30.0] {
+        ed.set_dimension(angle, degrees).unwrap();
+        let (c, e) = (ed.doc.point(p[1]).unwrap(), ed.doc.point(p[2]).unwrap());
+        let d0 = c - ed.doc.point(p[0]).unwrap();
+        let ray = d0
+            .perp_dot(e - c)
+            .atan2(d0.dot(e - c))
+            .to_degrees()
+            .rem_euclid(360.0);
+        let off = (ray - degrees - 180.0).rem_euclid(360.0);
+        assert!(off.min(360.0 - off) < 1e-6, "{degrees}: rays at {ray}");
+    }
+}

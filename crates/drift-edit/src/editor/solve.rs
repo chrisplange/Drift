@@ -246,16 +246,17 @@ impl Editor {
     /// The lines that give up their directions for the lines in `turning` to turn: those
     /// joined to a moving end of one (a point of it that `keep`, held in place, doesn't
     /// define), not themselves turning, and not hanging from it (a line whose other end
-    /// nothing else uses or relates is carried along at its direction instead).
+    /// nothing else uses or relates is carried along at its direction instead). Points
+    /// made Coincident count as one ([`joined`](Self::joined)).
     pub(crate) fn released_by_turning(
         &self,
         turning: &HashSet<EntityId>,
         keep: Option<EntityId>,
     ) -> HashSet<EntityId> {
         let held: HashSet<EntityId> = keep
-            .map(|k| self.doc.defining_points([k]).into_iter().collect())
+            .map(|k| self.joined(self.doc.defining_points([k])))
             .unwrap_or_default();
-        let moving: HashSet<EntityId> = turning
+        let ends: Vec<EntityId> = turning
             .iter()
             .filter_map(|id| match self.doc.get(*id)?.kind {
                 EntityKind::Line { a, b } => Some([a, b]),
@@ -264,9 +265,7 @@ impl Editor {
             .flatten()
             .filter(|p| !held.contains(p))
             .collect();
-        let hangs = |p: EntityId| {
-            self.doc.users_of(p).count() == 1 && self.doc.constraints_on(p).next().is_none()
-        };
+        let moving = self.joined(ends);
         moving
             .iter()
             .flat_map(|p| self.doc.users_of(*p).collect::<Vec<_>>())
@@ -274,11 +273,35 @@ impl Editor {
             .filter(|line| match self.doc.get(*line).map(|e| e.kind) {
                 Some(EntityKind::Line { a, b }) => {
                     let other = if moving.contains(&a) { b } else { a };
-                    !hangs(other)
+                    !self.hangs(other)
                 }
                 _ => false,
             })
             .collect()
+    }
+
+    /// Whether only one curve uses point `p` and no relation names it: a line ending there
+    /// hangs from its other end.
+    pub(crate) fn hangs(&self, p: EntityId) -> bool {
+        self.doc.users_of(p).count() == 1 && self.doc.constraints_on(p).next().is_none()
+    }
+
+    /// `points` and every point made Coincident with one of them, through chains of
+    /// Coincident relations: points the solve keeps together, as if one.
+    pub(crate) fn joined(&self, points: impl IntoIterator<Item = EntityId>) -> HashSet<EntityId> {
+        let mut out: HashSet<EntityId> = HashSet::new();
+        let mut todo: Vec<EntityId> = points.into_iter().collect();
+        while let Some(p) = todo.pop() {
+            if !out.insert(p) {
+                continue;
+            }
+            for c in self.doc.constraints_on(p) {
+                if let Some(Constraint::Coincident { a, b }) = self.doc.constraint(c) {
+                    todo.extend([*a, *b]);
+                }
+            }
+        }
+        out
     }
 
     /// What the driving relations reach through shared points and relations: all an edit's

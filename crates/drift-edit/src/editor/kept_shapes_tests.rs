@@ -525,3 +525,44 @@ fn a_typed_angle_turning_a_filleted_side_grows_no_fillet() {
         assert!(off < 1e-6, "{degrees}°: off tangent {off}");
     }
 }
+
+/// A fillet at the angle's own corner stays as it is, and the top keeps its length: the
+/// two lines share no point then, the top turns about its middle, and the round, tangent to
+/// the top, ends on the upright. Carrying it round tilted the upright and the turn was
+/// refused: with auto-relations the top flung from 46 to 106 / 634 / 401 mm at 120 / 145 /
+/// 160° (Opus review of #520, finding 1). (Without them, 60–145° reshape on main too: a
+/// follow-up; 160° is clean.)
+#[test]
+fn a_typed_angle_carries_no_fillet_at_its_own_corner() {
+    for (auto, degrees) in [
+        (true, 60.0),
+        (true, 120.0),
+        (true, 145.0),
+        (true, 160.0),
+        (false, 160.0),
+    ] {
+        let mut t = triangle(false);
+        t.ed.prefs.auto_relations = auto;
+        let arc = t.ed.fillet(t.corner, 6.0).unwrap();
+        let top =
+            t.ed.doc
+                .users_of(t.free)
+                .find(|l| {
+                    matches!(t.ed.doc.get(*l).map(|e| e.kind),
+                    Some(EntityKind::Line { b, .. }) if b == t.free)
+                })
+                .unwrap();
+        let Some(EntityKind::Line { a: near, .. }) = t.ed.doc.get(top).map(|e| e.kind) else {
+            panic!("no top");
+        };
+        let was = length(&t.ed, near, t.free);
+        t.ed.set_dimension(t.angle, degrees).unwrap();
+        let r = drift_solver::radius_of(&t.ed.doc, arc).unwrap();
+        assert!((r - 6.0).abs() < 1e-6, "auto {auto}, {degrees}°: R {r}");
+        let now = length(&t.ed, near, t.free);
+        assert!(
+            (now - was).abs() < 1e-6,
+            "auto {auto}, {degrees}°: top {was} -> {now}"
+        );
+    }
+}

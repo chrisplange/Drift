@@ -267,17 +267,35 @@ impl Editor {
             .collect();
         // A round met tangentially at a moving end (a fillet) is carried round with the
         // line, so its far end moves too, and the line beyond it turns rather than the
-        // round growing to meet it.
+        // round growing to meet it. Not from the corner two turning lines share (it is
+        // turned about, not moved), and not a round ending on a line the size names or
+        // where `keep` holds (see `carried_rounds`).
         let mut moving = self.joined(ends.iter().map(|(_, p)| *p));
+        let line_ends: Vec<(EntityId, EntityId)> = turning
+            .iter()
+            .filter_map(|id| match self.doc.get(*id)?.kind {
+                EntityKind::Line { a, b } => Some([(*id, a), (*id, b)]),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        let mut fixed = held.clone();
+        fixed.extend(self.joined(line_ends.iter().map(|(_, p)| *p)));
         let beyond: Vec<EntityId> = ends
             .iter()
+            .filter(|&&(line, p)| {
+                let at = self.joined([p]);
+                !line_ends
+                    .iter()
+                    .any(|&(other, q)| other != line && at.contains(&q))
+            })
             .flat_map(|&(line, p)| {
+                let fixed = &fixed;
                 self.joined([p])
                     .into_iter()
-                    .flat_map(move |q| self.rounds_carried_by(line, q))
+                    .flat_map(move |q| self.carried_rounds(line, q, fixed))
             })
             .map(|(_, far)| far)
-            .filter(|p| !held.contains(p))
             .collect();
         moving.extend(self.joined(beyond));
         moving
@@ -335,6 +353,23 @@ impl Editor {
                 }
                 _ => None,
             })
+            .collect()
+    }
+
+    /// [`rounds_carried_by`](Self::rounds_carried_by) `line` at `p`, but not a round whose
+    /// far end is `fixed` (held where it is, or an end of a line the size names: a fillet
+    /// at the angle's own corner ends on the other line, which carrying it would tilt).
+    /// What both the turn ([`Editor::turn_to`]) and the lines it releases
+    /// ([`released_by_turning`](Self::released_by_turning)) go by.
+    pub(crate) fn carried_rounds(
+        &self,
+        line: EntityId,
+        p: EntityId,
+        fixed: &HashSet<EntityId>,
+    ) -> Vec<(EntityId, EntityId)> {
+        self.rounds_carried_by(line, p)
+            .into_iter()
+            .filter(|(_, far)| !fixed.contains(far))
             .collect()
     }
 

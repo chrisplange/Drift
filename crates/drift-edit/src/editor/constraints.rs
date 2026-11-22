@@ -1125,6 +1125,10 @@ impl Editor {
             .and_then(at)
             .unwrap_or_else(|| (at(p0).unwrap_or_default() + at(p1).unwrap_or_default()) / 2.0);
         let rot = DVec2::from_angle(turn.to_radians());
+        // (Rounds ending where `keep` holds, or on either named line, stay: see
+        // `carried_rounds`.)
+        let mut fixed = held.clone();
+        fixed.extend(self.joined([a0, a1, b0, b1]));
         let mut moves: Vec<(EntityId, DVec2)> = Vec::new();
         for p in [p0, p1] {
             if shared_group.contains(&p) || held.contains(&p) {
@@ -1136,7 +1140,7 @@ impl Editor {
                 moves.push((m, to));
                 // A round met tangentially there (a fillet) turns with the line, rigidly:
                 // the line beyond it then turns to meet it (see `released_by_turning`).
-                for (arc, far) in self.rounds_carried_by(line, m) {
+                for (arc, far) in self.carried_rounds(line, m, &fixed) {
                     let centre = match self.doc.get(arc).map(|e| e.kind) {
                         Some(EntityKind::Arc { center, .. }) => center,
                         _ => continue,

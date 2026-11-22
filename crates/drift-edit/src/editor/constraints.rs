@@ -1134,6 +1134,19 @@ impl Editor {
             let to = pivot + rot.rotate(q - pivot);
             for m in self.joined([p]) {
                 moves.push((m, to));
+                // A round met tangentially there (a fillet) turns with the line, rigidly:
+                // the line beyond it then turns to meet it (see `released_by_turning`).
+                for (arc, far) in self.rounds_carried_by(line, m) {
+                    let centre = match self.doc.get(arc).map(|e| e.kind) {
+                        Some(EntityKind::Arc { center, .. }) => center,
+                        _ => continue,
+                    };
+                    for r in self.joined([centre]).into_iter().chain(self.joined([far])) {
+                        if let Some(o) = at(r) {
+                            moves.push((r, pivot + rot.rotate(o - pivot)));
+                        }
+                    }
+                }
                 // A line hanging from it is carried along as it is: the shapes the solve
                 // keeps are read from where this leaves things.
                 for user in self.doc.users_of(m).filter(|u| *u != line) {

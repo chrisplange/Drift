@@ -23,6 +23,7 @@ mod layers_ui;
 pub(crate) mod links;
 #[cfg(test)]
 mod mem_tests;
+mod motion;
 mod notes;
 pub mod output;
 mod overlay;
@@ -138,6 +139,8 @@ const KEY_DIRTY: &str = "drift.dirty";
 const KEY_RECENT: &str = "drift.recent";
 /// Which dark look (Midnight or Obsidian) is chosen.
 const KEY_DARK_LOOK: &str = "drift.dark_look";
+/// Preferences → General → Animate solves ("1" or "0").
+const KEY_ANIMATE_SOLVES: &str = "drift.animate_solves";
 /// How many recent files are remembered.
 const MAX_RECENT: usize = 10;
 
@@ -639,6 +642,11 @@ pub struct DriftApp {
     /// About → Licences: the third-party notices.
     show_licences: bool,
     show_settings: bool,
+    /// Preferences → General → Animate solves: geometry a solve moves eases into place
+    /// (#514). Kept with the app's settings, not in drawings.
+    animate_solves: bool,
+    /// The solves easing into place on the canvas.
+    solve_motion: motion::SolveMotion,
     /// File → Drawing settings: the units and drafting style saved with the drawing.
     show_drawing_settings: bool,
     /// What was last copied or cut here (for Edit → Paste).
@@ -875,6 +883,8 @@ impl DriftApp {
             show_report: false,
             show_licences: false,
             show_settings: false,
+            animate_solves: true,
+            solve_motion: Default::default(),
             show_drawing_settings: false,
             clipboard: None,
             palette: None,
@@ -965,6 +975,9 @@ impl DriftApp {
             .and_then(|v| theme::DarkLook::parse(&v))
         {
             theme::set_dark_look(look);
+        }
+        if let Some(storage) = cc.storage {
+            app.load_motion_pref(storage);
         }
         theme::apply(&cc.egui_ctx);
         // The double-click time of the tool it starts with (see `sync_double_click`).
@@ -1386,6 +1399,7 @@ impl eframe::App for DriftApp {
         storage.set_string(KEY_VIEW, self.view_prefs());
         storage.set_string(KEY_DARK_LOOK, theme::dark_look().key().into());
         self.new_drawing.save(storage);
+        self.save_motion_pref(storage);
         let recent: Vec<String> = self
             .recent
             .iter()
@@ -1420,6 +1434,22 @@ impl eframe::App for DriftApp {
 
     fn auto_save_interval(&self) -> std::time::Duration {
         std::time::Duration::from_secs(10)
+    }
+}
+
+impl DriftApp {
+    /// Preferences → General → Animate solves, as saved with the app's settings.
+    fn load_motion_pref(&mut self, storage: &dyn eframe::Storage) {
+        if let Some(on) = storage.get_string(KEY_ANIMATE_SOLVES) {
+            self.animate_solves = on != "0";
+        }
+    }
+
+    fn save_motion_pref(&self, storage: &mut dyn eframe::Storage) {
+        storage.set_string(
+            KEY_ANIMATE_SOLVES,
+            if self.animate_solves { "1" } else { "0" }.into(),
+        );
     }
 }
 

@@ -10,7 +10,17 @@ enum Shapes {
     /// As before: the rest's directions and radii only, nothing of what the relations name
     /// ([`Editor::kept_shapes_as_before`]).
     AsBefore,
+    /// As [`Kept`](Self::Kept), but the lines the relations name turn rather than stretch:
+    /// they keep their lengths, and the lines joined to their moving ends give up their
+    /// directions to let them (see [`Editor::kept_shapes_turned`]). Only for a typed size,
+    /// tried after the first solve (see [`Editor::solve_typed_size`]).
+    Turned,
 }
+
+/// How many times its length a line may grow (or shrink) in a typed size's solve turning
+/// its named lines ([`Shapes::Turned`]) before that solve counts as flung, or collapsed,
+/// and the first solve stands.
+const FLUNG: f64 = 3.0;
 
 impl Editor {
     /// Add constraints as one undoable step. Refused if they conflict with the existing ones
@@ -423,6 +433,7 @@ impl Editor {
         let kept = match shapes {
             Shapes::Kept => self.kept_shapes(&named),
             Shapes::AsBefore => self.kept_shapes_as_before(&named),
+            Shapes::Turned => self.kept_shapes_turned(&named, keep),
         };
         // (Relations on walls' faces take up the change on the centrelines they lower to.)
         let lowering = self.lowering();
@@ -874,7 +885,10 @@ impl Editor {
     /// one end, `keep`, stays where it is if it can (#348); else, or then, a solve that
     /// keeps shapes (from where the kept one landed, it takes no step). Where keeping
     /// shapes leaves a sliver, solved as before from the geometry as it was (see
-    /// [`check_new_constraints`](Self::check_new_constraints)).
+    /// [`check_new_constraints`](Self::check_new_constraints)). Where the size turns a
+    /// line (an angle's), solved again with that line turning instead of stretching, and
+    /// that taken where it is clearly better (see
+    /// [`solve_typed_size_turned`](Self::solve_typed_size_turned)).
     fn solve_typed_size(
         &mut self,
         id: ConstraintId,
@@ -883,17 +897,304 @@ impl Editor {
         degenerate_before: &[EntityId],
     ) -> SolveReport {
         let start = self.points_and_circles();
-        let report =
+        let mut report =
             self.solve_typed_size_keeping(id, named, keep, degenerate_before, &start, Shapes::Kept);
-        if !self.left_a_sliver(&start) {
-            return report;
+        if self.left_a_sliver(&start) {
+            self.restore_geometry(&start);
+            report = self.solve_typed_size_keeping(
+                id,
+                named,
+                keep,
+                degenerate_before,
+                &start,
+                Shapes::AsBefore,
+            );
         }
-        self.restore_geometry(&start);
-        self.solve_typed_size_keeping(id, named, keep, degenerate_before, &start, Shapes::AsBefore)
+        if !self.new_conflicts(&report)
+            && (self.stretched_a_turning_line(named, &start) || !self.keeps_its_sense(id, &start))
+        {
+            report =
+                self.solve_typed_size_turned(id, named, keep, degenerate_before, &start, report);
+        }
+        report
+    }
+
+    /// The lines among `named` whose lengths a solve of a size naming them keeps: an
+    /// angle's (a distance names points, a radius a round; a line a distance sizes is the
+    /// distance's).
+    fn turning_lines(&self, named: &HashSet<EntityId>) -> Vec<EntityId> {
+        let kept = self.kept_shapes(named);
+        named
+            .iter()
+            .copied()
+            .filter(|e| kept.lengths.contains_key(e))
+            .collect()
+    }
+
+    /// Whether a line among `named` that should turn at its length (see
+    /// [`turning_lines`](Self::turning_lines)) has a different length than in `start`.
+    fn stretched_a_turning_line(&self, named: &HashSet<EntityId>, start: &Geometry) -> bool {
+        let was: HashMap<EntityId, DVec2> = start.points.iter().copied().collect();
+        self.turning_lines(named).into_iter().any(|line| {
+            let Some(EntityKind::Line { a, b }) = self.doc.get(line).map(|e| e.kind) else {
+                return false;
+            };
+            let (Some(a0), Some(b0), Ok(a1), Ok(b1)) = (
+                was.get(&a),
+                was.get(&b),
+                self.doc.point(a),
+                self.doc.point(b),
+            ) else {
+                return false;
+            };
+            let (l0, l1) = (a0.distance(*b0), a1.distance(b1));
+            (l1 - l0).abs() > 1e-6 * l0 + 1e-9
+        })
+    }
+
+    /// Whether angle `id` is met the same way round as it was in `start`. An angle reads
+    /// modulo 180° (between lines, not rays), so 54° is met with the lines' rays at 54° or
+    /// at 234°: the sketch mirrored across one line, its corner showing 126°. A solve that
+    /// turns a line the short way can land on that other one; the rays keep the half they
+    /// had. (Anything but an angle, and an angle that started with its lines parallel,
+    /// either way round alike: true.)
+    fn keeps_its_sense(&self, id: ConstraintId, start: &Geometry) -> bool {
+        let Some(Constraint::Angle { a, b, degrees }) = self.doc.constraint(id).copied() else {
+            return true;
+        };
+        let was: HashMap<EntityId, DVec2> = start.points.iter().copied().collect();
+        let ray = |line: EntityId, before: bool| -> Option<DVec2> {
+            let EntityKind::Line { a, b } = self.doc.get(line)?.kind else {
+                return None;
+            };
+            Some(if before {
+                *was.get(&b)? - *was.get(&a)?
+            } else {
+                self.doc.point(b).ok()? - self.doc.point(a).ok()?
+            })
+        };
+        let rays = |before: bool| -> Option<f64> {
+            let (d1, d2) = (ray(a, before)?, ray(b, before)?);
+            Some(
+                d1.perp_dot(d2)
+                    .atan2(d1.dot(d2))
+                    .to_degrees()
+                    .rem_euclid(360.0),
+            )
+        };
+        let (Some(r0), Some(r1)) = (rays(true), rays(false)) else {
+            return true;
+        };
+        let off_half = |r: f64| (r.rem_euclid(180.0)).min(180.0 - r.rem_euclid(180.0));
+        if off_half(r0) < 1e-6 {
+            return true;
+        }
+        let half = if r0 >= 180.0 { 180.0 } else { 0.0 };
+        let d = (r1 - degrees.rem_euclid(180.0) - half).rem_euclid(360.0);
+        d.min(360.0 - d) < 1e-4
+    }
+
+    /// A typed size that turns a line, solved again with that line turning rather than
+    /// stretching ([`Shapes::Turned`]). Keeping every other line's direction can meet the
+    /// turned line only far out along it: an angle typed on a triangle's corner, where the
+    /// third side, kept square, crosses the turned side nearly parallel (90° to 145° flung
+    /// a 52 mm side out to 460 mm). The named line keeping its length is what #350 meant
+    /// ("a line made parallel turns, and neither stretches"), so this is tried only where
+    /// the first solve stretched one or met the angle the other way round (where it did
+    /// neither, the sketch stays square as before),
+    /// and taken where it lands cleanly with the named lines at their lengths, `keep`
+    /// where the first solve kept it, the dimension reading its value (not met mirrored),
+    /// and nothing else flung, collapsed or flipped and no radius grown; else the first
+    /// stands exactly as it landed. (Not by which moves less: that left a jump where the
+    /// two cross.) `first`: the first solve's report, its geometry in the document.
+    fn solve_typed_size_turned(
+        &mut self,
+        id: ConstraintId,
+        named: &HashSet<EntityId>,
+        keep: Option<EntityId>,
+        degenerate_before: &[EntityId],
+        start: &Geometry,
+        first: SolveReport,
+    ) -> SolveReport {
+        let landed = self.points_and_circles();
+        let held: Vec<EntityId> = keep
+            .map(|k| self.doc.defining_points([k]).into_iter().collect())
+            .unwrap_or_default();
+        let at = |ed: &Self| -> Vec<Option<DVec2>> {
+            held.iter().map(|p| ed.doc.point(*p).ok()).collect()
+        };
+        let first_at = at(self);
+        // From the named line already turned to the angle, the way round it was: a solve
+        // from where it was turns it the short way, which past 90° is the other way round.
+        // The line that turns is the one not kept; if that one can't (a relation holds it
+        // level, say), the other.
+        for turn_a in [false, true] {
+            self.restore_geometry(start);
+            let kept_was = at(self);
+            self.turn_to(id, keep, turn_a);
+            let turned = self.points_and_circles();
+            let report = self.solve_typed_size_keeping(
+                id,
+                named,
+                keep,
+                degenerate_before,
+                &turned,
+                Shapes::Turned,
+            );
+            // (The lines that gave up their directions turn and stretch freely: judged by
+            // the rest.)
+            // (With nothing kept, nothing to hold: held.)
+            let held = at(self) == kept_was;
+            let released = match keep.filter(|_| held) {
+                Some(k) => {
+                    let mut turning = named.clone();
+                    turning.remove(&k);
+                    self.released_by_turning(&turning, Some(k))
+                }
+                None => self.released_by_turning(named, None),
+            };
+            let better = !self.new_conflicts(&report)
+                && !self.unfinished(&report)
+                && !self.new_degeneracy(degenerate_before)
+                && !self.left_a_sliver(start)
+                && !self.stretched_a_turning_line(named, start)
+                && (first_at != kept_was || held)
+                && self.keeps_its_sense(id, start)
+                && !self.reshaped(start, named, &released);
+            if better {
+                return report;
+            }
+        }
+        self.restore_geometry(&landed);
+        first
+    }
+
+    /// Turn the line angle `id` turns (the one not `keep`; its second with nothing kept)
+    /// to the angle's value, the way round the angle was (see
+    /// [`keeps_its_sense`](Self::keeps_its_sense)): rigidly, about the point the two lines
+    /// share, else the turning line's end `keep` holds, else its middle. Only a start for
+    /// a solve: what is joined to it is put right by the solve. `turn_a`: turn the angle's
+    /// first line instead (the one that turns can be held by a relation, or fixed). Points
+    /// made Coincident count as one, and move together.
+    fn turn_to(&mut self, id: ConstraintId, keep: Option<EntityId>, turn_a: bool) {
+        let Some(Constraint::Angle { a, b, degrees }) = self.doc.constraint(id).copied() else {
+            return;
+        };
+        let ends = |line: EntityId| match self.doc.get(line).map(|e| e.kind) {
+            Some(EntityKind::Line { a, b }) => Some((a, b)),
+            _ => None,
+        };
+        let (Some((a0, a1)), Some((b0, b1))) = (ends(a), ends(b)) else {
+            return;
+        };
+        let at = |p: EntityId| self.doc.point(p).ok();
+        let (Some(pa0), Some(pa1), Some(pb0), Some(pb1)) = (at(a0), at(a1), at(b0), at(b1)) else {
+            return;
+        };
+        let (d1, d2) = (pa1 - pa0, pb1 - pb0);
+        if d1.length() == 0.0 || d2.length() == 0.0 {
+            return;
+        }
+        let r0 = d1
+            .perp_dot(d2)
+            .atan2(d1.dot(d2))
+            .to_degrees()
+            .rem_euclid(360.0);
+        let half = if r0 >= 180.0 { 180.0 } else { 0.0 };
+        let mut delta = (degrees.rem_euclid(180.0) + half - r0).rem_euclid(360.0);
+        if delta > 180.0 {
+            delta -= 360.0;
+        }
+        // The second line turns, unless it is the one kept or `turn_a` asks for the first:
+        // turning `a` turns the angle the other way.
+        let (line, (p0, p1), turn) = if turn_a || keep == Some(b) {
+            (a, (a0, a1), -delta)
+        } else {
+            (b, (b0, b1), delta)
+        };
+        let held: HashSet<EntityId> = keep
+            .filter(|k| *k != line)
+            .map(|k| self.joined(self.doc.defining_points([k])))
+            .unwrap_or_default();
+        let shared = [a0, a1]
+            .into_iter()
+            .find(|p| self.joined([*p]).iter().any(|q| *q == b0 || *q == b1));
+        let shared_group = shared.map(|s| self.joined([s])).unwrap_or_default();
+        let pivot = shared
+            .or_else(|| [p0, p1].into_iter().find(|p| held.contains(p)))
+            .and_then(at)
+            .unwrap_or_else(|| (at(p0).unwrap_or_default() + at(p1).unwrap_or_default()) / 2.0);
+        let rot = DVec2::from_angle(turn.to_radians());
+        let mut moves: Vec<(EntityId, DVec2)> = Vec::new();
+        for p in [p0, p1] {
+            if shared_group.contains(&p) || held.contains(&p) {
+                continue;
+            }
+            let Some(q) = at(p) else { continue };
+            let to = pivot + rot.rotate(q - pivot);
+            for m in self.joined([p]) {
+                moves.push((m, to));
+                // A line hanging from it is carried along as it is: the shapes the solve
+                // keeps are read from where this leaves things.
+                for user in self.doc.users_of(m).filter(|u| *u != line) {
+                    if let Some(EntityKind::Line { a: u0, b: u1 }) =
+                        self.doc.get(user).map(|e| e.kind)
+                    {
+                        let other = if u0 == m { u1 } else { u0 };
+                        if self.hangs(other)
+                            && let Some(o) = at(other)
+                        {
+                            moves.push((other, o + (to - q)));
+                        }
+                    }
+                }
+            }
+        }
+        for (p, q) in moves {
+            let _ = self.doc.set_point(p, q);
+        }
+    }
+
+    /// Whether, against `start`, a line not `released` grew or shrank past [`FLUNG`] times
+    /// its length, or turned end for end (not one in `named`), or a radius grew (radii are
+    /// never grown).
+    fn reshaped(
+        &self,
+        start: &Geometry,
+        named: &HashSet<EntityId>,
+        released: &HashSet<EntityId>,
+    ) -> bool {
+        let was: HashMap<EntityId, DVec2> = start.points.iter().copied().collect();
+        let radius_was: HashMap<EntityId, f64> = start.circles.iter().copied().collect();
+        let span = |a: EntityId, b: EntityId| -> Option<(DVec2, DVec2)> {
+            let (a0, b0) = (was.get(&a)?, was.get(&b)?);
+            let (a1, b1) = (self.doc.point(a).ok()?, self.doc.point(b).ok()?);
+            Some((*b0 - *a0, b1 - a1))
+        };
+        let grew = |before: f64, now: f64| now > before * (1.0 + 1e-6) + 1e-9;
+        self.doc.iter().any(|(id, e)| match e.kind {
+            EntityKind::Line { a, b } if !released.contains(&id) => {
+                span(a, b).is_some_and(|(before, now)| {
+                    let (l0, l1) = (before.length(), now.length());
+                    l0 > 0.0
+                        && (l1 > FLUNG * l0
+                            || l1 < l0 / FLUNG
+                            || (!named.contains(&id) && before.dot(now) < 0.0))
+                })
+            }
+            EntityKind::Arc { center, start, .. } => {
+                span(center, start).is_some_and(|(before, now)| grew(before.length(), now.length()))
+            }
+            EntityKind::Circle { radius, .. } => {
+                radius_was.get(&id).is_some_and(|&r0| grew(r0, radius))
+            }
+            _ => false,
+        })
     }
 
     /// [`solve_typed_size`](Self::solve_typed_size) keeping `shapes`. `start`: the geometry
-    /// as the edit found it.
+    /// as the edit found it. Turning ([`Shapes::Turned`]) with nothing kept in place, or
+    /// where it can't stay, the named lines turn from where they were.
     fn solve_typed_size_keeping(
         &mut self,
         id: ConstraintId,
@@ -903,11 +1204,14 @@ impl Editor {
         start: &Geometry,
         shapes: Shapes,
     ) -> SolveReport {
-        if let Some(k) = keep {
-            self.keep_in_place(&[id], named, k, degenerate_before, start, shapes);
-        }
+        let kept = keep
+            .is_some_and(|k| self.keep_in_place(&[id], named, k, degenerate_before, start, shapes));
         match shapes {
-            Shapes::Kept => self.solve_commit(),
+            Shapes::Turned if !kept => {
+                self.solve_new_constraints(&[id], named.clone(), None, Shapes::Turned);
+                self.solve_commit()
+            }
+            Shapes::Kept | Shapes::Turned => self.solve_commit(),
             Shapes::AsBefore => self.solve(&[]),
         }
     }

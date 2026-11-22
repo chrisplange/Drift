@@ -146,3 +146,350 @@ fn a_relation_beside_a_circle_keeps_its_radius() {
         circle_radius(&ed, circle)
     );
 }
+
+/// A triangle: an upright side (corner to foot), a top side (corner to a free end, 52 mm)
+/// square to it, and a third side closing the free end back to the foot; the angle between
+/// the upright and the top dimensioned at 90° (`swap`: named top first, at 270°).
+struct Triangle {
+    ed: Editor,
+    corner: EntityId,
+    foot: EntityId,
+    free: EntityId,
+    angle: ConstraintId,
+}
+
+fn triangle(swap: bool) -> Triangle {
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let corner = ed.doc.add_point(v(136.0, 77.0));
+    let foot = ed.doc.add_point(v(136.0, 14.0));
+    let free = ed.doc.add_point(v(188.0, 77.0));
+    let upright = ed.doc.add_line(corner, foot).unwrap();
+    let top = ed.doc.add_line(corner, free).unwrap();
+    ed.doc.add_line(free, foot).unwrap();
+    ed.commit("Triangle");
+    let (a, b, degrees) = if swap {
+        (top, upright, 270.0)
+    } else {
+        (upright, top, 90.0)
+    };
+    let angle = ed
+        .add_constraints("Angle", &[Constraint::Angle { a, b, degrees }])
+        .unwrap()[0];
+    Triangle {
+        ed,
+        corner,
+        foot,
+        free,
+        angle,
+    }
+}
+
+/// Where the top side's free end is with the top turned `degrees` from the upright about
+/// the corner, at its 52 mm.
+fn turned_top(degrees: f64) -> DVec2 {
+    let t = degrees.to_radians();
+    v(136.0 + 52.0 * t.sin(), 77.0 - 52.0 * t.cos())
+}
+
+/// The angle typed 90° to 145°. Keeping the third side's direction put the free end where
+/// that direction meets the turned top side: nearly parallel at 145°, so 460 mm out on a
+/// 52 mm side, flung far from the drawing. Now the top side turns about the corner and
+/// keeps its length, and the third follows.
+#[test]
+fn a_typed_angle_turns_a_triangle_side_instead_of_flinging_it() {
+    let mut t = triangle(false);
+    t.ed.set_dimension(t.angle, 145.0).unwrap();
+    let at = t.ed.doc.point(t.free).unwrap();
+    assert!(at.distance(turned_top(145.0)) < 1e-6, "{at:?}");
+    assert!((length(&t.ed, t.corner, t.free) - 52.0).abs() < 1e-6);
+    assert!(t.ed.doc.point(t.corner).unwrap().distance(v(136.0, 77.0)) < 1e-9);
+    assert!(t.ed.doc.point(t.foot).unwrap().distance(v(136.0, 14.0)) < 1e-9);
+}
+
+/// Every angle turns the top the same way, with no jump between near values (a first
+/// fix took the turn only past a 3× stretch: 125° flung the end to (259, 163), 126° put it
+/// at (178, 108)); typed in steps it lands where typed at once, and typed back to 90° the
+/// triangle is as it was.
+#[test]
+fn every_typed_angle_turns_the_side_alike() {
+    for degrees in [95.0, 120.0, 125.0, 126.0, 160.0, 179.0, 60.0, 30.0] {
+        let mut t = triangle(false);
+        t.ed.set_dimension(t.angle, degrees).unwrap();
+        let at = t.ed.doc.point(t.free).unwrap();
+        assert!(
+            at.distance(turned_top(degrees)) < 1e-6,
+            "{degrees}°: {at:?}"
+        );
+    }
+    let mut t = triangle(false);
+    for degrees in (19..=29).map(|k| f64::from(k) * 5.0) {
+        t.ed.set_dimension(t.angle, degrees).unwrap();
+    }
+    let at = t.ed.doc.point(t.free).unwrap();
+    assert!(at.distance(turned_top(145.0)) < 1e-6, "in steps: {at:?}");
+    t.ed.set_dimension(t.angle, 90.0).unwrap();
+    let at = t.ed.doc.point(t.free).unwrap();
+    assert!(at.distance(v(188.0, 77.0)) < 1e-6, "back: {at:?}");
+}
+
+/// A fillet at the foot keeps its radius while the top turns (a first fix ranked the
+/// turned side's length above the radii: R8 grew to 17.11 at 160°).
+#[test]
+fn a_typed_angle_turning_a_side_grows_no_fillet() {
+    let mut t = triangle(false);
+    let arc = t.ed.fillet(t.foot, 8.0).unwrap();
+    t.ed.set_dimension(t.angle, 160.0).unwrap();
+    let r = drift_solver::radius_of(&t.ed.doc, arc).unwrap();
+    assert!((r - 8.0).abs() < 1e-6, "R {r}");
+    let at = t.ed.doc.point(t.free).unwrap();
+    assert!(at.distance(turned_top(160.0)) < 1e-6, "{at:?}");
+}
+
+/// A line hanging off the free end is carried along at its length (a first fix shortened
+/// a 39.4 mm one by 2.2 mm at 155°; keeping shapes alone left a sliver, and the solve as
+/// before then flung the top to 507 mm).
+#[test]
+fn a_typed_angle_carries_a_line_hanging_off_the_turned_side() {
+    for degrees in [145.0, 155.0] {
+        let mut t = triangle(false);
+        t.ed.doc.begin();
+        let end = t.ed.doc.add_point(v(220.0, 100.0));
+        t.ed.doc.add_line(t.free, end).unwrap();
+        t.ed.commit("Tail");
+        let tail = length(&t.ed, t.free, end);
+        t.ed.set_dimension(t.angle, degrees).unwrap();
+        assert!(
+            (length(&t.ed, t.free, end) - tail).abs() < 1e-6,
+            "{degrees}°"
+        );
+        let at = t.ed.doc.point(t.free).unwrap();
+        assert!(
+            at.distance(turned_top(degrees)) < 1e-6,
+            "{degrees}°: {at:?}"
+        );
+    }
+}
+
+/// With the top side fixed, the upright turns at its length about the corner, whichever
+/// line the angle names first (the first fix only turned a line it could keep the other
+/// in place for: named upright first, the upright stretched from 63 to 200.8 mm).
+#[test]
+fn a_typed_angle_turns_the_free_side_whichever_is_named_first() {
+    for swap in [false, true] {
+        let mut t = triangle(swap);
+        let fixes = [
+            Constraint::Fix {
+                point: t.corner,
+                at: v(136.0, 77.0),
+            },
+            Constraint::Fix {
+                point: t.free,
+                at: v(188.0, 77.0),
+            },
+        ];
+        t.ed.add_constraints("Fix", &fixes).unwrap();
+        t.ed.set_dimension(t.angle, if swap { 215.0 } else { 145.0 })
+            .unwrap();
+        assert!(
+            (length(&t.ed, t.corner, t.foot) - 63.0).abs() < 1e-6,
+            "swap {swap}: upright {}",
+            length(&t.ed, t.corner, t.foot)
+        );
+    }
+}
+
+/// An open or closed run of lines through `at`.
+fn lines_through(ed: &mut Editor, at: &[DVec2], closed: bool) -> (Vec<EntityId>, Vec<EntityId>) {
+    ed.doc.begin();
+    let points: Vec<EntityId> = at.iter().map(|p| ed.doc.add_point(*p)).collect();
+    let n = if closed {
+        points.len()
+    } else {
+        points.len() - 1
+    };
+    let lines = (0..n)
+        .map(|i| {
+            ed.doc
+                .add_line(points[i], points[(i + 1) % points.len()])
+                .unwrap()
+        })
+        .collect();
+    ed.commit("Lines");
+    (points, lines)
+}
+
+/// An angle between `a` and `b` at the value it measures.
+fn measured_angle(ed: &mut Editor, a: EntityId, b: EntityId) -> ConstraintId {
+    let probe = Constraint::Angle { a, b, degrees: 0.0 };
+    let degrees = drift_solver::measure(&ed.doc, &probe).unwrap();
+    ed.add_constraints("Angle", &[Constraint::Angle { a, b, degrees }])
+        .unwrap()[0]
+}
+
+/// Where a typed angle doesn't stretch the line it turns, the sketch stays square as before
+/// (a second fix released the neighbours' directions on every angle: a rectangle's top
+/// tilted 12.8° at 135°, a zigzag's third run 11.6°).
+#[test]
+fn a_typed_angle_that_stretches_nothing_keeps_the_rest_square() {
+    let mut ed = Editor::default();
+    let (p, l) = lines_through(
+        &mut ed,
+        &[v(0.0, 0.0), v(100.0, 0.0), v(100.0, 50.0), v(0.0, 50.0)],
+        true,
+    );
+    let angle = measured_angle(&mut ed, l[0], l[1]);
+    ed.set_dimension(angle, 135.0).unwrap();
+    let (c, d) = (ed.doc.point(p[2]).unwrap(), ed.doc.point(p[3]).unwrap());
+    assert!((c.y - d.y).abs() < 1e-6, "top tilted: {c:?} {d:?}");
+
+    let mut ed = Editor::default();
+    let (p, l) = lines_through(
+        &mut ed,
+        &[v(0.0, 0.0), v(50.0, 0.0), v(50.0, 40.0), v(100.0, 40.0)],
+        false,
+    );
+    let angle = measured_angle(&mut ed, l[0], l[1]);
+    ed.set_dimension(angle, 135.0).unwrap();
+    let (c, d) = (ed.doc.point(p[2]).unwrap(), ed.doc.point(p[3]).unwrap());
+    assert!((c.y - d.y).abs() < 1e-6, "third run tilted: {c:?} {d:?}");
+}
+
+/// An angle changed by more than 90° keeps the side it was on: 145° then 54° is a true
+/// 54° (the turn the short way met it mirrored across the upright, its corner showing
+/// 126°), and back to 90° the triangle is as it was.
+#[test]
+fn a_typed_angle_keeps_its_side_past_ninety_degrees() {
+    let mut t = triangle(false);
+    t.ed.set_dimension(t.angle, 145.0).unwrap();
+    t.ed.set_dimension(t.angle, 54.0).unwrap();
+    let at = t.ed.doc.point(t.free).unwrap();
+    assert!(at.distance(turned_top(54.0)) < 1e-6, "{at:?}");
+    t.ed.set_dimension(t.angle, 90.0).unwrap();
+    let at = t.ed.doc.point(t.free).unwrap();
+    assert!(at.distance(v(188.0, 77.0)) < 1e-6, "{at:?}");
+    // Down to 30° and up to 119°: the closing side more than triples, and the turn stands.
+    let mut t = triangle(false);
+    t.ed.set_dimension(t.angle, 30.0).unwrap();
+    t.ed.set_dimension(t.angle, 119.0).unwrap();
+    let at = t.ed.doc.point(t.free).unwrap();
+    assert!(at.distance(turned_top(119.0)) < 1e-6, "{at:?}");
+}
+
+/// A line hanging off the turned side's free end keeps its direction as well as its
+/// length (a second fix swung it from 35.7° to -15.4°).
+#[test]
+fn a_typed_angle_carries_a_hanging_line_at_its_direction() {
+    let mut t = triangle(false);
+    t.ed.doc.begin();
+    let end = t.ed.doc.add_point(v(220.0, 100.0));
+    t.ed.doc.add_line(t.free, end).unwrap();
+    t.ed.commit("Tail");
+    let before = t.ed.doc.point(end).unwrap() - t.ed.doc.point(t.free).unwrap();
+    t.ed.set_dimension(t.angle, 145.0).unwrap();
+    let now = t.ed.doc.point(end).unwrap() - t.ed.doc.point(t.free).unwrap();
+    assert!(now.distance(before) < 1e-6, "{before:?} -> {now:?}");
+}
+
+/// A triangle of three separate lines joined by Coincident relations turns like one that
+/// shares its points (the third side wasn't seen as joined to the turned end: flung to
+/// 459 mm, as before the fix).
+#[test]
+fn a_typed_angle_turns_a_side_joined_by_coincident_relations() {
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let line = |ed: &mut Editor, a: DVec2, b: DVec2| {
+        let (pa, pb) = (ed.doc.add_point(a), ed.doc.add_point(b));
+        (ed.doc.add_line(pa, pb).unwrap(), pa, pb)
+    };
+    let (upright, corner, foot) = line(&mut ed, v(136.0, 77.0), v(136.0, 14.0));
+    let (top, corner2, free) = line(&mut ed, v(136.0, 77.0), v(188.0, 77.0));
+    let (_, free2, foot2) = line(&mut ed, v(188.0, 77.0), v(136.0, 14.0));
+    ed.commit("Lines");
+    ed.add_constraints(
+        "Coincident",
+        &[
+            Constraint::Coincident {
+                a: corner,
+                b: corner2,
+            },
+            Constraint::Coincident { a: free, b: free2 },
+            Constraint::Coincident { a: foot, b: foot2 },
+        ],
+    )
+    .unwrap();
+    let angle = measured_angle(&mut ed, upright, top);
+    ed.set_dimension(angle, 145.0).unwrap();
+    let at = ed.doc.point(free).unwrap();
+    assert!(at.distance(turned_top(145.0)) < 1e-6, "{at:?}");
+}
+
+/// Where the line that would turn can't, the other one does: the top held level, 145°
+/// turns the upright (keeping the top turning shrank it from 52 to 7 mm, the upright met
+/// mirrored); the top fixed in place, 145° then 35° turns the upright at its 63 mm.
+#[test]
+fn a_typed_angle_turns_the_other_line_where_one_is_held() {
+    let mut t = triangle(false);
+    let top =
+        t.ed.doc
+            .users_of(t.free)
+            .find(|u| {
+                matches!(t.ed.doc.get(*u).map(|e| e.kind),
+                Some(EntityKind::Line { a, .. }) if a == t.corner)
+            })
+            .unwrap();
+    t.ed.add_constraints("Horizontal", &[Constraint::Horizontal { line: top }])
+        .unwrap();
+    t.ed.set_dimension(t.angle, 145.0).unwrap();
+    assert!((length(&t.ed, t.corner, t.free) - 52.0).abs() < 1e-6);
+    assert!((length(&t.ed, t.corner, t.foot) - 63.0).abs() < 1e-6);
+    let m = drift_solver::measure(&t.ed.doc, t.ed.doc.constraint(t.angle).unwrap()).unwrap();
+    assert!((m - 145.0).abs() < 1e-6, "reads {m}");
+
+    let mut t = triangle(false);
+    let fixes = [
+        Constraint::Fix {
+            point: t.corner,
+            at: v(136.0, 77.0),
+        },
+        Constraint::Fix {
+            point: t.free,
+            at: v(188.0, 77.0),
+        },
+    ];
+    t.ed.add_constraints("Fix", &fixes).unwrap();
+    for degrees in [145.0, 35.0] {
+        t.ed.set_dimension(t.angle, degrees).unwrap();
+        assert!(
+            (length(&t.ed, t.corner, t.foot) - 63.0).abs() < 1e-6,
+            "{degrees}°: upright {}",
+            length(&t.ed, t.corner, t.foot)
+        );
+        let foot = t.ed.doc.point(t.foot).unwrap();
+        // The foot below the top: the angle not met mirrored above it.
+        assert!(foot.y < 77.0, "{degrees}°: foot {foot:?}");
+    }
+}
+
+/// Two lines sharing an end and nothing else: 145° then 30° is a true 30°, not met
+/// mirrored (the visible corner 150°), though nothing stretched. (The lines' rays,
+/// first to second, start at 270° for the 90° the dimension reads: they stay on that
+/// half, at the value plus 180°.)
+#[test]
+fn a_typed_angle_on_an_open_corner_keeps_its_side() {
+    let mut ed = Editor::default();
+    let (p, l) = lines_through(&mut ed, &[v(0.0, -60.0), v(0.0, 0.0), v(50.0, 0.0)], false);
+    let angle = measured_angle(&mut ed, l[0], l[1]);
+    for degrees in [145.0, 30.0] {
+        ed.set_dimension(angle, degrees).unwrap();
+        let (c, e) = (ed.doc.point(p[1]).unwrap(), ed.doc.point(p[2]).unwrap());
+        let d0 = c - ed.doc.point(p[0]).unwrap();
+        let ray = d0
+            .perp_dot(e - c)
+            .atan2(d0.dot(e - c))
+            .to_degrees()
+            .rem_euclid(360.0);
+        let off = (ray - degrees - 180.0).rem_euclid(360.0);
+        assert!(off.min(360.0 - off) < 1e-6, "{degrees}: rays at {ray}");
+    }
+}

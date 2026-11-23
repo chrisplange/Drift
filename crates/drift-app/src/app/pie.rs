@@ -45,8 +45,8 @@ fn key_for(label: &str) -> Option<Key> {
 }
 
 /// How far from the middle the pointer has to be to choose, and where the labels sit.
-const DEAD_ZONE: f32 = 22.0;
-const RADIUS: f32 = 96.0;
+pub(crate) const DEAD_ZONE: f32 = 22.0;
+pub(crate) const RADIUS: f32 = 96.0;
 
 /// The symbol of a relation, by the name it is offered under.
 pub(crate) fn glyph(label: &str) -> GlyphKind {
@@ -100,7 +100,7 @@ pub(crate) fn place_at(center: egui::Pos2, pointer: egui::Pos2) -> Option<usize>
 }
 
 /// The middle of a place's label.
-fn place_pos(center: egui::Pos2, place: usize) -> egui::Pos2 {
+pub(crate) fn place_pos(center: egui::Pos2, place: usize) -> egui::Pos2 {
     let a = place as f32 * std::f32::consts::FRAC_PI_4;
     center + egui::vec2(a.cos(), -a.sin()) * RADIUS
 }

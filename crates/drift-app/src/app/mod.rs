@@ -36,6 +36,7 @@ pub(crate) mod rail;
 pub(crate) mod recovery;
 pub(crate) mod rename_ui;
 pub(crate) mod scale_menu;
+pub(crate) mod select_pie;
 #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
 pub(crate) mod session;
 pub(crate) mod shape_ui;

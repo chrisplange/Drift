@@ -611,6 +611,8 @@ pub struct DriftApp {
     screen_font: fonts::ScreenFont,
     /// The relations pie (Q), while it is open.
     pie: Option<app::pie::Pie>,
+    /// The Selection filter pie (hold S), from S going down.
+    select_pie: Option<app::select_pie::SelectPie>,
     /// Text filtering the shortcuts list.
     shortcut_filter: String,
     /// Where the side panels are (docked, floating or hidden).
@@ -870,6 +872,7 @@ impl DriftApp {
             font_filter: String::new(),
             screen_font: Default::default(),
             pie: None,
+            select_pie: None,
             shortcut_filter: String::new(),
             layout: Default::default(),
             dock_view: Default::default(),

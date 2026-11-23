@@ -677,6 +677,7 @@ impl DriftApp {
             PrefsPage::General => self.general_prefs(ui),
             PrefsPage::Drawing => self.drawing_prefs(ui),
             PrefsPage::Layers => self.layer_prefs(ui),
+            PrefsPage::Keyboard => self.keyboard_prefs(ui),
             #[cfg(not(target_arch = "wasm32"))]
             PrefsPage::Updates => {
                 self.updates_section(ui);
@@ -997,26 +998,34 @@ pub(crate) enum PrefsPage {
     General,
     Drawing,
     Layers,
+    Keyboard,
     #[cfg(not(target_arch = "wasm32"))]
     Updates,
 }
 
 impl PrefsPage {
     #[cfg(not(target_arch = "wasm32"))]
+    const ALL: [PrefsPage; 5] = [
+        PrefsPage::General,
+        PrefsPage::Drawing,
+        PrefsPage::Layers,
+        PrefsPage::Keyboard,
+        PrefsPage::Updates,
+    ];
+    #[cfg(target_arch = "wasm32")]
     const ALL: [PrefsPage; 4] = [
         PrefsPage::General,
         PrefsPage::Drawing,
         PrefsPage::Layers,
-        PrefsPage::Updates,
+        PrefsPage::Keyboard,
     ];
-    #[cfg(target_arch = "wasm32")]
-    const ALL: [PrefsPage; 3] = [PrefsPage::General, PrefsPage::Drawing, PrefsPage::Layers];
 
     fn label(self) -> &'static str {
         match self {
             PrefsPage::General => "General",
             PrefsPage::Drawing => "Drawing aids",
             PrefsPage::Layers => "Layers",
+            PrefsPage::Keyboard => "Keyboard",
             #[cfg(not(target_arch = "wasm32"))]
             PrefsPage::Updates => "Updates & Labs",
         }

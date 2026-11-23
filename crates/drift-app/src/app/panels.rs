@@ -482,7 +482,7 @@ impl DriftApp {
         // A menu's shortcut runs that very item, so a cycle's later tools (Ellipse after
         // Circle's C) show none: the key is on the cycle's first tool, and the tooltip says
         // what pressing it again does.
-        let later_in_cycle = matches!(command, Command::Tool(kind) if kind.cycle_head() != kind && spec.keys.is_empty());
+        let later_in_cycle = matches!(command, Command::Tool(kind) if kind.cycle_head() != kind && spec.shortcuts().is_empty());
         let keys = if later_in_cycle {
             String::new()
         } else {

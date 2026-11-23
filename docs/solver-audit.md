@@ -277,38 +277,15 @@ and in the solver, per solve: `land` (pin the dragged, then the carried, and sol
 
 ## 4. The heuristics layered on so far, and their fate
 
-"Deleted" means the redesign has no such rule; "replaced" means a principled mechanism does its
-job; "kept" means it stays as a plain design parameter.
+**Superseded (2026-11-22, #187).** The table that stood here listed each heuristic as of
+2026-11-10 with the redesign's plan for it. It predated PR 3, PR 5's parking and #489
+(the smooth drag), and several of its rows no longer exist in the code (`SETTLE_PATIENCE`,
+`FELT_PASSES`, `SECOND_ORDER`, `fold_step`, `solve_settled`, the near/far hinge).
 
-| Heuristic | Where | Added | What it protects | Fate |
-|---|---|---|---|---|
-| Tolerance 1e-12 × max(1, \|c\|) | `Tolerances`, `Yardstick::scale` | early | Convergence | **Replaced** (PR 2): one bar, a fixed share of the part's size, in the part's frame |
-| `Yardstick`, `NEAR_FLOOR` = 64 ε, the 17.6 part-size hinge, `drag_part`, `drag_size`, `drag_near` | `lib.rs` 224–297 | #377 | Size-free stops near the origin, today's far out | **Deleted** (PR 2) |
-| Today/near split in `newton` (`cut_short`, `capped_loose`, `solve_judged(today)`) | `lib.rs` | #377 | Bound the work of a refused frame on a big part | **Deleted** (PR 2) |
-| Fallback (b): a near patience cut counts only if today's bar holds | `newton` | #377 | Same | **Kept by PR 2** for every drag solve, held to `PATIENCE_SHARE` (1e-3) of the bar, with no floor (floored, it gave way some 140 part-sizes out). **Deleted** (PR 3), with `PATIENCE_SHARE` |
-| λ /= 3 once rows hold (near drags only) | `newton` | #377 | Round-off steering the damping | **Extended by PR 2** to every drag solve (in a frame, every drag solve is what "near" was). **Deleted** (PR 3): once the rows hold, the relations' damping no longer runs |
-| Angle rows' floor of ulps over their shorter line (`row_tolerance`) | `lib.rs` | PR 2 | Storage rounding of a line's direction far out (#387) | **Settled by PR 3**: an angle between lines holds to the length bar over its shorter line (its end within the bar of where the angle puts it), so it is held as a length is, with the length bar's floor, a million part-sizes out; no edge between. The unitless bar stays for an ellipse's tangency only |
-| A fold solve isn't cut by patience before its rows hold to the patience share and every kept shape is met | `newton` | PR 2 | A fold solve finishes only where it meets everything; at the part's bar its rows hold sooner, and patience cut it mid-crawl (macOS CI) | **Deleted** with patience (PR 3). With `fold`, the shapes settle only where a step could gain them less than the bar squared |
-| `SETTLE_PATIENCE` = 10 | `newton` | #94 | Bounds a kept shape's crawl | **Replaced** (PR 3): a stationarity test of the preferences on the relations' manifold (projected gradient in the weighted metric below the bar, or the step's most gain below the bar squared, or the region below the bar) |
-| `MAX_ITERATIONS` = 100 as the conflict test | `newton` | early | A failing part stops | **Replaced** (PR 3): a least-squares stationary point (the region's best step brings the rows no more than their finest bar closer); the cap stays as a counted safety net. It still ends 0.63 % of the census's drag solves: drags that can't land, their dragged points giving way at their weight (see PR 3's notes) |
-| λ > 1e12 × max_diag break; 30-try factor loop | `newton` | early | A step that can't be taken | **Replaced** (PR 3): a factor that fails is a refused step (the damping rises); the stationarity test ends a stalled solve |
-| `still`/`at_rest`/`last_moved` ("a drag's solve isn't over while a step moves") | `newton` | #104 | Stops that depend on size | **Replaced** (PR 3): the frame and bar (PR 2) make the stop size-free, and the preferences' stage settles by stationarity |
-| `FELT_PASSES` = 6, `FELT_ROUND_OFF`, `SECOND_ORDER` = 0.25, the soft step's 4 halvings | `newton` | #94, #103 | Keeping the preferences' step in the relations' null space | **Replaced** (PR 3): a two-stage solve, the relations first, then the preferences by projected conjugate gradients in their null space (projection `μ·A⁻¹`), re-projected onto them by Newton steps |
-| `WANDERING_GAIN` = 0.25, `wandered`, `WANDERED` = 1 | `newton`, `drag.rs` | #103 | A solve that wanders round a fold triggers small steps | **Replaced** (PR 5): step-size control in the continuation |
-| `KEEP_SHAPE` = 100, `UNFOCUSED_MOBILITY`, `DRAGGED/CARRIED_MOBILITY` | `newton`, `system.rs` | #94, #333 | Ranks of what moves | **Kept** as weights; dragged targets become exact constraints in a drag (PR 5), so the dragged weight goes |
-| `land()` landing passes | `lib.rs` 521 | #94 era | The heavy, not pinned, dragged give a little | **Deleted** (PR 5): targets are exact |
-| Step limit `across` (`drawing_across`, circles counted) | `newton` | #103, #280 | One iteration can't fling geometry | **Kept** as the trust region's upper bound |
-| Fold steps: `SolveOptions::fold`, `FOLD_MET` = 1e-9, `fold_scale`, `fold_step` | `newton` | #282 | Finish a solve stalled at a fold | **Replaced** (PR 3 + 4). PR 3 deletes `fold_step` (the preferences' Gauss–Newton step meets a kept shape at a fold); `fold_scale`, `FOLD_MET` and the fold solve's strict finish stay for PR 4/5 |
-| `drag_from_start` substeps (size/4, ≤ 16), `drag_towards` (≤ 4 halvings), `drag_in_steps` (`MAX_SPLITS` = 6) | `drag.rs` | #103, c99881c | Go round the shape, not across a fold | **Replaced** (PR 5). PR 2: its size counts each place once (points at one place counted twice moved its middle) |
-| `DRAG_SOLVES` = 200, `UNFINISHED_WORK` = 6,400 | `drag.rs` | 1c46e52, #281 | Bound a frame's cost | **Replaced** (PR 5): one budget on the continuation's steps |
-| Fold try (own budgets) | `drag_frame_today` | #282 | Retry with fold steps | **Deleted** (PR 5) |
-| Length try: `LENGTH_TRY_SOLVES` = 32 (shared), `LENGTH_TRY_STRETCH` = 1e-6, `LENGTH_TRY_TOLERANCE`, `length_slack` | `keep_lengths` | #284, #365, #377 | A hanging line keeps its length | **Deleted** (PR 5): the continuation tracks the branch where the length is kept |
-| `SHAPE_HOLD` = 10, `LINE_HOLD` = 100, `COLLAPSED_LINE` = 1e-6 | `breaks_held_shape` | #278 | The binding drag rule | **Replaced** (PR 5): held radii are held, and the continuation stops at the last valid shape (decision 4) |
-| `Orientation` (arcs inside out, tangency sides, `SWEEP_JUMP`, `COLLAPSED_RADIUS`), flipped lines, `NO_WAY_ROUND` | `lib.rs`, `drag.rs` | c99881c, #280 | A step mustn't land on another branch | **Kept** as the continuation's branch test, run per predictor step instead of per halving |
-| `touching` (tangencies frozen at drag start), `TOUCHING_END` | `system.rs` | #97 | Tangent side kept | **Kept**, and extended to Parallel/Perpendicular/Angle (PR 4) |
-| Carry turned curves, `carry_holding` | `drag.rs` | #283, #282 | Push what can't give way | **Kept** as behaviour, re-expressed as which parameters the continuation moves |
-| `stalled` second solve in `solve_settled` | `solve.rs` | #342 | A commit that ran out of iterations | **Deleted** (PR 3), with `solve_settled` and `plain`: a solve stops at its stop test, not short of it |
-| `NEGLIGIBLE_ROW` = 1e-9, `row_scales` | `newton` | #94, #277 | Round-off rows don't steer the step | **Kept** |
+The current list is **[solver-heuristics.md](solver-heuristics.md)**: every heuristic and
+constant in the solve and the drag as they are now, what each protects, the tests that fail
+without it, and what the sketch corpus does with it switched off. What became of the old
+table's rows is in section 5's notes on each PR (as built).
 
 ---
 

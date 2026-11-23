@@ -1322,7 +1322,11 @@ impl System {
                 .sum::<f64>()
                 / total;
             if group.members.iter().any(|i| dragged.contains(i)) {
-                group.mobility = DRAGGED_MOBILITY;
+                group.mobility = crate::ablation::or(
+                    crate::ablation::Switch::DraggedMobilityTimes100,
+                    DRAGGED_MOBILITY,
+                    DRAGGED_MOBILITY * 100.0,
+                );
             } else if has_held {
                 group.mobility = CARRIED_MOBILITY;
             }

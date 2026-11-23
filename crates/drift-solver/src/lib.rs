@@ -14,6 +14,7 @@
 //! parameters) → equations → independent components → two-stage solve per component → write
 //! back.
 
+pub mod ablation;
 pub mod bench;
 mod equations;
 #[cfg(feature = "exit-counts")]
@@ -33,6 +34,7 @@ pub use crate::incremental::{AnalysisCache, analyze_cached};
 pub use crate::lowering::{Lowered, Lowering, Relations, relations};
 pub use crate::system::{TouchingEnds, touching_ends};
 
+use crate::ablation::Switch;
 use crate::equations::Equation;
 use crate::linalg::{Matrix, rref};
 use crate::sparse::{Dd, Skyline, qr_rank};
@@ -664,6 +666,38 @@ const CORRECTION_SHARE: f64 = 1.0;
 /// `newton`).
 pub const FOLD_MET: f64 = 1e-9;
 
+/// [`MIN_CHANGE`], [`KEEP_SHAPE`] and [`FOLD_MET`] as a solve reads them: themselves, but
+/// where the heuristic ledger's ablation has thrown their switch (test builds with the
+/// `ablate` feature only; see [`ablation`]).
+#[inline(always)]
+fn min_change() -> f64 {
+    if ablation::off(Switch::MinChangeTimes100) {
+        MIN_CHANGE * 100.0
+    } else if ablation::off(Switch::MinChangeOver100) {
+        MIN_CHANGE / 100.0
+    } else {
+        MIN_CHANGE
+    }
+}
+
+#[inline(always)]
+fn keep_shape() -> f64 {
+    if ablation::off(Switch::KeepShapeWeight) {
+        0.0
+    } else if ablation::off(Switch::KeepShapeTimes10) {
+        KEEP_SHAPE * 10.0
+    } else if ablation::off(Switch::KeepShapeOver10) {
+        KEEP_SHAPE / 10.0
+    } else {
+        KEEP_SHAPE
+    }
+}
+
+#[inline(always)]
+fn fold_met() -> f64 {
+    ablation::or(Switch::FoldMetTimes1000, FOLD_MET, FOLD_MET * 1000.0)
+}
+
 /// Solve the document's constraints in place. Changes go through the document's normal edit
 /// methods, so they are recorded by an open transaction.
 pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
@@ -675,7 +709,11 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
         &options.radii,
         options.lowering.as_deref(),
         options.relations.as_deref().map(Vec::as_slice),
-        options.touching.as_deref(),
+        if ablation::off(Switch::TouchingFrozen) {
+            None
+        } else {
+            options.touching.as_deref()
+        },
     );
     // A point merged with a dragged one (coincident with it) is dragged too: a preference
     // on a line or arc it ends would only pull against the drag, and slowly, the dragged
@@ -696,6 +734,7 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
     };
     for &arc in options.radii.keys() {
         if let Some(EntityKind::Arc { center, start, end }) = doc.get(arc).map(|e| e.kind)
+            && !ablation::off(Switch::DraggedEndDropsRadius)
             && (dragged_group(start) || dragged_group(end))
         {
             let key = [
@@ -710,6 +749,7 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
         }
         if let Some(EntityKind::Circle { .. }) = doc.get(arc).map(|e| e.kind)
             && let Some(&k) = sys.param_index.get(&Param::Radius(arc))
+            && !ablation::off(Switch::DraggedEndDropsRadius)
             && dragged_groups.contains(&sys.group_of[k])
         {
             sys.keep
@@ -742,8 +782,8 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
     lengths.sort_unstable_by_key(|(id, _)| **id);
     for (&line, &length) in lengths {
         if let Some(EntityKind::Line { a, b }) = doc.get(line).map(|e| e.kind)
-            && !dragged_group(a)
-            && !dragged_group(b)
+            && (ablation::off(Switch::DraggedEndDropsLength)
+                || (!dragged_group(a) && !dragged_group(b)))
         {
             let ends = [Param::X(a), Param::Y(a), Param::X(b), Param::Y(b)]
                 .map(|p| sys.param_index.get(&p).copied());
@@ -772,7 +812,7 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
             .filter_map(|p| sys.param_index.get(p).map(|&i| sys.group_of[i]))
             .collect();
         for (g, group) in sys.groups.iter_mut().enumerate() {
-            if !focus.contains(&g) {
+            if !focus.contains(&g) && !ablation::off(Switch::UnfocusedMobility) {
                 group.mobility = group.mobility.min(UNFOCUSED_MOBILITY);
             }
         }
@@ -802,7 +842,7 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
     let (mut report, failed) = run(&mut sys, options, true);
     // (Landed wherever every component converged: an old conflict over pinned geometry
     // alone, which no step can change, doesn't keep a drag beside it off its targets.)
-    if failed.components == 0 {
+    if failed.components == 0 && !ablation::off(Switch::LandingPasses) {
         report = land(&mut sys, options, &targets, report, &failed.rows);
     }
     // With the fold steps, finished means everything met: the relations, every rank landed
@@ -836,7 +876,7 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
 /// How far off a kept shape over `k` may be and still be met: [`FOLD_MET`] of its length, or
 /// the length bar it is solved to (`bar`) where that is looser.
 fn met_within(shape: &Shape, value: impl Fn(usize) -> f64, bar: f64) -> f64 {
-    (FOLD_MET * shape.size(&value)).max(bar)
+    (fold_met() * shape.size(&value)).max(bar)
 }
 
 /// Whether every kept shape the solve could move is met ([`met_within`]), each against the
@@ -1432,9 +1472,9 @@ impl Orientation {
                 ArcShape::of(doc, id).is_some_and(|now| {
                     if now.collapsed_from(reference) {
                         collapsed.insert(id);
-                        return true;
+                        return !ablation::off(Switch::CollapsedCountsAsTurned);
                     }
-                    (now.sweep - before).abs() > SWEEP_JUMP
+                    !ablation::off(Switch::ArcSweepTurn) && (now.sweep - before).abs() > SWEEP_JUMP
                 })
             })
             .map(|&(id, ..)| id)
@@ -1442,12 +1482,15 @@ impl Orientation {
         for &(id, reference) in &self.circles {
             if circle_radius(doc, id).is_some_and(|r| crushed(r, reference)) {
                 collapsed.insert(id);
-                out.push(id);
+                if !ablation::off(Switch::CollapsedCountsAsTurned) {
+                    out.push(id);
+                }
             }
         }
         for &((a, b), before) in &self.sides {
             // (A tangency to an arc the step collapsed has no side: the arc is blamed already.)
-            if !collapsed.contains(&a)
+            if !ablation::off(Switch::TangentSides)
+                && !collapsed.contains(&a)
                 && !collapsed.contains(&b)
                 && tangent_side(doc, a, b).is_some_and(|now| now != before)
             {
@@ -1455,7 +1498,9 @@ impl Orientation {
             }
         }
         for &((a, b), c, before) in &self.signs {
-            if distance_sign(doc, &c).is_some_and(|now| now != before) {
+            if !ablation::off(Switch::DistanceSigns)
+                && distance_sign(doc, &c).is_some_and(|now| now != before)
+            {
                 out.extend([a, b]);
             }
         }
@@ -1851,7 +1896,12 @@ fn row_scales(jac: &[Vec<(usize, f64)>], own: &[f64], holds: impl Fn(usize) -> b
         .zip(own)
         .enumerate()
         .map(|(k, (norm, own))| {
-            if norm <= NEGLIGIBLE_ROW * own && holds(k) {
+            if ablation::off(Switch::RowScaling) {
+                1.0
+            } else if !ablation::off(Switch::NegligibleRows)
+                && norm <= NEGLIGIBLE_ROW * own
+                && holds(k)
+            {
                 0.0
             } else if norm > NEGLIGIBLE_ROW * largest {
                 1.0 / norm
@@ -1974,7 +2024,7 @@ fn newton(
     // rounded the rows over it (#377's seeded census, 100 km out).
     let leave_storage = || {
         let b = bar.get();
-        if b.share > 0.0 {
+        if b.share > 0.0 && !ablation::off(Switch::LeaveStorage) {
             bar.set(Bar {
                 length: b.length.min(b.share),
                 ..b
@@ -2184,7 +2234,7 @@ fn newton(
                     }
                 }
             }
-            let mu = MIN_CHANGE * max_diag_of(back_normal);
+            let mu = min_change() * max_diag_of(back_normal);
             let shift: Vec<f64> = mobility
                 .iter()
                 .zip(fixed)
@@ -2261,7 +2311,7 @@ fn newton(
             converged,
             iterations: iteration,
             wandered,
-            unkept: converged && unkept,
+            unkept: converged && unkept && !ablation::off(Switch::UnkeptRadiusUnfinished),
             bar: bar.get().length.max(bar.get().floor),
         }
     };
@@ -2275,7 +2325,12 @@ fn newton(
     let stage2 = |_: usize, _: f64| {};
     let mut last_stationary = f64::NAN;
     let mut in_stage2 = false;
-    for iteration in 0..MAX_ITERATIONS {
+    let cap = ablation::or(
+        Switch::IterationCapTimes10,
+        MAX_ITERATIONS,
+        10 * MAX_ITERATIONS,
+    );
+    for iteration in 0..cap {
         if !res.iter().all(|f| f.is_finite()) || !jac.iter().flatten().all(|(_, g)| g.is_finite()) {
             return finish(Stop::NoStep, iteration, false, wandered, false);
         }
@@ -2284,7 +2339,7 @@ fn newton(
         // an analysis of what it writes reads it: a solve that moves the geometry can make the
         // part smaller than the solve found it, and a row met to the bar it began with would
         // then be off to the drawing's own (`perturbed_satisfiable_sketches_converge`).
-        if rows_hold {
+        if rows_hold && !ablation::off(Switch::BarWhereItStands) {
             let now = bar_now(values);
             if now < bar.get().length {
                 bar.set(Bar {
@@ -2379,7 +2434,7 @@ fn newton(
                     }
                 }
             }
-            let mu = MIN_CHANGE * max_diag_of(&normal);
+            let mu = min_change() * max_diag_of(&normal);
             let shift: Vec<f64> = mobility
                 .iter()
                 .zip(&pinned)
@@ -2461,7 +2516,7 @@ fn newton(
                                 .filter(|(_, pinned)| !**pinned)
                                 .map(|((g, m), _)| g * g * m)
                                 .sum();
-                            *is_radius && dot(&g, &once(&g)) > MIN_CHANGE.sqrt() * whole
+                            *is_radius && dot(&g, &once(&g)) > min_change().sqrt() * whole
                         })
                         .collect(),
                 );
@@ -2488,7 +2543,9 @@ fn newton(
             // and a drag whose radii can't follow stops (`Editor::breaks_held_shape`).)
             last_stationary = stationary;
             if rv <= 0.0
-                || (!fold && radii_met && stationary <= bar.get().length * bar.get().length)
+                || (!fold
+                    && (radii_met || ablation::off(Switch::RadiiHoldStationary))
+                    && stationary <= bar.get().length * bar.get().length)
             {
                 stage2(1, stationary);
                 return finish(
@@ -2555,7 +2612,9 @@ fn newton(
             // moving the misfit itself by far less than the bar, and the solve would creep on.
             let nearer = (2.0 * phi_now).sqrt() - (2.0 * (phi_now - promised).max(0.0)).sqrt();
             if promised <= bar.get().length * bar.get().length
-                || (!fold && nearer <= bar.get().length)
+                || (!fold
+                    && !ablation::off(Switch::PreferenceNearerStop)
+                    && nearer <= bar.get().length)
             {
                 stage2(
                     if promised <= bar.get().length * bar.get().length {
@@ -2615,8 +2674,9 @@ fn newton(
                 .collect();
             let landed = landed.filter(|_| {
                 if dragging {
-                    fold || moved(&from_entry) <= across
-                } else if sys.shapes_as_before {
+                    fold || ablation::off(Switch::DragBoundFromEntry)
+                        || moved(&from_entry) <= across
+                } else if sys.shapes_as_before || ablation::off(Switch::EditPreferenceBound) {
                     true
                 } else {
                     // (In an edit, from where the preferences' stage began: a preference never
@@ -2640,7 +2700,12 @@ fn newton(
                 // would slide geometry along a direction the shapes hardly feel, as far as
                 // round-off had it go.)
                 let gain = (phi_now - phi(&terms)) / promised;
-                (gain >= 0.25).then_some((evaluated, gain))
+                let kept = if ablation::off(Switch::PreferenceQuarterGain) {
+                    gain > 0.0
+                } else {
+                    gain >= 0.25
+                };
+                kept.then_some((evaluated, gain))
             });
             match kept {
                 Some((((trial_res, trial_jac), trial_own), gain)) => {
@@ -2680,7 +2745,7 @@ fn newton(
             }
         }
         let max_diag = max_diag_of(&normal);
-        let mu = MIN_CHANGE * max_diag;
+        let mu = min_change() * max_diag;
         // The shapes kept, as part of the change a step makes: where the rows' solutions
         // could go either way (a concentric round's lines follow it, or the round shrinks),
         // being off a radius, length or direction costs as much as moving its points that
@@ -2698,7 +2763,7 @@ fn newton(
             let own = rank * if own.is_finite() { own } else { 1.0 };
             for (i, &(c1, g1)) in grad.iter().enumerate() {
                 for &(c2, g2) in &grad[..=i] {
-                    normal.add_product(c1, c2, mu * KEEP_SHAPE * own * g1, g2);
+                    normal.add_product(c1, c2, mu * keep_shape() * own * g1, g2);
                 }
             }
         }
@@ -2714,7 +2779,14 @@ fn newton(
         let shift: Vec<f64> = mobility
             .iter()
             .zip(&pinned)
-            .map(|(m, pinned)| mu * fold_scale / m + if *pinned { lambda / m } else { lambda })
+            .map(|(m, pinned)| {
+                mu * fold_scale / m
+                    + if *pinned && !ablation::off(Switch::DampingKeepsDraggedHeavy) {
+                        lambda / m
+                    } else {
+                        lambda
+                    }
+            })
             .collect();
         let refuse = |lambda: &mut f64, nu: &mut f64, fold_scale: f64| {
             *lambda = lambda.max(1e-6 * max_diag * fold_scale) * *nu;
@@ -2749,7 +2821,12 @@ fn newton(
             .enumerate()
             .map(|(c, (g, e))| values[*g] + delta[c] - e)
             .collect();
-        if moved(&delta) > across || (dragging && !fold && moved(&from_entry) > across) {
+        if (!ablation::off(Switch::StepLimit) && moved(&delta) > across)
+            || (dragging
+                && !fold
+                && !ablation::off(Switch::DragBoundFromEntry)
+                && moved(&from_entry) > across)
+        {
             wandered += 1;
             refuse(&mut lambda, &mut nu, fold_scale);
             continue;
@@ -2773,7 +2850,7 @@ fn newton(
         // the rows round and is judged by what it does to the rows that are off (a second-order
         // correction). Where they don't close in, or the correction is more than a share of the
         // step ([`CORRECTION_SHARE`]), the step as it was.
-        {
+        if !ablation::off(Switch::SecondOrderCorrection) {
             let promise: Vec<f64> = res
                 .iter()
                 .zip(&jac)
@@ -2820,11 +2897,12 @@ fn newton(
             } else {
                 1.0
             };
-            if plain_gain < WANDERING_GAIN {
+            if plain_gain < WANDERING_GAIN && !ablation::off(Switch::WanderingGain) {
                 wandered += 1;
             }
             if fold
                 && dragging
+                && !ablation::off(Switch::FoldScale)
                 && soft_terms
                     .iter()
                     .all(|(_, off)| off.abs() <= bar.get().length)
@@ -2881,7 +2959,7 @@ fn newton(
     }
     finish(
         Stop::Cap,
-        MAX_ITERATIONS,
+        cap,
         converged(&res, values),
         wandered,
         unkept(&free_radius, values),

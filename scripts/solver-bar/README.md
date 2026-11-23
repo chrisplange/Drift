@@ -48,6 +48,23 @@ CORPUS_ONLY=linkage-pantograph CORPUS_TARGET=e9 CORPUS_PATH=long-ne CORPUS_TRACE
 With `DRIFT_CORPUS_PRIVATE` set to a folder of `.drift` files, those are swept too, numbered
 and never named; their lines go to `private.txt` and the tables count them in aggregate.
 
+## The heuristic ledger's ablation
+
+`docs/solver-heuristics.md` lists every heuristic in the solve and the drag with what
+breaks without it. Its numbers come from `ablate.py`, which builds both crates' tests with
+the test-only `ablate` feature (`drift_solver::ablation`: a switch per heuristic, `false` at
+compile time in every other build) and, for each switch, sweeps the corpus and runs the
+tests with `DRIFT_ABLATE=<switch>`:
+
+```bash
+python scripts/solver-bar/ablate.py --tests --out DIR                 # every switch: hours
+python scripts/solver-bar/ablate.py --tests --out DIR --only strides,fold-try
+```
+
+It isn't part of the nightly bar. Run it for the switches concerned when a heuristic is
+added, changed or proposed for deletion, and bring its row in the ledger up to date. A new
+heuristic gets a switch where its rule is (`ablation::off(Switch::…)`), a row and a run.
+
 ## Censuses
 
 Each census test prints one line per drag; keep the lines and hand the files to

@@ -5,7 +5,6 @@ name: Quarantine
 # Not a required check: a red run here blocks nothing. When an issue is fixed, drop its
 # `#[ignore]` and its line below.
 #
-#   #409  mutated_dxf_never_panics                                  Windows
 #   #368  large_import_commits_quickly,
 #         many_filled_rectangles_made_shapes_commit_quickly         Windows (busy machine)
 
@@ -31,10 +30,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-
-      - name: "#409 mutated_dxf_never_panics"
-        if: ${{ !cancelled() && runner.os == 'Windows' }}
-        run: cargo test -p drift-io --test import_robustness -- --ignored --exact mutated_dxf_never_panics
 
       - name: "#368 drift-edit commit-time budgets"
         if: ${{ !cancelled() && runner.os == 'Windows' }}

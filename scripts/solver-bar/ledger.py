@@ -70,7 +70,8 @@ lines = []
 w = lines.append
 w("# The solver's heuristics: what each protects, and what breaks without it")
 w("")
-w(f"*The ledger #187 asked for. Measured on `main` at {commit} (Windows, release), by "
+w(f"*The ledger #187 asked for. Measured at {commit} (the ledger's branch, up to date with "
+  "`main`; Windows, release), by "
   "`scripts/solver-bar/ablate.py`. It replaces section 4 of "
   "[solver-audit.md](solver-audit.md), which predates the audit's PR 3, PR 5 and #489.*")
 w("")
@@ -165,7 +166,8 @@ w("## Reading")
 w("")
 w(f"Of {sum(len(r) for _, r in SECTIONS)} switches: {len(breaks)} break a test or a corpus "
   f"check when thrown, {len(moved_only)} change where drags end without breaking either, "
-  f"{len(refused_only)} change only which frames are refused, "
+  f"{len(refused_only)} {'changes' if len(refused_only) == 1 else 'change'} only which frames "
+  "are refused, "
   f"and {len(flagged)} change nothing at all.")
 w("")
 if flagged:
@@ -216,7 +218,7 @@ w("### Off, drags that fail on main pass")
 w("")
 failing = base["failing"]
 w(f"Main fails {failing['drags']} of the corpus's drags ("
-  + ", ".join(f"{n} `{l}`" for l, n in failing["by"].items() if n)
+  + ", ".join(f"{n} `{l}`" for l, n in sorted(failing["by"].items(), key=lambda x: -x[1]) if n)
   + "; #526, #344, #362). "
   "With these thrown, some of those pass. That is a lead on where those failures come from, "
   "not a case for deleting the rule: each row also shows what it costs.")

@@ -1,11 +1,29 @@
 {
  "base": {
+  "commit": "a3d2608",
   "cost": {
-   "solves": 1645522,
+   "solves": 1651536,
    "refused": 3553,
    "cap": 78683
   },
+  "drags": 9580,
+  "sketches": 52,
   "differ_from_baseline": 0,
+  "failing": {
+   "drags": 115,
+   "by": {
+    "R": 0,
+    "S": 1,
+    "W": 13,
+    "L": 94,
+    "G": 0,
+    "J": 11,
+    "X": 0,
+    "C": 0,
+    "P": 0,
+    "O": 0
+   }
+  },
   "tests_failed": {
    "solver": [],
    "edit": []
@@ -13,7 +31,7 @@
  },
  "keep-shape-weight": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -41,11 +59,11 @@
    },
    "newly_failing": 0,
    "newly_passing": 1,
-   "moved": 1779,
+   "moved": 1835,
    "refusals_differ": 13,
    "cases": [],
    "cost": {
-    "solves": 1644652,
+    "solves": 1650666,
     "refused": 3581,
     "cap": 78942
    },
@@ -69,7 +87,7 @@
  },
  "keep-shape-x10": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -97,11 +115,11 @@
    },
    "newly_failing": 0,
    "newly_passing": 0,
-   "moved": 1819,
+   "moved": 1875,
    "refusals_differ": 6,
    "cases": [],
    "cost": {
-    "solves": 1646642,
+    "solves": 1652656,
     "refused": 3548,
     "cap": 78071
    },
@@ -113,13 +131,14 @@
    "solver": [],
    "edit": [
     "drag_props::carried_line_keeps_its_length_step_after_step",
+    "editor::kept_shapes_tests::a_typed_angle_turns_a_slot_whole",
     "perf_tests::a_refused_drag_on_a_small_part_takes_at_most_72_solves_a_frame"
    ]
   }
  },
  "keep-shape-over10": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -147,11 +166,11 @@
    },
    "newly_failing": 0,
    "newly_passing": 0,
-   "moved": 1764,
+   "moved": 1820,
    "refusals_differ": 8,
    "cases": [],
    "cost": {
-    "solves": 1645287,
+    "solves": 1651301,
     "refused": 3570,
     "cap": 78578
    },
@@ -166,6 +185,7 @@
     "drag_props::relation_census::edits_agree_whatever_the_round_off",
     "drag_props::seeds::i_unheld_row_with_no_gradient_left_still_goes",
     "editor::active_tests::the_free_end_of_a_chain_turns_to_the_active_bar",
+    "editor::kept_shapes_tests::a_typed_angle_turns_a_slot_whole",
     "editor::tests::broken_geometry::a_dimension_past_a_tangency_still_ends_consistent",
     "perf_tests::a_refused_drag_on_a_small_part_takes_at_most_72_solves_a_frame"
    ]
@@ -173,12 +193,12 @@
  },
  "second-order-correction": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
     "S": 0,
-    "W": 3,
+    "W": 1,
     "L": 7,
     "G": 0,
     "J": 0,
@@ -201,11 +221,11 @@
    },
    "newly_failing": 7,
    "newly_passing": 6,
-   "moved": 3649,
+   "moved": 3691,
    "refusals_differ": 27,
    "cases": [
-    "linkage-pantograph e9p long-se: J -> WLJ",
-    "plan-corridor e37c long-nw: ok -> WL",
+    "linkage-pantograph e9p long-se: J -> LJ",
+    "plan-corridor e37c long-nw: ok -> L",
     "plan-free-walls e35p long-sw: ok -> WL",
     "plan-three-rooms e49p long-nw: ok -> L",
     "plan-three-rooms e51p circle: ok -> L",
@@ -213,7 +233,7 @@
     "plan-three-rooms e85p long-ne: ok -> L"
    ],
    "cost": {
-    "solves": 1619463,
+    "solves": 1624454,
     "refused": 3619,
     "cap": 82401
    },
@@ -232,12 +252,12 @@
  },
  "step-limit": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
     "S": 0,
-    "W": 1,
+    "W": 0,
     "L": 2,
     "G": 0,
     "J": 1,
@@ -263,11 +283,11 @@
    "moved": 48,
    "refusals_differ": 1,
    "cases": [
-    "plan-corridor e37c long-nw: ok -> WL",
+    "plan-corridor e37c long-nw: ok -> L",
     "plan-free-walls e33p circle: ok -> LJ"
    ],
    "cost": {
-    "solves": 1645191,
+    "solves": 1651205,
     "refused": 3549,
     "cap": 79840
    },
@@ -278,18 +298,19 @@
    "finished": true,
    "solver": [],
    "edit": [
+    "editor::kept_shapes_tests::a_typed_angle_carries_no_fillet_at_its_own_corner",
     "editor::tests::editing::variants_store_and_apply_variable_sets"
    ]
   }
  },
  "drag-bound-from-entry": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
     "S": 0,
-    "W": 1,
+    "W": 0,
     "L": 9,
     "G": 0,
     "J": 8,
@@ -316,7 +337,7 @@
    "refusals_differ": 1,
    "cases": [
     "dims-point-line e8p through: ok -> J",
-    "linkage-pantograph e4p long-sw: ok -> WLJ",
+    "linkage-pantograph e4p long-sw: ok -> LJ",
     "plan-bedroom e21p long-nw: ok -> LJ",
     "plan-corridor e7p through: L -> LJ",
     "plan-corridor e32p circle: ok -> LJ",
@@ -329,7 +350,7 @@
     "real-bar-shelves e34p long-se: ok -> LJ"
    ],
    "cost": {
-    "solves": 1645126,
+    "solves": 1651140,
     "refused": 3548,
     "cap": 83047
    },
@@ -346,7 +367,7 @@
  },
  "edit-preference-bound": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -378,7 +399,7 @@
    "refusals_differ": 0,
    "cases": [],
    "cost": {
-    "solves": 1645522,
+    "solves": 1651536,
     "refused": 3553,
     "cap": 78683
    },
@@ -393,7 +414,7 @@
  },
  "wandering-gain": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -425,7 +446,7 @@
    "refusals_differ": 12,
    "cases": [],
    "cost": {
-    "solves": 1592489,
+    "solves": 1597207,
     "refused": 3539,
     "cap": 78757
    },
@@ -440,7 +461,7 @@
  },
  "preference-quarter-gain": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -472,7 +493,7 @@
    "refusals_differ": 0,
    "cases": [],
    "cost": {
-    "solves": 1645522,
+    "solves": 1651536,
     "refused": 3553,
     "cap": 78683
    },
@@ -490,7 +511,7 @@
  },
  "preference-nearer-stop": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -522,7 +543,7 @@
    "refusals_differ": 0,
    "cases": [],
    "cost": {
-    "solves": 1645518,
+    "solves": 1651532,
     "refused": 3553,
     "cap": 78683
    },
@@ -537,7 +558,7 @@
  },
  "radii-hold-stationary": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -569,7 +590,7 @@
    "refusals_differ": 5,
    "cases": [],
    "cost": {
-    "solves": 1692149,
+    "solves": 1698163,
     "refused": 3671,
     "cap": 78683
    },
@@ -590,7 +611,7 @@
  },
  "unkept-radius-unfinished": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -622,7 +643,7 @@
    "refusals_differ": 20,
    "cases": [],
    "cost": {
-    "solves": 1644975,
+    "solves": 1650989,
     "refused": 3580,
     "cap": 78683
    },
@@ -641,12 +662,12 @@
  },
  "landing-passes": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 1,
     "S": 0,
-    "W": 2,
+    "W": 0,
     "L": 2,
     "G": 0,
     "J": 0,
@@ -669,15 +690,15 @@
    },
    "newly_failing": 3,
    "newly_passing": 5,
-   "moved": 5450,
+   "moved": 5506,
    "refusals_differ": 74,
    "cases": [
     "bracket-hinge-leaf e4p through: ok -> R",
-    "plan-corridor e37c long-nw: ok -> WL",
-    "plan-corridor e49c long-se: ok -> WL"
+    "plan-corridor e37c long-nw: ok -> L",
+    "plan-corridor e49c long-se: ok -> L"
    ],
    "cost": {
-    "solves": 3512650,
+    "solves": 3542518,
     "refused": 4313,
     "cap": 81422
    },
@@ -727,19 +748,22 @@
     "editor::active_tests::perpendicular_turns_the_other_line_to_the_active_one",
     "editor::active_tests::the_free_end_of_a_chain_turns_to_the_active_bar",
     "editor::kept_shapes_tests::a_typed_angle_that_stretches_nothing_keeps_the_rest_square",
+    "editor::kept_shapes_tests::a_vertex_fillet_without_relations_reshapes_no_worse_than_main",
     "editor::tests::circle_drag::a_point_dragged_across_its_circles_centre_is_refused_only_on_it",
     "editor::tests::circle_drag::a_point_dragged_across_its_circles_centre_never_leaves_it_without_a_radius",
     "editor::tests::editing::units_change_display_only",
     "editor::typed_size_tests::a_point_to_line_distance_keeps_the_line",
     "editor::typed_size_tests::a_typed_line_length_keeps_its_start",
     "editor::typed_size_tests::the_last_picked_point_stays",
-    "editor::typed_size_tests::with_nothing_picked_the_first_point_stays"
+    "editor::typed_size_tests::with_nothing_picked_the_first_point_stays",
+    "tools::tests::a_dragged_ring_neither_turns_inside_out_nor_crushes_its_inner_circle",
+    "tools::tests::a_typed_gap_moves_the_outer_circle_whichever_was_picked_first"
    ]
   }
  },
  "negligible-rows": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -771,7 +795,7 @@
    "refusals_differ": 4,
    "cases": [],
    "cost": {
-    "solves": 1645514,
+    "solves": 1651528,
     "refused": 3566,
     "cap": 78657
    },
@@ -786,12 +810,12 @@
  },
  "row-scaling": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
     "S": 0,
-    "W": 4,
+    "W": 5,
     "L": 0,
     "G": 0,
     "J": 0,
@@ -803,7 +827,7 @@
    "better": {
     "R": 0,
     "S": 0,
-    "W": 4,
+    "W": 1,
     "L": 26,
     "G": 0,
     "J": 5,
@@ -812,18 +836,19 @@
     "P": 0,
     "O": 0
    },
-   "newly_failing": 4,
+   "newly_failing": 5,
    "newly_passing": 31,
-   "moved": 5986,
+   "moved": 6042,
    "refusals_differ": 1005,
    "cases": [
     "linkage-pantograph e4p long-sw: ok -> W",
     "linkage-pantograph e5c long-sw: ok -> W",
     "linkage-toggle e5p long-ne: ok -> W",
-    "linkage-toggle e6c long-ne: ok -> W"
+    "linkage-toggle e6c long-ne: ok -> W",
+    "linkage-toggle e9p long-sw: L -> WL"
    ],
    "cost": {
-    "solves": 1685955,
+    "solves": 1691969,
     "refused": 27473,
     "cap": 272191
    },
@@ -842,13 +867,14 @@
     "drag_props::a_try_with_the_fold_steps_that_fails_leaves_the_frame_as_it_was",
     "drag_props::drag_is_invariant_under_similarity",
     "drag_props::relation_census::edits_agree_whatever_the_round_off",
-    "drag_props::seeds::i_unheld_row_with_no_gradient_left_still_goes"
+    "drag_props::seeds::i_unheld_row_with_no_gradient_left_still_goes",
+    "editor::kept_shapes_tests::a_typed_angle_turns_a_slot_whole"
    ]
   }
  },
  "leave-storage": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -880,7 +906,7 @@
    "refusals_differ": 0,
    "cases": [],
    "cost": {
-    "solves": 1645522,
+    "solves": 1651536,
     "refused": 3553,
     "cap": 78683
    },
@@ -895,7 +921,7 @@
  },
  "bar-where-it-stands": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -927,7 +953,7 @@
    "refusals_differ": 0,
    "cases": [],
    "cost": {
-    "solves": 1645560,
+    "solves": 1651574,
     "refused": 3553,
     "cap": 78683
    },
@@ -944,7 +970,7 @@
  },
  "fold-scale": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -976,7 +1002,7 @@
    "refusals_differ": 0,
    "cases": [],
    "cost": {
-    "solves": 1644951,
+    "solves": 1650965,
     "refused": 3553,
     "cap": 79173
    },
@@ -991,12 +1017,12 @@
  },
  "damping-keeps-dragged-heavy": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
     "S": 0,
-    "W": 9,
+    "W": 10,
     "L": 24,
     "G": 0,
     "J": 32,
@@ -1008,7 +1034,7 @@
    "better": {
     "R": 0,
     "S": 0,
-    "W": 5,
+    "W": 2,
     "L": 14,
     "G": 0,
     "J": 9,
@@ -1017,8 +1043,8 @@
     "P": 0,
     "O": 0
    },
-   "newly_failing": 58,
-   "newly_passing": 24,
+   "newly_failing": 60,
+   "newly_passing": 23,
    "moved": 885,
    "refusals_differ": 180,
    "cases": [
@@ -1029,6 +1055,7 @@
     "linkage-bell-crank e2p through: ok -> W",
     "linkage-bell-crank e4p through: ok -> W",
     "linkage-bell-crank e14p through: ok -> L",
+    "linkage-bell-crank e15c long-se: L -> WL",
     "linkage-cam-follower e8p long-se: ok -> L",
     "linkage-crank-slider e5p through: ok -> J",
     "linkage-crank-slider e9p long-ne: ok -> L",
@@ -1041,15 +1068,14 @@
     "linkage-piston e9p long-nw: ok -> L",
     "linkage-toggle e5p long-ne: ok -> W",
     "linkage-toggle e6c long-ne: ok -> W",
+    "linkage-toggle e9p long-sw: L -> W",
     "plan-corridor e7p through: L -> WL",
     "plan-corridor e15p through: ok -> WL",
     "plan-corridor e26p short-w: ok -> J",
-    "plan-corridor e26p long-se: ok -> WLJ",
-    "plan-corridor e26p circle: ok -> J",
-    "plan-corridor e30p long-se: ok -> J"
+    "plan-corridor e26p long-se: ok -> LJ"
    ],
    "cost": {
-    "solves": 1660330,
+    "solves": 1666344,
     "refused": 1102,
     "cap": 35543
    },
@@ -1064,6 +1090,7 @@
     "drag_props::held_shapes::an_offset_refused_once_is_refused_again_without_a_solve",
     "drag_props::held_shapes::an_old_conflict_elsewhere_doesnt_excuse_a_broken_shape",
     "drag_props::seeds::l_a_point_on_a_fixed_centre_swings_its_radius_round",
+    "editor::kept_shapes_tests::a_typed_angle_carries_no_fillet_at_its_own_corner",
     "editor::tests::editing::pinned_measurements_follow_geometry",
     "editor::tests::editing::whole_sketch_options_apply_as_an_undoable_step"
    ]
@@ -1071,7 +1098,7 @@
  },
  "dragged-end-drops-radius": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -1103,7 +1130,7 @@
    "refusals_differ": 13,
    "cases": [],
    "cost": {
-    "solves": 1665320,
+    "solves": 1671334,
     "refused": 3659,
     "cap": 78683
    },
@@ -1133,7 +1160,7 @@
  },
  "dragged-end-drops-length": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -1165,7 +1192,7 @@
    "refusals_differ": 0,
    "cases": [],
    "cost": {
-    "solves": 1645522,
+    "solves": 1651536,
     "refused": 3553,
     "cap": 78683
    },
@@ -1182,7 +1209,7 @@
  },
  "touching-frozen": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 1,
@@ -1216,7 +1243,7 @@
     "bracket-hinge-leaf e3p through: ok -> R"
    ],
    "cost": {
-    "solves": 1645522,
+    "solves": 1651536,
     "refused": 3553,
     "cap": 78683
    },
@@ -1235,12 +1262,12 @@
  },
  "min-change-x100": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
     "S": 0,
-    "W": 1,
+    "W": 0,
     "L": 4,
     "G": 0,
     "J": 0,
@@ -1263,16 +1290,16 @@
    },
    "newly_failing": 4,
    "newly_passing": 5,
-   "moved": 6553,
+   "moved": 6609,
    "refusals_differ": 39,
    "cases": [
-    "linkage-pantograph e9p long-se: J -> WL",
+    "linkage-pantograph e9p long-se: J -> L",
     "plan-corridor e15p through: ok -> L",
     "plan-free-walls e37p long-sw: ok -> L",
     "plan-three-rooms e49p long-nw: ok -> L"
    ],
    "cost": {
-    "solves": 1623265,
+    "solves": 1628149,
     "refused": 3664,
     "cap": 77920
    },
@@ -1299,19 +1326,21 @@
     "drag_props::relation_census::no_edit_leaves_a_sliver",
     "drag_props::seeds::f_free_move_refused_unconverged",
     "editor::active_tests::equal_lines_take_the_active_ones_length",
+    "editor::kept_shapes_tests::a_typed_angle_turns_a_slot_whole",
     "editor::tests::drag_size::a_held_shape_refuses_a_drag_alike_at_every_size",
-    "editor::tests::editing::sliders_scrub_in_one_undo_step"
+    "editor::tests::editing::sliders_scrub_in_one_undo_step",
+    "tools::tests::a_dragged_ring_neither_turns_inside_out_nor_crushes_its_inner_circle"
    ]
   }
  },
  "min-change-over100": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
     "S": 0,
-    "W": 4,
+    "W": 2,
     "L": 3,
     "G": 0,
     "J": 2,
@@ -1332,21 +1361,20 @@
     "P": 0,
     "O": 0
    },
-   "newly_failing": 7,
+   "newly_failing": 6,
    "newly_passing": 1,
-   "moved": 6160,
+   "moved": 6216,
    "refusals_differ": 20,
    "cases": [
-    "bracket-slotted-plate e25p through: ok -> W",
     "plan-corridor e10c through: ok -> W",
-    "plan-corridor e15p through: ok -> WLJ",
+    "plan-corridor e15p through: ok -> LJ",
     "plan-corridor e21c through: ok -> W",
     "plan-free-walls e31p long-nw: ok -> L",
     "plan-free-walls e35p long-nw: L -> LJ",
     "real-bar-shelves e34p long-se: ok -> L"
    ],
    "cost": {
-    "solves": 1645124,
+    "solves": 1651138,
     "refused": 3549,
     "cap": 77985
    },
@@ -1361,18 +1389,19 @@
    ],
    "edit": [
     "drag_props::relation_census::edits_agree_whatever_the_round_off",
-    "drag_props::seeds::i_unheld_row_with_no_gradient_left_still_goes"
+    "drag_props::seeds::i_unheld_row_with_no_gradient_left_still_goes",
+    "editor::kept_shapes_tests::a_typed_angle_turns_a_slot_whole"
    ]
   }
  },
  "dragged-mobility-x100": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 2,
     "S": 0,
-    "W": 3,
+    "W": 5,
     "L": 10,
     "G": 0,
     "J": 3,
@@ -1384,7 +1413,7 @@
    "better": {
     "R": 0,
     "S": 0,
-    "W": 2,
+    "W": 0,
     "L": 11,
     "G": 0,
     "J": 4,
@@ -1393,15 +1422,16 @@
     "P": 0,
     "O": 0
    },
-   "newly_failing": 17,
+   "newly_failing": 19,
    "newly_passing": 13,
-   "moved": 6533,
+   "moved": 6589,
    "refusals_differ": 163,
    "cases": [
     "bracket-hinge-leaf e3p through: ok -> R",
     "bracket-hinge-leaf e7c through: ok -> R",
     "linkage-bell-crank e14p long-se: ok -> L",
     "linkage-bell-crank e14p through: ok -> L",
+    "linkage-bell-crank e15c long-se: L -> WL",
     "linkage-crank-slider e9p long-ne: ok -> L",
     "linkage-crank-slider e11p long-se: ok -> L",
     "linkage-crank-slider e12p long-se: ok -> L",
@@ -1410,6 +1440,7 @@
     "linkage-piston e8p long-se: ok -> L",
     "linkage-toggle e5p long-ne: ok -> W",
     "linkage-toggle e6c long-ne: ok -> W",
+    "linkage-toggle e9p long-sw: L -> WL",
     "plan-corridor e28p circle: ok -> J",
     "plan-corridor e40p circle: ok -> J",
     "plan-free-walls e35p long-sw: ok -> WL",
@@ -1417,7 +1448,7 @@
     "plan-three-rooms e77p circle: ok -> L"
    ],
    "cost": {
-    "solves": 1658993,
+    "solves": 1665234,
     "refused": 1713,
     "cap": 86100
    },
@@ -1445,13 +1476,13 @@
  },
  "iteration-cap-x10": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
     "S": 0,
     "W": 0,
-    "L": 0,
+    "L": 2,
     "G": 0,
     "J": 0,
     "X": 0,
@@ -1471,15 +1502,18 @@
     "P": 0,
     "O": 0
    },
-   "newly_failing": 0,
+   "newly_failing": 2,
    "newly_passing": 1,
-   "moved": 92,
+   "moved": 103,
    "refusals_differ": 91,
-   "cases": [],
+   "cases": [
+    "plan-corridor e37c long-nw: ok -> L",
+    "plan-corridor e49c long-se: ok -> L"
+   ],
    "cost": {
-    "solves": 1608339,
+    "solves": 1606403,
     "refused": 3305,
-    "cap": 42941
+    "cap": 41996
    },
    "shards_broke": []
   },
@@ -1488,13 +1522,19 @@
    "finished": true,
    "solver": [],
    "edit": [
-    "drag_props::held_shapes::a_drag_that_cant_land_doesnt_crush_a_line_it_doesnt_move"
+    "drag_props::a_try_with_the_fold_steps_flings_nothing",
+    "drag_props::a_try_with_the_fold_steps_never_refuses_what_today_takes",
+    "drag_props::a_try_with_the_fold_steps_that_fails_leaves_the_frame_as_it_was",
+    "drag_props::held_shapes::a_drag_that_cant_land_doesnt_crush_a_line_it_doesnt_move",
+    "drag_props::held_shapes::a_failed_try_at_keeping_a_length_leaves_the_frame_as_it_was",
+    "drag_props::held_shapes::many_parts_trying_to_keep_a_length_share_one_budget",
+    "editor::kept_shapes_tests::a_typed_angle_turns_a_slot_whole"
    ]
   }
  },
  "fold-met-x1000": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -1523,11 +1563,11 @@
    "newly_failing": 0,
    "newly_passing": 0,
    "moved": 34,
-   "refusals_differ": 65,
+   "refusals_differ": 0,
    "cases": [],
    "cost": {
-    "solves": 1644975,
-    "refused": 3667,
+    "solves": 1650989,
+    "refused": 3553,
     "cap": 78683
    },
    "shards_broke": []
@@ -1540,14 +1580,13 @@
     "drag_props::a_carried_step_that_does_not_finish_whole_goes_in_halves",
     "drag_props::a_move_held_at_a_fold_goes",
     "drag_props::a_move_held_on_a_circle_at_a_fold_takes_the_circle_along",
-    "drag_props::dragging_a_corner_arc_leaves_the_rest_of_the_outline",
-    "drag_props::seeds::f_free_move_refused_unconverged"
+    "drag_props::held_shapes::slow_radius_growth_stops_too"
    ]
   }
  },
  "unfocused-mobility": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -1579,7 +1618,7 @@
    "refusals_differ": 0,
    "cases": [],
    "cost": {
-    "solves": 1645522,
+    "solves": 1651536,
     "refused": 3553,
     "cap": 78683
    },
@@ -1590,6 +1629,7 @@
    "finished": true,
    "solver": [],
    "edit": [
+    "editor::kept_shapes_tests::a_typed_angle_turns_a_slot_whole",
     "editor::tests::a_stalled_relation::an_upright_line_from_an_arcs_centre_is_kept",
     "tools::relation_motion_tests::concentric_keeps_lines_square",
     "tools::relation_motion_tests::concentric_moves_the_fillet"
@@ -1598,7 +1638,7 @@
  },
  "arc-sweep-turn": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -1645,7 +1685,7 @@
     "profile-ogee e7p through: ok -> S"
    ],
    "cost": {
-    "solves": 1634154,
+    "solves": 1640168,
     "refused": 3329,
     "cap": 78683
    },
@@ -1666,12 +1706,12 @@
  },
  "collapsed-counts-as-turned": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
     "S": 51,
-    "W": 68,
+    "W": 66,
     "L": 0,
     "G": 0,
     "J": 0,
@@ -1706,7 +1746,7 @@
     "bracket-slotted-plate e11p long-ne: ok -> SW",
     "bracket-slotted-plate e11p long-nw: ok -> SW",
     "bracket-slotted-plate e11p circle: ok -> SW",
-    "bracket-slotted-plate e11p through: ok -> SW",
+    "bracket-slotted-plate e11p through: ok -> S",
     "bracket-slotted-plate e13p long-se: ok -> SW",
     "bracket-slotted-plate e13p circle: ok -> SW",
     "bracket-slotted-plate e14p long-ne: ok -> SW",
@@ -1724,7 +1764,7 @@
     "bracket-slotted-plate e18c long-se: ok -> W"
    ],
    "cost": {
-    "solves": 1633878,
+    "solves": 1639892,
     "refused": 3462,
     "cap": 78683
    },
@@ -1749,12 +1789,12 @@
  },
  "tangent-sides": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
     "S": 0,
-    "W": 101,
+    "W": 52,
     "L": 7,
     "G": 0,
     "J": 0,
@@ -1775,7 +1815,7 @@
     "P": 0,
     "O": 0
    },
-   "newly_failing": 101,
+   "newly_failing": 52,
    "newly_passing": 0,
    "moved": 49,
    "refusals_differ": 41,
@@ -1798,16 +1838,16 @@
     "bracket-hinge-leaf e10c long-nw: ok -> W",
     "bracket-hinge-leaf e10c long-se: ok -> W",
     "bracket-hinge-leaf e10c circle: ok -> W",
-    "bracket-lug e6p long-se: ok -> W",
-    "bracket-slotted-plate e9p through: ok -> W",
-    "bracket-slotted-plate e10p through: ok -> W",
-    "bracket-slotted-plate e11p through: ok -> W",
-    "bracket-slotted-plate e12c through: ok -> W",
     "bracket-slotted-plate e13p long-se: ok -> W",
-    "bracket-slotted-plate e23p through: ok -> W"
+    "linkage-belt e3p long-se: ok -> W",
+    "linkage-belt e3p circle: ok -> W",
+    "linkage-belt e4c long-se: ok -> W",
+    "linkage-belt e4c circle: ok -> W",
+    "linkage-belt e6p circle: ok -> W",
+    "linkage-belt e7c long-sw: ok -> W"
    ],
    "cost": {
-    "solves": 1601977,
+    "solves": 1607991,
     "refused": 2907,
     "cap": 77930
    },
@@ -1825,12 +1865,12 @@
  },
  "distance-signs": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
     "S": 0,
-    "W": 514,
+    "W": 507,
     "L": 56,
     "G": 0,
     "J": 1,
@@ -1851,7 +1891,7 @@
     "P": 0,
     "O": 0
    },
-   "newly_failing": 514,
+   "newly_failing": 507,
    "newly_passing": 0,
    "moved": 365,
    "refusals_differ": 60,
@@ -1860,15 +1900,11 @@
     "bracket-gusset e4p through: ok -> W",
     "bracket-l-holes e1p circle: ok -> W",
     "bracket-l-holes e2p long-ne: ok -> W",
-    "bracket-l-holes e2p long-nw: ok -> W",
     "bracket-l-holes e3p long-sw: ok -> W",
-    "bracket-l-holes e3p long-se: ok -> W",
     "bracket-l-holes e7c long-ne: ok -> W",
-    "bracket-l-holes e7c long-nw: ok -> W",
     "bracket-l-holes e7c circle: ok -> W",
     "bracket-l-holes e7c through: ok -> W",
     "bracket-l-holes e9c long-sw: ok -> W",
-    "bracket-l-holes e9c long-se: ok -> W",
     "bracket-l-holes e12c circle: ok -> W",
     "bracket-l-holes e12c through: ok -> W",
     "bracket-l-holes e13p long-nw: ok -> W",
@@ -1880,10 +1916,14 @@
     "pattern-linear-holes e1p long-ne: ok -> W",
     "pattern-linear-holes e1p long-nw: ok -> W",
     "pattern-linear-holes e1p circle: ok -> W",
-    "pattern-linear-holes e5c long-nw: ok -> W"
+    "pattern-linear-holes e5c long-nw: ok -> W",
+    "pattern-linear-holes e5c circle: ok -> W",
+    "pattern-linear-holes e5c through: ok -> W",
+    "pattern-linear-holes e8c long-ne: ok -> W",
+    "pattern-linear-holes e8c long-nw: ok -> W"
    ],
    "cost": {
-    "solves": 1359581,
+    "solves": 1365595,
     "refused": 4501,
     "cap": 81148
    },
@@ -1898,15 +1938,15 @@
  },
  "strides": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 2,
     "S": 1,
-    "W": 10,
+    "W": 8,
     "L": 39,
     "G": 0,
-    "J": 21,
+    "J": 26,
     "X": 0,
     "C": 0,
     "P": 0,
@@ -1915,7 +1955,7 @@
    "better": {
     "R": 0,
     "S": 0,
-    "W": 5,
+    "W": 4,
     "L": 7,
     "G": 0,
     "J": 2,
@@ -1924,14 +1964,19 @@
     "P": 0,
     "O": 0
    },
-   "newly_failing": 59,
+   "newly_failing": 65,
    "newly_passing": 12,
-   "moved": 2497,
+   "moved": 2521,
    "refusals_differ": 37,
    "cases": [
     "arcs-coradial e15p through: ok -> SJ",
-    "bracket-clamp e1p long-nw: ok -> WL",
-    "bracket-clamp e5p long-ne: ok -> WL",
+    "bracket-bushing-gap e2p through: ok -> J",
+    "bracket-bushing-gap e4p through: ok -> J",
+    "bracket-bushing-gap e5c through: ok -> J",
+    "bracket-bushing-gap e6p through: ok -> J",
+    "bracket-bushing-gap e7c through: ok -> J",
+    "bracket-clamp e1p long-nw: ok -> L",
+    "bracket-clamp e5p long-ne: ok -> L",
     "bracket-flange-symmetric e1p through: ok -> LJ",
     "bracket-flange-symmetric e2p through: ok -> LJ",
     "bracket-flange-symmetric e4p through: ok -> LJ",
@@ -1946,17 +1991,12 @@
     "ellipse-riders e6p through: ok -> J",
     "ellipse-riders e7c long-sw: ok -> L",
     "linkage-bell-crank e12p through: ok -> L",
+    "linkage-bell-crank e13c long-sw: L -> W",
     "linkage-toggle e5p long-nw: ok -> W",
-    "linkage-toggle e6c long-nw: ok -> W",
-    "linkage-toggle e7p long-nw: ok -> L",
-    "linkage-toggle e8c long-nw: ok -> W",
-    "linkage-toggle e9p through: ok -> W",
-    "pattern-hexagon e5p through: ok -> J",
-    "pattern-hexagon e7p through: ok -> J",
-    "pattern-hexagon e8p through: ok -> J"
+    "linkage-toggle e6c long-nw: ok -> W"
    ],
    "cost": {
-    "solves": 1618403,
+    "solves": 1621975,
     "refused": 3770,
     "cap": 77701
    },
@@ -1973,7 +2013,7 @@
  },
  "settle-by-the-pointer": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 2,
@@ -1990,7 +2030,7 @@
    "better": {
     "R": 0,
     "S": 0,
-    "W": 11,
+    "W": 8,
     "L": 25,
     "G": 0,
     "J": 2,
@@ -2008,7 +2048,7 @@
     "bracket-hinge-leaf e7c through: ok -> R"
    ],
    "cost": {
-    "solves": 1617526,
+    "solves": 1623540,
     "refused": 3553,
     "cap": 78011
    },
@@ -2025,7 +2065,7 @@
  },
  "settle-flings-nothing": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -2068,7 +2108,7 @@
     "profile-stepped-shaft e4p through: ok -> L"
    ],
    "cost": {
-    "solves": 1645522,
+    "solves": 1651536,
     "refused": 3553,
     "cap": 78683
    },
@@ -2083,7 +2123,7 @@
  },
  "settle-meets-relations": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -2115,7 +2155,7 @@
    "refusals_differ": 0,
    "cases": [],
    "cost": {
-    "solves": 1645522,
+    "solves": 1651536,
     "refused": 3553,
     "cap": 78683
    },
@@ -2130,7 +2170,7 @@
  },
  "settle-keeps-held-shapes": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -2162,7 +2202,7 @@
    "refusals_differ": 2,
    "cases": [],
    "cost": {
-    "solves": 1645522,
+    "solves": 1651536,
     "refused": 3555,
     "cap": 78683
    },
@@ -2179,7 +2219,7 @@
  },
  "one-solve-fallback": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -2196,7 +2236,7 @@
    "better": {
     "R": 0,
     "S": 1,
-    "W": 1,
+    "W": 0,
     "L": 9,
     "G": 0,
     "J": 0,
@@ -2211,7 +2251,7 @@
    "refusals_differ": 34,
    "cases": [],
    "cost": {
-    "solves": 1613246,
+    "solves": 1619260,
     "refused": 3777,
     "cap": 66991
    },
@@ -2228,7 +2268,7 @@
  },
  "halve-failed-steps": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -2262,7 +2302,7 @@
     "plan-corridor e15p through: ok -> WL"
    ],
    "cost": {
-    "solves": 1460494,
+    "solves": 1466508,
     "refused": 8109,
     "cap": 42952
    },
@@ -2277,12 +2317,12 @@
  },
  "halve-wandering-steps": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
     "S": 0,
-    "W": 1,
+    "W": 0,
     "L": 6,
     "G": 0,
     "J": 2,
@@ -2294,7 +2334,7 @@
    "better": {
     "R": 0,
     "S": 0,
-    "W": 3,
+    "W": 0,
     "L": 6,
     "G": 0,
     "J": 4,
@@ -2309,7 +2349,7 @@
    "refusals_differ": 11,
    "cases": [
     "ellipse-in-frame e13p through: ok -> J",
-    "linkage-pantograph e9p circle: J -> WLJ",
+    "linkage-pantograph e9p circle: J -> LJ",
     "plan-free-walls e31p circle: ok -> L",
     "plan-free-walls e33p circle: ok -> LJ",
     "plan-free-walls e33p through: ok -> L",
@@ -2317,7 +2357,7 @@
     "plan-three-rooms e53p circle: ok -> L"
    ],
    "cost": {
-    "solves": 1371380,
+    "solves": 1376098,
     "refused": 3562,
     "cap": 77626
    },
@@ -2332,7 +2372,7 @@
  },
  "split-steps": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -2364,7 +2404,7 @@
    "refusals_differ": 46,
    "cases": [],
    "cost": {
-    "solves": 1231175,
+    "solves": 1237189,
     "refused": 3637,
     "cap": 46419
    },
@@ -2383,12 +2423,12 @@
  },
  "unfinished-is-refused": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 278,
     "S": 0,
-    "W": 26,
+    "W": 13,
     "L": 61,
     "G": 0,
     "J": 56,
@@ -2400,7 +2440,7 @@
    "better": {
     "R": 0,
     "S": 0,
-    "W": 1,
+    "W": 0,
     "L": 9,
     "G": 0,
     "J": 0,
@@ -2441,7 +2481,7 @@
     "bracket-shelf e6p short-w: ok -> R"
    ],
    "cost": {
-    "solves": 1610686,
+    "solves": 1616700,
     "refused": 1884,
     "cap": 62903
    },
@@ -2471,12 +2511,12 @@
  },
  "turned-is-refused": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
     "S": 84,
-    "W": 726,
+    "W": 675,
     "L": 63,
     "G": 0,
     "J": 2,
@@ -2497,7 +2537,7 @@
     "P": 0,
     "O": 0
    },
-   "newly_failing": 736,
+   "newly_failing": 685,
    "newly_passing": 1,
    "moved": 463,
    "refusals_differ": 119,
@@ -2529,7 +2569,7 @@
     "bracket-hinge-leaf e10c long-nw: ok -> W"
    ],
    "cost": {
-    "solves": 1287181,
+    "solves": 1293195,
     "refused": 3628,
     "cap": 79920
    },
@@ -2557,12 +2597,12 @@
  },
  "carried-line-flip": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
     "S": 0,
-    "W": 6,
+    "W": 0,
     "L": 46,
     "G": 0,
     "J": 3,
@@ -2591,18 +2631,18 @@
     "bracket-l-holes e16c through: ok -> L",
     "linkage-four-bar e5c through: ok -> LJ",
     "linkage-pantograph e10c long-ne: ok -> L",
-    "plan-corridor e29c long-se: ok -> WL",
-    "plan-corridor e29c circle: ok -> WL",
+    "plan-corridor e29c long-se: ok -> L",
+    "plan-corridor e29c circle: ok -> L",
     "plan-corridor e36c circle: ok -> L",
-    "plan-corridor e41c long-ne: ok -> WL",
-    "plan-corridor e41c circle: ok -> WL",
+    "plan-corridor e41c long-ne: ok -> L",
+    "plan-corridor e41c circle: ok -> L",
     "plan-corridor e48c circle: ok -> L",
-    "plan-corridor e49c long-se: ok -> WL",
+    "plan-corridor e49c long-se: ok -> L",
     "plan-free-walls e9c long-sw: ok -> L",
     "plan-free-walls e34c long-se: ok -> LJ",
     "plan-free-walls e34c circle: ok -> L",
     "plan-free-walls e41c long-nw: ok -> L",
-    "plan-free-walls e42c circle: ok -> WL",
+    "plan-free-walls e42c circle: ok -> L",
     "plan-three-rooms e6c short-n: ok -> LJ",
     "plan-three-rooms e6c long-nw: ok -> L",
     "plan-three-rooms e6c circle: ok -> L",
@@ -2615,7 +2655,7 @@
     "profile-c-channel e16c long-sw: ok -> L"
    ],
    "cost": {
-    "solves": 1586729,
+    "solves": 1592743,
     "refused": 3409,
     "cap": 78799
    },
@@ -2632,7 +2672,7 @@
  },
  "squeezed-shut": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -2664,7 +2704,7 @@
    "refusals_differ": 16,
    "cases": [],
    "cost": {
-    "solves": 1652399,
+    "solves": 1658413,
     "refused": 3708,
     "cap": 78260
    },
@@ -2681,7 +2721,7 @@
  },
  "lowered-line-flip": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -2713,7 +2753,7 @@
    "refusals_differ": 0,
    "cases": [],
    "cost": {
-    "solves": 1645522,
+    "solves": 1651536,
     "refused": 3553,
     "cap": 78683
    },
@@ -2728,12 +2768,12 @@
  },
  "carry-turned-curves": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
     "S": 0,
-    "W": 0,
+    "W": 1,
     "L": 0,
     "G": 0,
     "J": 0,
@@ -2754,13 +2794,15 @@
     "P": 0,
     "O": 0
    },
-   "newly_failing": 0,
+   "newly_failing": 1,
    "newly_passing": 4,
    "moved": 153,
    "refusals_differ": 115,
-   "cases": [],
+   "cases": [
+    "linkage-bell-crank e13c long-sw: L -> WL"
+   ],
    "cost": {
-    "solves": 1941163,
+    "solves": 1947177,
     "refused": 5510,
     "cap": 78665
    },
@@ -2785,7 +2827,7 @@
  },
  "carry-holding": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -2817,7 +2859,7 @@
    "refusals_differ": 0,
    "cases": [],
    "cost": {
-    "solves": 1663283,
+    "solves": 1669297,
     "refused": 3553,
     "cap": 83526
    },
@@ -2836,7 +2878,7 @@
  },
  "pushed-stays-pushed": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -2868,7 +2910,7 @@
    "refusals_differ": 7,
    "cases": [],
    "cost": {
-    "solves": 1687321,
+    "solves": 1693335,
     "refused": 3593,
     "cap": 79521
    },
@@ -2887,12 +2929,12 @@
  },
  "fold-try": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
     "S": 0,
-    "W": 2,
+    "W": 0,
     "L": 2,
     "G": 0,
     "J": 0,
@@ -2918,11 +2960,11 @@
    "moved": 18,
    "refusals_differ": 0,
    "cases": [
-    "plan-corridor e37c long-nw: ok -> WL",
-    "plan-corridor e49c long-se: ok -> WL"
+    "plan-corridor e37c long-nw: ok -> L",
+    "plan-corridor e49c long-se: ok -> L"
    ],
    "cost": {
-    "solves": 1635607,
+    "solves": 1641621,
     "refused": 3553,
     "cap": 76463
    },
@@ -2941,7 +2983,7 @@
  },
  "length-try": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -2973,7 +3015,7 @@
    "refusals_differ": 0,
    "cases": [],
    "cost": {
-    "solves": 1645522,
+    "solves": 1651536,
     "refused": 3553,
     "cap": 78683
    },
@@ -2991,7 +3033,7 @@
  },
  "held-shape-stop": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -3023,7 +3065,7 @@
    "refusals_differ": 2,
    "cases": [],
    "cost": {
-    "solves": 1645522,
+    "solves": 1651536,
     "refused": 3549,
     "cap": 78683
    },
@@ -3061,7 +3103,7 @@
  },
  "never-grow": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -3093,7 +3135,7 @@
    "refusals_differ": 0,
    "cases": [],
    "cost": {
-    "solves": 1645522,
+    "solves": 1651536,
     "refused": 3553,
     "cap": 78683
    },
@@ -3116,7 +3158,7 @@
  },
  "crushed-line-stop": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -3148,7 +3190,7 @@
    "refusals_differ": 2,
    "cases": [],
    "cost": {
-    "solves": 1645522,
+    "solves": 1651536,
     "refused": 3549,
     "cap": 78683
    },
@@ -3170,7 +3212,7 @@
  },
  "unlanded-radius-hold": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -3202,7 +3244,7 @@
    "refusals_differ": 0,
    "cases": [],
    "cost": {
-    "solves": 1645522,
+    "solves": 1651536,
     "refused": 3553,
     "cap": 78683
    },
@@ -3219,7 +3261,7 @@
  },
  "refused-again": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -3251,7 +3293,7 @@
    "refusals_differ": 0,
    "cases": [],
    "cost": {
-    "solves": 1645522,
+    "solves": 1651536,
     "refused": 3553,
     "cap": 78683
    },
@@ -3268,7 +3310,7 @@
  },
  "bar-cap": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -3300,7 +3342,7 @@
    "refusals_differ": 2,
    "cases": [],
    "cost": {
-    "solves": 1645966,
+    "solves": 1651980,
     "refused": 3553,
     "cap": 78681
    },
@@ -3317,7 +3359,7 @@
  },
  "kept-radii": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -3345,12 +3387,12 @@
    },
    "newly_failing": 0,
    "newly_passing": 1,
-   "moved": 1178,
-   "refusals_differ": 247,
+   "moved": 1238,
+   "refusals_differ": 289,
    "cases": [],
    "cost": {
-    "solves": 1713556,
-    "refused": 8779,
+    "solves": 1719570,
+    "refused": 9559,
     "cap": 78899
    },
    "shards_broke": []
@@ -3381,7 +3423,7 @@
  },
  "kept-lengths": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -3413,7 +3455,7 @@
    "refusals_differ": 4,
    "cases": [],
    "cost": {
-    "solves": 1692562,
+    "solves": 1698576,
     "refused": 3564,
     "cap": 78659
    },
@@ -3438,7 +3480,7 @@
  },
  "smooth-anchors": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -3473,7 +3515,7 @@
     "curve-smooth e11p circle: ok -> J"
    ],
    "cost": {
-    "solves": 1645554,
+    "solves": 1651568,
     "refused": 3553,
     "cap": 78683
    },
@@ -3490,7 +3532,7 @@
  },
  "drag-solves-x10": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
@@ -3522,7 +3564,7 @@
    "refusals_differ": 2,
    "cases": [],
    "cost": {
-    "solves": 1645710,
+    "solves": 1651724,
     "refused": 3537,
     "cap": 78687
    },
@@ -3537,12 +3579,12 @@
  },
  "unfinished-work-x10": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
     "S": 0,
-    "W": 3,
+    "W": 2,
     "L": 1,
     "G": 0,
     "J": 0,
@@ -3554,7 +3596,7 @@
    "better": {
     "R": 0,
     "S": 0,
-    "W": 2,
+    "W": 0,
     "L": 12,
     "G": 0,
     "J": 2,
@@ -3570,10 +3612,10 @@
    "cases": [
     "plan-corridor e10c through: ok -> W",
     "plan-corridor e21c through: ok -> W",
-    "plan-corridor e48c long-se: ok -> WL"
+    "plan-corridor e48c long-se: ok -> L"
    ],
    "cost": {
-    "solves": 2268936,
+    "solves": 2274950,
     "refused": 3514,
     "cap": 173984
    },
@@ -3591,12 +3633,12 @@
  },
  "unfinished-work-none": {
   "corpus": {
-   "drags": 9510,
+   "drags": 9580,
    "missing": 0,
    "worse": {
     "R": 0,
     "S": 0,
-    "W": 3,
+    "W": 0,
     "L": 8,
     "G": 0,
     "J": 2,
@@ -3608,7 +3650,7 @@
    "better": {
     "R": 0,
     "S": 0,
-    "W": 3,
+    "W": 0,
     "L": 6,
     "G": 0,
     "J": 4,
@@ -3623,9 +3665,9 @@
    "refusals_differ": 13,
    "cases": [
     "ellipse-in-frame e13p through: ok -> J",
-    "linkage-pantograph e9p circle: J -> WLJ",
-    "plan-corridor e37c long-nw: ok -> WL",
-    "plan-corridor e49c long-se: ok -> WL",
+    "linkage-pantograph e9p circle: J -> LJ",
+    "plan-corridor e37c long-nw: ok -> L",
+    "plan-corridor e49c long-se: ok -> L",
     "plan-free-walls e31p circle: ok -> L",
     "plan-free-walls e33p circle: ok -> LJ",
     "plan-free-walls e33p through: ok -> L",
@@ -3633,7 +3675,7 @@
     "plan-three-rooms e53p circle: ok -> L"
    ],
    "cost": {
-    "solves": 1311642,
+    "solves": 1316360,
     "refused": 3565,
     "cap": 51912
    },

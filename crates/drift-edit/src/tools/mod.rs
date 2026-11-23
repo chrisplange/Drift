@@ -555,6 +555,12 @@ pub trait Tool {
         false
     }
 
+    /// Whether an alignment guide must not start from `at` (within `tol`): where a point
+    /// that moves with a drag started, or is now (#498).
+    fn guide_excludes(&self, _ed: &Editor, _at: DVec2, _tol: f64) -> bool {
+        false
+    }
+
     /// Copies of blocks that must not be snapped to (copies moving with the selection).
     /// The move just started by G was started on a copy just made (Duplicate or Paste) of
     /// `originals`: cancelling it removes the copy instead of leaving it stacked on them

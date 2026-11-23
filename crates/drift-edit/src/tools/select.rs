@@ -213,14 +213,118 @@ impl Grab {
     }
 }
 
+/// Where every point was, and every circle's radius, when the current move or turn began
+/// (#498): whatever has left it since was pulled along by the drag, so it isn't a snap target
+/// or the start of an alignment guide. (Comparing with the start, rather than with what the
+/// drag picked, also covers the neighbours the solve pulls along.)
+#[derive(Debug, Default)]
+pub(super) struct Rest {
+    points: std::collections::HashMap<EntityId, DVec2>,
+    radii: std::collections::HashMap<EntityId, f64>,
+}
+
+/// How far a point may drift (in mm) and still count as where it was: well under anything
+/// visible, but over the rounding a solve can leave on a point it doesn't move.
+const REST_EPS: f64 = 1e-9;
+
+impl Rest {
+    pub(super) fn of(doc: &drift_core::Document) -> Self {
+        let mut rest = Self::default();
+        for (id, e) in doc.iter() {
+            match e.kind {
+                EntityKind::Point(p) => {
+                    rest.points.insert(id, p);
+                }
+                EntityKind::Circle { radius, .. } => {
+                    rest.radii.insert(id, radius);
+                }
+                _ => {}
+            }
+        }
+        rest
+    }
+
+    /// Whether the point `id` has left where it was (one made since counts as moved).
+    fn point_moved(&self, doc: &drift_core::Document, id: EntityId) -> bool {
+        match (self.points.get(&id), doc.point(id)) {
+            (Some(was), Ok(now)) => was.distance(now) > REST_EPS,
+            _ => true,
+        }
+    }
+
+    /// Whether the entity `id` has moved or changed shape: it is a point that moved, or a
+    /// curve with a point that moved (or a circle whose radius changed).
+    pub(super) fn moved(&self, doc: &drift_core::Document, id: EntityId) -> bool {
+        let Some(e) = doc.get(id) else {
+            return false;
+        };
+        if e.kind.is_point() {
+            return self.point_moved(doc, id);
+        }
+        if let EntityKind::Circle { radius, .. } = e.kind
+            && self
+                .radii
+                .get(&id)
+                .is_none_or(|r| (r - radius).abs() > REST_EPS)
+        {
+            return true;
+        }
+        e.kind.points().any(|q| self.point_moved(doc, q))
+    }
+
+    /// Whether `at` is where a point that is moving (one of `moving`, or one pulled along)
+    /// started or is now, and no point that stays put is there too. (A copy made by Shift+D
+    /// or Paste starts on top of its original: the original's points still start guides.)
+    pub(super) fn moving_point_at(
+        &self,
+        doc: &drift_core::Document,
+        moving: &BTreeSet<EntityId>,
+        at: DVec2,
+        tol: f64,
+    ) -> bool {
+        let mut moving_here = false;
+        for (&id, &was) in &self.points {
+            let near =
+                was.distance(at) <= tol || doc.point(id).is_ok_and(|now| now.distance(at) <= tol);
+            if !near {
+                continue;
+            }
+            if moving.contains(&id) || self.point_moved(doc, id) {
+                moving_here = true;
+            } else {
+                // A point that stays put sits here: a guide from it is a real one.
+                return false;
+            }
+        }
+        moving_here
+    }
+}
+
 #[derive(Default)]
 pub struct SelectTool {
     pub(super) drag: Option<SelectDrag>,
     pub(super) grab: Option<Grab>,
     pub(super) spin: Option<super::rotate::Spin>,
+    /// Where everything was when the current move or turn began.
+    pub(super) rest: Option<Rest>,
 }
 
 impl SelectTool {
+    /// Before input: a move or turn that has ended forgets where things were.
+    fn forget_rest(&mut self) {
+        if self.grab.is_none() && self.spin.is_none() {
+            self.rest = None;
+        }
+    }
+
+    /// After input: a move or turn just begun remembers where everything is (nothing has
+    /// moved yet when one starts).
+    fn note_rest(&mut self, ed: &Editor) {
+        if (self.grab.is_some() || self.spin.is_some()) && self.rest.is_none() {
+            self.rest = Some(Rest::of(&ed.doc));
+        }
+    }
+
     /// Start a modal move of the selection from the pointer.
     pub(super) fn start_grab(&mut self, p: &Pointer, ed: &mut Editor) -> bool {
         if self.drag.is_some() || self.grab.is_some() {
@@ -543,38 +647,10 @@ impl Tool for SelectTool {
     }
 
     fn key(&mut self, key: ToolKey, pointer: Option<&Pointer>, ed: &mut Editor) -> bool {
-        if self.spin.is_some() {
-            return self.spin_key(key, ed);
-        }
-        if key == ToolKey::R && self.grab.is_none() {
-            return match pointer {
-                Some(p) => self.start_spin(p, ed),
-                None => false,
-            };
-        }
-        match (key, &mut self.grab) {
-            (ToolKey::G, None) => match pointer {
-                Some(p) => self.start_grab(p, ed),
-                None => false,
-            },
-            (ToolKey::X | ToolKey::Y, Some(grab)) if !grab.picking_base => {
-                let axis = if key == ToolKey::X { Axis::X } else { Axis::Y };
-                grab.lock = (grab.lock != Some(axis)).then_some(axis);
-                let offset = grab.offset();
-                grab.apply(offset, ed);
-                true
-            }
-            // (A mouse drag keeps the base it was grabbed by.)
-            (ToolKey::B, Some(grab)) if grab.by_mouse.is_none() => {
-                // Put the geometry back while the new base is picked.
-                grab.apply(DVec2::ZERO, ed);
-                grab.picking_base = true;
-                true
-            }
-            // Swallow other modal keys during a grab.
-            (_, Some(_)) => true,
-            _ => false,
-        }
+        self.forget_rest();
+        let used = self.key_select(key, pointer, ed);
+        self.note_rest(ed);
+        used
     }
 
     fn axis_lock(&self) -> Option<(DVec2, Axis)> {
@@ -764,6 +840,133 @@ impl Tool for SelectTool {
     }
 
     fn handle(&mut self, input: Input, ed: &mut Editor) {
+        self.forget_rest();
+        self.handle_select(input, ed);
+        self.note_rest(ed);
+    }
+
+    fn grab_from_copy(&mut self, originals: crate::clipboard::Picked) {
+        if let Some(grab) = self.grab.as_mut().filter(|g| g.by_mouse.is_none()) {
+            grab.from_copy = Some(originals);
+        }
+    }
+
+    fn cancel(&mut self, ed: &mut Editor) -> bool {
+        ed.pick_cycle.reset();
+        if self.cancel_grab(ed) || self.cancel_spin(ed) {
+            return true;
+        }
+        match self.drag.take() {
+            Some(
+                SelectDrag::Radius { .. }
+                | SelectDrag::Offset { .. }
+                | SelectDrag::OffsetSides { .. }
+                | SelectDrag::Fillet { .. }
+                | SelectDrag::Text { .. }
+                | SelectDrag::Scale { .. }
+                | SelectDrag::Opening { .. },
+            ) => {
+                ed.region_motion = None;
+                ed.doc.rollback();
+                ed.sync();
+                true
+            }
+            Some(SelectDrag::Box { .. }) => true,
+            // Esc first leaves an open group.
+            None if ed.open_group.is_some() => {
+                ed.close_open_group();
+                ed.expand_groups();
+                true
+            }
+            None if !ed.selection.is_empty()
+                || !ed.selected_midpoints.is_empty()
+                || ed.selected_region.is_some()
+                || !ed.selected_fills.is_empty()
+                || !ed.selected_instances.is_empty()
+                || ed.picks_annotations() =>
+            {
+                ed.selected_texts.clear();
+                ed.selected_annotation = None;
+                ed.annotation_picks.clear();
+                ed.selected_instances.clear();
+                ed.selection.clear();
+                ed.selected_midpoints.clear();
+                ed.selected_region = None;
+                ed.selected_fills.clear();
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn overlay(&self) -> Option<Overlay> {
+        if let Some(o) = self.spin_overlay() {
+            return Some(o);
+        }
+        if let Some(grab) = self.grab.as_ref().filter(|g| g.by_mouse.is_none()) {
+            return Some(Overlay::Move {
+                base: grab.base,
+                to: (!grab.picking_base).then(|| grab.base + grab.offset()),
+            });
+        }
+        match &self.drag {
+            Some(SelectDrag::Box { start, current }) => {
+                let (start, current) = (*start, *current);
+                let mut rect = Bounds::from_point(start);
+                rect.include(current);
+                Some(Overlay::SelectionBox {
+                    rect,
+                    crossing: current.x < start.x,
+                })
+            }
+            _ => None,
+        }
+    }
+
+    fn wants_snap(&self) -> bool {
+        // Moving, and rotating: a new pivot snaps to geometry and the grid; while turning,
+        // a snap onto geometry gives an exact angle.
+        self.grab.is_some() || self.spin.is_some()
+    }
+
+    fn snap_excludes(&self, ed: &Editor, id: EntityId) -> bool {
+        // Nothing that moves with the selection (picking a grab's base point: anything,
+        // typically a point of the selection). The moving points are every moving entity's
+        // defining points, so set lookups cover the moving curves too. Whatever the solve has
+        // pulled along since the move began moves with it too (#498).
+        self.moving().is_some_and(|points| {
+            points.contains(&id)
+                || ed
+                    .doc
+                    .get(id)
+                    .is_some_and(|e| e.kind.points().any(|q| points.contains(&q)))
+                || self.rest.as_ref().is_some_and(|r| r.moved(&ed.doc, id))
+        })
+    }
+
+    fn guide_excludes(&self, ed: &Editor, at: DVec2, tol: f64) -> bool {
+        // No alignment guide from where a moving point started, or from where it is (#498).
+        match (self.moving(), &self.rest) {
+            (Some(points), Some(rest)) => rest.moving_point_at(&ed.doc, points, at, tol),
+            (Some(points), None) => points
+                .iter()
+                .any(|q| ed.doc.point(*q).is_ok_and(|p| p.distance(at) <= tol)),
+            _ => false,
+        }
+    }
+
+    fn snap_excludes_copy(&self, id: drift_core::InstanceId) -> bool {
+        let moving = match (&self.grab, &self.spin) {
+            (Some(grab), _) if !grab.picking_base => &grab.instances,
+            (None, Some(spin)) if !spin.picking() => &spin.instances,
+            _ => return false,
+        };
+        moving.iter().any(|(i, _)| *i == id)
+    }
+}
+
+impl SelectTool {
+    fn handle_select(&mut self, input: Input, ed: &mut Editor) {
         // A pick here is on purpose, even of what a Trim or Extend left picked (#461).
         if matches!(
             input,
@@ -1353,110 +1556,39 @@ impl Tool for SelectTool {
         }
     }
 
-    fn grab_from_copy(&mut self, originals: crate::clipboard::Picked) {
-        if let Some(grab) = self.grab.as_mut().filter(|g| g.by_mouse.is_none()) {
-            grab.from_copy = Some(originals);
+    fn key_select(&mut self, key: ToolKey, pointer: Option<&Pointer>, ed: &mut Editor) -> bool {
+        if self.spin.is_some() {
+            return self.spin_key(key, ed);
         }
-    }
-
-    fn cancel(&mut self, ed: &mut Editor) -> bool {
-        ed.pick_cycle.reset();
-        if self.cancel_grab(ed) || self.cancel_spin(ed) {
-            return true;
+        if key == ToolKey::R && self.grab.is_none() {
+            return match pointer {
+                Some(p) => self.start_spin(p, ed),
+                None => false,
+            };
         }
-        match self.drag.take() {
-            Some(
-                SelectDrag::Radius { .. }
-                | SelectDrag::Offset { .. }
-                | SelectDrag::OffsetSides { .. }
-                | SelectDrag::Fillet { .. }
-                | SelectDrag::Text { .. }
-                | SelectDrag::Scale { .. }
-                | SelectDrag::Opening { .. },
-            ) => {
-                ed.region_motion = None;
-                ed.doc.rollback();
-                ed.sync();
+        match (key, &mut self.grab) {
+            (ToolKey::G, None) => match pointer {
+                Some(p) => self.start_grab(p, ed),
+                None => false,
+            },
+            (ToolKey::X | ToolKey::Y, Some(grab)) if !grab.picking_base => {
+                let axis = if key == ToolKey::X { Axis::X } else { Axis::Y };
+                grab.lock = (grab.lock != Some(axis)).then_some(axis);
+                let offset = grab.offset();
+                grab.apply(offset, ed);
                 true
             }
-            Some(SelectDrag::Box { .. }) => true,
-            // Esc first leaves an open group.
-            None if ed.open_group.is_some() => {
-                ed.close_open_group();
-                ed.expand_groups();
+            // (A mouse drag keeps the base it was grabbed by.)
+            (ToolKey::B, Some(grab)) if grab.by_mouse.is_none() => {
+                // Put the geometry back while the new base is picked.
+                grab.apply(DVec2::ZERO, ed);
+                grab.picking_base = true;
                 true
             }
-            None if !ed.selection.is_empty()
-                || !ed.selected_midpoints.is_empty()
-                || ed.selected_region.is_some()
-                || !ed.selected_fills.is_empty()
-                || !ed.selected_instances.is_empty()
-                || ed.picks_annotations() =>
-            {
-                ed.selected_texts.clear();
-                ed.selected_annotation = None;
-                ed.annotation_picks.clear();
-                ed.selected_instances.clear();
-                ed.selection.clear();
-                ed.selected_midpoints.clear();
-                ed.selected_region = None;
-                ed.selected_fills.clear();
-                true
-            }
-            None => false,
+            // Swallow other modal keys during a grab.
+            (_, Some(_)) => true,
+            _ => false,
         }
-    }
-
-    fn overlay(&self) -> Option<Overlay> {
-        if let Some(o) = self.spin_overlay() {
-            return Some(o);
-        }
-        if let Some(grab) = self.grab.as_ref().filter(|g| g.by_mouse.is_none()) {
-            return Some(Overlay::Move {
-                base: grab.base,
-                to: (!grab.picking_base).then(|| grab.base + grab.offset()),
-            });
-        }
-        match &self.drag {
-            Some(SelectDrag::Box { start, current }) => {
-                let (start, current) = (*start, *current);
-                let mut rect = Bounds::from_point(start);
-                rect.include(current);
-                Some(Overlay::SelectionBox {
-                    rect,
-                    crossing: current.x < start.x,
-                })
-            }
-            _ => None,
-        }
-    }
-
-    fn wants_snap(&self) -> bool {
-        // Moving, and rotating: a new pivot snaps to geometry and the grid; while turning,
-        // a snap onto geometry gives an exact angle.
-        self.grab.is_some() || self.spin.is_some()
-    }
-
-    fn snap_excludes(&self, ed: &Editor, id: EntityId) -> bool {
-        // Nothing that moves with the selection (picking a grab's base point: anything,
-        // typically a point of the selection). The moving points are every moving entity's
-        // defining points, so set lookups cover the moving curves too.
-        self.moving().is_some_and(|points| {
-            points.contains(&id)
-                || ed
-                    .doc
-                    .get(id)
-                    .is_some_and(|e| e.kind.points().any(|q| points.contains(&q)))
-        })
-    }
-
-    fn snap_excludes_copy(&self, id: drift_core::InstanceId) -> bool {
-        let moving = match (&self.grab, &self.spin) {
-            (Some(grab), _) if !grab.picking_base => &grab.instances,
-            (None, Some(spin)) if !spin.picking() => &spin.instances,
-            _ => return false,
-        };
-        moving.iter().any(|(i, _)| *i == id)
     }
 }
 

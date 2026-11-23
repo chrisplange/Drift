@@ -74,6 +74,35 @@ pub struct Snap {
     pub entity: Option<EntityId>,
 }
 
+/// How much further a snap the pointer already has reaches, against a new one (#498): it
+/// holds until the pointer is this many times as far from it as the rule would otherwise
+/// allow, so the snap doesn't flicker between two targets on a small pointer move.
+pub const SNAP_HOLD: f64 = 1.25;
+
+/// Whether the snap `prev` (last frame's) holds against `fresh` (what the snap rule picks
+/// now) with the pointer at `p` and capture radius `tol` (#498). The rule is the snap rule's
+/// own, priority then distance, with `prev`'s distance shortened by [`SNAP_HOLD`]: geometry
+/// still comes before a grid point, and a stronger kind still takes over at once, but between
+/// equals, or from geometry back to the grid, the pointer has to move clearly away first.
+/// Only snaps at a fixed spot hold (not one that follows the pointer along a curve).
+pub fn snap_holds(prev: Snap, fresh: Option<Snap>, p: DVec2, tol: f64) -> bool {
+    let fixed = !matches!(
+        prev.kind,
+        SnapKind::OnCurve | SnapKind::Perpendicular | SnapKind::Tangent
+    );
+    let d_prev = prev.at.distance(p);
+    if !fixed || d_prev > tol * SNAP_HOLD {
+        return false;
+    }
+    match fresh {
+        None => true,
+        Some(f) if f == prev => true,
+        Some(f) => {
+            (prev.kind.priority(), d_prev / SNAP_HOLD) <= (f.kind.priority(), f.at.distance(p))
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SnapOptions {
     /// Capture radius in world units (usually a fixed number of screen pixels / zoom).
@@ -311,6 +340,34 @@ mod tests {
 
     fn v(x: f64, y: f64) -> DVec2 {
         DVec2::new(x, y)
+    }
+
+    #[test]
+    fn a_snap_holds_with_a_small_hysteresis() {
+        let at = |x: f64, y: f64, kind| Snap {
+            at: v(x, y),
+            kind,
+            entity: None,
+        };
+        let vertex = at(0.0, 0.0, SnapKind::Endpoint);
+        let grid = at(2.0, 0.0, SnapKind::Grid);
+        // Geometry holds a little past the capture radius against the grid...
+        assert!(snap_holds(vertex, Some(grid), v(1.1, 0.0), 1.0));
+        assert!(snap_holds(vertex, None, v(1.2, 0.0), 1.0));
+        // ...but not far past it.
+        assert!(!snap_holds(vertex, Some(grid), v(1.3, 0.0), 1.0));
+        // The grid gives way to geometry at once: geometry comes first.
+        assert!(!snap_holds(grid, Some(vertex), v(1.0, 0.0), 1.0));
+        // Between equals, the new one has to be clearly nearer.
+        let other = at(1.0, 0.0, SnapKind::Endpoint);
+        assert!(snap_holds(vertex, Some(other), v(0.55, 0.0), 1.0));
+        assert!(!snap_holds(vertex, Some(other), v(0.6, 0.0), 1.0));
+        // A stronger kind takes over at once.
+        let mid = at(0.0, 0.0, SnapKind::Midpoint);
+        assert!(!snap_holds(mid, Some(other), v(0.6, 0.0), 1.0));
+        // A snap that follows the pointer along a curve doesn't hold.
+        let on = at(0.0, 0.0, SnapKind::OnCurve);
+        assert!(!snap_holds(on, None, v(0.1, 0.0), 1.0));
     }
 
     fn options(tolerance: f64) -> SnapOptions {

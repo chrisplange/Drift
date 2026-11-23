@@ -27,7 +27,9 @@ pub use primitives::{
     shape_within_rect,
 };
 pub use reference::RefIndex;
-pub use snap::{Snap, SnapKind, SnapOptions, perpendicular_feet, tangent_points};
+pub use snap::{
+    SNAP_HOLD, Snap, SnapKind, SnapOptions, perpendicular_feet, snap_holds, tangent_points,
+};
 
 /// Whether two shapes are the same to the bit (`-0.0` and `0.0` differ; so do NaNs), as
 /// a cache of something found from shapes needs to know.

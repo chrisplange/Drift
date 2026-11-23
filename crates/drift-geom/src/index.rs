@@ -168,6 +168,10 @@ impl SceneIndex {
         if let (Some(revision), Some(lineage)) = (self.revision, self.lineage)
             && let Some(changes) = doc.changes_since(lineage, revision)
             && !changes.layers
+            // (When most of the drawing changed, the full pass over its entities is quicker
+            // than looking at each change and the curves on it: a whole move rolled back or
+            // undone, #371. Changes and the drawing both count points and curves.)
+            && changes.entities.len() <= (doc.len() / 4).max(4096)
             && !self.touches_hidden_curves(doc, &changes.entities)
         {
             self.revision = Some(doc.revision());

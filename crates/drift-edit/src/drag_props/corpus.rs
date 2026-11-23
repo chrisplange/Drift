@@ -17,13 +17,13 @@
 //! |---|---|
 //! | `R` | **rows met**: an accepted frame leaves a relation or a structural row off |
 //! | `S` | **no arc sweep flip**: an arc the drag doesn't hold by a point swept over 90° more or less in one frame (a short arc become a near-full circle with every row still met) |
-//! | `W` | **no way-round flip**: a tangency changed side, a signed distance changed sign, or a Parallel, Perpendicular or Angle pair turned round (not by a line of the pair squeezed through no length) |
+//! | `W` | **no way-round flip**: a tangency changed side, a signed distance changed sign, or a Parallel, Perpendicular or Angle pair turned round (not by a line it is measured along that was squeezed through no length, or turned end for end and counted as `L`: that flip is the line's) |
 //! | `L` | a line the drag doesn't hold by an end turned end for end in one frame (not one squeezed through no length at the pointer's pace: see [`TURNED_SHARE`]) |
 //! | `G` | **held radii**: an arc or circle the drag doesn't move grew (more than [`HELD`] of its radius as the drag began) |
-//! | `J` | **no jump**: a point moved more than [`JUMP`] (50) times as far as the pointer did since the last accepted frame |
+//! | `J` | **no jump**: a point, or the radius of a circle the drag moves, moved more than [`JUMP`] (50) times as far as the pointer did since the last accepted frame |
 //! | `X` | **the stop rule**: a refused frame changed geometry (a drag that can't go on stops at the last shape that went) |
 //! | `C` | the release: the commit was refused, or left a relation off |
-//! | `P` | out and back: a path that ends where it began, its last frame accepted, left a point more than [`CREEP`] of the part's size from where it started |
+//! | `P` | out and back: a path that ends where it began, its last frame accepted, left a point more than [`CREEP`] of the part's size from where it started (`back y` in the record where it was judged, `n` where the last frame or the release was refused) |
 //! | `O` | geometry the dragged part isn't joined to moved |
 //!
 //! Noted, not judged: an arc the drag holds by a point sweeping over 90° in a frame (`own`:
@@ -41,8 +41,10 @@
 //!
 //! `CORPUS_SHARD=k/n` runs every n-th target from the k-th; `CORPUS_ONLY=<sketch>`,
 //! `CORPUS_TARGET=<e12>` and `CORPUS_PATH=<name>` replay one, and `CORPUS_TRACE` prints its
-//! frames. `DRIFT_CORPUS_PRIVATE=<folder>` adds the `.drift` files there as `private-001`
-//! and so on (never by name: the repository is public, and so is every record of them).
+//! frames. `DRIFT_CORPUS_PRIVATE=<folder>` adds the `.drift` files there as `private-` and
+//! eight hex digits of a hash of the file's contents (never by name: the repository is public,
+//! and so is every record of them; by contents, so a drawing keeps its number when others
+//! come or go, and `diff` of two records compares the same drawing).
 //! `CORPUS_PRIVATE_ONLY=1` sweeps those alone.
 
 use std::collections::HashMap;
@@ -115,7 +117,8 @@ fn drift_files(dir: &std::path::Path) -> Vec<PathBuf> {
 }
 
 /// The committed corpus, by name, and with `private` the drawings `DRIFT_CORPUS_PRIVATE`
-/// names, numbered. A private drawing that doesn't load is left out and counted on stderr.
+/// names, numbered by a hash of their contents. A private drawing that doesn't load is left
+/// out and counted on stderr.
 pub(super) fn sketches(private: bool) -> Vec<Sketch> {
     let mut out: Vec<Sketch> = drift_files(&corpus_dir())
         .into_iter()
@@ -134,22 +137,22 @@ pub(super) fn sketches(private: bool) -> Vec<Sketch> {
     if private && let Some(dir) = std::env::var_os("DRIFT_CORPUS_PRIVATE").filter(|d| !d.is_empty())
     {
         let mut unread = 0;
-        for (k, path) in drift_files(std::path::Path::new(&dir))
-            .into_iter()
-            .enumerate()
-        {
-            let loaded = std::fs::read_to_string(&path)
-                .ok()
-                .and_then(|text| drift_io::load(&text).ok());
+        let public = out.len();
+        for path in drift_files(std::path::Path::new(&dir)) {
+            let loaded = std::fs::read_to_string(&path).ok().and_then(|text| {
+                let (doc, _) = drift_io::load(&text).ok()?;
+                Some((text, doc))
+            });
             match loaded {
-                Some((doc, _)) => out.push(Sketch {
-                    name: format!("private-{:03}", k + 1),
+                Some((text, doc)) => out.push(Sketch {
+                    name: format!("private-{:08x}", fnv1a(text.as_bytes()) as u32),
                     doc,
                     private: true,
                 }),
                 None => unread += 1,
             }
         }
+        out[public..].sort_by(|a, b| a.name.cmp(&b.name));
         if unread > 0 {
             eprintln!("{unread} private drawings didn't load");
         }
@@ -352,6 +355,20 @@ fn way_round(doc: &Document, c: &Constraint) -> Option<Way> {
     }
 }
 
+/// The ids `c`'s way round is measured along (lines among them): a pair's two lines, and the
+/// line a tangency's side or a distance's sign is taken from. A line that points the other
+/// way flips them.
+fn along(c: &Constraint) -> [Option<EntityId>; 2] {
+    match *c {
+        Constraint::Parallel { a, b }
+        | Constraint::Perpendicular { a, b }
+        | Constraint::Angle { a, b, .. }
+        | Constraint::Tangent { a, b } => [Some(a), Some(b)],
+        Constraint::PointLineDistance { line, .. } => [Some(line), None],
+        _ => [None, None],
+    }
+}
+
 /// An arc's counter-clockwise sweep from start to end, in (0, 2π].
 fn sweep(c: DVec2, s: DVec2, e: DVec2) -> f64 {
     let (s, e) = (s - c, e - c);
@@ -371,8 +388,8 @@ struct Watch {
     arcs: Vec<([usize; 3], bool)>,
     /// Circles, and whether the drag moves their centres.
     circles: Vec<(EntityId, bool)>,
-    /// Lines by their ends' places in `points`, and whether the drag moves one.
-    lines: Vec<([usize; 2], bool)>,
+    /// Lines, by their ends' places in `points`, and whether the drag moves one.
+    lines: Vec<(EntityId, [usize; 2], bool)>,
     /// Each line's place in `lines`.
     line_place: HashMap<EntityId, usize>,
     relations: Vec<Constraint>,
@@ -441,7 +458,7 @@ impl Watch {
                 Some(EntityKind::Line { a, b }) => {
                     if let (Some(&pa), Some(&pb)) = (place.get(&a), place.get(&b)) {
                         line_place.insert(id, lines.len());
-                        lines.push(([pa, pb], moved.contains(&a) || moved.contains(&b)));
+                        lines.push((id, [pa, pb], moved.contains(&a) || moved.contains(&b)));
                     }
                 }
                 _ => {}
@@ -479,6 +496,12 @@ impl Watch {
     }
 }
 
+/// What moved farthest in a frame: a watched point, or a dragged circle's radius.
+enum Mover {
+    Point(usize),
+    Radius(usize),
+}
+
 /// What a drag did, frame against frame: one line of the record.
 #[derive(Default)]
 struct Outcome {
@@ -497,6 +520,9 @@ struct Outcome {
     worst: f64,
     stop_moved: usize,
     commit: bool,
+    /// For a path that ends where it began: whether it came back and was committed, so `P`
+    /// was judged (`None` for the paths that don't come back).
+    back: Option<bool>,
     creep: f64,
     outside: bool,
     solves: u32,
@@ -530,22 +556,27 @@ impl Outcome {
     }
 }
 
+/// FNV-1a of `bytes`.
+fn fnv1a(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for &byte in bytes {
+        h ^= u64::from(byte);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
+}
+
 /// FNV-1a over the bits of the watched geometry: two builds that end a drag at the same
 /// place to the last bit print the same.
 fn digest(state: &State) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    let values = state
+    let bytes: Vec<u8> = state
         .points
         .iter()
         .flat_map(|p| [p.x, p.y])
-        .chain(state.radii.iter().copied());
-    for v in values {
-        for byte in v.to_bits().to_le_bytes() {
-            h ^= u64::from(byte);
-            h = h.wrapping_mul(0x0000_0100_0000_01b3);
-        }
-    }
-    h
+        .chain(state.radii.iter().copied())
+        .flat_map(|v| v.to_bits().to_le_bytes())
+        .collect();
+    fnv1a(&bytes)
 }
 
 /// Drag `id` of `base` (a curve whole, or a point) along path `k`, judging every frame.
@@ -647,14 +678,25 @@ fn sweep_one(base: &Document, id: EntityId, k: usize, trace: bool) -> Outcome {
             out.rows += 1;
             fail(&mut first, out.rows, format!("frame {n}: {what}"));
         }
-        // The farthest any point went, against the pointer.
-        let (mut most, mut mover) = (0.0f64, 0);
+        // The farthest any point went, against the pointer; and a circle the drag moves, by
+        // how much its radius changed (no other check sees its own radius).
+        let (mut most, mut mover) = (0.0f64, Mover::Point(0));
         for (i, (a, b)) in last.points.iter().zip(&now.points).enumerate() {
             let d = a.distance(*b);
             if d > most || d.is_nan() {
-                (most, mover) = (d, i);
+                (most, mover) = (d, Mover::Point(i));
             }
         }
+        for (i, &(_, moved)) in watch.circles.iter().enumerate() {
+            let d = (now.radii[i] - last.radii[i]).abs();
+            if moved && (d > most || d.is_nan()) {
+                (most, mover) = (d, Mover::Radius(i));
+            }
+        }
+        let mover = match mover {
+            Mover::Point(i) => watch.points[i].to_string(),
+            Mover::Radius(i) => format!("{}'s radius", watch.circles[i].0),
+        };
         // (Not where the pointer hardly moved: a frame back onto a place a refused frame
         // left it is a move of round-off.)
         if travel > floor {
@@ -666,8 +708,7 @@ fn sweep_one(base: &Document, id: EntityId, k: usize, trace: bool) -> Outcome {
                 &mut first,
                 out.jumps,
                 format!(
-                    "frame {n}: {} moved {most:.6}, {:.1} times the pointer",
-                    watch.points[mover],
+                    "frame {n}: {mover} moved {most:.6}, {:.1} times the pointer",
                     most / travel
                 ),
             );
@@ -721,10 +762,11 @@ fn sweep_one(base: &Document, id: EntityId, k: usize, trace: bool) -> Outcome {
                 out.shrank += 1;
             }
         }
-        // Each line that points the other way: turned end for end, or squeezed through no
-        // length (see `TURNED_SHARE`).
-        let mut squeezed = vec![false; watch.lines.len()];
-        for (i, &([a, b], moved)) in watch.lines.iter().enumerate() {
+        // Each line that points the other way: squeezed through no length (see
+        // `TURNED_SHARE`), or turned end for end, and counted (`L`) where the drag doesn't
+        // hold it.
+        let mut turned_round = vec![false; watch.lines.len()];
+        for (i, &(line, [a, b], moved)) in watch.lines.iter().enumerate() {
             let (was, is) = (
                 last.points[b] - last.points[a],
                 now.points[b] - now.points[a],
@@ -736,14 +778,15 @@ fn sweep_one(base: &Document, id: EntityId, k: usize, trace: bool) -> Outcome {
             let turned = was.length().min(is.length()) > TURNED_SHARE * began
                 && was.distance(is) > TURNED_PACE * travel;
             if !turned {
-                squeezed[i] = true;
+                turned_round[i] = true;
                 out.through += 1;
             } else if !moved {
+                turned_round[i] = true;
                 out.reversed += 1;
                 fail(
                     &mut first,
                     out.reversed,
-                    format!("frame {n}: a line turned end for end, {was:?} to {is:?}"),
+                    format!("frame {n}: {line} turned end for end, {was:?} to {is:?}"),
                 );
             }
         }
@@ -751,11 +794,13 @@ fn sweep_one(base: &Document, id: EntityId, k: usize, trace: bool) -> Outcome {
             if let (Some(was), Some(is)) = (was, is)
                 && was.flipped(*is)
             {
-                // (A pair one of whose lines was squeezed through no length turned with it.)
-                if matches!(was, Way::Turn(_))
-                    && watch.relations[i]
-                        .entities()
-                        .any(|e| watch.line_place.get(&e).is_some_and(|l| squeezed[*l]))
+                // (A way measured along a line that was squeezed through no length, or turned
+                // end for end and counted as `L`, turned with it: that is the line's flip, not
+                // the relation's.)
+                if along(&watch.relations[i])
+                    .into_iter()
+                    .flatten()
+                    .any(|e| watch.line_place.get(&e).is_some_and(|l| turned_round[*l]))
                 {
                     continue;
                 }
@@ -772,9 +817,8 @@ fn sweep_one(base: &Document, id: EntityId, k: usize, trace: bool) -> Outcome {
         }
         if trace {
             println!(
-                "  frame {n} to {target:?}: went ({} solves), most {} by {:.3} x the pointer",
+                "  frame {n} to {target:?}: went ({} solves), most {mover} by {:.3} x the pointer",
                 ed.drag_solves,
-                watch.points[mover],
                 most / travel
             );
         }
@@ -791,6 +835,9 @@ fn sweep_one(base: &Document, id: EntityId, k: usize, trace: bool) -> Outcome {
             "the release: committed {committed}, {:?}",
             broken(&ed.doc, ed.lowering().as_deref())
         ));
+    }
+    if closed {
+        out.back = Some(came_back && committed);
     }
     if came_back && committed {
         out.creep = start
@@ -817,8 +864,8 @@ fn sweep_one(base: &Document, id: EntityId, k: usize, trace: bool) -> Outcome {
 fn record(sketch: &str, id: EntityId, curve: bool, k: usize, o: &Outcome) -> String {
     format!(
         "D {sketch} {id}{} {} {} frames {} ref {} res {} rows {} sweep {} own {} way {} rev {} \
-         thru {} grew {} shrank {} jumps {} worst {:.3e} stop {} creep {:.3e} solves {} ex {} \
-         end {:016x}",
+         thru {} grew {} shrank {} jumps {} worst {:.3e} stop {} back {} creep {:.3e} solves {} \
+         ex {} end {:016x}",
         if curve { "c" } else { "p" },
         PATHS[k],
         o.verdict(),
@@ -836,6 +883,11 @@ fn record(sketch: &str, id: EntityId, curve: bool, k: usize, o: &Outcome) -> Str
         o.jumps,
         o.worst,
         o.stop_moved,
+        match o.back {
+            Some(true) => "y",
+            Some(false) => "n",
+            None => "-",
+        },
         o.creep,
         o.solves,
         o.exits.map(|n| n.to_string()).join(","),

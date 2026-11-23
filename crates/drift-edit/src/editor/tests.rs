@@ -2059,3 +2059,180 @@ mod drag_size {
         assert!(patterns.iter().all(|w| *w == patterns[0]), "{patterns:?}");
     }
 }
+
+/// #371: after big moves (every entity, frame after frame, past the size of the document's
+/// change log), the editor's index and analysis are what a full rebuild finds, between
+/// random edits, undo and redo.
+#[cfg(test)]
+mod big_moves {
+    use drift_core::{Constraint, DVec2, EntityId, Layer};
+    use drift_geom::SceneIndex;
+
+    use super::*;
+
+    fn v(x: f64, y: f64) -> DVec2 {
+        DVec2::new(x, y)
+    }
+
+    /// The index and the analysis against a fresh build of each.
+    fn check(ed: &Editor, step: usize, rnd: &mut impl FnMut(usize) -> usize) {
+        let fresh = SceneIndex::build(&ed.doc);
+        for (id, _) in ed.doc.iter() {
+            assert_eq!(
+                ed.index.shape(id),
+                fresh.shape(id),
+                "shape {id:?}, step {step}"
+            );
+            assert_eq!(
+                ed.index.role(id),
+                fresh.role(id),
+                "role {id:?}, step {step}"
+            );
+            let users = |i: &SceneIndex| i.users_of(id).collect::<Vec<_>>();
+            assert_eq!(users(&ed.index), users(&fresh), "users {id:?}, step {step}");
+        }
+        for _ in 0..6 {
+            let c = v(rnd(400) as f64 - 50.0, rnd(400) as f64 - 50.0);
+            let r = drift_core::Bounds::from_center_half_size(c, v(rnd(60) as f64, 30.0));
+            let found = |i: &SceneIndex| {
+                let mut f: Vec<EntityId> = i.query(r).collect();
+                f.sort_unstable();
+                f
+            };
+            assert_eq!(found(&ed.index), found(&fresh), "query, step {step}");
+        }
+        let (a, b) = (ed.analysis(), drift_solver::analyze(&ed.doc));
+        assert_eq!(a.converged, b.converged, "converged, step {step}");
+        assert_eq!(a.dof, b.dof, "dof, step {step}");
+        assert_eq!(a.dependent_equations, b.dependent_equations, "step {step}");
+        assert_eq!(a.conflicts, b.conflicts, "conflicts, step {step}");
+        assert_eq!(a.redundant, b.redundant, "redundant, step {step}");
+        assert_eq!(a.exposed, b.exposed, "exposed, step {step}");
+        assert_eq!(a.broken, b.broken, "broken, step {step}");
+        assert_eq!(a.definitions, b.definitions, "definitions, step {step}");
+    }
+
+    #[test]
+    fn index_and_analysis_after_big_moves_are_a_full_rebuilds() {
+        let mut seed = 0x0037_1b16_u64;
+        let mut rnd = move |n: usize| {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((seed >> 33) as usize) % n.max(1)
+        };
+        let mut ed = Editor::default();
+        let locked = ed.doc.add_layer(Layer {
+            locked: true,
+            ..Layer::new("Locked")
+        });
+        ed.doc.begin();
+        // Chains of lines (shared points), arcs, a few relations and a locked line.
+        for k in 0..900 {
+            let x = (k % 30) as f64 * 10.0;
+            let y = (k / 30) as f64 * 10.0;
+            let a = ed.doc.add_point(v(x, y));
+            let b = ed.doc.add_point(v(x + 4.0, y + 1.0));
+            let c = ed.doc.add_point(v(x + 6.0, y + 5.0));
+            let first = ed.doc.add_line(a, b).unwrap();
+            ed.doc.add_line(b, c).unwrap();
+            match k % 50 {
+                0 => {
+                    ed.doc.add_arc(a, b, c).unwrap();
+                }
+                1 => {
+                    ed.doc
+                        .add_constraint(Constraint::Horizontal { line: first })
+                        .unwrap();
+                }
+                2 => {
+                    ed.doc
+                        .add_constraint(Constraint::Fix {
+                            point: a,
+                            at: v(x, y),
+                        })
+                        .unwrap();
+                }
+                3 => ed.doc.set_entity_layer(first, locked).unwrap(),
+                _ => {}
+            }
+        }
+        assert!(ed.commit("Drawing"));
+        // A whole move of the drawing as drawn: exactly the clusters whose analysis reads
+        // their places (an arc, a relation or a locked line: 4 of every 50, 72 of 900) are
+        // analysed again, and the other 828 kept.
+        let all: Vec<EntityId> = ed.doc.iter().map(|(id, _)| id).collect();
+        ed.doc.begin();
+        for _ in 0..3 {
+            ed.doc.translate(all.clone(), v(1.0, 1.0));
+            ed.sync();
+        }
+        assert!(ed.commit("Move"));
+        assert_eq!(ed.analysis_cache.last_misses(), 72);
+        let mut moves = 0;
+        let mut kept = 0;
+        for step in 0..40 {
+            let all: Vec<EntityId> = ed.doc.iter().map(|(id, _)| id).collect();
+            let curves: Vec<EntityId> = ed
+                .doc
+                .iter()
+                .filter(|(_, e)| !e.kind.is_point())
+                .map(|(id, _)| id)
+                .collect();
+            let points: Vec<EntityId> = ed
+                .doc
+                .iter()
+                .filter(|(_, e)| e.kind.is_point())
+                .map(|(id, _)| id)
+                .collect();
+            match rnd(8) {
+                // A whole move, a few frames, then let go (or rolled back).
+                0..=2 => {
+                    moves += 1;
+                    ed.doc.begin();
+                    for _ in 0..1 + rnd(4) {
+                        ed.doc.translate(all.clone(), v(rnd(5) as f64 - 2.0, 1.0));
+                        ed.sync();
+                    }
+                    if rnd(5) == 0 {
+                        ed.doc.rollback();
+                        ed.sync();
+                    } else if ed.commit("Move") {
+                        // Only the clusters whose analysis reads their places are analysed
+                        // again: at most the 72 there were as drawn (the random edits since
+                        // join and split some, so the count isn't exact here).
+                        if ed.analysis_cache.last_misses() <= 72 {
+                            kept += 1;
+                        }
+                    }
+                }
+                3 => {
+                    let _ = ed.undo();
+                }
+                4 => {
+                    let _ = ed.redo();
+                }
+                5 => {
+                    ed.doc.begin();
+                    let _ = ed
+                        .doc
+                        .add_line(points[rnd(points.len())], points[rnd(points.len())]);
+                    let _ = ed.commit("Line");
+                }
+                6 => {
+                    ed.doc.begin();
+                    ed.doc.delete([curves[rnd(curves.len())]]);
+                    let _ = ed.commit("Delete");
+                }
+                _ => {
+                    // One entity moved alone.
+                    ed.doc.begin();
+                    ed.doc.translate([all[rnd(all.len())]], v(3.0, -2.0));
+                    let _ = ed.commit("Nudge");
+                }
+            }
+            check(&ed, step, &mut rnd);
+        }
+        assert!(moves > 8 && kept > 4, "{moves} moves, {kept} kept");
+    }
+}

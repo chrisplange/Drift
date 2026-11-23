@@ -158,9 +158,7 @@ fn build(script: &str) -> Result<(String, Session), String> {
             continue;
         }
         let (bind, call) = match directive.split_once('=') {
-            Some((name, call))
-                if !name.contains('{') && name.trim().split_whitespace().count() == 1 =>
-            {
+            Some((name, call)) if !name.contains('{') && name.split_whitespace().count() == 1 => {
                 (Some(name.trim()), call.trim())
             }
             _ => (None, directive),

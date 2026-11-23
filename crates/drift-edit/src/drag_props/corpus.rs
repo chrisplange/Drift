@@ -131,7 +131,8 @@ pub(super) fn sketches(private: bool) -> Vec<Sketch> {
             }
         })
         .collect();
-    if private && let Some(dir) = std::env::var_os("DRIFT_CORPUS_PRIVATE") {
+    if private && let Some(dir) = std::env::var_os("DRIFT_CORPUS_PRIVATE").filter(|d| !d.is_empty())
+    {
         let mut unread = 0;
         for (k, path) in drift_files(std::path::Path::new(&dir))
             .into_iter()
@@ -572,7 +573,7 @@ fn sweep_one(base: &Document, id: EntityId, k: usize, trace: bool) -> Outcome {
         (middle, size)
     };
     let (middle, mut size) = extent(&start.points);
-    if !(size > 0.0) {
+    if size.is_nan() || size <= 0.0 {
         let all: Vec<DVec2> = ed
             .doc
             .iter()
@@ -583,7 +584,7 @@ fn sweep_one(base: &Document, id: EntityId, k: usize, trace: bool) -> Outcome {
             .collect();
         size = extent(&all).1;
     }
-    if !(size > 0.0) {
+    if size.is_nan() || size <= 0.0 {
         size = 100.0;
     }
     let grabbed: Vec<DVec2> = ed
@@ -659,7 +660,7 @@ fn sweep_one(base: &Document, id: EntityId, k: usize, trace: bool) -> Outcome {
         if travel > floor {
             out.worst = out.worst.max(most / travel);
         }
-        if !(most <= JUMP * travel + floor) {
+        if most.is_nan() || most > JUMP * travel + floor {
             out.jumps += 1;
             fail(
                 &mut first,
@@ -897,8 +898,8 @@ fn corpus_sweep() {
             {
                 continue;
             }
-            for k in 0..PATHS.len() {
-                if only_path.as_ref().is_some_and(|p| p != PATHS[k]) {
+            for (k, path) in PATHS.iter().enumerate() {
+                if only_path.as_ref().is_some_and(|p| p != path) {
                     continue;
                 }
                 let outcome = sweep_one(&doc, id, k, trace);

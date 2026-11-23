@@ -39,6 +39,13 @@ bracket-bolt-circle e13p ok ok ok ok ok ok ok ok ok ok
 bracket-bolt-circle e14c ok ok ok ok ok ok ok ok ok ok
 bracket-bolt-circle e15p ok ok ok ok ok ok ok ok ok ok
 bracket-bolt-circle e16c ok ok ok ok ok ok ok ok ok ok
+bracket-bushing-gap e1p ok ok ok ok ok ok ok ok ok ok
+bracket-bushing-gap e2p ok ok ok ok ok ok ok ok ok ok
+bracket-bushing-gap e3c ok ok ok ok ok ok ok ok ok ok
+bracket-bushing-gap e4p ok ok ok ok ok ok ok ok ok ok
+bracket-bushing-gap e5c ok ok ok ok ok ok ok ok ok ok
+bracket-bushing-gap e6p ok ok ok ok ok ok ok ok ok ok
+bracket-bushing-gap e7c ok ok ok ok ok ok ok ok ok ok
 bracket-clamp e1p ok ok ok ok ok ok ok ok ok ok
 bracket-clamp e2p ok ok ok ok ok ok ok ok ok ok
 bracket-clamp e3p ok ok ok ok ok ok ok ok ok ok

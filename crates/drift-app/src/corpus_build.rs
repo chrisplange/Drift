@@ -266,7 +266,7 @@ fn covers(doc: &drift_core::Document, kinds: &mut BTreeMap<String, usize>) {
 
 /// Every relation and dimension kind the corpus must hold at least once (the audit's known
 /// gaps among them), and the curves.
-const MUST_COVER: [&str; 33] = [
+const MUST_COVER: [&str; 34] = [
     "Coincident",
     "Horizontal",
     "Vertical",
@@ -296,6 +296,7 @@ const MUST_COVER: [&str; 33] = [
     "HorizontalDistance",
     "VerticalDistance",
     "PointLineDistance",
+    "RadialGap",
     "Angle",
     "(circle)",
     "(ellipse)",

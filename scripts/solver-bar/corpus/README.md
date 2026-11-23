@@ -8,7 +8,7 @@ these hold every relation and dimension kind, circles, ellipses and curves.
 | Group | Sketches |
 |---|---|
 | `profile-` | sections and outlines: slot, L angle, T, channel, rounded rectangle, keyhole, D, stepped shaft, dovetail, I beam, ogee, a filleted corner |
-| `bracket-` | plates with holes: L bracket, bolt circle, symmetric flange, gusset, slotted plate, hinge leaf, shelf bracket, clamp, lug |
+| `bracket-` | plates with holes: L bracket, bolt circle, symmetric flange, gusset, slotted plate, hinge leaf, shelf bracket, clamp, lug, a bushing (a ring with its wall set as a gap) |
 | `linkage-` | mechanisms with one or two freedoms: four-bar, crank and slider, scissor, pantograph, toggle, bell crank, cam and follower, Watt's linkage, belt, piston |
 | `plan-` | rooms with walls, doors, windows and openings, free-standing walls, a corridor, a column grid |
 | `pattern-` | rows, grids and rings of holes, a mirrored pair, evenly spaced slats, a hexagon |

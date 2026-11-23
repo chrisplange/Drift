@@ -1,7 +1,7 @@
 {
   "format": "drift",
-  "version": 45,
-  "reader": 45,
+  "version": 46,
+  "reader": 46,
   "meta": {"units":"mm"},
   "layers": [
     {"id":"l0","name":"Layer 1","weight":0.25,"linetype":"continuous"}

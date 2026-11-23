@@ -726,7 +726,7 @@ pub fn fit_scale(extent: DVec2, room: DVec2, imperial: bool) -> f64 {
         PREFERRED_SCALES
             .into_iter()
             .find(fits)
-            .unwrap_or(*PREFERRED_SCALES.last().expect("scales"))
+            .unwrap_or(PREFERRED_SCALES[PREFERRED_SCALES.len() - 1])
     }
 }
 
@@ -972,6 +972,11 @@ mod tests {
                 false
             ),
             50.0
+        );
+        // Nothing fits: the smallest preferred scale.
+        assert_eq!(
+            fit_scale(DVec2::splat(1.0e12), DVec2::splat(1.0), false),
+            PREFERRED_SCALES[PREFERRED_SCALES.len() - 1]
         );
     }
 

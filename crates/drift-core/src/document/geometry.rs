@@ -270,11 +270,8 @@ impl Document {
         id: EntityId,
         kind: EntityKind,
     ) -> Result<(), DocumentError> {
-        if !matches!(kind, EntityKind::Arc { .. }) {
-            return self.set_entity_kind(id, kind);
-        }
         let EntityKind::Arc { center, start, end } = kind else {
-            unreachable!()
+            return self.set_entity_kind(id, kind);
         };
         let current = self.entities.get(&id).ok_or(DocumentError::Missing(id))?;
         if current.kind.is_point() {

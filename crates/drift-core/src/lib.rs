@@ -3,6 +3,15 @@
 //! All model geometry is stored in `f64` world units (millimetres). World space is y-up,
 //! following the usual CAD convention.
 
+#![deny(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::todo,
+    clippy::unimplemented
+)]
+
 pub mod affine;
 pub mod blocks;
 pub mod bounds;

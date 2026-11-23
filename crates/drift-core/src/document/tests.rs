@@ -1073,4 +1073,44 @@ mod first_layer {
         let p = doc.add_point(DVec2::new(1.0, 2.0));
         assert_eq!(doc.layer_of(p).name, "Layer 1");
     }
+
+    /// `layer_of` relies on the first layer always being there (#442).
+    #[test]
+    fn the_first_layer_cannot_be_removed_so_layer_of_always_answers() {
+        let mut doc = Document::new();
+        assert!(doc.remove_layer(LayerId::DEFAULT).is_err());
+        let other = doc.add_layer(Layer::new("Walls"));
+        doc.set_current_layer(other).unwrap();
+        let p = doc.add_point(DVec2::new(1.0, 2.0));
+        assert_eq!(doc.layer_of(p).name, "Walls");
+        doc.remove_layer(other).unwrap();
+        assert_eq!(doc.layer_of(p).name, "Layer 1");
+        // An id the drawing doesn't have falls back to the first layer.
+        assert_eq!(doc.layer_of(EntityId(9_999_999)).name, "Layer 1");
+    }
+}
+
+/// `set_entity_kind_exact` hands anything but an arc to `set_entity_kind` (#442).
+#[cfg(test)]
+mod exact_kind {
+    use super::*;
+
+    #[test]
+    fn a_line_goes_through_set_entity_kind_and_its_checks() {
+        let mut doc = Document::new();
+        let a = doc.add_point(DVec2::ZERO);
+        let b = doc.add_point(DVec2::new(10.0, 0.0));
+        let c = doc.add_point(DVec2::new(0.0, 10.0));
+        let line = doc.add_line(a, b).unwrap();
+        doc.set_entity_kind_exact(line, EntityKind::Line { a, b: c })
+            .unwrap();
+        assert!(matches!(
+            doc.get(line).map(|e| e.kind),
+            Some(EntityKind::Line { a: x, b: y }) if x == a && y == c
+        ));
+        assert!(matches!(
+            doc.set_entity_kind_exact(line, EntityKind::Line { a, b: a }),
+            Err(DocumentError::Degenerate("line"))
+        ));
+    }
 }

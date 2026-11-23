@@ -137,10 +137,19 @@ impl Document {
         constraint: Constraint,
     ) -> Result<ConstraintId, DocumentError> {
         self.validate(&constraint)?;
-        // A gap between circles is kept inner first, as drawn when it is added, so which
-        // one is outside is the relation's, not whatever the geometry is at the next solve
-        // (nor which was picked first).
-        let constraint = match constraint {
+        let constraint = self.inner_first(constraint);
+        let id = ConstraintId(self.next_constraint_id);
+        self.next_constraint_id += 1;
+        self.touch_constraint(id);
+        self.constraints.insert(id, constraint);
+        Ok(id)
+    }
+
+    /// `c`, with a gap between circles put inner first, as drawn now: so which one is outside
+    /// is the relation's, not whatever the geometry is at the next solve (nor which was picked
+    /// first, nor how a file spelled it). Adding and reading a drawing both go by it.
+    pub(super) fn inner_first(&self, c: Constraint) -> Constraint {
+        match c {
             Constraint::RadialGap { a, b, value }
                 if self
                     .radius_here(a)
@@ -150,12 +159,7 @@ impl Document {
                 Constraint::RadialGap { a: b, b: a, value }
             }
             c => c,
-        };
-        let id = ConstraintId(self.next_constraint_id);
-        self.next_constraint_id += 1;
-        self.touch_constraint(id);
-        self.constraints.insert(id, constraint);
-        Ok(id)
+        }
     }
 
     /// A circle's or arc's radius as drawn now.

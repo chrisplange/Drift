@@ -2619,6 +2619,37 @@ mod tests {
         assert!(doc.is_empty());
     }
 
+    /// A gap a file spells outer first opens inner first, as one added is kept: the ring
+    /// stays the right way out (Opus re-review of #521: it opened inverted, with no
+    /// conflict to say so).
+    #[test]
+    fn a_gap_spelled_outer_first_opens_inner_first() {
+        let mut doc = Document::new();
+        let c = doc.add_point(DVec2::new(5.0, 5.0));
+        let inner = doc.add_circle(c, 40.0).unwrap();
+        let outer = doc.add_circle(c, 65.0).unwrap();
+        doc.add_constraint(Constraint::RadialGap {
+            a: inner,
+            b: outer,
+            value: 25.0,
+        })
+        .unwrap();
+        let text = save(&doc, &Metadata::default());
+        let (i, o) = (id_string(inner), id_string(outer));
+        let spelled = format!(r#""a":"{i}","b":"{o}""#);
+        assert!(text.contains(&spelled), "{text}");
+        let swapped = text.replace(&spelled, &format!(r#""a":"{o}","b":"{i}""#));
+        let (back, _) = load(&swapped).unwrap();
+        let gap = back
+            .constraints()
+            .find_map(|(_, c)| match *c {
+                Constraint::RadialGap { a, b, .. } => Some((a, b)),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(gap, (inner, outer));
+    }
+
     #[test]
     fn every_constraint_kind_round_trips() {
         let mut doc = Document::new();

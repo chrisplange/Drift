@@ -911,6 +911,7 @@ impl Editor {
             );
         }
         if !self.new_conflicts(&report)
+            && turning_on()
             && (self.stretched_a_turning_line(named, &start) || !self.keeps_its_sense(id, &start))
         {
             report =
@@ -1590,6 +1591,26 @@ impl Editor {
             }
         }
         drift_geom::walls::lower::lower_constraint(&self.doc, c)?.err()
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests: whether a typed size tries the turning solve. Off, a typed angle is solved as
+    /// the first solve alone lands it: what a test compares against to show the turning
+    /// solve left a sketch exactly as that does, on whatever platform it runs.
+    pub(super) static TURNING: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+}
+
+/// Whether a typed size tries the turning solve (always, outside tests).
+fn turning_on() -> bool {
+    #[cfg(test)]
+    {
+        TURNING.with(std::cell::Cell::get)
+    }
+    #[cfg(not(test))]
+    {
+        true
     }
 }
 

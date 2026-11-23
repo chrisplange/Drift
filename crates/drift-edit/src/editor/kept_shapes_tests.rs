@@ -630,38 +630,28 @@ fn vertex_fillet_off(degrees: f64) -> (f64, DVec2) {
     )
 }
 
-/// Guard: where a fillet at the angle's own corner (auto-relations off) still reshapes, it
-/// does so as on main (b92d400, with #518; equal to the last digit on Windows): this PR
-/// makes none of it worse. #522 is
-/// to fix it (see `a_typed_angle_reshapes_no_corner_fillet_without_relations`); then this
-/// guard goes.
+/// Guard: where a fillet at the angle's own corner (auto-relations off) still reshapes, the
+/// turning solve leaves it exactly as the first solve alone lands it, as on main (b92d400,
+/// with #518), where it was refused too: this PR makes none of it worse. Compared in the
+/// same run rather than against numbers from one platform: the first solve doesn't land
+/// here, and where it stops differs between Windows, Ubuntu and macOS (60°: the free end
+/// 0.4 mm apart). #522 is to fix it (see
+/// `a_typed_angle_reshapes_no_corner_fillet_without_relations`); then this guard goes.
 #[test]
 fn a_vertex_fillet_without_relations_reshapes_no_worse_than_main() {
-    for (degrees, r, at) in [
-        (
-            60.0,
-            6.000272528222731,
-            v(172.14922385105382, 57.79600184454344),
-        ),
-        (
-            120.0,
-            6.000372893709087,
-            v(206.96320363636167, 99.97656634817018),
-        ),
-        (
-            145.0,
-            10.31942489362502,
-            v(506.0334971709158, 563.9542461181143),
-        ),
-    ] {
-        let (r1, at1) = vertex_fillet_off(degrees);
-        // (Within 1e-3: this solve doesn't land, and its last bits differ from one platform
-        // to another (Ubuntu's R at 60° is 6.000126); a change in behaviour moves R or the
-        // free end far more.)
-        assert!((r1 - r).abs() <= 1e-3 * r, "{degrees}°: R {r1}, main {r}");
+    use super::constraints::TURNING;
+    for degrees in [60.0, 120.0, 145.0] {
+        let (r, at) = vertex_fillet_off(degrees);
+        TURNING.with(|t| t.set(false));
+        let (r0, at0) = vertex_fillet_off(degrees);
+        TURNING.with(|t| t.set(true));
         assert!(
-            at1.distance(at) <= 1e-3 * at.length(),
-            "{degrees}°: {at1:?}, main {at:?}"
+            (r - r0).abs() <= 1e-9 * r0,
+            "{degrees}°: R {r}, first solve {r0}"
+        );
+        assert!(
+            at.distance(at0) <= 1e-9 * at0.length(),
+            "{degrees}°: {at:?}, first solve {at0:?}"
         );
     }
 }

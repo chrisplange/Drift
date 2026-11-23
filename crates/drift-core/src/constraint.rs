@@ -202,7 +202,10 @@ pub enum Constraint {
         value: f64,
     },
     /// Driving dimension: the gap between two concentric circles/arcs, the difference of
-    /// their radii (a ring's wall). Which one is the larger stays as it was when added.
+    /// their radii (a ring's wall): `b`'s radius less `a`'s, always positive. Added, the
+    /// smaller as drawn becomes `a` (see `Document::add_constraint`), so `a` stays the inner
+    /// one and `b` the outer, whichever was picked first. With neither held, a typed gap moves
+    /// the outer one.
     RadialGap {
         a: EntityId,
         b: EntityId,

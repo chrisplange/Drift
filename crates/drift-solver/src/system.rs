@@ -680,17 +680,13 @@ impl System {
                     source: Some(cid),
                     owner: None,
                 }),
-                // The larger radius less the smaller, whichever is larger as drawn (equal: `a`).
+                // `b`, the outer one (kept so as it was added), less `a`, the inner: never read
+                // again from the geometry, which a drag frame may already have carried past.
                 Constraint::RadialGap { a, b, value } => {
-                    let (ra, rb) = (
-                        crate::radius_of(doc, a).unwrap_or(0.0),
-                        crate::radius_of(doc, b).unwrap_or(0.0),
-                    );
-                    let (big, small) = if ra >= rb { (a, b) } else { (b, a) };
                     rows.push(Row {
                         equation: Equation::LengthGap {
-                            a: radius(big),
-                            b: radius(small),
+                            a: radius(b),
+                            b: radius(a),
                             value,
                         },
                         source: Some(cid),

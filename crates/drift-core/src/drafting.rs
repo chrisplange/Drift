@@ -903,7 +903,7 @@ mod tests {
             style: NoteStyle::default(),
         };
         let Annotation::Note { at, leaders, .. } = note.mapped(&turn) else {
-            unreachable!()
+            panic!("the map keeps the annotation kind")
         };
         assert_eq!(leaders[0].to, Anchor::Free(v(0.0, 10.0)));
         assert!((at - v(0.0, 5.0)).length() < 1e-12, "{at}");
@@ -917,7 +917,7 @@ mod tests {
             view: None,
         };
         let Annotation::Section { a, b, flip, .. } = section.mapped(&mirror_x) else {
-            unreachable!()
+            panic!("the map keeps the annotation kind")
         };
         assert_eq!((a, b, flip), (v(-1.0, 0.0), v(-1.0, 5.0), true));
         let elevation = Annotation::Elevation {
@@ -928,7 +928,7 @@ mod tests {
             view: None,
         };
         let Annotation::Elevation { at, angle, .. } = elevation.mapped(&turn) else {
-            unreachable!()
+            panic!("the map keeps the annotation kind")
         };
         assert!((at - v(0.0, 2.0)).length() < 1e-12 && (angle - 90.0).abs() < 1e-9);
         // On other geometry: a leader to geometry with no counterpart keeps its tip.
@@ -942,7 +942,7 @@ mod tests {
         let map = |e: EntityId| (e == e1).then_some(EntityId(9));
         let pos = |_: &Anchor| Some(v(3.0, 3.0));
         let Some(Annotation::Note { leaders, .. }) = leadered.with_entities(&map, &pos) else {
-            unreachable!()
+            panic!("the map keeps the annotation kind")
         };
         assert_eq!(leaders[0].to, Anchor::Point(EntityId(9)));
         assert_eq!(leaders[1].to, Anchor::Free(v(3.0, 3.0)));

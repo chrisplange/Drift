@@ -246,12 +246,7 @@ impl DriftApp {
         }
         prefs.extend(self.layout.prefs());
         prefs.push(format!("quickbar={}", u8::from(self.show_quick_bar)));
-        // The grid's spacing (#506; appended, read back by builds that know it).
-        prefs.push(format!("gfixed={}", u8::from(self.grid_fixed)));
-        prefs.push(format!("gspace={}", self.grid_spacing));
-        prefs.push(format!("gdiv={}", self.grid_divisions));
-        // (The typed text may hold any character but `;`.)
-        prefs.push(format!("gtext={}", self.grid_spacing_text.replace(';', "")));
+        prefs.extend(self.grid_prefs());
         // The tool rail with names (off: the slim rail of icons).
         prefs.push(format!("railnames={}", u8::from(self.rail_names)));
         prefs.join(";")
@@ -265,7 +260,10 @@ impl DriftApp {
                 continue;
             };
             let on = value == "1";
-            if self.crosshair.apply(key, value) || rules_pref(&mut self.new_rules, key, value) {
+            if self.crosshair.apply(key, value)
+                || self.apply_grid_pref(key, value)
+                || rules_pref(&mut self.new_rules, key, value)
+            {
                 continue;
             }
             match key {
@@ -291,23 +289,6 @@ impl DriftApp {
                     }
                 }
                 "grid" => self.show_grid = on,
-                "gfixed" => self.grid_fixed = on,
-                "gspace" => {
-                    if let Ok(v) = value.parse::<f64>()
-                        && v.is_finite()
-                        && v > 0.0
-                    {
-                        self.grid_spacing = v;
-                    }
-                }
-                "gdiv" => {
-                    if let Ok(n) = value.parse::<u32>()
-                        && (1..=1000).contains(&n)
-                    {
-                        self.grid_divisions = n;
-                    }
-                }
-                "gtext" => self.grid_spacing_text = value.to_string(),
                 "axes" => self.show_axes = on,
                 "snap" => self.grid_snap = on,
                 "ptsnap" => self.perp_tangent_snap = on,
@@ -1116,38 +1097,6 @@ impl DriftApp {
     /// True if the document shows imperial units (for grid steps).
     pub(crate) fn imperial(&self) -> bool {
         !self.drawing.editor.doc.units().length.is_metric()
-    }
-
-    /// The grid setting: Auto, or the fixed spacing and divisions.
-    pub(crate) fn grid_spec(&self) -> drift_render::GridSpec {
-        if self.grid_fixed {
-            drift_render::GridSpec::Fixed {
-                spacing: self.grid_spacing,
-                divisions: self.grid_divisions,
-            }
-        } else {
-            drift_render::GridSpec::Auto
-        }
-    }
-
-    /// The grid as drawn now (snap and nudges follow its minor step).
-    pub(crate) fn grid(&self) -> drift_render::GridInfo {
-        drift_render::grid_info_for(&self.drawing.view.camera, self.imperial(), self.grid_spec())
-    }
-
-    /// Set the fixed grid's spacing from typed text (`600`, `1'`, `3.6 m`; a bare number is
-    /// in the drawing's length unit). False if the text isn't a positive length.
-    pub(crate) fn set_grid_spacing(&mut self, text: &str) -> bool {
-        let none = |_: &str| None;
-        let unit = self.drawing.editor.doc.units().length;
-        match drift_core::expr::evaluate_input(text, drift_core::Kind::Length, unit, &none) {
-            Ok(r) if r.value > 1e-6 && r.value.is_finite() => {
-                self.grid_spacing = r.value;
-                self.grid_spacing_text = r.text;
-                true
-            }
-            _ => false,
-        }
     }
 
     pub(crate) fn abort_operation(&mut self) {

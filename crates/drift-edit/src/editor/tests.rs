@@ -2158,6 +2158,17 @@ mod big_moves {
             }
         }
         assert!(ed.commit("Drawing"));
+        // A whole move of the drawing as drawn: exactly the clusters whose analysis reads
+        // their places (an arc, a relation or a locked line: 4 of every 50, 72 of 900) are
+        // analysed again, and the other 828 kept.
+        let all: Vec<EntityId> = ed.doc.iter().map(|(id, _)| id).collect();
+        ed.doc.begin();
+        for _ in 0..3 {
+            ed.doc.translate(all.clone(), v(1.0, 1.0));
+            ed.sync();
+        }
+        assert!(ed.commit("Move"));
+        assert_eq!(ed.analysis_cache.last_misses(), 72);
         let mut moves = 0;
         let mut kept = 0;
         for step in 0..40 {
@@ -2187,8 +2198,9 @@ mod big_moves {
                         ed.doc.rollback();
                         ed.sync();
                     } else if ed.commit("Move") {
-                        // Only the clusters whose analysis reads their places (an arc, a
-                        // relation or a locked line: 72 of 900) are analysed again.
+                        // Only the clusters whose analysis reads their places are analysed
+                        // again: at most the 72 there were as drawn (the random edits since
+                        // join and split some, so the count isn't exact here).
                         if ed.analysis_cache.last_misses() <= 72 {
                             kept += 1;
                         }

@@ -171,41 +171,101 @@ impl Clone for Lineage {
 #[derive(Debug, Default)]
 struct ChangeLog {
     lineage: Lineage,
-    /// (revision the change was made at, entity changed or `None` for a layer).
+    /// (revision the change was made at, entity changed or `None` for a layer), in revision
+    /// order, but for `gap` while the log is being tidied.
     entries: Vec<(u64, Option<EntityId>)>,
     /// Changes made before this revision have been let go.
     floor: u64,
+    /// Each entity's latest change noted, by id (ids are small and never reused, and a drag
+    /// notes its points in id order, so this is a walk through memory, where a map missed
+    /// the cache at every point).
+    latest: Vec<u64>,
+    /// The latest layer change noted.
+    latest_layer: u64,
+    /// While the log is tidied: `entries[gap]` are free slots, the tidied entries before it
+    /// and those not yet looked at after it.
+    gap: Option<std::ops::Range<usize>>,
 }
 
 impl ChangeLog {
     /// Entries kept at least, however small the drawing.
     const LIMIT: usize = 1 << 16;
+    /// Entries looked at per change noted while tidying: the tidy is done before the log
+    /// has grown by half again.
+    const TIDY_STEPS: usize = 3;
+
+    /// The latest change noted to `what`.
+    fn latest(&mut self, what: Option<EntityId>) -> &mut u64 {
+        match what {
+            Some(id) => {
+                let i = id.0 as usize;
+                if i >= self.latest.len() {
+                    self.latest.resize((i + 1).max(2 * self.latest.len()), 0);
+                }
+                &mut self.latest[i]
+            }
+            None => &mut self.latest_layer,
+        }
+    }
 
     /// Note a change to `what` (`None`: a layer) at `revision`, in a drawing of `entities`.
-    /// When the log is full it keeps only each entity's latest change, which answers every
-    /// [`Document::changes_since`] as the whole log did (an entity changed since a revision
-    /// exactly when its latest change was at or after it): a drag of every point notes each
-    /// point every frame, and a cache asking after it must still be told what changed, not
-    /// to start over (#371). Only past four entries an entity even then does the older half
-    /// go (a cache that far behind starts over).
+    /// At twice the drawing's size the log is tidied down to each entity's latest change,
+    /// which answers every [`Document::changes_since`] as the whole log did (an entity
+    /// changed since a revision exactly when its latest change was at or after it, and an
+    /// older change of it is only a repeat): a drag of every point notes each point every
+    /// frame, and a cache asking after it must still be told what changed, not to start
+    /// over (#371). The tidy is spread over the changes noted after it starts, a few entries
+    /// each, so no change (and no frame of a drag) pays for all of it. Only when it leaves
+    /// more than half again the drawing's size (ids since deleted) does the older half go (a
+    /// cache that far behind starts over).
     fn note(&mut self, revision: u64, what: Option<EntityId>, entities: usize) {
-        let limit = Self::LIMIT.max(4 * entities);
-        if self.entries.len() >= limit {
-            let mut latest: HashMap<Option<EntityId>, u64> =
-                HashMap::with_capacity(self.entries.len() / 2);
-            for &(r, id) in &self.entries {
-                latest.insert(id, r);
+        *self.latest(what) = revision;
+        self.entries.push((revision, what));
+        let limit = Self::LIMIT.max(2 * entities);
+        if self.gap.is_none() && self.entries.len() >= limit {
+            self.gap = Some(0..0);
+        }
+        if let Some(gap) = self.gap.take() {
+            self.gap = self.tidy(gap, limit);
+        }
+    }
+
+    /// A few steps of the tidy: keep the next entries that are their entity's latest
+    /// change, moving them down over the gap, and let the others go. The gap left, or
+    /// `None` once the tidy is done.
+    fn tidy(
+        &mut self,
+        mut gap: std::ops::Range<usize>,
+        limit: usize,
+    ) -> Option<std::ops::Range<usize>> {
+        for _ in 0..Self::TIDY_STEPS {
+            if gap.end == self.entries.len() {
+                self.entries.truncate(gap.start);
+                // Past three quarters of the limit (half again the drawing's size), what is
+                // left is mostly ids since deleted.
+                if self.entries.len() > limit / 4 * 3 {
+                    let half = self.entries.len() / 2;
+                    self.entries.drain(..half);
+                    // (Entries at this revision may have gone too: it is no longer whole.)
+                    self.floor = self.entries.first().map_or(self.floor, |e| e.0 + 1);
+                }
+                return None;
             }
-            self.entries = latest.into_iter().map(|(id, r)| (r, id)).collect();
-            self.entries.sort_unstable();
-            if self.entries.len() > limit / 2 {
-                let half = self.entries.len() / 2;
-                self.entries.drain(..half);
-                // (Entries at this revision may have gone too: it is no longer whole.)
-                self.floor = self.entries.first().map_or(revision, |e| e.0 + 1);
+            let entry = self.entries[gap.end];
+            gap.end += 1;
+            if *self.latest(entry.1) == entry.0 {
+                self.entries[gap.start] = entry;
+                gap.start += 1;
             }
         }
-        self.entries.push((revision, what));
+        Some(gap)
+    }
+
+    /// The entries in revision order: before the gap, then after it.
+    fn parts(&self) -> [&[(u64, Option<EntityId>)]; 2] {
+        let gap = self.gap.clone().unwrap_or(0..0);
+        let (tidied, rest) = self.entries.split_at(gap.start);
+        [tidied, &rest[gap.len()..]]
     }
 }
 
@@ -214,11 +274,20 @@ impl ChangeLog {
 /// every copy (undo steps, design options) down.
 impl Clone for ChangeLog {
     fn clone(&self) -> Self {
+        let last = self
+            .parts()
+            .iter()
+            .filter_map(|p| p.last())
+            .map(|e| e.0)
+            .max();
         Self {
             lineage: self.lineage.clone(),
             entries: Vec::new(),
             // Every change to an entity or layer is noted, so none came after the last one.
-            floor: self.entries.last().map_or(self.floor, |e| e.0 + 1),
+            floor: last.map_or(self.floor, |r| r + 1),
+            latest: Vec::new(),
+            latest_layer: 0,
+            gap: None,
         }
     }
 }
@@ -536,13 +605,14 @@ impl Document {
         if lineage != self.lineage() || revision < self.changes.floor || revision > self.revision {
             return None;
         }
-        let entries = &self.changes.entries;
-        let from = entries.partition_point(|(r, _)| *r < revision);
         let mut out = Changes::default();
-        for (_, what) in &entries[from..] {
-            match what {
-                Some(id) => out.entities.push(*id),
-                None => out.layers = true,
+        for entries in self.changes.parts() {
+            let from = entries.partition_point(|(r, _)| *r < revision);
+            for (_, what) in &entries[from..] {
+                match what {
+                    Some(id) => out.entities.push(*id),
+                    None => out.layers = true,
+                }
             }
         }
         out.entities.sort_unstable();

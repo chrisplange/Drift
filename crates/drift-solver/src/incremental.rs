@@ -615,7 +615,7 @@ mod tests {
         let pick = |list: &[EntityId], k: u32| list[k as usize % list.len().max(1)];
         let at = |k: u32| DVec2::new(f64::from(k % 97), f64::from(k / 97 % 89));
         let cons: Vec<ConstraintId> = doc.constraints().map(|(id, _)| id).collect();
-        match n[0] % 16 {
+        match n[0] % 19 {
             0 | 1 => {
                 doc.add_point(at(n[1]));
             }
@@ -687,6 +687,28 @@ mod tests {
             }
             15 => {
                 let _ = doc.set_entity_layer(pick(&ids, n[1]), locked);
+            }
+            // Ellipses and elliptical arcs keep a shape of their own, read from their points.
+            16 => {
+                let _ = doc.add_ellipse(
+                    pick(&points, n[1]),
+                    pick(&points, n[2]),
+                    pick(&points, n[3]),
+                );
+            }
+            17 => {
+                let _ = doc.add_ellipse_arc(
+                    pick(&points, n[1]),
+                    pick(&points, n[2]),
+                    pick(&points, n[3]),
+                    pick(&points, n[4]),
+                    pick(&points, n[4].wrapping_add(n[1])),
+                );
+            }
+            // An entity changed in place but not moved: back on the default layer (off the
+            // locked one, so its cluster may be free now).
+            18 => {
+                let _ = doc.set_entity_layer(pick(&ids, n[1]), drift_core::LayerId::DEFAULT);
             }
             _ => {
                 doc.add_point(at(n[4]));
@@ -774,7 +796,8 @@ mod tests {
     }
 
     /// #371: a whole move of free lines analyses nothing again, while a cluster with a
-    /// relation, an arc or geometry on a locked layer is analysed again when it moves, and so
+    /// relation, an arc, an ellipse, an elliptical arc or geometry on a locked layer is
+    /// analysed again when it moves, and so
     /// is one whose entity changed in place (a line moved off the locked layer) or that was
     /// joined to another.
     #[test]
@@ -807,6 +830,17 @@ mod tests {
         let s = doc.add_point(v(10.0, 80.0));
         let e = doc.add_point(v(0.0, 90.0));
         doc.add_arc(c, s, e).unwrap();
+        // An ellipse and an elliptical arc: their shape rows read their points' places.
+        let ec = doc.add_point(v(50.0, 80.0));
+        let em = doc.add_point(v(60.0, 80.0));
+        let en = doc.add_point(v(50.0, 85.0));
+        doc.add_ellipse(ec, em, en).unwrap();
+        let ac = doc.add_point(v(100.0, 80.0));
+        let am = doc.add_point(v(110.0, 80.0));
+        let an = doc.add_point(v(100.0, 85.0));
+        let a_start = doc.add_point(v(110.0, 80.0));
+        let a_end = doc.add_point(v(100.0, 85.0));
+        doc.add_ellipse_arc(ac, am, an, a_start, a_end).unwrap();
         let layer = doc.add_layer(Layer {
             locked: true,
             ..Layer::new("Locked")
@@ -819,7 +853,11 @@ mod tests {
         let all: Vec<EntityId> = doc.iter().map(|(id, _)| id).collect();
         doc.translate(all, v(-1.0, 4.0));
         let r = analyze_cached(&doc, None, &mut cache).clone();
-        assert_eq!(cache.last_misses(), 3, "the fixed, arc and locked clusters");
+        assert_eq!(
+            cache.last_misses(),
+            5,
+            "the fixed, arc, ellipse, elliptical arc and locked clusters"
+        );
         let whole = crate::analyze(&doc);
         assert_eq!(
             (r.converged, r.dof, &r.conflicts, &r.definitions),
@@ -883,13 +921,15 @@ mod tests {
         /// moved one by one, whole clusters and the whole drawing moved, between random edits
         /// (relations, fixes, arcs, circles, locked layers, kinds changed by deletes and new
         /// curves). A cluster whose analysis reads its points' places (a relation, an arc, a
-        /// locked layer) is analysed again; only a free one is kept.
+        /// locked layer) is analysed again; only a free one is kept. Several changes can come
+        /// between two analyses, as the editor analyses once per transaction.
         #[test]
         fn moves_kept_by_the_cache_are_the_full_analysis(
             steps in prop::collection::vec(
                 (prop::array::uniform5(0u32..10_000), 0u32..6),
-                1..60,
+                1..80,
             ),
+            every in 1usize..4,
         ) {
             let mut doc = Document::new();
             let locked = doc.add_layer(Layer {
@@ -897,7 +937,7 @@ mod tests {
                 ..Layer::new("Locked")
             });
             let mut cache = AnalysisCache::default();
-            for (n, how) in &steps {
+            for (k, (n, how)) in steps.iter().enumerate() {
                 let ids: Vec<EntityId> = doc.iter().map(|(id, _)| id).collect();
                 let pick = |k: u32| ids[k as usize % ids.len().max(1)];
                 let by = DVec2::new(f64::from(n[3] % 7) - 3.0, f64::from(n[4] % 5) - 2.0);
@@ -914,9 +954,12 @@ mod tests {
                     // Anything else.
                     _ => change(&mut doc, locked, n),
                 }
-                let cached = analyze_cached(&doc, None, &mut cache).clone();
-                same(&cached, &crate::analyze(&doc))?;
-                same(&cached, &analyze_cached(&doc, None, &mut AnalysisCache::default()).clone())?;
+                if k % every == 0 || k + 1 == steps.len() {
+                    let cached = analyze_cached(&doc, None, &mut cache).clone();
+                    same(&cached, &crate::analyze(&doc))?;
+                    let fresh = analyze_cached(&doc, None, &mut AnalysisCache::default()).clone();
+                    same(&cached, &fresh)?;
+                }
             }
         }
     }

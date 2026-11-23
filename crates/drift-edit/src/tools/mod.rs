@@ -106,6 +106,17 @@ pub fn click_past_annotation(ed: &mut Editor, p: &Pointer) -> bool {
     }
 }
 
+/// Whether a point the select tool could pick is under the pointer: a point there comes
+/// before a dimension's extension line running near it (#533).
+pub fn point_under(ed: &Editor, p: &Pointer) -> bool {
+    picking::pick_target_with(ed, p, ed.prefs.pick_filter)
+        .and_then(|t| match t {
+            picking::Target::Entity(id) => ed.doc.get(id),
+            picking::Target::Midpoint(_) => None,
+        })
+        .is_some_and(|e| e.kind.is_point())
+}
+
 /// The geometry under the pointer that a temporary dimension's far end can measure to: a
 /// point, or a line (picked at its middle, the line).
 pub fn reference_at(ed: &Editor, p: &Pointer) -> Option<EntityId> {

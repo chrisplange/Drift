@@ -769,3 +769,56 @@ fn smoke_picking_an_arcs_centre_is_reached_from_its_arc() {
     assert!(!drawn(&h), "out of reach");
     assert_eq!(hover(&mut h, DVec2::ZERO).entity, None, "and not picked");
 }
+
+/// A click near a dimension's extension line picks the dimension, as near as a click picks a
+/// curve; a line lying under the extension line is picked by clicking there again (#533).
+#[test]
+fn smoke_picking_a_dimension_by_its_extension_line() {
+    let Some(mut h) = harness() else { return };
+    view(&mut h, DVec2::new(-30.0, -10.0), DVec2::new(30.0, 25.0));
+    let (id, under) = {
+        let ed = &mut h.state_mut().drawing.editor;
+        ed.doc.begin();
+        let a = ed.doc.add_point(DVec2::new(-20.0, 0.0));
+        let b = ed.doc.add_point(DVec2::new(20.0, 0.0));
+        ed.doc.add_line(a, b).unwrap();
+        let id = ed
+            .doc
+            .add_constraint(drift_core::Constraint::Distance { a, b, value: 40.0 })
+            .unwrap();
+        ed.doc.set_placement(id, DVec2::new(0.0, 12.0)).unwrap();
+        // A line under the right extension line, not joined to the dimensioned one.
+        let c = ed.doc.add_point(DVec2::new(20.0, 3.0));
+        let d = ed.doc.add_point(DVec2::new(20.0, 11.0));
+        let under = ed.doc.add_line(c, d).unwrap();
+        ed.commit("Dimension");
+        (id, under)
+    };
+    h.run();
+    let picked = |h: &Harness<'_, DriftApp>| h.state().drawing.selected_constraint == Some(id);
+    let rest = |h: &mut Harness<'_, DriftApp>| {
+        for _ in 0..4 {
+            h.run();
+        }
+    };
+    let dim = first_dimension(&h);
+    let [a, b] = dim.shape.extension_line(0).expect("drawn");
+    // Beside the left extension line, a little inside the pick radius.
+    let beside = a.lerp(b, 0.5) + (b - a).normalized().rot90() * (crate::PICK_RADIUS as f32 - 2.0);
+    click_with(&mut h, beside, EguiModifiers::NONE);
+    assert!(picked(&h), "picked beside its extension line");
+    rest(&mut h);
+    h.key_press(Key::Escape);
+    rest(&mut h);
+    assert!(!picked(&h));
+
+    // On the right one, over the line: the dimension first, then the line under it.
+    let [a, b] = dim.shape.extension_line(1).expect("drawn");
+    let on = a.lerp(b, 0.5);
+    click_with(&mut h, on, EguiModifiers::NONE);
+    assert!(picked(&h), "the dimension first");
+    rest(&mut h);
+    click_with(&mut h, on, EguiModifiers::NONE);
+    assert!(!picked(&h), "then past it");
+    assert_eq!(h.state().drawing.editor.selection, [under].into());
+}

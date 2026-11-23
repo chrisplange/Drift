@@ -847,6 +847,8 @@ fn sheets() {
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
     h.get_by_label("New sheet").click();
+    h.run();
+    h.state_mut().show_newest_sheet();
     whole_view(&mut h);
     h.run();
     h.run();

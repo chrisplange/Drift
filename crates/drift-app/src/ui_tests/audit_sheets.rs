@@ -73,6 +73,8 @@ fn audit_sheets() {
 
     // 2. New sheet.
     h.get_all_by_label("New sheet").next().unwrap().click();
+    h.run();
+    h.state_mut().show_newest_sheet();
     whole_view(&mut h);
     h.run();
     h.state_mut().status = None;
@@ -152,6 +154,8 @@ fn audit_sheets() {
 
     // 10. A second sheet: the tabs, and its number.
     h.get_by_label("Add a sheet").click();
+    h.run();
+    h.state_mut().show_newest_sheet();
     whole_view(&mut h);
     h.run();
     h.state_mut().status = None;

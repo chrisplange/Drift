@@ -1442,15 +1442,6 @@ impl DriftApp {
             })
             .collect();
         let current = self.current_sheet();
-        if sheets.is_empty() {
-            ui.label(
-                egui::RichText::new(
-                    "A sheet lays the drawing out on paper at a scale, with a border, title \
-                     block and revision table, for printing and PDF.",
-                )
-                .weak(),
-            );
-        }
         // Rows drag to reorder (a bar shows where one would go); right-click for more.
         use crate::app::sheet_editor::{SheetMenu, drop_index, gap_at, sheet_menu};
         let mut spots = Vec::new();
@@ -3043,15 +3034,6 @@ impl DriftApp {
                 )
             })
             .collect();
-        if rows.is_empty() {
-            ui.label(
-                egui::RichText::new(
-                    "A view is a named crop of the model at a scale. Draw one with the View \
-                     tool, or add one to a sheet.",
-                )
-                .weak(),
-            );
-        }
         let mut zoom = None;
         let mut chose = None;
         for (id, name, detail) in &rows {

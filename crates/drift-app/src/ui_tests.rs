@@ -3669,6 +3669,8 @@ fn a_sheet_prints_in_greyscale_or_black_and_white() {
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
     h.get_by_label("New sheet").click();
+    h.run();
+    h.state_mut().show_newest_sheet();
     whole_view(&mut h);
     h.run();
     h.run();
@@ -4082,6 +4084,8 @@ fn a_sheets_title_block_can_be_border_only_or_none() {
     h.run();
     h.get_by_label("New sheet").click();
     h.run();
+    h.state_mut().show_newest_sheet();
+    h.run();
     h.run();
     let id = h.state().current_sheet().expect("a sheet");
     h.state_mut().show_panel(Panel::Inspector);
@@ -4145,6 +4149,8 @@ fn sheets_preview_and_export() {
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
     h.get_by_label("New sheet").click();
+    h.run();
+    h.state_mut().show_newest_sheet();
     whole_view(&mut h);
     h.run();
     h.run();
@@ -5878,6 +5884,8 @@ fn a_sheet_holds_several_views() {
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
     h.get_by_label("New sheet").click();
+    h.run();
+    h.state_mut().show_newest_sheet();
     whole_view(&mut h);
     h.run();
     h.run();
@@ -6186,6 +6194,8 @@ fn a_logo_goes_in_the_title_block() {
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
     h.get_by_label("New sheet").click();
+    h.run();
+    h.state_mut().show_newest_sheet();
     h.run();
     h.run();
     let painter = h.ctx.layer_painter(egui::LayerId::background());
@@ -6620,6 +6630,8 @@ fn the_drawing_font_is_kept_in_the_drawing_and_used_everywhere() {
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
     h.get_by_label("New sheet").click();
+    h.run();
+    h.state_mut().show_newest_sheet();
     h.run();
     h.run();
     let standard = h.state_mut().pdf_bytes(&painter);
@@ -8046,6 +8058,8 @@ fn views_line_up_on_the_sheet() {
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
     h.get_by_label("New sheet").click();
+    h.run();
+    h.state_mut().show_newest_sheet();
     whole_view(&mut h);
     h.run();
     h.run();
@@ -8659,6 +8673,8 @@ fn views_are_drawn_on_the_canvas_and_placed_on_sheets() {
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
     h.get_by_label("New sheet").click();
+    h.run();
+    h.state_mut().show_newest_sheet();
     whole_view(&mut h);
     h.run();
     h.run();
@@ -8862,6 +8878,8 @@ fn sheets_are_tabs_with_their_own_tools_and_inspector() {
     // The tabs over the canvas: the model, and + for a sheet.
     assert!(h.query_by_label("Model").is_some());
     h.get_by_label("Add a sheet").click();
+    h.run();
+    h.state_mut().show_newest_sheet();
     whole_view(&mut h);
     h.run();
     h.run();
@@ -8878,6 +8896,8 @@ fn sheets_are_tabs_with_their_own_tools_and_inspector() {
     assert!(h.query_by_label("Number").is_some());
     // The next one counts on.
     h.get_by_label("Add a sheet").click();
+    h.run();
+    h.state_mut().show_newest_sheet();
     whole_view(&mut h);
     h.run();
     h.run();
@@ -8978,6 +8998,8 @@ fn esc_never_leaves_a_sheet_and_ctrl_page_keys_step_the_tabs() {
     for _ in 0..2 {
         h.get_by_label("Add a sheet").click();
         h.run();
+        h.state_mut().show_newest_sheet();
+        h.run();
         h.run();
     }
     let sheets: Vec<_> = h
@@ -9049,6 +9071,8 @@ fn place_on_sheet_finds_free_paper() {
     h.get_by_label("Open example").click();
     h.run();
     h.get_by_label("Add a sheet").click();
+    h.run();
+    h.state_mut().show_newest_sheet();
     whole_view(&mut h);
     h.run();
     h.run();
@@ -9108,6 +9132,8 @@ fn a_view_leaves_out_the_layers_it_hides() {
         layer
     };
     h.get_by_label("Add a sheet").click();
+    h.run();
+    h.state_mut().show_newest_sheet();
     whole_view(&mut h);
     h.run();
     h.run();
@@ -9188,6 +9214,8 @@ fn a_view_can_show_construction_geometry() {
     h.get_by_label("Open example").click();
     h.run();
     h.get_by_label("Add a sheet").click();
+    h.run();
+    h.state_mut().show_newest_sheet();
     whole_view(&mut h);
     h.run();
     h.run();
@@ -9261,6 +9289,8 @@ fn sheets_reorder_duplicate_and_choose_for_pdf() {
     h.run();
     for _ in 0..2 {
         h.get_by_label("Add a sheet").click();
+        h.run();
+        h.state_mut().show_newest_sheet();
         whole_view(&mut h);
         h.run();
         h.run();
@@ -9503,6 +9533,8 @@ fn a_section_mark_makes_its_view_and_reads_its_number() {
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
     h.get_by_label("New sheet").click();
+    h.run();
+    h.state_mut().show_newest_sheet();
     whole_view(&mut h);
     h.run();
     h.run();
@@ -9615,6 +9647,8 @@ fn every_sheet_shares_the_project() {
     h.run();
     for _ in 0..2 {
         h.get_by_label("Add a sheet").click();
+        h.run();
+        h.state_mut().show_newest_sheet();
         h.run();
         h.run();
     }
@@ -9832,6 +9866,8 @@ fn an_annotation_can_be_drawn_in_some_views_only() {
     h.get_by_label("Open example").click();
     h.run();
     h.get_by_label("Add a sheet").click();
+    h.run();
+    h.state_mut().show_newest_sheet();
     whole_view(&mut h);
     h.run();
     h.run();
@@ -10642,6 +10678,8 @@ fn annotation_scale_screenshots() {
     shoot(&mut h, "example");
     // Its sheet, as it prints (the view at the drawing scale, 1:1 here), beside the canvas.
     h.get_by_label("Add a sheet").click();
+    h.run();
+    h.state_mut().show_newest_sheet();
     whole_view(&mut h);
     h.run_steps(3);
     save_png("anno_example_sheet.png", &mut h);

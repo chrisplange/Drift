@@ -268,7 +268,7 @@ fn the_bar_is_hidden_whenever_it_would_be_in_the_way() {
     h.run();
     assert!(shows(&h));
     // On a sheet.
-    h.state_mut().new_sheet();
+    h.state_mut().new_sheet_shown();
     h.run();
     h.run();
     assert!(h.state().drawing.view.sheet_preview);

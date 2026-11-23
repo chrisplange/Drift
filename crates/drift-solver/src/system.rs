@@ -680,6 +680,19 @@ impl System {
                     source: Some(cid),
                     owner: None,
                 }),
+                // `b`, the outer one (kept so as it was added), less `a`, the inner: never read
+                // again from the geometry, which a drag frame may already have carried past.
+                Constraint::RadialGap { a, b, value } => {
+                    rows.push(Row {
+                        equation: Equation::LengthGap {
+                            a: radius(b),
+                            b: radius(a),
+                            value,
+                        },
+                        source: Some(cid),
+                        owner: None,
+                    });
+                }
                 Constraint::Concentric { a, b } | Constraint::Coradial { a, b } => {
                     let (ca, cb) = (center(a), center(b));
                     equalities.push((x(ca), x(cb)));

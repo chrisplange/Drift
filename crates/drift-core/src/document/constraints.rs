@@ -137,11 +137,40 @@ impl Document {
         constraint: Constraint,
     ) -> Result<ConstraintId, DocumentError> {
         self.validate(&constraint)?;
+        let constraint = self.inner_first(constraint);
         let id = ConstraintId(self.next_constraint_id);
         self.next_constraint_id += 1;
         self.touch_constraint(id);
         self.constraints.insert(id, constraint);
         Ok(id)
+    }
+
+    /// `c`, with a gap between circles put inner first, as drawn now: so which one is outside
+    /// is the relation's, not whatever the geometry is at the next solve (nor which was picked
+    /// first, nor how a file spelled it). Adding and reading a drawing both go by it.
+    pub(super) fn inner_first(&self, c: Constraint) -> Constraint {
+        match c {
+            Constraint::RadialGap { a, b, value }
+                if self
+                    .radius_here(a)
+                    .zip(self.radius_here(b))
+                    .is_some_and(|(ra, rb)| ra > rb) =>
+            {
+                Constraint::RadialGap { a: b, b: a, value }
+            }
+            c => c,
+        }
+    }
+
+    /// A circle's or arc's radius as drawn now.
+    fn radius_here(&self, curve: EntityId) -> Option<f64> {
+        match self.get(curve)?.kind {
+            EntityKind::Circle { radius, .. } => Some(radius),
+            EntityKind::Arc { center, start, .. } => {
+                Some(self.point(center).ok()?.distance(self.point(start).ok()?))
+            }
+            _ => None,
+        }
     }
 
     /// Replace a constraint (e.g. to change a dimension's value).

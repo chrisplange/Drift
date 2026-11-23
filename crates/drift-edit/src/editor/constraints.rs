@@ -61,9 +61,20 @@ impl Editor {
         }
         let before = self.analysis().clone();
         let degenerate_before = drift_solver::degenerate_entities(&self.doc);
+        // A gap between circles holds them concentric too, in the same step, where nothing
+        // does yet: picked with centres that merely sit together, they would otherwise drift
+        // apart with the gap still on them. (Its id isn't returned: it is the gap's.)
+        let mut all: Vec<Constraint> = constraints.to_vec();
+        for c in constraints {
+            if let Constraint::RadialGap { a, b, .. } = *c
+                && !self.centres_held_together(a, b, &all)
+            {
+                all.push(Constraint::Concentric { a, b });
+            }
+        }
         self.doc.begin();
         let mut ids = Vec::new();
-        for c in constraints {
+        for c in &all {
             match self.doc.add_constraint(*c) {
                 Ok(id) => ids.push(id),
                 Err(e) => {
@@ -75,7 +86,56 @@ impl Editor {
             self.settle_fillet(c);
         }
         self.check_new_constraints(label, &ids, &before, &degenerate_before, keep)?;
+        ids.truncate(constraints.len());
         Ok(ids)
+    }
+
+    /// Whether the centres of circles or arcs `a` and `b` are kept together already: the
+    /// same point, or joined through Coincident, Concentric and Coradial relations (those on
+    /// the sketch and those in `adding`).
+    fn centres_held_together(&self, a: EntityId, b: EntityId, adding: &[Constraint]) -> bool {
+        let centre = |id: EntityId| match self.doc.get(id).map(|e| e.kind) {
+            Some(EntityKind::Circle { center, .. } | EntityKind::Arc { center, .. }) => {
+                Some(center)
+            }
+            _ => None,
+        };
+        let (Some(ca), Some(cb)) = (centre(a), centre(b)) else {
+            return false;
+        };
+        let relations: Vec<Constraint> = self
+            .doc
+            .constraints()
+            .map(|(_, c)| *c)
+            .chain(adding.iter().copied())
+            .collect();
+        let mut seen: HashSet<EntityId> = HashSet::new();
+        let mut todo = vec![ca];
+        while let Some(p) = todo.pop() {
+            if p == cb {
+                return true;
+            }
+            if !seen.insert(p) {
+                continue;
+            }
+            for c in &relations {
+                match *c {
+                    Constraint::Coincident { a: x, b: y } if x == p || y == p => {
+                        todo.push(if x == p { y } else { x });
+                    }
+                    Constraint::Concentric { a: x, b: y } | Constraint::Coradial { a: x, b: y } => {
+                        let (cx, cy) = (centre(x), centre(y));
+                        if cx == Some(p) {
+                            todo.extend(cy);
+                        } else if cy == Some(p) {
+                            todo.extend(cx);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        false
     }
 
     /// Fix geometry where it is (one undoable step), pinning only what is still free (#203):

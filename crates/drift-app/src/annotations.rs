@@ -154,6 +154,11 @@ pub fn default_offset(doc: &Document, c: &Constraint, scale: f64) -> DVec2 {
             let r = drift_solver::radius_of(doc, curve).unwrap_or(0.0);
             diagonal * (r + d)
         }
+        // Across the ring to the right, the number midway between the two circles.
+        Constraint::RadialGap { a, b, .. } => {
+            let r = |id| drift_solver::radius_of(doc, id).unwrap_or(0.0);
+            DVec2::X * (r(a) + r(b)) * 0.5
+        }
         Constraint::Angle { a, b, degrees } => {
             // Inside the dimensioned angle, between the lines themselves where it can be.
             let bisector =
@@ -1718,6 +1723,9 @@ pub fn layout_dimension_own(
         Constraint::VerticalDistance { a, b, .. } => {
             p(a).zip(p(b)).map(|(a, b)| ([a, b], DVec2::X))
         }
+        Constraint::RadialGap { a, b, .. } => {
+            radial_gap_ends(doc, a, b, anchor + offset).map(|[w1, w2]| ([w1, w2], (w2 - w1).perp()))
+        }
         _ => None,
     };
 
@@ -1766,6 +1774,18 @@ pub fn layout_dimension_own(
                 let ends = [center - v * r, center + v * r];
                 (DimShape::Diameter { ends }, label)
             }
+        }
+        // Radially between the two circles, toward the label; no extension lines.
+        Constraint::RadialGap { a, b, .. } => {
+            let [w1, w2] = radial_gap_ends(doc, a, b, anchor + offset)?;
+            let d = [s(w1), s(w2)];
+            let shape = DimShape::Linear {
+                p: d,
+                d,
+                start: [0.0; 2],
+                ends: [None; 2],
+            };
+            (shape, label)
         }
         Constraint::Angle { a, b, degrees } => {
             let center = s(anchor);
@@ -1816,6 +1836,18 @@ pub fn layout_dimension_own(
     Some(finish_layout(
         painter, doc, id, c, shape, text_pos, measured, map, style, own,
     ))
+}
+
+/// Where a gap between concentric circles `a` and `b` meets each, on the ray from their
+/// centre toward `toward` (to the right where that is the centre): smaller circle first.
+fn radial_gap_ends(doc: &Document, a: EntityId, b: EntityId, toward: DVec2) -> Option<[DVec2; 2]> {
+    let center = center_of(doc, a)?;
+    let v = (toward - center).try_normalize().unwrap_or(DVec2::X);
+    let (ra, rb) = (
+        drift_solver::radius_of(doc, a)?,
+        drift_solver::radius_of(doc, b)?,
+    );
+    Some([center + v * ra.min(rb), center + v * ra.max(rb)])
 }
 
 /// A linear dimension's shape between two screen points, its line through `label`'s

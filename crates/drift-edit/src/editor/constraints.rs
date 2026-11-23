@@ -971,6 +971,7 @@ impl Editor {
             );
         }
         if !self.new_conflicts(&report)
+            && turning_on()
             && (self.stretched_a_turning_line(named, &start) || !self.keeps_its_sense(id, &start))
         {
             report =
@@ -1185,15 +1186,50 @@ impl Editor {
             .and_then(at)
             .unwrap_or_else(|| (at(p0).unwrap_or_default() + at(p1).unwrap_or_default()) / 2.0);
         let rot = DVec2::from_angle(turn.to_radians());
+        // (Rounds ending where `keep` holds, or on either named line, stay: see
+        // `carried_rounds`.)
+        let mut fixed = held.clone();
+        fixed.extend(self.joined([a0, a1, b0, b1]));
+        let rigid = |q: DVec2| pivot + rot.rotate(q - pivot);
         let mut moves: Vec<(EntityId, DVec2)> = Vec::new();
+        // First, where the rigid turn puts everything it moves: the line's moving ends, and
+        // the centres and far ends of the rounds carried with it (a fillet met tangentially
+        // there turns with the line; the line beyond it then turns to meet it, see
+        // `released_by_turning`).
+        let mut turned: HashMap<EntityId, DVec2> = HashMap::new();
+        let mut rounds: Vec<Carried> = Vec::new();
         for p in [p0, p1] {
             if shared_group.contains(&p) || held.contains(&p) {
                 continue;
             }
             let Some(q) = at(p) else { continue };
-            let to = pivot + rot.rotate(q - pivot);
+            let to = rigid(q);
             for m in self.joined([p]) {
                 moves.push((m, to));
+                turned.insert(m, to);
+                for (arc, far) in self.carried_rounds(line, m, &fixed) {
+                    let Some(EntityKind::Arc { center, .. }) = self.doc.get(arc).map(|e| e.kind)
+                    else {
+                        continue;
+                    };
+                    let (Some(c0), Some(f0)) = (at(center), at(far)) else {
+                        continue;
+                    };
+                    let (centres, fars) = (self.joined([center]), self.joined([far]));
+                    for c in &centres {
+                        turned.insert(*c, rigid(c0));
+                    }
+                    for f in &fars {
+                        turned.insert(*f, rigid(f0));
+                    }
+                    rounds.push(Carried {
+                        arc,
+                        centres,
+                        fars,
+                        c0,
+                        f0,
+                    });
+                }
                 // A line hanging from it is carried along as it is: the shapes the solve
                 // keeps are read from where this leaves things.
                 for user in self.doc.users_of(m).filter(|u| *u != line) {
@@ -1209,6 +1245,45 @@ impl Editor {
                     }
                 }
             }
+        }
+        // Then each carried round: the line beyond meets it tangent again where it did, from
+        // its other end where this turn leaves that (turned with it, as a slot's other side
+        // is, the rigid turn is already tangent and nothing slides); a line hanging from the
+        // far end goes with the far end, as it is.
+        for Carried {
+            arc,
+            centres,
+            fars,
+            c0,
+            f0,
+        } in rounds
+        {
+            let c1 = rigid(c0);
+            let mut f1 = rigid(f0);
+            let mut hanging: Vec<(EntityId, DVec2)> = Vec::new();
+            for f in &fars {
+                for user in self.doc.users_of(*f).filter(|u| *u != arc) {
+                    let Some(EntityKind::Line { a: u0, b: u1 }) =
+                        self.doc.get(user).map(|e| e.kind)
+                    else {
+                        continue;
+                    };
+                    let other = if u0 == *f { u1 } else { u0 };
+                    let Some(o) = at(other) else { continue };
+                    if self.hangs(other) {
+                        hanging.push((other, rigid(o)));
+                    } else {
+                        let from = turned.get(&other).copied().unwrap_or(o);
+                        if let Some(t) = tangent_from(from, c1, f1, (o - f0, f0 - c0)) {
+                            f1 = t;
+                        }
+                    }
+                }
+            }
+            let slid = f1 - rigid(f0);
+            moves.extend(hanging.into_iter().map(|(p, q)| (p, q + slid)));
+            moves.extend(centres.into_iter().map(|c| (c, c1)));
+            moves.extend(fars.into_iter().map(|f| (f, f1)));
         }
         for (p, q) in moves {
             let _ = self.doc.set_point(p, q);
@@ -1577,4 +1652,57 @@ impl Editor {
         }
         drift_geom::walls::lower::lower_constraint(&self.doc, c)?.err()
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests: whether a typed size tries the turning solve. Off, a typed angle is solved as
+    /// the first solve alone lands it: what a test compares against to show the turning
+    /// solve left a sketch exactly as that does, on whatever platform it runs.
+    pub(super) static TURNING: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+}
+
+/// Whether a typed size tries the turning solve (always, outside tests).
+fn turning_on() -> bool {
+    #[cfg(test)]
+    {
+        TURNING.with(std::cell::Cell::get)
+    }
+    #[cfg(not(test))]
+    {
+        true
+    }
+}
+
+/// A round [`Editor::turn_to`] carries with the line it turns: the arc, the points joined
+/// at its centre and at its far end, and where those were.
+struct Carried {
+    arc: EntityId,
+    centres: HashSet<EntityId>,
+    fars: HashSet<EntityId>,
+    c0: DVec2,
+    f0: DVec2,
+}
+
+/// Where a line from `from` meets the circle round `centre` through `near` tangent, at the
+/// touching point nearer `near`, if the line met it tangent before (`was`: the line's
+/// direction there and the radius out to that end, as they were). None where it didn't
+/// (a corner stays a corner) or `from` is inside the circle.
+fn tangent_from(from: DVec2, centre: DVec2, near: DVec2, was: (DVec2, DVec2)) -> Option<DVec2> {
+    let (along, radial) = (was.0.try_normalize()?, was.1.try_normalize()?);
+    if along.dot(radial).abs() >= 1e-4 {
+        return None;
+    }
+    let r = near.distance(centre);
+    let d = from - centre;
+    let l = d.length();
+    if !(r > 0.0 && l > r) {
+        return None;
+    }
+    let u = d / l;
+    let half = (r / l).acos();
+    [half, -half]
+        .into_iter()
+        .map(|t| centre + DVec2::from_angle(t).rotate(u) * r)
+        .min_by(|p, q| p.distance(near).total_cmp(&q.distance(near)))
 }

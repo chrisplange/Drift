@@ -8895,3 +8895,83 @@ fn a_gap_between_circles_on_two_centre_points_holds_them_concentric() {
             .any(|(_, c)| matches!(c, Constraint::Concentric { .. }))
     );
 }
+
+/// A gap the drawing already has unmet (red, as a file can hold it) is the drawing's: it
+/// doesn't block every other edit (it did: an unrelated Horizontal was refused, Fable
+/// re-review of #521).
+#[test]
+fn a_gap_already_unmet_blocks_no_other_edit() {
+    let mut doc = Document::new();
+    let c = doc.add_point(v(0.0, 0.0));
+    let inner = doc.add_circle(c, 40.0).unwrap();
+    let outer = doc.add_circle(c, 65.0).unwrap();
+    for k in [
+        Constraint::Radius {
+            curve: inner,
+            value: 40.0,
+        },
+        Constraint::Radius {
+            curve: outer,
+            value: 65.0,
+        },
+        Constraint::RadialGap {
+            a: inner,
+            b: outer,
+            value: 30.0,
+        },
+    ] {
+        doc.add_constraint(k).unwrap();
+    }
+    let (p, q) = (doc.add_point(v(200.0, 0.0)), doc.add_point(v(260.0, 10.0)));
+    let line = doc.add_line(p, q).unwrap();
+    let mut ed = Editor::new(doc);
+    assert!(!ed.analysis().conflicts.is_empty(), "the ring is red");
+    ed.add_constraints("Horizontal", &[Constraint::Horizontal { line }])
+        .unwrap();
+    ed.add_constraints(
+        "Distance",
+        &[Constraint::Distance {
+            a: p,
+            b: q,
+            value: 120.0,
+        }],
+    )
+    .unwrap();
+}
+
+/// An inner arc round the origin can't be typed to nothing through the gap (its radius
+/// went to 2.6e-8: the degeneracy check scales with the centre's coordinates, 0 there).
+#[test]
+fn a_gap_squeezes_no_arc_round_the_origin_to_nothing() {
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let c = ed.doc.add_point(v(0.0, 0.0));
+    let (s, e) = (
+        ed.doc.add_point(v(40.0, 0.0)),
+        ed.doc.add_point(v(0.0, 40.0)),
+    );
+    let arc = ed.doc.add_arc(c, s, e).unwrap();
+    let outer = ed.doc.add_circle(c, 65.0).unwrap();
+    ed.commit("Arc and circle");
+    ed.add_constraints(
+        "Radius",
+        &[Constraint::Radius {
+            curve: outer,
+            value: 65.0,
+        }],
+    )
+    .unwrap();
+    let gap = ed
+        .add_dimension(
+            Constraint::RadialGap {
+                a: arc,
+                b: outer,
+                value: 25.0,
+            },
+            None,
+        )
+        .unwrap();
+    assert!(ed.set_dimension(gap, 65.0).is_err());
+    let r = drift_solver::radius_of(&ed.doc, arc).unwrap();
+    assert!((r - 40.0).abs() < 1e-9, "R {r}");
+}

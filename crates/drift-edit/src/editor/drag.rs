@@ -1216,7 +1216,7 @@ impl Editor {
         let grew = part.held_radii.iter().any(|&(id, was)| {
             drift_solver::radius_of(&self.doc, id).is_some_and(|r| {
                 r - was
-                    > (drift_solver::FOLD_MET * was)
+                    > (drift_solver::fold_met() * was)
                         .max(drift_solver::landed_within(bar, DVec2::splat(was)))
             })
         });
@@ -1771,7 +1771,7 @@ impl Editor {
             || self.drag_no_fold
             || ablation::off(Switch::FoldTry)
             || frame.fold_solves_left == 0
-            || frame.scope.len() * drift_solver::MAX_ITERATIONS > frame.fold_unfinished_left
+            || frame.scope.len() * drift_solver::max_iterations() > frame.fold_unfinished_left
             || (ok && self.landed(frame, delta, before))
         {
             return ok;
@@ -1834,7 +1834,7 @@ impl Editor {
             || ablation::off(Switch::LengthTry)
             || frame.fold
             || frame.length_solves_left == 0
-            || frame.scope.len() * drift_solver::MAX_ITERATIONS > frame.length_unfinished_left
+            || frame.scope.len() * drift_solver::max_iterations() > frame.length_unfinished_left
         {
             return;
         }
@@ -1877,7 +1877,7 @@ impl Editor {
         frame.wandered = wandered;
         frame.kept_wandered = kept_wandered;
         if went
-            && kept_to(self, drift_solver::FOLD_MET)
+            && kept_to(self, drift_solver::fold_met())
             && drift_solver::meets_within(
                 &self.doc,
                 frame.scope,
@@ -1915,10 +1915,11 @@ impl Editor {
             return true;
         }
         // (With what the frame's steps before this one pushed: see `Pushed`.)
+        let none = Pushed::default();
         let pushed_so_far = if ablation::off(Switch::PushedStaysPushed) {
-            Pushed::default()
+            &none
         } else {
-            frame.pushed.clone()
+            &frame.pushed
         };
         let mut ids = frame.ids.to_vec();
         ids.extend(
@@ -1928,7 +1929,7 @@ impl Editor {
                 .copied()
                 .filter(|id| !frame.ids.contains(id)),
         );
-        let mut carried_points = pushed_so_far.points;
+        let mut carried_points = pushed_so_far.points.clone();
         let mut turned = Vec::new();
         let mut ok =
             self.drag_in_steps(frame, &ids, delta, &carried_points, before, 0, &mut turned);

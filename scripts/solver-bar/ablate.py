@@ -11,8 +11,9 @@ Builds drift-edit's and drift-solver's test binaries with the test-only `ablate`
     python scripts/solver-bar/ablate.py [--jobs N] [--out DIR] [--only a,b,c] [--tests] [--skip-corpus]
 
 DIR/<switch>/record.txt is the corpus record with that switch thrown, DIR/<switch>/tests.txt
-the tests that failed, DIR/ablation.json everything counted, and DIR/ablation.md the table
-`docs/solver-heuristics.md` quotes. A run of every switch takes hours: it is not part of
+the tests that failed, DIR/ablation.json everything counted (with the commit it was run at:
+a run at another commit, or from a changed tree, refuses to add to it), and DIR/ablation.md
+the table `docs/solver-heuristics.md` quotes. A run of every switch takes hours: it is not part of
 the nightly bar. Re-run it (or `--only` the switches concerned) when a heuristic is added,
 changed or proposed for deletion.
 
@@ -33,6 +34,15 @@ HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 import corpus  # noqa: E402
+
+
+def commit():
+    """The commit the tree is at, short, with `-dirty` when tracked files differ from it."""
+    def git(*a):
+        return subprocess.run(["git", *a], cwd=ROOT, stdout=subprocess.PIPE, text=True,
+                              encoding="utf-8").stdout.strip()
+    head = git("rev-parse", "--short", "HEAD")
+    return head + ("-dirty" if git("status", "--porcelain", "--untracked-files=no") else "")
 
 
 def build(package, features):
@@ -107,6 +117,15 @@ def run_tests(exe, switch, timeout, threads):
     hung = sorted(started - done) if "(timed out)" in text else []
     finished = bool(re.search(r"^test result:", text, re.M))
     return failed, hung, finished, text
+
+
+def failing(drags):
+    """How many drags fail some check with nothing thrown, in all and by check."""
+    by = {c[0]: 0 for c in corpus.CHECKS}
+    for d in drags.values():
+        for l in d.failed():
+            by[l] += 1
+    return {"drags": sum(1 for d in drags.values() if d.failed()), "by": by}
 
 
 def cost(drags):
@@ -185,8 +204,10 @@ def table(result, base_cost, names):
         breaks = c["newly_failing"] or c["missing"] or (tests and (tests["solver"] or tests["edit"] or tests["hung"] or not tests["finished"]))
         if breaks:
             verdict = "breaks"
-        elif c["moved"] or c["refusals_differ"]:
+        elif c["moved"]:
             verdict = "nothing breaks; drags end elsewhere"
+        elif c["refusals_differ"]:
+            verdict = "nothing breaks; other frames refused"
         else:
             verdict = "**nothing breaks without it**"
         lines.append(
@@ -221,19 +242,28 @@ def main():
         sys.exit(f"no switch named {unknown}")
     store = out / "ablation.json"
     result = json.loads(store.read_text(encoding="utf-8")) if store.exists() else {}
+    # Numbers from two commits in one table would read as one run's: refuse to mix them.
+    at = commit()
+    was = result.get("base", {}).get("commit")
+    if result and was != at:
+        sys.exit(f"{store} holds a run at {was or 'an unrecorded commit'}, and the tree is at "
+                 f"{at}: use another --out, or delete it to start over")
+    result.setdefault("base", {})["commit"] = at
 
     base = None
     if not args.skip_corpus:
         base, broke = sweep(edit, out / "base", args.jobs, None, args.timeout)
         if broke:
             sys.exit(f"the base run broke: {broke}")
-        want = corpus.expected_rows()
+        want, _ = corpus.expected_rows()
         got = corpus.baseline_rows(base)
         differ = [k for k in want if got.get(k) != want[k]]
         if differ:
             print(f"WARNING: with nothing thrown, {len(differ)} targets' verdicts differ from "
                   f"corpus-baseline.txt (first: {differ[0]})")
-        result["base"] = {"cost": cost(base), "differ_from_baseline": len(differ)}
+        result["base"].update(cost=cost(base), drags=len(base), sketches=len({k[0] for k in base}),
+                              differ_from_baseline=len(differ),
+                              failing=failing(base))
     if args.tests:
         base_failed = {}
         for which, exe in (("solver", solver), ("edit", edit)):

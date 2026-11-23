@@ -19,7 +19,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 args = sys.argv[1:]
 result = json.loads(pathlib.Path(args[0] if args else HERE / "ablation.json").read_text(encoding="utf-8"))
 out = pathlib.Path(args[1] if len(args) > 1 else HERE.parents[1] / "docs" / "solver-heuristics.md")
-commit = args[2] if len(args) > 2 else result["base"].get("commit", "b92d400")
+commit = args[2] if len(args) > 2 else result["base"]["commit"]
 base = result["base"]
 LETTERS = "RSWLGJXCPO"
 
@@ -61,7 +61,9 @@ def corpus_cell(r):
     cell += f"; solves ×{solves:.2f}"
     if refused:
         cell += f", frames refused {refused:+d}"
-    return cell, bool(c["newly_failing"] or c["missing"]), bool(c["moved"] or c["refusals_differ"])
+    if c["refusals_differ"] and not c["moved"]:
+        cell += f"; {c['refusals_differ']} drags refuse other frames"
+    return cell, bool(c["newly_failing"] or c["missing"]), (c["moved"], c["refusals_differ"])
 
 
 lines = []
@@ -87,8 +89,7 @@ w("")
 w("- **Guarding tests**: the normal tests of drift-solver and drift-edit were run, and the "
   "ones that fail are listed. A heuristic no test fails without has no guard.")
 w("- **Corpus**: the sketch corpus (the solver bar's item 8: "
-  f"{base.get('drags', '9,510')} drags of its first 51 sketches, every frame judged; the 52nd, "
-  "the bushing with a radial gap, was added after this run) was swept and "
+  f"{base['drags']:,} drags of its {base['sketches']} sketches, every frame judged) was swept and "
   "compared, drag by drag, with the same build with nothing thrown. \"Newly fail\" counts "
   "drags that fail a check they passed, by check: `R` rows met, `S` arc sweep flip, `W` "
   "way-round flip, `L` line turned end for end, `G` held radius grew, `J` jump over 50 "
@@ -98,8 +99,11 @@ w("- **Corpus**: the sketch corpus (the solver bar's item 8: "
 w("")
 w("**Verdict.** *Breaks*: a test fails or a corpus drag newly fails a check. *Nothing "
   "breaks; drags end elsewhere*: no test and no check fails, but results change, so the "
-  "rule does something nothing here measures as better or worse. ***Nothing breaks without "
-  "it***: no test fails, no check fails, and every drag ends where it did, to the bit: on "
+  "rule does something nothing here measures as better or worse. *Nothing breaks; other "
+  "frames refused*: every drag ends where it did, to the bit, but some refuse different "
+  "frames on the way. ***Nothing breaks without "
+  "it***: no test fails, no check fails, every drag ends where it did, to the bit, and "
+  "refuses the same frames: on "
   "this evidence the rule is dead weight, or guards a case neither the tests nor the corpus "
   "holds (the row says which is likelier).")
 w("")
@@ -123,6 +127,7 @@ w("")
 flagged = []
 breaks = []
 moved_only = []
+refused_only = []
 for title, rows in SECTIONS:
     w(f"## {title}")
     w("")
@@ -131,7 +136,7 @@ for title, rows in SECTIONS:
     for name, what, where, protects in rows:
         r = result.get(name, {})
         g, g_breaks = guards(r)
-        c, c_breaks, c_moved = corpus_cell(r)
+        c, c_breaks, (c_moved, c_refusals) = corpus_cell(r) if r else ("not run", False, (0, 0))
         if not r:
             verdict = "not run"
         elif g_breaks or c_breaks:
@@ -140,6 +145,9 @@ for title, rows in SECTIONS:
         elif c_moved:
             verdict = "nothing breaks; drags end elsewhere"
             moved_only.append(name)
+        elif c_refusals:
+            verdict = "nothing breaks; other frames refused"
+            refused_only.append(name)
         else:
             verdict = "**nothing breaks without it**"
             flagged.append(name)
@@ -157,6 +165,7 @@ w("## Reading")
 w("")
 w(f"Of {sum(len(r) for _, r in SECTIONS)} switches: {len(breaks)} break a test or a corpus "
   f"check when thrown, {len(moved_only)} change where drags end without breaking either, "
+  f"{len(refused_only)} change only which frames are refused, "
   f"and {len(flagged)} change nothing at all.")
 w("")
 if flagged:
@@ -166,6 +175,10 @@ if flagged:
 if moved_only:
     w("**Nothing breaks, drags end elsewhere** (the rule acts, and nothing here says "
       "whether for better): " + ", ".join(f"`{n}`" for n in moved_only) + ".")
+    w("")
+if refused_only:
+    w("**Nothing breaks, other frames refused** (every drag ends where it did; the rule "
+      "changes the way there): " + ", ".join(f"`{n}`" for n in refused_only) + ".")
     w("")
 WHY_DEAD = {
     "edit-preference-bound": "an edit's rule (PR 6), and the sweep's only edits are its releases, which begin with their shapes met. Its case (a line kept square stretched 40 km) has no test: **it needs one before anyone touches it**",
@@ -201,7 +214,10 @@ helped = [(n, result[n]["corpus"]) for n, _ in all_rows
 helped.sort(key=lambda x: x[1]["newly_passing"] - x[1]["newly_failing"], reverse=True)
 w("### Off, drags that fail on main pass")
 w("")
-w("Main fails 115 of the corpus's drags (94 `L`, 20 `W`, 11 `J`, 1 `S`; #526, #344, #362). "
+failing = base["failing"]
+w(f"Main fails {failing['drags']} of the corpus's drags ("
+  + ", ".join(f"{n} `{l}`" for l, n in failing["by"].items() if n)
+  + "; #526, #344, #362). "
   "With these thrown, some of those pass. That is a lead on where those failures come from, "
   "not a case for deleting the rule: each row also shows what it costs.")
 w("")
@@ -215,7 +231,7 @@ for n, c in helped:
 w("")
 w("### Cost")
 w("")
-w("Drag solves over the whole sweep, against 1,645,522 with nothing thrown, where a switch "
+w(f"Drag solves over the whole sweep, against {base['cost']['solves']:,} with nothing thrown, where a switch "
   "moves them by more than a tenth:")
 w("")
 w("| Switch | Solves | Frames refused | Solves ending at the iteration cap |")
@@ -242,4 +258,5 @@ for n, _ in all_rows:
     w(f"- **`{n}`** ({len(t['solver']) + len(t['edit'])}): {names}")
 w("")
 out.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
-print(f"wrote {out}: {len(breaks)} break, {len(moved_only)} moved only, {len(flagged)} nothing")
+print(f"wrote {out}: {len(breaks)} break, {len(moved_only)} moved only, "
+      f"{len(refused_only)} refused only, {len(flagged)} nothing")

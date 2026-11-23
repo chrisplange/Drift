@@ -693,9 +693,22 @@ fn keep_shape() -> f64 {
     }
 }
 
+/// [`FOLD_MET`] as a solve reads it (see [`min_change`]): the drag reads it here too, so the
+/// ledger's `fold-met-x1000` loosens the solve's and the drag's together.
 #[inline(always)]
-fn fold_met() -> f64 {
+pub fn fold_met() -> f64 {
     ablation::or(Switch::FoldMetTimes1000, FOLD_MET, FOLD_MET * 1000.0)
+}
+
+/// [`MAX_ITERATIONS`] as a solve reads it: ten times as many where the ledger's
+/// `iteration-cap-x10` is thrown. The drag's try budgets read it here too.
+#[inline(always)]
+pub fn max_iterations() -> usize {
+    ablation::or(
+        Switch::IterationCapTimes10,
+        MAX_ITERATIONS,
+        10 * MAX_ITERATIONS,
+    )
 }
 
 /// Solve the document's constraints in place. Changes go through the document's normal edit
@@ -2325,11 +2338,7 @@ fn newton(
     let stage2 = |_: usize, _: f64| {};
     let mut last_stationary = f64::NAN;
     let mut in_stage2 = false;
-    let cap = ablation::or(
-        Switch::IterationCapTimes10,
-        MAX_ITERATIONS,
-        10 * MAX_ITERATIONS,
-    );
+    let cap = max_iterations();
     for iteration in 0..cap {
         if !res.iter().all(|f| f.is_finite()) || !jac.iter().flatten().all(|(_, g)| g.is_finite()) {
             return finish(Stop::NoStep, iteration, false, wandered, false);

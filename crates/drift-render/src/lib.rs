@@ -20,8 +20,9 @@ mod renderer;
 
 pub use camera::Camera;
 pub use frame::{
-    ArcInstance, DrawGroup, FillVertex, Frame, FrameImage, Globals, GridInfo, GroupRanges,
-    ImageVertex, SegmentInstance, Viewport, build_frame, clip_polygon, grid_info,
+    ArcInstance, DrawGroup, FillVertex, Frame, FrameImage, Globals, GridInfo, GridSpec,
+    GroupRanges, ImageVertex, SegmentInstance, Viewport, build_frame, clip_polygon, grid_info,
+    grid_info_for,
 };
 pub use palette::Palette;
 pub use renderer::CanvasRenderer;

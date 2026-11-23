@@ -63,6 +63,7 @@ fn perf_editor_pipeline_frames() {
         pixels_per_point: 2.0,
         srgb_target: false,
         imperial_grid: false,
+        grid: drift_render::GridSpec::Auto,
         thin_lines: false,
         show_grid: true,
         show_axes: true,

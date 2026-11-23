@@ -37,9 +37,7 @@ impl DriftApp {
         if snap && self.tool.wants_snap() {
             let options = SnapOptions {
                 tolerance: pointer.tolerance,
-                grid: self
-                    .grid_snap
-                    .then(|| grid_info(&self.drawing.view.camera, self.imperial()).minor),
+                grid: self.grid_snap.then(|| self.grid().minor),
                 from: self
                     .perp_tangent_snap
                     .then(|| self.tool.snap_from())
@@ -1384,6 +1382,7 @@ impl DriftApp {
             crate::canvas::CanvasOptions {
                 dark_mode: ui.visuals().dark_mode,
                 imperial_grid: self.imperial(),
+                grid: self.grid_spec(),
                 thin_lines: self.thin_lines,
                 show_grid: self.show_grid,
                 show_axes: self.show_axes,

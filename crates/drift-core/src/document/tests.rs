@@ -622,6 +622,54 @@ mod change_log {
             Some(Changes::default())
         );
     }
+
+    /// #371: a log past its size keeps each entity's latest change and still answers every
+    /// question as the whole log would: frames of a drag moving every point, over many times
+    /// the log's least size, asked from every revision on the way (a few each frame).
+    #[test]
+    fn a_full_log_still_answers_exactly() {
+        let mut doc = Document::new();
+        let points: Vec<EntityId> = (0..6000)
+            .map(|i| doc.add_point(DVec2::new(i as f64, 0.0)))
+            .collect();
+        let lineage = doc.lineage();
+        // Every change, as a log that never let any go: (revision, entity).
+        let mut all: Vec<(u64, EntityId)> = Vec::new();
+        let mut seed: u64 = 0x0371_c4a9_e10a_5eed;
+        let mut rnd = move |n: usize| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n as u64) as usize
+        };
+        let mut asked = Vec::new();
+        for frame in 0..60 {
+            asked.push(doc.revision());
+            // A frame of a drag: every point, or a random handful.
+            let moved: Vec<EntityId> = if frame % 2 == 0 {
+                points.clone()
+            } else {
+                (0..200).map(|_| points[rnd(points.len())]).collect()
+            };
+            for id in moved {
+                all.push((doc.revision(), id));
+                let at = doc.point(id).unwrap();
+                doc.set_point(id, at + DVec2::new(1.0, 0.0)).unwrap();
+            }
+        }
+        assert!(all.len() > 2 * ChangeLog::LIMIT, "{}", all.len());
+        for at in asked {
+            let mut want: Vec<EntityId> = all
+                .iter()
+                .filter(|(r, _)| *r >= at)
+                .map(|(_, id)| *id)
+                .collect();
+            want.sort_unstable();
+            want.dedup();
+            let got = doc.changes_since(lineage, at).expect("still answers");
+            assert_eq!(got.entities, want, "since {at}");
+        }
+    }
 }
 
 /// [`Document::reopen`] keeps the step it reopens as the journal's lower layer: an edit

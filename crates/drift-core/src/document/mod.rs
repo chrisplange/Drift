@@ -178,15 +178,32 @@ struct ChangeLog {
 }
 
 impl ChangeLog {
-    /// Entries kept: past this, the older half goes (a cache that far behind starts over).
+    /// Entries kept at least, however small the drawing.
     const LIMIT: usize = 1 << 16;
 
-    fn note(&mut self, revision: u64, what: Option<EntityId>) {
-        if self.entries.len() >= Self::LIMIT {
-            let half = self.entries.len() / 2;
-            self.entries.drain(..half);
-            // (Entries at this revision may have gone too: it is no longer whole.)
-            self.floor = self.entries.first().map_or(revision, |e| e.0 + 1);
+    /// Note a change to `what` (`None`: a layer) at `revision`, in a drawing of `entities`.
+    /// When the log is full it keeps only each entity's latest change, which answers every
+    /// [`Document::changes_since`] as the whole log did (an entity changed since a revision
+    /// exactly when its latest change was at or after it): a drag of every point notes each
+    /// point every frame, and a cache asking after it must still be told what changed, not
+    /// to start over (#371). Only past four entries an entity even then does the older half
+    /// go (a cache that far behind starts over).
+    fn note(&mut self, revision: u64, what: Option<EntityId>, entities: usize) {
+        let limit = Self::LIMIT.max(4 * entities);
+        if self.entries.len() >= limit {
+            let mut latest: HashMap<Option<EntityId>, u64> =
+                HashMap::with_capacity(self.entries.len() / 2);
+            for &(r, id) in &self.entries {
+                latest.insert(id, r);
+            }
+            self.entries = latest.into_iter().map(|(id, r)| (r, id)).collect();
+            self.entries.sort_unstable();
+            if self.entries.len() > limit / 2 {
+                let half = self.entries.len() / 2;
+                self.entries.drain(..half);
+                // (Entries at this revision may have gone too: it is no longer whole.)
+                self.floor = self.entries.first().map_or(revision, |e| e.0 + 1);
+            }
         }
         self.entries.push((revision, what));
     }

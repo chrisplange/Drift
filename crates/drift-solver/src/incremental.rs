@@ -7,7 +7,9 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use drift_core::polygon::UnionFind;
-use drift_core::{Constraint, ConstraintId, Document, EntityId, LayerId};
+use drift_core::{
+    Constraint, ConstraintId, DVec2, Document, Entity, EntityId, EntityKind, LayerId,
+};
 
 use crate::system::{EntityShape, System};
 use crate::{Definition, Param, SolveOptions, SolveReport};
@@ -20,6 +22,9 @@ pub struct AnalysisCache {
     at: Option<(u64, u64)>,
     /// Each entity's cluster (by its lowest entity) then, in id order.
     reps: Vec<(EntityId, EntityId)>,
+    /// Each entity then, with a point's place left out ([`unplaced`]), in the order of
+    /// `reps`: what tells a change that only moved a point from any other (#371).
+    unplaced: Vec<Entity>,
     /// The driving relations then, in id order.
     driving: Vec<(ConstraintId, Constraint)>,
     locked: BTreeSet<LayerId>,
@@ -112,6 +117,7 @@ pub fn analyze_cached<'a>(
         cache.report = crate::analyze_with(doc, lowering);
         return &cache.report;
     }
+    let entities: Vec<&Entity> = doc.iter().map(|(_, e)| e).collect();
     let ids: Vec<EntityId> = doc.iter().map(|(id, _)| id).collect();
     let index = |id: EntityId| ids.binary_search(&id).ok();
     let mut sets = UnionFind::new(ids.len());
@@ -154,7 +160,8 @@ pub fn analyze_cached<'a>(
         cache.clear();
         return finish(doc, cache, &ids, &roots, &driving, &home, locked, None);
     };
-    let mut changed: HashSet<EntityId> = since.entities.into_iter().collect();
+    // The entities of relations added, removed or changed.
+    let mut related: HashSet<EntityId> = HashSet::new();
     {
         let (old, new) = (&cache.driving, &driving);
         let (mut a, mut b) = (0, 0);
@@ -162,39 +169,108 @@ pub fn analyze_cached<'a>(
             let take_old = b == new.len() || (a < old.len() && old[a].0 < new[b].0);
             let take_new = a == old.len() || (b < new.len() && new[b].0 < old[a].0);
             if take_old {
-                changed.extend(old[a].1.entities());
+                related.extend(old[a].1.entities());
                 a += 1;
             } else if take_new {
-                changed.extend(new[b].1.entities());
+                related.extend(new[b].1.entities());
                 b += 1;
             } else {
                 if old[a].1 != new[b].1 {
-                    changed.extend(old[a].1.entities());
-                    changed.extend(new[b].1.entities());
+                    related.extend(old[a].1.entities());
+                    related.extend(new[b].1.entities());
                 }
                 a += 1;
                 b += 1;
             }
         }
     }
-    let old_rep = |id: EntityId| {
-        cache
-            .reps
-            .binary_search_by_key(&id, |(e, _)| *e)
-            .ok()
-            .map(|k| cache.reps[k].1)
-    };
+    // Each entity's place in the cache's lists, by one walk of the two (both in id order).
+    let mut old_of: Vec<Option<usize>> = vec![None; ids.len()];
+    {
+        let mut k = 0;
+        for (i, id) in ids.iter().enumerate() {
+            while k < cache.reps.len() && cache.reps[k].0 < *id {
+                k += 1;
+            }
+            if k < cache.reps.len() && cache.reps[k].0 == *id {
+                old_of[i] = Some(k);
+            }
+        }
+    }
+    let mut changed = vec![false; ids.len()];
     // Clusters a change was in before it.
-    let dirty_before: HashSet<EntityId> = changed.iter().filter_map(|id| old_rep(*id)).collect();
+    let mut dirty_before: HashSet<EntityId> = HashSet::new();
+    let mut mark = |id: EntityId, at: Option<usize>| {
+        if let Some(i) = at {
+            changed[i] = true;
+        }
+        let k = match at {
+            Some(i) => old_of[i],
+            None => cache.reps.binary_search_by_key(&id, |(e, _)| *e).ok(),
+        };
+        if let Some(k) = k {
+            dirty_before.insert(cache.reps[k].1);
+        }
+    };
+    for &id in &related {
+        mark(id, index(id));
+    }
+    // Entities that only moved or didn't change (the same entity apart from a point's
+    // place, and no relation on it changed) in a cluster with nothing that reads where its
+    // points are: no driving relation, no arc or ellipse (they keep a shape of their own),
+    // nothing pinned on a locked layer. Such a cluster's analysis is its entities'
+    // freedoms, whatever their places, so a move alone leaves it as it was (#371: a whole
+    // move of a big drawing). (The changes are in id order, as the entities are.)
+    let mut moved: Vec<usize> = Vec::new();
+    {
+        let mut i = 0;
+        for &id in &since.entities {
+            while i < ids.len() && ids[i] < id {
+                i += 1;
+            }
+            let at = (i < ids.len() && ids[i] == id).then_some(i);
+            let only_moved = !related.contains(&id)
+                && at.is_some_and(|i| {
+                    old_of[i].is_some_and(|k| unplaced(entities[i]) == cache.unplaced[k])
+                });
+            match at {
+                Some(i) if only_moved => moved.push(i),
+                _ => mark(id, at),
+            }
+        }
+    }
+    if !moved.is_empty() {
+        let mut placed = vec![false; ids.len()];
+        for (i, e) in entities.iter().enumerate() {
+            if locked.contains(&e.layer)
+                || matches!(
+                    e.kind,
+                    EntityKind::Arc { .. }
+                        | EntityKind::Ellipse { .. }
+                        | EntityKind::EllipseArc { .. }
+                )
+            {
+                placed[roots[i]] = true;
+            }
+        }
+        for i in home.iter().flatten() {
+            placed[roots[*i]] = true;
+        }
+        for i in moved {
+            if placed[roots[i]] {
+                mark(ids[i], Some(i));
+            }
+        }
+    }
     // A cluster is analysed again if a change is in it, or was in a cluster one of its
     // entities was in, or its entities were in another cluster, or it grew or shrank.
     let mut dirty = vec![false; ids.len()];
     let mut size = vec![0usize; ids.len()];
-    for (i, id) in ids.iter().enumerate() {
+    for (i, was) in old_of.iter().enumerate() {
         let root = roots[i];
         size[root] += 1;
-        let was = old_rep(*id);
-        if changed.contains(id) || was.is_none_or(|r| r != ids[root] || dirty_before.contains(&r)) {
+        let was = was.map(|k| cache.reps[k].1);
+        if changed[i] || was.is_none_or(|r| r != ids[root] || dirty_before.contains(&r)) {
             dirty[root] = true;
         }
     }
@@ -323,6 +399,7 @@ fn finish<'a>(
         .zip(roots)
         .map(|(id, &r)| (*id, ids[r]))
         .collect();
+    cache.unplaced = doc.iter().map(|(_, e)| unplaced(e)).collect();
     cache.driving = driving.to_vec();
     cache.locked = locked;
     &cache.report
@@ -495,6 +572,17 @@ fn analyze_parts(
         }
     }
     Some(parts)
+}
+
+/// `e` with a point's place left out: what a move leaves as it was.
+fn unplaced(e: &Entity) -> Entity {
+    match e.kind {
+        EntityKind::Point(_) => Entity {
+            kind: EntityKind::Point(DVec2::ZERO),
+            ..*e
+        },
+        _ => *e,
+    }
 }
 
 fn entry(parts: &mut HashMap<EntityId, Part>, rep: EntityId) -> &mut Part {
@@ -685,6 +773,85 @@ mod tests {
         assert_eq!(r.broken, vec![mixed]);
     }
 
+    /// #371: a whole move of free lines analyses nothing again, while a cluster with a
+    /// relation, an arc or geometry on a locked layer is analysed again when it moves, and so
+    /// is one whose entity changed in place (a line moved off the locked layer) or that was
+    /// joined to another.
+    #[test]
+    fn a_move_keeps_only_free_clusters() {
+        let v = DVec2::new;
+        let mut doc = Document::new();
+        let mut cache = AnalysisCache::default();
+        let mut free = Vec::new();
+        for k in 0..20 {
+            let a = doc.add_point(v(k as f64 * 10.0, 0.0));
+            let b = doc.add_point(v(k as f64 * 10.0 + 5.0, 3.0));
+            free.push(doc.add_line(a, b).unwrap());
+        }
+        analyze_cached(&doc, None, &mut cache);
+        let all: Vec<EntityId> = doc.iter().map(|(id, _)| id).collect();
+        doc.translate(all.clone(), v(2.0, 1.0));
+        let r = analyze_cached(&doc, None, &mut cache).clone();
+        assert_eq!(cache.last_misses(), 0, "free lines moved");
+        assert_eq!(r.dof, crate::analyze(&doc).dof);
+        // A fixed line, an arc and a line on a locked layer: each is analysed again.
+        let p = doc.add_point(v(0.0, 50.0));
+        let q = doc.add_point(v(10.0, 50.0));
+        doc.add_line(p, q).unwrap();
+        doc.add_constraint(Constraint::Fix {
+            point: p,
+            at: v(0.0, 50.0),
+        })
+        .unwrap();
+        let c = doc.add_point(v(0.0, 80.0));
+        let s = doc.add_point(v(10.0, 80.0));
+        let e = doc.add_point(v(0.0, 90.0));
+        doc.add_arc(c, s, e).unwrap();
+        let layer = doc.add_layer(Layer {
+            locked: true,
+            ..Layer::new("Locked")
+        });
+        let l1 = doc.add_point(v(0.0, 120.0));
+        let l2 = doc.add_point(v(10.0, 120.0));
+        let pinned = doc.add_line(l1, l2).unwrap();
+        doc.set_entity_layer(pinned, layer).unwrap();
+        analyze_cached(&doc, None, &mut cache);
+        let all: Vec<EntityId> = doc.iter().map(|(id, _)| id).collect();
+        doc.translate(all, v(-1.0, 4.0));
+        let r = analyze_cached(&doc, None, &mut cache).clone();
+        assert_eq!(cache.last_misses(), 3, "the fixed, arc and locked clusters");
+        let whole = crate::analyze(&doc);
+        assert_eq!(
+            (r.converged, r.dof, &r.conflicts, &r.definitions),
+            (
+                whole.converged,
+                whole.dof,
+                &whole.conflicts,
+                &whole.definitions
+            )
+        );
+        // The pinned line put back on a shown layer that isn't locked (the same entity but
+        // its layer): its cluster is free now, and analysed again, not kept as pinned.
+        analyze_cached(&doc, None, &mut cache);
+        doc.set_entity_layer(pinned, drift_core::LayerId::DEFAULT)
+            .unwrap();
+        let r = analyze_cached(&doc, None, &mut cache).clone();
+        assert_eq!(cache.last_misses(), 1, "the line off the locked layer");
+        let whole = crate::analyze(&doc);
+        assert_eq!((r.dof, &r.definitions), (whole.dof, &whole.definitions));
+        // A free line joined to another (a change, not a move): its cluster is analysed
+        // again.
+        let Some(EntityKind::Line { b, .. }) = doc.get(free[0]).map(|e| e.kind) else {
+            panic!("a line");
+        };
+        let Some(EntityKind::Line { a: next, .. }) = doc.get(free[1]).map(|e| e.kind) else {
+            panic!("a line");
+        };
+        doc.add_line(b, next).unwrap();
+        analyze_cached(&doc, None, &mut cache);
+        assert_eq!(cache.last_misses(), 1);
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(64))]
 
@@ -710,6 +877,47 @@ mod tests {
             // Nothing changed: nothing analysed again.
             analyze_cached(&doc, None, &mut cache);
             prop_assert_eq!(cache.last_misses(), 0);
+        }
+
+        /// #371: moves kept cluster by cluster are still the whole drawing's analysis: points
+        /// moved one by one, whole clusters and the whole drawing moved, between random edits
+        /// (relations, fixes, arcs, circles, locked layers, kinds changed by deletes and new
+        /// curves). A cluster whose analysis reads its points' places (a relation, an arc, a
+        /// locked layer) is analysed again; only a free one is kept.
+        #[test]
+        fn moves_kept_by_the_cache_are_the_full_analysis(
+            steps in prop::collection::vec(
+                (prop::array::uniform5(0u32..10_000), 0u32..6),
+                1..60,
+            ),
+        ) {
+            let mut doc = Document::new();
+            let locked = doc.add_layer(Layer {
+                locked: true,
+                ..Layer::new("Locked")
+            });
+            let mut cache = AnalysisCache::default();
+            for (n, how) in &steps {
+                let ids: Vec<EntityId> = doc.iter().map(|(id, _)| id).collect();
+                let pick = |k: u32| ids[k as usize % ids.len().max(1)];
+                let by = DVec2::new(f64::from(n[3] % 7) - 3.0, f64::from(n[4] % 5) - 2.0);
+                match how {
+                    // A move of one point, of an entity and what it uses, of every entity.
+                    0 if !ids.is_empty() => doc.translate([pick(n[1])], by),
+                    1 if !ids.is_empty() => {
+                        let start = pick(n[1]);
+                        let some: Vec<EntityId> =
+                            ids.iter().copied().filter(|id| *id >= start).collect();
+                        doc.translate(some, by);
+                    }
+                    2 => doc.translate(ids.clone(), by),
+                    // Anything else.
+                    _ => change(&mut doc, locked, n),
+                }
+                let cached = analyze_cached(&doc, None, &mut cache).clone();
+                same(&cached, &crate::analyze(&doc))?;
+                same(&cached, &analyze_cached(&doc, None, &mut AnalysisCache::default()).clone())?;
+            }
         }
     }
 }

@@ -374,6 +374,37 @@ impl DriftApp {
                 .filter(|_| dims_ok)
                 .find(|d| d.text_rect.expand(annotations::TEXT_REACH).contains(p))
         };
+        // Its text, or near one of its extension lines (as near as a curve picks, #533). Only
+        // the text drags the label; a press on an extension line is left to the tool.
+        // A point under the pointer comes before an extension line (which starts close by its
+        // measured point).
+        let reach = crate::PICK_RADIUS as f32;
+        // (Looked up now, for where the pointer is and where a click lands, before the
+        // editor changes below.)
+        let points_under: Vec<egui::Pos2> = {
+            let ed = &self.drawing.editor;
+            let scale = self.drawing.view.camera.scale;
+            [pos, release_pos(ui, PointerButton::Primary)]
+                .into_iter()
+                .flatten()
+                .filter(|p| {
+                    let pointer = Pointer::new(map.to_world(*p), crate::PICK_RADIUS / scale);
+                    drift_edit::tools::point_under(ed, &pointer)
+                })
+                .collect()
+        };
+        // A note or mark under the pointer comes first too (it was looked for before this).
+        let note_under = self.drawing.editor.hovered_annotation.is_some();
+        let point_under = |p: egui::Pos2| note_under || points_under.contains(&p);
+        let dim_or_extension_at = |p: egui::Pos2| {
+            dim_at(p).or_else(|| {
+                dims.iter()
+                    .filter(|_| !point_under(p))
+                    .rev()
+                    .filter(|_| dims_ok)
+                    .find(|d| d.extension_hit(p, reach))
+            })
+        };
         let glyph_at = |p: egui::Pos2| {
             glyphs
                 .iter()
@@ -382,7 +413,7 @@ impl DriftApp {
                 .find(|g| g.rect.contains(p))
         };
         let hit = |p: egui::Pos2| {
-            dim_at(p)
+            dim_or_extension_at(p)
                 .and_then(|d| d.id)
                 .or_else(|| glyph_at(p).map(|g| g.id))
         };

@@ -134,6 +134,7 @@ fn pins(c: &Constraint) -> bool {
         | Constraint::HorizontalDistance { .. }
         | Constraint::VerticalDistance { .. }
         | Constraint::PointLineDistance { .. }
+        | Constraint::RadialGap { .. }
         | Constraint::Angle { .. } => false,
     }
 }
@@ -175,6 +176,7 @@ fn held_on(c: &Constraint) -> Option<(EntityId, [EntityId; 2])> {
         | Constraint::FixRadius { .. }
         | Constraint::Radius { .. }
         | Constraint::Diameter { .. }
+        | Constraint::RadialGap { .. }
         | Constraint::Angle { .. } => None,
     }
 }

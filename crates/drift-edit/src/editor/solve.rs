@@ -406,8 +406,41 @@ impl Editor {
     /// edit, even if the edit breaks it further ([`SolveReport::exposed`]): a solve of such a
     /// part shares its misfit with it whatever the edit did.
     pub(crate) fn new_conflicts(&self, report: &SolveReport) -> bool {
-        !report.converged
-            && (report.unwritten || self.new_conflict_named(report) || self.newly_failing(report))
+        (!report.converged
+            && (report.unwritten || self.new_conflict_named(report) || self.newly_failing(report)))
+            || self.left_a_gap_unmet()
+    }
+
+    /// Whether a gap between circles isn't what it says: a solve that needs a circle's radius
+    /// at or through zero (an inner circle a gap or a sized outer one squeezes away) can't
+    /// write it, and the solve still counts as landed with the old radius left in place
+    /// (reviews of #521). (Not caught there for all: a tangency's form re-chosen on the next
+    /// solve relies on that write being passed over.) Nor an inner one squeezed to nothing
+    /// (an arc round the origin, whose degeneracy tolerance scales with its centre's
+    /// coordinates, got through at 2.6e-8). Only a gap the edit left so: one the drawing's
+    /// analysis already finds conflicting is the drawing's, and blocks nothing.
+    fn left_a_gap_unmet(&self) -> bool {
+        let before = &self.analysis().conflicts;
+        self.doc.constraints().any(|(id, c)| match *c {
+            Constraint::RadialGap { a, b, value }
+                if !self.doc.is_driven(id) && !before.contains(&id) =>
+            {
+                match (
+                    drift_solver::radius_of(&self.doc, a),
+                    drift_solver::radius_of(&self.doc, b),
+                ) {
+                    (Some(ra), Some(rb)) => {
+                        let extent = crate::labels::center_of(&self.doc, a)
+                            .map_or(0.0, |c| c.abs().max_element())
+                            + rb;
+                        (rb - ra - value).abs() > 1e-6 * rb.max(1.0)
+                            || ra <= drift_core::tolerance::same(extent)
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
+        })
     }
 
     /// Whether `report` names a conflict the drawing didn't have before this edit.
@@ -591,12 +624,16 @@ impl Editor {
         let Some(old) = drift_solver::radius_of(&self.doc, circle) else {
             return false;
         };
+        // (Measured before the new radius is set: a drag stops short of crushing anything,
+        // such as the inner circle a gap holds the dragged one to.)
+        let degenerate_before = drift_solver::degenerate_entities(&self.doc);
         if self.doc.set_radius(circle, radius).is_err() {
             return false;
         }
         let dragged = [Param::Radius(circle)];
         let report = self.solve(&dragged);
         let ok = !self.new_conflicts(&report)
+            && !self.new_degeneracy(&degenerate_before)
             && drift_solver::radius_of(&self.doc, circle)
                 .is_some_and(|r| (r - radius).abs() <= 1e-6 * radius.max(1.0));
         if !ok {

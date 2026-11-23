@@ -6,8 +6,8 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 45,
-//!   "reader": 45,
+//!   "version": 46,
+//!   "reader": 46,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -139,8 +139,10 @@ pub const EXTENSION: &str = "drift";
 /// fillet or chamfer keeps what was measured to its corner and along its sides (#238);
 /// 45 = adds a sheet's own `annotations` (notes, leaders and dimensions placed on the sheet in
 /// paper mm, tied to model geometry through a viewport) and a viewport's `id` (what those
-/// annotations name it by) (#432). Breaking: `reader` is 45 too (see [`READER_VERSION`]).
-pub const FORMAT_VERSION: u32 = 45;
+/// annotations name it by) (#432). Breaking: `reader` is 45 too (see [`READER_VERSION`]);
+/// 46 = adds `radial_gap` (the gap between two concentric circles or arcs: the difference of
+/// their radii).
+pub const FORMAT_VERSION: u32 = 46;
 /// The oldest version that reads what this build writes: the last breaking change, written as
 /// a file's `"reader"`. A reader refuses a file only when its `reader` is above the reader's
 /// own [`FORMAT_VERSION`] (a file without one, from before 42, gives its `version`).
@@ -154,8 +156,9 @@ pub const FORMAT_VERSION: u32 = 45;
 /// `id` it kept sits on the other view, and the annotations are tied through the wrong one
 /// with nothing to tell (and reordering sheets leaves a sheet's notes on another sheet). An
 /// addition that can't survive an older build's edits is breaking, so a 44 reader refuses
-/// the file instead.
-pub const READER_VERSION: u32 = 45;
+/// the file instead; 46 = `radial_gap` dimensions (a 45 reader refuses a relation type it
+/// doesn't know).
+pub const READER_VERSION: u32 = 46;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -854,6 +857,10 @@ fn constraint_record(
             (r.curve, r.value) = (s(curve), Some(value));
             "diameter"
         }
+        Constraint::RadialGap { a, b, value } => {
+            (r.a, r.b, r.value) = (s(a), s(b), Some(value));
+            "radial_gap"
+        }
         Constraint::Angle { a, b, degrees } => {
             (r.a, r.b, r.degrees) = (s(a), s(b), Some(degrees));
             "angle"
@@ -977,6 +984,11 @@ fn parse_constraint(r: ConstraintRecord) -> Result<ParsedConstraint, LoadError> 
         },
         "diameter" => Constraint::Diameter {
             curve: entity(&r.curve, "curve")?,
+            value: number(r.value, "value")?,
+        },
+        "radial_gap" => Constraint::RadialGap {
+            a: a()?,
+            b: b()?,
             value: number(r.value, "value")?,
         },
         "angle" => Constraint::Angle {
@@ -2453,7 +2465,8 @@ pub fn migrate(value: serde_json::Value) -> Result<serde_json::Value, LoadError>
     // defaults, and `Metadata::older_rules` tells the app to apply its own.
     // v2 → v26 only added optional fields, sections and constraint types: nothing to convert
     // here (a sheet's own views, from before v27, are made model views as the file is read).
-    // v42 → v43 added the `fix_x` and `fix_y` relation types: nothing to convert.
+    // v42 → v43 added the `fix_x` and `fix_y` relation types: nothing to convert (nor
+    // v45 → v46, which added `radial_gap`).
     value["version"] = FORMAT_VERSION.into();
     Ok(value)
 }
@@ -2568,8 +2581,8 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 45,
-  "reader": 45,
+  "version": 46,
+  "reader": 46,
   "meta": {"units":"mm"},
   "layers": [
     {"id":"l0","name":"Layer 1","weight":0.25,"linetype":"continuous"}
@@ -2604,6 +2617,37 @@ mod tests {
         assert!(text.contains("\"constraints\": []"));
         let (doc, _) = load(&text).unwrap();
         assert!(doc.is_empty());
+    }
+
+    /// A gap a file spells outer first opens inner first, as one added is kept: the ring
+    /// stays the right way out (Opus re-review of #521: it opened inverted, with no
+    /// conflict to say so).
+    #[test]
+    fn a_gap_spelled_outer_first_opens_inner_first() {
+        let mut doc = Document::new();
+        let c = doc.add_point(DVec2::new(5.0, 5.0));
+        let inner = doc.add_circle(c, 40.0).unwrap();
+        let outer = doc.add_circle(c, 65.0).unwrap();
+        doc.add_constraint(Constraint::RadialGap {
+            a: inner,
+            b: outer,
+            value: 25.0,
+        })
+        .unwrap();
+        let text = save(&doc, &Metadata::default());
+        let (i, o) = (id_string(inner), id_string(outer));
+        let spelled = format!(r#""a":"{i}","b":"{o}""#);
+        assert!(text.contains(&spelled), "{text}");
+        let swapped = text.replace(&spelled, &format!(r#""a":"{o}","b":"{i}""#));
+        let (back, _) = load(&swapped).unwrap();
+        let gap = back
+            .constraints()
+            .find_map(|(_, c)| match *c {
+                Constraint::RadialGap { a, b, .. } => Some((a, b)),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(gap, (inner, outer));
     }
 
     #[test]
@@ -2681,6 +2725,11 @@ mod tests {
                 a: circle,
                 b: circle2,
             },
+            Constraint::RadialGap {
+                a: circle,
+                b: circle2,
+                value: 2.5,
+            },
             Constraint::Collinear { a: l1, b: l3 },
             Constraint::PointOnCurve {
                 point: p[3],
@@ -2703,7 +2752,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let (loaded, _) = load(&text).unwrap();
         assert_eq!(loaded, doc);
-        assert_eq!(loaded.constraint_count(), 24);
+        assert_eq!(loaded.constraint_count(), 25);
         assert!(text.contains(r#""label":[1.5,-2.25]"#));
         assert!(text.contains(r#""driven":true"#));
     }
@@ -3084,11 +3133,11 @@ mod tests {
     }
 
     #[test]
-    fn a_format_44_build_refuses_what_this_build_writes() {
-        // A 44 build would re-tie a sheet's annotations to another view after editing the
-        // sheet's views (it knows viewports by their place alone), so it must not open the
-        // file at all (#432). Every file this build writes says so: its `reader` is 45, and
-        // by the rule every build reads by, a build at 44 refuses that.
+    fn a_format_45_build_refuses_what_this_build_writes() {
+        // A 45 build refuses a relation type it doesn't know (`radial_gap`), and a 44 build
+        // would re-tie a sheet's annotations to another view (#432), so neither may open the
+        // file. Every file this build writes says so: its `reader` is 46, and by the rule
+        // every build reads by, a build at 45 refuses that.
         let mut doc = Document::new();
         let a = doc.add_point(DVec2::ZERO);
         let b = doc.add_point(DVec2::new(100.0, 0.0));
@@ -3119,8 +3168,8 @@ mod tests {
             let text = save(&doc, &Metadata::default());
             let value: serde_json::Value = serde_json::from_str(&text).unwrap();
             let reader = u32::try_from(value["reader"].as_u64().unwrap()).unwrap();
-            assert_eq!(reader, 45, "{text}");
-            assert!(refuses(reader, 44), "a 44 build refuses it");
+            assert_eq!(reader, 46, "{text}");
+            assert!(refuses(reader, 45), "a 45 build refuses it");
             assert!(!refuses(reader, FORMAT_VERSION));
             // The same rule, end to end in this build: a file asking for a newer reader
             // than this build is refused with "please update Drift".

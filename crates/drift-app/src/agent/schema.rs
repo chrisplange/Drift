@@ -216,12 +216,12 @@ Relations already implied are skipped; one that conflicts fails the call.",
         ToolSpec {
             name: "add_dimensions",
             description: "Add driving dimensions, which move the geometry to their values; one undo step. Types: length {line}; distance {a, b} (points or lines' midpoints; a point and a line gives the perpendicular distance); \
-horizontal / vertical {a, b} or {line}; point_line {point, line}; radius / diameter {curve}; angle {a, b lines} (counter-clockwise from a to b). \
+horizontal / vertical {a, b} or {line}; point_line {point, line}; radius / diameter {curve}; radial_gap {a, b concentric circles/arcs} (the gap between them: the difference of their radii); angle {a, b lines} (counter-clockwise from a to b). \
 `value` links to variables when it uses them. A dimension that would over-define the sketch fails unless driven: true (a reference that only shows the measurement).",
             schema: object(
                 json!({
                     "dimensions": { "type": "array", "items": { "type": "object", "properties": {
-                        "type": { "type": "string", "enum": ["length", "distance", "horizontal", "vertical", "point_line", "radius", "diameter", "angle"] },
+                        "type": { "type": "string", "enum": ["length", "distance", "horizontal", "vertical", "point_line", "radius", "diameter", "radial_gap", "angle"] },
                         "a": { "type": "string" }, "b": { "type": "string" }, "line": { "type": "string" },
                         "point": { "type": "string" }, "curve": { "type": "string" },
                         "value": value(),

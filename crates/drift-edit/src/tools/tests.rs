@@ -8635,3 +8635,343 @@ fn space_from_the_default_centre_steps_to_left_then_right_then_centre() {
     assert_eq!(seen, [Justify::Left, Justify::Right, Justify::Centre]);
     tool.handle(Input::Finish, &mut ed);
 }
+
+/// Two concentric circles take a gap dimension across the ring: picked one then the other,
+/// it measures the difference of their radii, and typed it sets it. Circles round different
+/// centres don't.
+#[test]
+fn two_concentric_circles_take_a_gap_dimension() {
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let c = ed.doc.add_point(v(0.0, 0.0));
+    let inner = ed.doc.add_circle(c, 40.0).unwrap();
+    let outer = ed.doc.add_circle(c, 65.0).unwrap();
+    let off = ed.doc.add_point(v(200.0, 0.0));
+    let apart = ed.doc.add_circle(off, 20.0).unwrap();
+    ed.commit("Rings");
+    let mut dim = DimensionTool::default();
+    click(&mut ed, &mut dim, v(40.0, 0.0));
+    click(&mut ed, &mut dim, v(65.0, 0.0));
+    assert_eq!(dim.base, Some(dimension::DimBase::RadialGap(inner, outer)));
+    click(&mut ed, &mut dim, v(52.0, 10.0));
+    let (id, c) = ed
+        .doc
+        .constraints()
+        .find(|(_, c)| matches!(c, Constraint::RadialGap { .. }))
+        .map(|(id, c)| (id, *c))
+        .expect("gap dimension");
+    assert!((c.value().unwrap() - 25.0).abs() < 1e-9, "{c:?}");
+    ed.set_dimension(id, 30.0).unwrap();
+    let r = |id| drift_solver::radius_of(&ed.doc, id).unwrap();
+    assert!(
+        (r(outer) - r(inner) - 30.0).abs() < 1e-8,
+        "{} {}",
+        r(inner),
+        r(outer)
+    );
+    // (Round different centres: no gap.)
+    assert_eq!(
+        DimensionTool::pair(
+            &ed,
+            picking::Target::Entity(inner),
+            picking::Target::Entity(apart),
+        ),
+        None
+    );
+}
+
+/// A gap typed across a ring with its inner circle sized moves the outer circle alone.
+#[test]
+fn a_typed_gap_moves_the_circle_its_size_leaves_free() {
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let c = ed.doc.add_point(v(0.0, 0.0));
+    let inner = ed.doc.add_circle(c, 40.0).unwrap();
+    let outer = ed.doc.add_circle(c, 65.0).unwrap();
+    ed.commit("Rings");
+    ed.add_constraints(
+        "Diameter",
+        &[Constraint::Diameter {
+            curve: inner,
+            value: 80.0,
+        }],
+    )
+    .unwrap();
+    let gap = ed
+        .add_constraints(
+            "Gap",
+            &[Constraint::RadialGap {
+                a: inner,
+                b: outer,
+                value: 25.0,
+            }],
+        )
+        .unwrap()[0];
+    ed.set_dimension(gap, 30.0).unwrap();
+    let r = |id| drift_solver::radius_of(&ed.doc, id).unwrap();
+    assert!((r(inner) - 40.0).abs() < 1e-8, "inner {}", r(inner));
+    assert!((r(outer) - 70.0).abs() < 1e-8, "outer {}", r(outer));
+}
+
+/// A ring round (500, 300): an inner circle r40 and an outer r65 on one centre point, the
+/// gap between them dimensioned (picked `inner_first` or not); the outer sized by a radius
+/// where `sized`.
+fn ring(inner_first: bool, sized: bool) -> (Editor, EntityId, EntityId, ConstraintId) {
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let c = ed.doc.add_point(v(500.0, 300.0));
+    let inner = ed.doc.add_circle(c, 40.0).unwrap();
+    let outer = ed.doc.add_circle(c, 65.0).unwrap();
+    ed.commit("Ring");
+    if sized {
+        ed.add_constraints(
+            "Radius",
+            &[Constraint::Radius {
+                curve: outer,
+                value: 65.0,
+            }],
+        )
+        .unwrap();
+    }
+    let (a, b) = if inner_first {
+        (inner, outer)
+    } else {
+        (outer, inner)
+    };
+    let gap = ed
+        .add_dimension(Constraint::RadialGap { a, b, value: 25.0 }, None)
+        .unwrap();
+    (ed, inner, outer, gap)
+}
+
+fn radius(ed: &Editor, id: EntityId) -> f64 {
+    drift_solver::radius_of(&ed.doc, id).unwrap()
+}
+
+/// A gap that would take the inner circle's radius to zero or through it is refused, the
+/// ring as it was (it was taken, the gap left unmet and the drawing red: reviews of #521).
+#[test]
+fn a_gap_past_the_inner_circle_is_refused() {
+    for typed in [65.0, 66.0, 80.0] {
+        let (mut ed, inner, outer, gap) = ring(true, true);
+        assert!(ed.set_dimension(gap, typed).is_err(), "gap {typed} taken");
+        assert!(
+            (radius(&ed, inner) - 40.0).abs() < 1e-9,
+            "{typed}: inner {}",
+            radius(&ed, inner)
+        );
+        assert!((radius(&ed, outer) - 65.0).abs() < 1e-9);
+        assert!(
+            ed.analysis().conflicts.is_empty(),
+            "{typed}: {:?}",
+            ed.analysis().conflicts
+        );
+    }
+    // (Nor the outer typed down past the gap.)
+    let (mut ed, inner, outer, _) = ring(true, true);
+    let size = ed
+        .doc
+        .constraints()
+        .find(|(_, c)| matches!(c, Constraint::Radius { .. }))
+        .map(|(id, _)| id)
+        .unwrap();
+    assert!(ed.set_dimension(size, 20.0).is_err());
+    assert!((radius(&ed, inner) - 40.0).abs() < 1e-9 && (radius(&ed, outer) - 65.0).abs() < 1e-9);
+}
+
+/// The owner's rule (#521): whichever circle was picked first, the gap is kept inner first
+/// and reads outer less inner; with neither circle held, typed it moves the outer circle
+/// and the inner stays. A gap of zero or less is refused.
+#[test]
+fn a_typed_gap_moves_the_outer_circle_whichever_was_picked_first() {
+    for inner_first in [true, false] {
+        let (mut ed, inner, outer, gap) = ring(inner_first, false);
+        assert!(matches!(
+            ed.doc.constraint(gap),
+            Some(Constraint::RadialGap { a, b, .. }) if *a == inner && *b == outer
+        ));
+        for (typed, want) in [(30.0, 70.0), (10.0, 50.0)] {
+            ed.set_dimension(gap, typed).unwrap();
+            assert!(
+                (radius(&ed, inner) - 40.0).abs() < 1e-8,
+                "{inner_first} {typed}: inner {}",
+                radius(&ed, inner)
+            );
+            assert!(
+                (radius(&ed, outer) - want).abs() < 1e-8,
+                "{inner_first} {typed}: outer {}",
+                radius(&ed, outer)
+            );
+        }
+        for bad in [0.0, -5.0] {
+            assert!(ed.set_dimension(gap, bad).is_err(), "gap {bad} taken");
+        }
+        assert!((radius(&ed, outer) - 50.0).abs() < 1e-8);
+    }
+}
+
+/// Dragged, a circle changes size and the other follows to keep the gap, whichever is
+/// dragged; a drag can't turn the ring inside out (one frame carrying the outer inside the
+/// inner left inner 55 / outer 30) nor crush the inner circle (stepped in, it went to zero
+/// and the drag went on): it stops at the last shape that holds.
+#[test]
+fn a_dragged_ring_neither_turns_inside_out_nor_crushes_its_inner_circle() {
+    // The inner dragged out: the outer follows.
+    let (mut ed, inner, outer, _) = ring(true, false);
+    ed.doc.begin();
+    assert!(ed.drag_radius(inner, 50.0));
+    ed.commit("Drag");
+    assert!((radius(&ed, inner) - 50.0).abs() < 1e-8 && (radius(&ed, outer) - 75.0).abs() < 1e-8);
+    // The outer dragged in past the inner in one frame: the inner follows, still inside.
+    let (mut ed, inner, outer, _) = ring(true, false);
+    ed.doc.begin();
+    let ok = ed.drag_radius(outer, 30.0);
+    ed.commit("Drag");
+    let (ri, ro) = (radius(&ed, inner), radius(&ed, outer));
+    assert!(ro > ri, "inside out: inner {ri}, outer {ro} (ok {ok})");
+    assert!((ro - ri - 25.0).abs() < 1e-8);
+    // Stepped in: it stops before the inner circle is gone.
+    let (mut ed, inner, outer, _) = ring(true, false);
+    ed.doc.begin();
+    let mut last = 65.0;
+    for k in 0..60 {
+        let r = 65.0 - f64::from(k);
+        if ed.drag_radius(outer, r) {
+            last = r;
+        }
+    }
+    ed.commit("Drag");
+    assert!(
+        radius(&ed, inner) > 0.0 && last > 25.0,
+        "inner {} at outer {last}",
+        radius(&ed, inner)
+    );
+    assert!((radius(&ed, outer) - radius(&ed, inner) - 25.0).abs() < 1e-8);
+    // The follower held (the outer's radius set): dragging the inner is refused, held.
+    let (mut ed, inner, outer, _) = ring(true, true);
+    ed.doc.begin();
+    assert!(!ed.drag_radius(inner, 50.0));
+    ed.commit("Drag");
+    assert!((radius(&ed, inner) - 40.0).abs() < 1e-8 && (radius(&ed, outer) - 65.0).abs() < 1e-8);
+}
+
+/// Picked with centres that are two points drawn together, the gap holds them concentric
+/// too, in the same step: moving one centre takes the other with it.
+#[test]
+fn a_gap_between_circles_on_two_centre_points_holds_them_concentric() {
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let (c1, c2) = (ed.doc.add_point(v(0.0, 0.0)), ed.doc.add_point(v(0.0, 0.0)));
+    let inner = ed.doc.add_circle(c1, 40.0).unwrap();
+    let outer = ed.doc.add_circle(c2, 65.0).unwrap();
+    ed.commit("Rings");
+    let gap = ed
+        .add_dimension(
+            Constraint::RadialGap {
+                a: inner,
+                b: outer,
+                value: 25.0,
+            },
+            None,
+        )
+        .unwrap();
+    assert!(
+        ed.doc
+            .constraints()
+            .any(|(_, c)| matches!(c, Constraint::Concentric { .. })),
+        "no concentric"
+    );
+    assert!(matches!(
+        ed.doc.constraint(gap),
+        Some(Constraint::RadialGap { .. })
+    ));
+    ed.undo();
+    assert_eq!(ed.doc.constraints().count(), 0, "one step");
+    // (One centre point already: nothing added.)
+    let (ed, ..) = ring(true, false);
+    assert!(
+        !ed.doc
+            .constraints()
+            .any(|(_, c)| matches!(c, Constraint::Concentric { .. }))
+    );
+}
+
+/// A gap the drawing already has unmet (red, as a file can hold it) is the drawing's: it
+/// doesn't block every other edit (it did: an unrelated Horizontal was refused, Fable
+/// re-review of #521).
+#[test]
+fn a_gap_already_unmet_blocks_no_other_edit() {
+    let mut doc = Document::new();
+    let c = doc.add_point(v(0.0, 0.0));
+    let inner = doc.add_circle(c, 40.0).unwrap();
+    let outer = doc.add_circle(c, 65.0).unwrap();
+    for k in [
+        Constraint::Radius {
+            curve: inner,
+            value: 40.0,
+        },
+        Constraint::Radius {
+            curve: outer,
+            value: 65.0,
+        },
+        Constraint::RadialGap {
+            a: inner,
+            b: outer,
+            value: 30.0,
+        },
+    ] {
+        doc.add_constraint(k).unwrap();
+    }
+    let (p, q) = (doc.add_point(v(200.0, 0.0)), doc.add_point(v(260.0, 10.0)));
+    let line = doc.add_line(p, q).unwrap();
+    let mut ed = Editor::new(doc);
+    assert!(!ed.analysis().conflicts.is_empty(), "the ring is red");
+    ed.add_constraints("Horizontal", &[Constraint::Horizontal { line }])
+        .unwrap();
+    ed.add_constraints(
+        "Distance",
+        &[Constraint::Distance {
+            a: p,
+            b: q,
+            value: 120.0,
+        }],
+    )
+    .unwrap();
+}
+
+/// An inner arc round the origin can't be typed to nothing through the gap (its radius
+/// went to 2.6e-8: the degeneracy check scales with the centre's coordinates, 0 there).
+#[test]
+fn a_gap_squeezes_no_arc_round_the_origin_to_nothing() {
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let c = ed.doc.add_point(v(0.0, 0.0));
+    let (s, e) = (
+        ed.doc.add_point(v(40.0, 0.0)),
+        ed.doc.add_point(v(0.0, 40.0)),
+    );
+    let arc = ed.doc.add_arc(c, s, e).unwrap();
+    let outer = ed.doc.add_circle(c, 65.0).unwrap();
+    ed.commit("Arc and circle");
+    ed.add_constraints(
+        "Radius",
+        &[Constraint::Radius {
+            curve: outer,
+            value: 65.0,
+        }],
+    )
+    .unwrap();
+    let gap = ed
+        .add_dimension(
+            Constraint::RadialGap {
+                a: arc,
+                b: outer,
+                value: 25.0,
+            },
+            None,
+        )
+        .unwrap();
+    assert!(ed.set_dimension(gap, 65.0).is_err());
+    let r = drift_solver::radius_of(&ed.doc, arc).unwrap();
+    assert!((r - 40.0).abs() < 1e-9, "R {r}");
+}

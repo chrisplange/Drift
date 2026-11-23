@@ -1597,6 +1597,26 @@ pub fn radius_of(doc: &Document, curve: EntityId) -> Option<f64> {
     }
 }
 
+/// Whether `a` and `b` are two circles or arcs of different sizes round one place (their
+/// centres the same point, or drawn or held together): what a gap dimension measures
+/// across. The Dimension tool and the AI link both ask this.
+pub fn concentric_pair(doc: &Document, a: EntityId, b: EntityId) -> bool {
+    let center = |id: EntityId| match doc.get(id)?.kind {
+        EntityKind::Circle { center, .. } | EntityKind::Arc { center, .. } => {
+            doc.point(center).ok()
+        }
+        _ => None,
+    };
+    let (Some(ca), Some(cb), Some(ra), Some(rb)) =
+        (center(a), center(b), radius_of(doc, a), radius_of(doc, b))
+    else {
+        return false;
+    };
+    let extent = ca.abs().max_element().max(cb.abs().max_element()) + ra.max(rb);
+    let near = drift_core::tolerance::same(extent);
+    a != b && ca.distance(cb) <= near && (ra - rb).abs() > near
+}
+
 /// The current value of a dimension in the document's geometry (mm, or degrees in [0, 180)).
 pub fn measure(doc: &Document, constraint: &Constraint) -> Option<f64> {
     let point = |id| doc.ref_point(id);
@@ -1608,6 +1628,7 @@ pub fn measure(doc: &Document, constraint: &Constraint) -> Option<f64> {
         Constraint::Distance { a, b, .. } => Some(point(a)?.distance(point(b)?)),
         Constraint::Radius { curve, .. } => radius_of(doc, curve),
         Constraint::Diameter { curve, .. } => radius_of(doc, curve).map(|r| 2.0 * r),
+        Constraint::RadialGap { a, b, .. } => Some((radius_of(doc, a)? - radius_of(doc, b)?).abs()),
         Constraint::HorizontalDistance { a, b, .. } => Some((point(b)?.x - point(a)?.x).abs()),
         Constraint::VerticalDistance { a, b, .. } => Some((point(b)?.y - point(a)?.y).abs()),
         Constraint::PointLineDistance {

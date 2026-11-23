@@ -273,7 +273,8 @@ impl Rest {
     }
 
     /// Whether `at` is where a point that is moving (one of `moving`, or one pulled along)
-    /// started or is now.
+    /// started or is now, and no point that stays put is there too. (A copy made by Shift+D
+    /// or Paste starts on top of its original: the original's points still start guides.)
     pub(super) fn moving_point_at(
         &self,
         doc: &drift_core::Document,
@@ -281,11 +282,21 @@ impl Rest {
         at: DVec2,
         tol: f64,
     ) -> bool {
-        self.points.iter().any(|(&id, &was)| {
+        let mut moving_here = false;
+        for (&id, &was) in &self.points {
             let near =
                 was.distance(at) <= tol || doc.point(id).is_ok_and(|now| now.distance(at) <= tol);
-            near && (moving.contains(&id) || self.point_moved(doc, id))
-        })
+            if !near {
+                continue;
+            }
+            if moving.contains(&id) || self.point_moved(doc, id) {
+                moving_here = true;
+            } else {
+                // A point that stays put sits here: a guide from it is a real one.
+                return false;
+            }
+        }
+        moving_here
     }
 }
 

@@ -5118,6 +5118,37 @@ fn duplicate_copies_curves_and_their_relations_then_grabs_the_copy() {
     assert_eq!(lines(&ed.doc), 1);
 }
 
+/// #498: a copy made by Shift+D starts on top of its original. While the copy moves, the
+/// original's points still start alignment guides (only the copy's own spots don't).
+#[test]
+fn a_duplicate_moving_off_its_original_still_gets_guides_from_it() {
+    let (mut ed, line, [a, _], _) = move_fixture();
+    ed.selection = [line].into();
+    assert_eq!(ed.duplicate_selection(), 1);
+    let copy = *ed.selection.iter().next().unwrap();
+    let EntityKind::Line { a: ca, .. } = ed.doc.get(copy).unwrap().kind else {
+        panic!()
+    };
+    let mut tool = SelectTool::default();
+    let p = ptr(&ed, &tool, v(5.0, 0.0));
+    assert!(tool.key(ToolKey::G, Some(&p), &mut ed));
+    let moved = ptr(&ed, &tool, v(5.0, 20.0));
+    tool.handle(Input::Hover(moved), &mut ed);
+    let now = ed.doc.point(ca).unwrap();
+    assert!(now.distance(v(0.0, 0.0)) > 1.0, "{now:?}");
+    assert_eq!(ed.doc.point(a).unwrap(), v(0.0, 0.0));
+    assert!(
+        !tool.guide_excludes(&ed, v(0.0, 0.0), 1e-6),
+        "the original's end still starts a guide"
+    );
+    assert!(!tool.snap_excludes(&ed, a) && !tool.snap_excludes(&ed, line));
+    assert!(
+        tool.guide_excludes(&ed, now, 1e-6),
+        "the copy's end doesn't"
+    );
+    assert!(tool.snap_excludes(&ed, ca) && tool.snap_excludes(&ed, copy));
+}
+
 /// #264: Esc during the move Shift+D starts removes the copy (it was never moved, so it would
 /// sit stacked on the original), picks the originals again, and leaves the copy on Redo.
 #[test]
@@ -8994,6 +9025,11 @@ fn what_a_drag_pulls_along_is_no_snap_target() {
         &[
             Constraint::Horizontal { line: a },
             Constraint::Vertical { line: b },
+            // The far end stays put, so it stays a snap target and a guide start.
+            Constraint::Fix {
+                point: p0,
+                at: v(0.0, 0.0),
+            },
         ],
     )
     .unwrap();
@@ -9011,9 +9047,15 @@ fn what_a_drag_pulls_along_is_no_snap_target() {
     assert!(sel.snap_excludes(&ed, a), "its line changed with it");
     assert!(sel.guide_excludes(&ed, v(10.0, 0.0), 1e-6), "where it was");
     assert!(sel.guide_excludes(&ed, pulled, 1e-6), "where it is");
-    let stayed = ed.doc.point(p0).unwrap() == v(0.0, 0.0);
-    assert_eq!(sel.snap_excludes(&ed, p0), !stayed);
-    assert_eq!(sel.guide_excludes(&ed, v(0.0, 0.0), 1e-6), !stayed);
+    assert_eq!(ed.doc.point(p0).unwrap(), v(0.0, 0.0));
+    assert!(
+        !sel.snap_excludes(&ed, p0),
+        "what stays put is still a snap target"
+    );
+    assert!(
+        !sel.guide_excludes(&ed, v(0.0, 0.0), 1e-6),
+        "and a guide start"
+    );
     sel.handle(Input::DragEnd(p, m), &mut ed);
     let hover = ptr(&ed, &sel, v(30.0, 30.0));
     sel.handle(Input::Hover(hover), &mut ed);

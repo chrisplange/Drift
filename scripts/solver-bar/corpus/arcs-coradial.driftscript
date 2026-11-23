@@ -1,0 +1,11 @@
+# A ring segment: two arcs about one centre with square ends, and a second pair of arcs
+# lying on one circle.
+arc outer centre 0,0 from 50,0 to 0,50
+arc inner centre 0,0 from 30,0 to 0,30
+line enda from inner.start to outer.start
+line endb from inner.end to outer.end
+concentric outer inner
+arc pa centre 100,0 from 120,0 to 100,20
+arc pb centre 100,0 from 80,0 to 100,-20
+#> add_relations {"relations":[{"type":"coradial","a":"$pa","b":"$pb"}]}
+dim r inner = 30

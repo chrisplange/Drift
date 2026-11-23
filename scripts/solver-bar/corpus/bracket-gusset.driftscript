@@ -1,0 +1,9 @@
+# A triangular gusset with a set corner angle and a hole placed from two of its edges.
+line base from 0,0 to 90,0
+line upright from 0,0 to 0,60
+line brace from base.end to upright.end
+horizontal base
+dim angle base upright = 90°
+dim base = 90
+point hole at 20,20
+#> add_dimensions {"dimensions":[{"type":"point_line","point":"$hole","line":"$base","value":20},{"type":"point_line","point":"$hole","line":"$upright","value":20}]}

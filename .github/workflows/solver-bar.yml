@@ -1,7 +1,7 @@
 name: Solver bar
 
-# The solver's acceptance bar on Linux (docs/solver-audit.md, section 5, item 6, and decision
-# 9): the heavy drag matrix and the ignored pins on ubuntu, where libm's sin, cos and atan2
+# The solver's acceptance bar on Linux (docs/solver-audit.md, section 5, items 6 and 8, and
+# decision 9): the heavy drag matrix, the ignored pins and the sketch corpus on ubuntu, where libm's sin, cos and atan2
 # differ from Windows' and macOS' by the ulps that decide a drag at a fold. Nightly, by hand,
 # and on any pull request that touches the solver, what it is built on, the editor that calls
 # it, or this bar: the [heavy] and [solver] paths in .github/tiers.txt.
@@ -110,4 +110,48 @@ jobs:
         with:
           name: solver-bar-linux
           path: target/solver-bar/
+          if-no-files-found: ignore
+
+  corpus:
+    name: Sketch corpus (ubuntu)
+    needs: changes
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.heavy == 'true')
+    # (Pinned, as the heavy job is.)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # The bar's item 8 (#187): every point and curve of the drawings in
+      # scripts/solver-bar/corpus/ dragged along ten pointer paths, every frame judged. Fails
+      # on a drag whose verdict differs from corpus-baseline.txt (with
+      # corpus-baseline.linux.txt's rows over it); the table goes to the job summary and the
+      # record, one line per drag, to the artifact.
+      - name: Sketch corpus
+        run: |
+          mkdir -p target/solver-bar/corpus
+          python3 scripts/solver-bar/corpus.py run --jobs 4 --out target/solver-bar/corpus             | tee target/solver-bar-corpus.txt
+          exit "${PIPESTATUS[0]}"
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Sketch corpus (Linux)"
+            echo
+            cat target/solver-bar/corpus/summary.md 2>/dev/null || echo "no summary: the sweep didn't finish"
+            echo
+            echo '```'
+            sed -n '/verdict(s) differ/,$p' target/solver-bar-corpus.txt | head -220
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: solver-bar-corpus-linux
+          path: |
+            target/solver-bar/corpus/record.txt
+            target/solver-bar/corpus/summary.md
+            target/solver-bar/corpus/shard-*.log
           if-no-files-found: ignore

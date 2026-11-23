@@ -1,0 +1,8 @@
+# A studio: one room, a partition from its south wall to a free end, a door and two windows.
+room studio 6000 x 4500 at 0,0 walls 200 fixed
+line partition from 4000,0 to 4000,2600
+on partition.start studio.south
+vertical partition
+door d1 900 in studio.west
+window w1 1800 in studio.north centred
+window w2 1200 in studio.south offset 500 from studio.sw

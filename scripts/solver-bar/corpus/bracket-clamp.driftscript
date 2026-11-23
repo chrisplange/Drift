@@ -1,0 +1,8 @@
+# A C clamp: an outer and an inner arc about one centre, closed by two jaws.
+arc outer centre 0,0 from 34.64,-20 to 34.64,20
+arc inner centre 0,0 from 21.65,12.5 to 21.65,-12.5
+line jawa from outer.end to inner.start
+line jawb from inner.end to outer.start
+concentric outer inner
+dim d outer = 80
+parallel jawa jawb

@@ -1,0 +1,20 @@
+# A square flange with a bore and four holes mirrored about both centre lines.
+rect plate about 100 x 100 centred at 0,0
+construction line vaxis from 0,-60 to 0,60
+construction line haxis from -60,0 to 60,0
+vertical vaxis
+horizontal haxis
+midpoint vaxis.start of plate.south
+midpoint haxis.start of plate.west
+circle bore r 18 at 0,0
+on bore.center vaxis
+on bore.center haxis
+circle hne r 5 at 35,35
+circle hnw r 5 at -35,35
+circle hsw r 5 at -35,-35
+circle hse r 5 at 35,-35
+symmetric hne.center hnw.center about vaxis
+symmetric hse.center hsw.center about vaxis
+symmetric hne.center hse.center about haxis
+dim plate.south = 100
+equal plate.south plate.west

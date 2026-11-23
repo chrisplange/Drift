@@ -1,0 +1,5 @@
+# A four by three grid of holes at two pitches set by variables.
+let P = 30
+let Q = 25
+circle hole r 4 at 0,0
+array holes of hole 4 x P, 3 x Q

@@ -1,0 +1,24 @@
+# A rectangle with four rounded corners, each arc tangent to its two sides, all four radii
+# equal. The width is set; the height and the corner radius are free.
+line south from 10,0 to 70,0
+line east from 80,10 to 80,40
+line north from 70,50 to 10,50
+line west from 0,40 to 0,10
+arc cse centre 70,10 from south.end to east.start
+arc cne centre 70,40 from east.end to north.start
+arc cnw centre 10,40 from north.end to west.start
+arc csw centre 10,10 from west.end to south.start
+horizontal south
+vertical east
+horizontal north
+vertical west
+tangent south cse
+tangent east cse
+tangent east cne
+tangent north cne
+tangent north cnw
+tangent west cnw
+tangent west csw
+tangent south csw
+equal cse cne cnw csw
+dim csw.center to cse.center = 60

@@ -3280,6 +3280,7 @@ fn a_try_with_the_fold_steps_that_fails_leaves_the_frame_as_it_was() {
 }
 
 mod census;
+mod corpus;
 mod held_shapes;
 mod relation_census;
 mod seeds;

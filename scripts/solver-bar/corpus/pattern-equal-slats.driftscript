@@ -1,0 +1,18 @@
+# Five parallel slats of equal length, their feet evenly spaced along a rail.
+line rail from 0,0 to 100,0
+horizontal rail
+line s1 from rail.start to 0,60
+line s2 from 25,0 to 25,60
+line s3 from 50,0 to 50,60
+line s4 from 75,0 to 75,60
+line s5 from rail.end to 100,60
+on s2.start rail
+on s3.start rail
+on s4.start rail
+parallel s1 s2
+parallel s2 s3
+parallel s3 s4
+parallel s4 s5
+equal s1 s2 s3 s4 s5
+#> constraint equal_distance $s1.start $s2.start $s2.start $s3.start
+#> constraint midpoint_of $s4.start $s3.start $s5.start

@@ -92,7 +92,7 @@ Commands, scripts and raw logs: `E:\Drift\solver-audit-logs\` (`census.sh`, `cen
 | **#343** | Drag property tests can't see structural rows | Test gap: `unmet` skips rows no relation owns | Code: `lib.rs` ~589 `let Some(id) = row.source else { continue }` | PR 0 |
 | **#347** | Active element through relations lowered onto wall faces | Not the solver: the editor's relation-adding policy, and blocked by #313 | — | Out of scope; stays blocked |
 | **#295** | "Flaky" `face_dimensions_hold_through_drags` | **Not flaky and not the solver.** The 4 "join flipped" seeds fail on every run, on main and on `lfa` alike: walls' join bookkeeping (`drag_joins`, tees re-read at step 5 of a 1.3 to 1.5 m drag). The 2 "face relation" seeds no longer fail on main | Replays of the six saved `cc` lines | Walls fix, outside this plan (decision 7; relabelled `drawing` + `batch-2`, the repo has no walls label) |
-| **#187** | Record what each heuristic protects; keep a corpus | Meta | Section 3 is the record; PR 0 is the corpus | PR 0 |
+| **#187** | Record what each heuristic protects; keep a corpus | Meta | Section 3 is the record; PR 0's corpus is the random generator's, and the corpus of drawn sketches is the bar's item 8 (section 5) | PR 0, then #187's own PRs |
 
 ## 2. Every ignored or pinned drag test, mapped to a root cause
 
@@ -331,17 +331,30 @@ not time.
 7. **The binding drag rule:** a drag that kept radii can't follow stops at the last valid shape;
    radii are never grown. Checked by `held_shapes::` and the census's stop classes.
 
-PR 0 puts the bar in `scripts/solver-bar/` (its README runs all seven). **Known gaps, from PR
-0's review, to close before PR 3 or PR 4 is judged:**
+8. **The sketch corpus** (#187, added 2026-11-22): 52 drawn sketches (profiles, brackets,
+   linkages, plans with walls and openings, patterns, a real drawing), every point and curve
+   that can move dragged along ten pointer paths, every frame judged: rows met, no arc sweep
+   flip, no way-round flip, held radii never grown, no jump over 50 times the pointer's move,
+   a refused frame changing nothing. No drag's verdict differs from
+   `scripts/solver-bar/corpus-baseline.txt` unless the PR says why and updates it, and
+   `corpus.py diff` of the base's record and the PR's goes in the PR.
+
+PR 0 puts the bar in `scripts/solver-bar/` (its README runs all of them). **Known gaps, from
+PR 0's review, to close before PR 3 or PR 4 is judged** (the first two closed by item 8, the
+last two open):
 - The heavy matrix and the censuses draw from one generator (`plan()`). It never draws Angle,
   Radius, Diameter, FixRadius, Symmetric, Collinear, Concentric, Coradial, Smooth, Corner,
   EqualDistance, H/V distances, PointLineDistance, circles or ellipses. PR 4 re-lowers Angle,
   and a radius dimension is what a kept radius meets most. A second generator, with its own
   seed so today's case numbers stay valid, adds at least Angle, Radius/Diameter, Symmetric and
   Collinear.
+  *Closed by item 8, another way: not a second generator but drawn sketches, which hold every
+  one of those (`corpus_build` fails if a kind goes missing).*
 - No check sees an arc flip. A drag that carries an arc's end past its start turns a short arc
   into a near-full circle with every row still met. The second generator's properties add an
   arc-sweep continuity check.
+  *Closed by item 8: its `S` check (an arc the drag doesn't hold by a point sweeping over 90°
+  more or less in one frame).*
 - The similarity census translates and scales but never turns. Rotation, where libm's sin and
   cos come in, is covered only by the heavy similarity property.
 - Item 7 in the census is a flag to check, not a verdict. A drag that goes while an arc's

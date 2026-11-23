@@ -1,0 +1,19 @@
+# Half of a stepped shaft above its axis: three diameters, the outer two equal in length,
+# its shoulders square.
+construction line axis from -5,0 to 125,0
+horizontal axis
+fix axis.start
+polyline shaft (0,0) (0,10) (30,10) (30,18) (90,18) (90,10) (120,10) (120,0)
+on shaft.start axis
+on shaft.end axis
+vertical shaft[1]
+horizontal shaft[2]
+vertical shaft[3]
+horizontal shaft[4]
+vertical shaft[5]
+horizontal shaft[6]
+vertical shaft[7]
+collinear shaft[2] shaft[6]
+equal shaft[2] shaft[6]
+dim shaft[4] = 60
+dim shaft[1] = 10

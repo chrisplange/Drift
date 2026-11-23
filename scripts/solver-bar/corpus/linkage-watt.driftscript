@@ -1,0 +1,9 @@
+# Watt's linkage: two equal arms from fixed pivots, joined by a short link whose middle
+# traces a near-straight line.
+point pa at 0,0 fixed
+point pb at 100,40 fixed
+line arma from pa to 48,14 length 50
+line armb from pb to 52,26 length 50
+line link from arma.end to armb.end length 12.65
+point tracer at 50,20
+midpoint tracer of link

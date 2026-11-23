@@ -1,0 +1,7 @@
+# A bushing: a bore and an outside about one centre, the wall between them set as a gap
+# (neither radius is), and a key line from the bore to the outside.
+line key from 28,0 to 40,0
+#> outer = add_geometry {"items":[{"type":"circle","center":[0,0],"radius":40}],"join":false}
+#> bore = add_geometry {"items":[{"type":"circle","center":[0,0],"radius":28}],"join":false}
+#> add_relations {"relations":[{"type":"concentric","a":"$bore","b":"$outer"},{"type":"on_curve","point":"$key.start","curve":"$bore"},{"type":"on_curve","point":"$key.end","curve":"$outer"}]}
+#> add_dimensions {"dimensions":[{"type":"radial_gap","a":"$bore","b":"$outer","value":12}]}

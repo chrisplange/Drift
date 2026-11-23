@@ -1,0 +1,3 @@
+# A regular hexagon with a circle beside it.
+#> hex = add_geometry {"items":[{"type":"polygon","center":[0,0],"radius":40,"sides":6}]}
+circle inner r 20 at 0,0

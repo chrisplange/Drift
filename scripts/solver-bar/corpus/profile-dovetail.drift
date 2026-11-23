@@ -1,0 +1,48 @@
+{
+  "format": "drift",
+  "version": 46,
+  "reader": 46,
+  "meta": {"units":"mm"},
+  "layers": [
+    {"id":"l0","name":"Layer 1","weight":0.25,"linetype":"continuous"}
+  ],
+  "entities": [
+    {"type":"point","id":"e1","at":[0.00008118038253600003,-5.0]},
+    {"type":"point","id":"e2","at":[0.00008118038253600003,45.0]},
+    {"type":"line","id":"e3","a":"e1","b":"e2","style":"construction"},
+    {"type":"point","id":"e4","at":[-29.99991881960528,0.0]},
+    {"type":"point","id":"e5","at":[30.000081180390655,0.0]},
+    {"type":"line","id":"e6","a":"e4","b":"e5"},
+    {"type":"point","id":"e7","at":[30.000081180390655,20.000000003996497]},
+    {"type":"line","id":"e8","a":"e5","b":"e7"},
+    {"type":"point","id":"e9","at":[8.000040587855768,20.000000003996497]},
+    {"type":"line","id":"e10","a":"e7","b":"e9"},
+    {"type":"point","id":"e11","at":[14.000304431535648,39.999920965614145]},
+    {"type":"line","id":"e12","a":"e9","b":"e11"},
+    {"type":"point","id":"e13","at":[-14.000142070780319,39.999920965614145]},
+    {"type":"line","id":"e14","a":"e11","b":"e13"},
+    {"type":"point","id":"e15","at":[-7.999878227100442,20.000000003996497]},
+    {"type":"line","id":"e16","a":"e13","b":"e15"},
+    {"type":"point","id":"e17","at":[-29.99991881960528,20.000000003996497]},
+    {"type":"line","id":"e18","a":"e15","b":"e17"},
+    {"type":"line","id":"e19","a":"e17","b":"e4"}
+  ],
+  "constraints": [
+    {"type":"vertical","id":"c1","line":"e3"},
+    {"type":"horizontal","id":"c3","line":"e6"},
+    {"type":"vertical","id":"c4","line":"e8"},
+    {"type":"horizontal","id":"c5","line":"e10"},
+    {"type":"horizontal","id":"c6","line":"e14"},
+    {"type":"horizontal","id":"c7","line":"e18"},
+    {"type":"vertical","id":"c8","line":"e19"},
+    {"type":"symmetric","id":"c9","a":"e4","b":"e5","line":"e3"},
+    {"type":"symmetric","id":"c10","a":"e9","b":"e15","line":"e3"},
+    {"type":"symmetric","id":"c11","a":"e11","b":"e13","line":"e3"},
+    {"type":"angle","id":"c12","a":"e10","b":"e12","degrees":73.3},
+    {"type":"distance","id":"c13","a":"e4","b":"e5","value":60.0,"label":[0.0,-10.0],"paper_label":[0.0,-10.0]}
+  ],
+  "figures": [
+    {"id":"d1","curves":["e3"]},
+    {"id":"d2","curves":["e6","e8","e10","e12","e14","e16","e18","e19"]}
+  ]
+}

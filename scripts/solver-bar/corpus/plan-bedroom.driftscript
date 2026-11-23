@@ -1,0 +1,5 @@
+# A bedroom with a door free to slide along its wall and a window kept 600 from a corner.
+# The room isn't pinned.
+room bed 3600 x 4500 at 0,0 walls 200
+door d1 900 in bed.south
+window w1 1200 in bed.north offset 600 from bed.nw

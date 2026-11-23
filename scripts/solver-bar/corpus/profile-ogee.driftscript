@@ -1,0 +1,10 @@
+# An ogee: two arcs meeting tangent in an S, between two level lines.
+line foot from 0,0 to 30,0
+arc hollow centre 30,20 from foot.end to 50,20
+arc swell centre 70,20 from 90,20 to hollow.end
+line shelf from swell.start to 110,20
+horizontal foot
+tangent foot hollow
+tangent hollow swell
+dim r hollow = 20
+dim foot = 30

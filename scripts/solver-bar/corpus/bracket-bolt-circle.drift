@@ -1,0 +1,44 @@
+{
+  "format": "drift",
+  "version": 46,
+  "reader": 46,
+  "meta": {"units":"mm"},
+  "layers": [
+    {"id":"l0","name":"Layer 1","weight":0.25,"linetype":"continuous"}
+  ],
+  "entities": [
+    {"type":"point","id":"e1","at":[0.0,0.0]},
+    {"type":"circle","id":"e2","center":"e1","radius":60.0},
+    {"type":"circle","id":"e3","center":"e1","radius":20.0},
+    {"type":"circle","id":"e4","center":"e1","radius":42.0,"style":"construction"},
+    {"type":"point","id":"e5","at":[42.0,0.0]},
+    {"type":"circle","id":"e6","center":"e5","radius":4.0},
+    {"type":"point","id":"e7","at":[21.000000000000004,36.373066958946424]},
+    {"type":"circle","id":"e8","center":"e7","radius":4.0},
+    {"type":"point","id":"e9","at":[-20.99999999999999,36.373066958946424]},
+    {"type":"circle","id":"e10","center":"e9","radius":4.0},
+    {"type":"point","id":"e11","at":[-42.0,0.0]},
+    {"type":"circle","id":"e12","center":"e11","radius":4.0},
+    {"type":"point","id":"e13","at":[-21.000000000000018,-36.37306695894642]},
+    {"type":"circle","id":"e14","center":"e13","radius":4.0},
+    {"type":"point","id":"e15","at":[21.000000000000004,-36.373066958946424]},
+    {"type":"circle","id":"e16","center":"e15","radius":4.0}
+  ],
+  "constraints": [
+    {"type":"radius","id":"c1","curve":"e2","value":60.0},
+    {"type":"radius","id":"c2","curve":"e3","value":20.0},
+    {"type":"radius","id":"c3","curve":"e4","value":42.0},
+    {"type":"radius","id":"c6","curve":"e6","value":4.0},
+    {"type":"point_on_curve","id":"c7","point":"e5","curve":"e4"},
+    {"type":"radius","id":"c8","curve":"e8","value":4.0},
+    {"type":"radius","id":"c9","curve":"e10","value":4.0},
+    {"type":"radius","id":"c10","curve":"e12","value":4.0},
+    {"type":"radius","id":"c11","curve":"e14","value":4.0},
+    {"type":"radius","id":"c12","curve":"e16","value":4.0},
+    {"type":"point_on_curve","id":"c13","point":"e7","curve":"e4"},
+    {"type":"point_on_curve","id":"c14","point":"e9","curve":"e4"},
+    {"type":"point_on_curve","id":"c15","point":"e11","curve":"e4"},
+    {"type":"point_on_curve","id":"c16","point":"e13","curve":"e4"},
+    {"type":"point_on_curve","id":"c17","point":"e15","curve":"e4"}
+  ]
+}

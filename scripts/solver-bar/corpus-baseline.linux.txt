@@ -1,0 +1,5 @@
+# The corpus baseline's rows that differ on linux (see corpus-baseline.txt).
+# From the Solver bar workflow's run on ubuntu-24.04 (run 45104150205): of 9,510 drags, these
+# two targets' through-the-middle drags turn a line or a pair that Windows doesn't.
+plan-corridor e7p ok ok ok ok ok ok ok ok ok WL
+plan-corridor e15p ok ok ok ok ok ok ok ok ok L

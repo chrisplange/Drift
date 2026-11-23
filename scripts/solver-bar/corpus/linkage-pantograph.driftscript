@@ -1,0 +1,11 @@
+# A pantograph: a parallelogram of bars with an extended arm; one corner is the fixed
+# pivot.
+point pivot at 0,0 fixed
+line arma from pivot to 40,60 length 72.11
+line armd from pivot to 78,18 length 80.05
+line armb from arma.end to 118,78
+line armc from armd.end to armb.end
+parallel arma armc
+parallel armb armd
+line tracer from armd.end to 58,-12 length 36.06
+collinear tracer armc

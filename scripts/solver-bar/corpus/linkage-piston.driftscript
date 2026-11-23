@@ -1,0 +1,15 @@
+# A piston engine in outline: the crank pin runs on the crank circle, the rod has a set
+# length, and the piston (a rectangle) keeps to the cylinder's centre line.
+circle crankcircle r 20 at 0,0
+fix crankcircle.center
+construction line bore from 0,0 to 0,140 fixed
+fix bore.end
+point pinpt at 14.14,14.14
+on pinpt crankcircle
+line rod from pinpt to 0,88 length 75
+on rod.end bore
+rect piston about 30 x 24 centred at 0,100
+midpoint rod.end of piston.south
+horizontal piston.south
+equal piston.west piston.east
+dim piston.south = 30

@@ -750,9 +750,10 @@ impl Document {
         match key {
             Key::Entity(id) => {
                 self.geometry = next_structure();
-                self.changes.note(self.revision, Some(id));
+                self.changes
+                    .note(self.revision, Some(id), self.entities.len());
             }
-            Key::Layer(_) => self.changes.note(self.revision, None),
+            Key::Layer(_) => self.changes.note(self.revision, None, self.entities.len()),
             _ => {}
         }
     }

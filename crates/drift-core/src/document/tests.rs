@@ -622,6 +622,152 @@ mod change_log {
             Some(Changes::default())
         );
     }
+
+    /// #371: a log past its size keeps each entity's latest change and still answers every
+    /// question as the whole log would: frames of a drag moving every point, over many times
+    /// the log's least size, asked from every revision on the way (a few each frame).
+    #[test]
+    fn a_full_log_still_answers_exactly() {
+        let mut doc = Document::new();
+        let points: Vec<EntityId> = (0..6000)
+            .map(|i| doc.add_point(DVec2::new(i as f64, 0.0)))
+            .collect();
+        let lineage = doc.lineage();
+        // Every change, as a log that never let any go: (revision, entity).
+        let mut all: Vec<(u64, EntityId)> = Vec::new();
+        let mut seed: u64 = 0x0371_c4a9_e10a_5eed;
+        let mut rnd = move |n: usize| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n as u64) as usize
+        };
+        let mut asked = Vec::new();
+        for frame in 0..60 {
+            asked.push(doc.revision());
+            // A frame of a drag: every point, or a random handful.
+            let moved: Vec<EntityId> = if frame % 2 == 0 {
+                points.clone()
+            } else {
+                (0..200).map(|_| points[rnd(points.len())]).collect()
+            };
+            for id in moved {
+                all.push((doc.revision(), id));
+                let at = doc.point(id).unwrap();
+                doc.set_point(id, at + DVec2::new(1.0, 0.0)).unwrap();
+            }
+        }
+        assert!(all.len() > 2 * ChangeLog::LIMIT, "{}", all.len());
+        for at in asked {
+            let mut want: Vec<EntityId> = all
+                .iter()
+                .filter(|(r, _)| *r >= at)
+                .map(|(_, id)| *id)
+                .collect();
+            want.sort_unstable();
+            want.dedup();
+            let got = doc.changes_since(lineage, at).expect("still answers");
+            assert_eq!(got.entities, want, "since {at}");
+        }
+    }
+
+    /// #371 review: when a tidy leaves more ids than the log keeps (most of the drawing
+    /// deleted, so the limit, which follows the drawing's size, shrank under the log), the
+    /// older half goes. A question from before what is left is refused (the cache starts
+    /// over); every later one is still answered exactly.
+    #[test]
+    fn a_log_of_mostly_deleted_ids_lets_the_older_half_go() {
+        let mut doc = Document::new();
+        let lineage = doc.lineage();
+        // Every change, as a log that never let any go: (revision before the change, id).
+        let mut all: Vec<(u64, EntityId)> = Vec::new();
+        let mut asked = Vec::new();
+        let mut points = Vec::new();
+        for i in 0..60_000 {
+            if i % 1000 == 0 {
+                asked.push(doc.revision());
+            }
+            all.push((doc.revision(), EntityId(u32::MAX)));
+            let id = doc.add_point(DVec2::new(i as f64, 0.0));
+            all.last_mut().unwrap().1 = id;
+            points.push(id);
+        }
+        // A mass delete: the drawing drops to 1,000 points, so the log's limit to its least.
+        // (Asked only between calls, so each change's revision can be the call's first.)
+        asked.push(doc.revision());
+        all.extend(points[1000..].iter().map(|&id| (doc.revision(), id)));
+        doc.delete(points[1000..].iter().copied());
+        // Then more changes, through and past the tidy.
+        for frame in 0..40 {
+            asked.push(doc.revision());
+            for &id in &points[..1000] {
+                if frame % 4 == 0 || id.0 % 7 == 0 {
+                    all.push((doc.revision(), id));
+                    let at = doc.point(id).unwrap();
+                    doc.set_point(id, at + DVec2::new(1.0, 0.0)).unwrap();
+                }
+            }
+        }
+        asked.push(doc.revision());
+        assert_eq!(doc.len(), 1000);
+        assert!(doc.changes.floor > 0, "the older half went");
+        let mut refused = 0;
+        for at in asked {
+            let Some(got) = doc.changes_since(lineage, at) else {
+                assert!(at < doc.changes.floor, "refused since {at}");
+                refused += 1;
+                continue;
+            };
+            let mut want: Vec<EntityId> = all
+                .iter()
+                .filter(|(r, _)| *r >= at)
+                .map(|(_, id)| *id)
+                .collect();
+            want.sort_unstable();
+            want.dedup();
+            assert_eq!(got.entities, want, "since {at}");
+        }
+        assert!(refused > 0);
+        // What is left is bounded by the drawing's size, not by every id it ever had.
+        assert!(doc.changes.entries.len() <= 2 * ChangeLog::LIMIT);
+    }
+
+    /// Perf baseline (#371 review): frames of a drag moving every point of a big drawing
+    /// (140k points, the 70k-line sample's size). The log keeps each point's latest change
+    /// as it goes, so no frame pays for tidying it all at once: the slowest frame stays
+    /// near the typical one. Run with `cargo test --release -p drift-core -- --ignored`.
+    #[test]
+    #[ignore]
+    fn perf_change_log_whole_drag() {
+        let mut doc = Document::new();
+        let points: Vec<EntityId> = (0..140_000)
+            .map(|i| doc.add_point(DVec2::new(i as f64, 0.0)))
+            .collect();
+        let mut frames = Vec::new();
+        for _ in 0..40 {
+            let start = std::time::Instant::now();
+            for &id in &points {
+                let at = doc.point(id).unwrap();
+                doc.set_point(id, at + DVec2::new(1.0, 0.0)).unwrap();
+            }
+            frames.push(start.elapsed().as_secs_f64() * 1000.0);
+        }
+        let mut sorted = frames.clone();
+        sorted.sort_by(f64::total_cmp);
+        let median = sorted[sorted.len() / 2];
+        let max = sorted[sorted.len() - 1];
+        println!(
+            "whole drag, 140k points, 40 frames: median {median:.1} ms, max {max:.1} ms, \
+             log {} entries",
+            doc.changes.entries.len()
+        );
+        // The first frames grow the log's buffers; the rest must not spike.
+        let steady = frames[4..].iter().copied().fold(0.0, f64::max);
+        assert!(
+            steady <= 1.5 * median + 3.0,
+            "a frame took {steady:.1} ms, median {median:.1} ms: {frames:.1?}"
+        );
+    }
 }
 
 /// [`Document::reopen`] keeps the step it reopens as the journal's lower layer: an edit

@@ -694,6 +694,11 @@ impl DriftApp {
         theme::section(ui, "Crosshair");
         self.crosshair_prefs(ui);
         self.mouse_prefs(ui);
+        theme::section(ui, "Move");
+        crate::theme::checkbox(ui, &mut self.g_base_point, "G picks a base point first")
+            .on_hover_text(
+                "On: G works like B during a move: click a base point, then the destination                  (snaps apply to both). Nothing moves until the base point is picked; Esc                  cancels. Off: G grabs from where the pointer is",
+            );
         theme::section(ui, "Motion");
         crate::theme::checkbox(ui, &mut self.animate_solves, "Animate solves").on_hover_text(
             "When a typed value, a new relation, an undo or a redo moves geometry, it eases              into place instead of jumping. Only the drawing moves: picking and readouts use              where things are at once. Never while dragging",

@@ -246,9 +246,7 @@ fn same_drawing(a: &str, b: &str) -> bool {
 /// What a sketch covers: its relation kinds, and which kinds of curve it draws.
 fn covers(doc: &drift_core::Document, kinds: &mut BTreeMap<String, usize>) {
     for (_, c) in doc.constraints() {
-        let name = format!("{c:?}");
-        let name = name.split([' ', '{']).next().unwrap_or_default().to_owned();
-        *kinds.entry(name).or_default() += 1;
+        *kinds.entry(kind_name(c).to_owned()).or_default() += 1;
     }
     for (_, e) in doc.iter() {
         let name = match e.kind {
@@ -265,43 +263,58 @@ fn covers(doc: &drift_core::Document, kinds: &mut BTreeMap<String, usize>) {
 }
 
 /// Every relation and dimension kind the corpus must hold at least once (the audit's known
-/// gaps among them), and the curves.
-const MUST_COVER: [&str; 34] = [
-    "Coincident",
-    "Horizontal",
-    "Vertical",
-    "HorizontalPoints",
-    "VerticalPoints",
-    "Parallel",
-    "Perpendicular",
-    "Equal",
-    "Tangent",
-    "Concentric",
-    "Coradial",
-    "Collinear",
-    "PointOnCurve",
-    "Symmetric",
-    "Smooth",
-    "Midpoint",
-    "MidpointOf",
-    "EqualDistance",
-    "Corner",
-    "Fix",
-    "FixX",
-    "FixY",
-    "FixRadius",
-    "Distance",
-    "Radius",
-    "Diameter",
-    "HorizontalDistance",
-    "VerticalDistance",
-    "PointLineDistance",
-    "RadialGap",
-    "Angle",
-    "(circle)",
-    "(ellipse)",
-    "(arc)",
+/// gaps among them), named once: the match in [`kind_name`] has no catch-all arm, so a kind
+/// added to `Constraint` doesn't compile until it is listed here, and then `corpus_build`
+/// fails until a sketch holds it.
+macro_rules! relation_kinds {
+    ($($kind:ident),* $(,)?) => {
+        const RELATION_KINDS: &[&str] = &[$(stringify!($kind)),*];
+
+        /// A relation's kind, as `RELATION_KINDS` names it.
+        fn kind_name(c: &Constraint) -> &'static str {
+            match c {
+                $(Constraint::$kind { .. } => stringify!($kind),)*
+            }
+        }
+    };
+}
+
+relation_kinds![
+    Coincident,
+    Horizontal,
+    Vertical,
+    HorizontalPoints,
+    VerticalPoints,
+    Parallel,
+    Perpendicular,
+    Equal,
+    Tangent,
+    Concentric,
+    Coradial,
+    Collinear,
+    PointOnCurve,
+    Symmetric,
+    Smooth,
+    Midpoint,
+    MidpointOf,
+    EqualDistance,
+    Corner,
+    Fix,
+    FixX,
+    FixY,
+    FixRadius,
+    Distance,
+    Radius,
+    Diameter,
+    HorizontalDistance,
+    VerticalDistance,
+    PointLineDistance,
+    RadialGap,
+    Angle,
 ];
+
+/// The curves the corpus must draw, besides lines.
+const CURVE_KINDS: [&str; 3] = ["(circle)", "(ellipse)", "(arc)"];
 
 /// Every script builds, each committed drawing is what its script makes (or, with
 /// `DRIFT_CORPUS_WRITE`, is written), the corpus has at least 40 sketches, and together they
@@ -389,8 +402,10 @@ fn corpus_build() {
         drawings >= 40,
         "{drawings} sketches: the corpus is at least 40"
     );
-    let missing: Vec<&str> = MUST_COVER
-        .into_iter()
+    let missing: Vec<&str> = RELATION_KINDS
+        .iter()
+        .chain(&CURVE_KINDS)
+        .copied()
         .filter(|k| !kinds.contains_key(*k))
         .collect();
     assert!(missing.is_empty(), "no sketch has {missing:?}");

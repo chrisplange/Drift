@@ -196,9 +196,9 @@ linkage-bell-crank e3c ok ok ok ok ok ok W ok ok ok
 linkage-bell-crank e4p ok ok ok ok ok ok ok WL ok ok
 linkage-bell-crank e5c ok ok ok ok ok ok ok W ok ok
 linkage-bell-crank e12p ok ok ok ok ok ok ok ok ok ok
-linkage-bell-crank e13c ok ok ok ok ok ok WL ok ok ok
+linkage-bell-crank e13c ok ok ok ok ok ok L ok ok ok
 linkage-bell-crank e14p ok ok ok ok ok ok ok ok ok ok
-linkage-bell-crank e15c ok ok ok ok ok ok ok WL ok WL
+linkage-bell-crank e15c ok ok ok ok ok ok ok L ok L
 linkage-belt e3p ok ok ok ok ok ok ok ok ok ok
 linkage-belt e4c ok ok ok ok ok ok ok ok ok ok
 linkage-belt e5p ok ok ok ok ok ok ok ok ok ok
@@ -236,7 +236,7 @@ linkage-pantograph e5c ok ok ok ok ok ok ok ok ok ok
 linkage-pantograph e6p ok ok ok ok ok ok ok ok ok ok
 linkage-pantograph e7c ok ok ok ok ok ok ok ok ok ok
 linkage-pantograph e8c ok ok ok ok ok ok ok ok ok ok
-linkage-pantograph e9p ok ok ok ok WLJ LJ ok J J ok
+linkage-pantograph e9p ok ok ok ok LJ LJ ok J J ok
 linkage-pantograph e10c ok ok ok ok ok ok ok ok ok ok
 linkage-piston e5p ok ok ok ok ok ok ok ok ok ok
 linkage-piston e6p ok ok ok ok ok ok ok ok ok ok
@@ -260,7 +260,7 @@ linkage-toggle e5p ok ok ok ok ok ok ok ok ok ok
 linkage-toggle e6c ok ok ok ok ok ok ok ok ok ok
 linkage-toggle e7p ok ok ok ok ok ok ok ok ok ok
 linkage-toggle e8c ok ok ok ok W ok W ok ok ok
-linkage-toggle e9p ok ok ok ok ok ok WL ok ok ok
+linkage-toggle e9p ok ok ok ok ok ok L ok ok ok
 linkage-toggle e10c ok ok ok ok ok ok W ok ok ok
 linkage-watt e3p ok ok ok ok ok ok ok ok ok ok
 linkage-watt e4c ok ok ok ok ok ok ok ok ok ok
@@ -410,7 +410,7 @@ plan-corridor e1p ok ok ok ok ok ok ok ok ok ok
 plan-corridor e2p ok ok ok ok ok ok ok ok ok ok
 plan-corridor e3c ok ok ok ok ok ok ok ok ok ok
 plan-corridor e4p ok ok ok ok ok ok ok ok ok L
-plan-corridor e5p ok ok ok ok ok ok ok ok ok WL
+plan-corridor e5p ok ok ok ok ok ok ok ok ok L
 plan-corridor e6c ok ok ok ok ok ok ok ok ok ok
 plan-corridor e7p ok ok ok ok ok ok ok ok ok L
 plan-corridor e8p ok ok ok ok ok ok ok ok ok ok
@@ -424,7 +424,7 @@ plan-corridor e15p ok ok ok ok ok ok ok ok ok ok
 plan-corridor e16p ok ok ok ok ok ok ok ok ok ok
 plan-corridor e17c ok ok ok ok ok ok ok ok ok ok
 plan-corridor e18p ok ok ok ok ok ok ok ok ok L
-plan-corridor e19p ok ok ok ok ok ok ok ok ok WL
+plan-corridor e19p ok ok ok ok ok ok ok ok ok L
 plan-corridor e20c ok ok ok ok ok ok ok ok ok ok
 plan-corridor e21c ok ok ok ok ok ok ok ok ok ok
 plan-corridor e22c ok ok ok ok ok ok ok ok ok ok

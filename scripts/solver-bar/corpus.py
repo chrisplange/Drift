@@ -7,6 +7,7 @@ are in `crates/drift-edit/src/drag_props/corpus.rs`.
 
     python scripts/solver-bar/corpus.py run [--jobs N] [--out DIR] [--exe PATH] [--update]
     python scripts/solver-bar/corpus.py diff BASE/record.txt PR/record.txt
+    python scripts/solver-bar/corpus.py baseline --from record.txt --platform linux
 
 `run` builds the drift-edit test binary in release (unless --exe), runs the sweep in N
 processes, and writes DIR/record.txt (one line per drag) and DIR/summary.md (the table for
@@ -15,14 +16,24 @@ main gives, and exits with status 1 if any differs: a drag that newly fails a ch
 that no longer fails it (the PR that fixes a drag updates the baseline with --update, so a
 later PR can't break it again unseen). On Linux and macOS the rows of
 `corpus-baseline.<platform>.txt` stand in for the baseline's (round-off decides a drag at a
-fold, and libm differs); --update there writes that file.
+fold, and libm differs); --update there writes that file. `run` says which files it judged
+against. --update refuses a sweep that isn't whole (one narrowed by CORPUS_ONLY,
+CORPUS_TARGET, CORPUS_PATH or CORPUS_PRIVATE_ONLY, or one missing rows the baseline has).
+
+`baseline --from` writes a platform's rows from a record made there: the Linux rows from the
+`record.txt` of CI's `Sketch corpus (ubuntu)` job (its `solver-bar-corpus-linux` artifact),
+with no Linux machine needed. Only one machine per platform is measured (Windows: the
+owner's PC; Linux: CI's ubuntu-24.04 image); another CPU, a new runner image or toolchain,
+or macOS may differ by a row, and those rows come from that machine's record the same way.
 
 `diff` compares two records, drag by drag: checks newly failed and newly passed, frames
 refused, and where the drag ended (a digest of the dragged part's geometry, to the bit).
-Exit status 1 if a drag newly fails a check.
+It also lists drags that got worse at a check they already failed: more frames failing it,
+or for `J` a worst jump at least twice as far. Exit status 1 if a drag newly fails a check
+or got worse at one it fails.
 
 With `DRIFT_CORPUS_PRIVATE` set to a folder of `.drift` files, those are swept too, as
-`private-001` and so on. Their lines go to DIR/private.txt, never into the baseline, and
+`private-` and a hash of the file's contents. Their lines go to DIR/private.txt, never into the baseline, and
 every table counts them in aggregate only: the repository is public.
 """
 
@@ -177,6 +188,10 @@ def read_baseline(path):
     return rows
 
 
+# What narrows a sweep to part of the corpus: such a run can't be a baseline.
+NARROWING = ("CORPUS_ONLY", "CORPUS_TARGET", "CORPUS_PATH", "CORPUS_PRIVATE_ONLY")
+
+
 def write_baseline(path, rows, head):
     lines = [f"# {h}" for h in head]
     lines += [f"{s} {t} {' '.join(v)}" for (s, t), v in rows.items()]
@@ -188,11 +203,46 @@ def this_platform():
         platform.system(), platform.system().lower())
 
 
-def expected_rows():
-    """The verdicts expected here: the baseline's, with this platform's own rows over them."""
+def platform_file(name):
+    return HERE / f"corpus-baseline.{name}.txt"
+
+
+def expected_rows(name=None):
+    """The verdicts expected on platform `name` (here by default): the baseline's, with that
+    platform's own rows over them; and the files they came from."""
+    name = name or this_platform()
     rows = read_baseline(HERE / "corpus-baseline.txt")
-    rows.update(read_baseline(HERE / f"corpus-baseline.{this_platform()}.txt"))
-    return rows
+    files = ["corpus-baseline.txt"]
+    own = platform_file(name)
+    if own.exists():
+        rows.update(read_baseline(own))
+        files.append(own.name)
+    return rows, files
+
+
+def partial(got, narrowed):
+    """Why `got` (a sweep's baseline rows) can't be written as the baseline, or None."""
+    if narrowed:
+        return f"the sweep was narrowed by {', '.join(narrowed)}"
+    base = read_baseline(HERE / "corpus-baseline.txt")
+    missing = [k for k in base if k not in got]
+    if missing:
+        return (f"{len(missing)} target(s) the baseline has weren't swept "
+                f"(first: {missing[0][0]} {missing[0][1]})")
+    gaps = [k for k, v in got.items() if "-" in v]
+    if gaps:
+        return f"{len(gaps)} target(s) weren't swept along every path (first: {gaps[0][0]} {gaps[0][1]})"
+    return None
+
+
+def write_platform_rows(name, got):
+    """Write platform `name`'s rows: those of `got` that differ from corpus-baseline.txt."""
+    base = read_baseline(HERE / "corpus-baseline.txt")
+    own = {k: v for k, v in got.items() if base.get(k) != v}
+    write_baseline(
+        platform_file(name), own,
+        [f"The corpus baseline's rows that differ on {name} (see corpus-baseline.txt)."])
+    return len(own)
 
 
 BASELINE_HEAD = [
@@ -297,20 +347,21 @@ def cmd_run(args):
         return 1
     got = baseline_rows(drags)
     if args.update:
+        narrowed = [k for k in NARROWING if env_extra.get(k, os.environ.get(k))]
+        why = partial(got, narrowed)
+        if why:
+            print(f"not updating the baseline: {why}. --update takes a whole sweep.")
+            return 1
         if this_platform() == "windows":
             write_baseline(HERE / "corpus-baseline.txt", got, BASELINE_HEAD)
         else:
-            base = read_baseline(HERE / "corpus-baseline.txt")
-            own = {k: v for k, v in got.items() if base.get(k) != v}
-            write_baseline(
-                HERE / f"corpus-baseline.{this_platform()}.txt", own,
-                [f"The corpus baseline's rows that differ on {this_platform()} "
-                 "(see corpus-baseline.txt)."])
+            write_platform_rows(this_platform(), got)
         print("baseline updated")
         return 0
     if args.no_judge:
         return 0
-    want = expected_rows()
+    want, files = expected_rows()
+    print(f"judged against {' + '.join(files)} ({this_platform()})")
     changed = []
     for key in sorted(set(got) | set(want), key=lambda k: (k[0], target_order(k[1]))):
         g, w = got.get(key), want.get(key)
@@ -341,7 +392,7 @@ def diff_records(base, pr):
     both = [k for k in sorted_keys(base) if k in pr]
     only_base = [k for k in base if k not in pr]
     only_pr = [k for k in pr if k not in base]
-    worse, better, moved, refusals = [], [], 0, 0
+    worse, better, deeper, moved, refusals = [], [], [], 0, 0
     per_check_worse = collections.Counter()
     per_check_better = collections.Counter()
     for k in both:
@@ -353,6 +404,15 @@ def diff_records(base, pr):
         if fa - fb:
             better.append((k, a, b))
             per_check_better.update(fa - fb)
+        # Worse at a check it already failed: more frames failing it, or a jump twice as far.
+        rose = [letter for letter, field, _ in CHECKS
+                if field and letter in fa & fb and b.n(field) > a.n(field)]
+        if "J" in fa & fb and "J" not in rose:
+            wa, wb = float(a.fields.get("worst", 0)), float(b.fields.get("worst", 0))
+            if wb >= 2 * wa:
+                rose.append("J")
+        if rose:
+            deeper.append((k, a, b, rose))
         moved += a.fields.get("end") != b.fields.get("end")
         refusals += a.n("ref") != b.n("ref")
     out.append(f"{len(both)} drags in both records"
@@ -376,7 +436,22 @@ def diff_records(base, pr):
                 out.append(f"  {k[0]} {k[1]} {k[2]}: {a.verdict} -> {b.verdict}")
             if len(public) > 60:
                 out.append(f"  ... and {len(public) - 60} more")
-    return out, bool(worse)
+    if deeper:
+        public = [r for r in deeper if not r[1].private]
+        private = len(deeper) - len(public)
+        out.append(f"Worse at a check already failing: {len(deeper)}"
+                   + (f" ({private} in private drawings)" if private else ""))
+        for k, a, b, rose in public[:60]:
+            what = ", ".join(
+                f"{letter} {a.fields.get(field)} -> {b.fields.get(field)} frames"
+                if letter != "J" or b.n("jumps") > a.n("jumps")
+                else f"J worst {a.fields.get('worst')} -> {b.fields.get('worst')}"
+                for letter in rose
+                for field in [next(f for l, f, _ in CHECKS if l == letter)])
+            out.append(f"  {k[0]} {k[1]} {k[2]}: {b.verdict}: {what}")
+        if len(public) > 60:
+            out.append(f"  ... and {len(public) - 60} more")
+    return out, bool(worse or deeper)
 
 
 def cmd_diff(args):
@@ -389,6 +464,20 @@ def cmd_diff(args):
     lines, worse = diff_records(base, pr)
     print("\n".join(lines))
     return 1 if worse else 0
+
+
+def cmd_baseline(args):
+    """Write a platform's rows from a record made on it (CI's artifact, say)."""
+    if args.platform == "windows":
+        sys.exit("corpus-baseline.txt is Windows's: write it with `run --update` on Windows")
+    drags, _ = read_record(args.record)
+    got = baseline_rows(drags)
+    why = partial(got, [])
+    if why:
+        sys.exit(f"not writing {platform_file(args.platform).name}: {why}")
+    n = write_platform_rows(args.platform, got)
+    print(f"{platform_file(args.platform).name}: {n} row(s) that differ from corpus-baseline.txt")
+    return 0
 
 
 def main():
@@ -411,6 +500,10 @@ def main():
     diff.add_argument("base")
     diff.add_argument("pr")
     diff.set_defaults(func=cmd_diff)
+    base = sub.add_parser("baseline", help="write a platform's rows from a record made there")
+    base.add_argument("--from", dest="record", required=True, help="a record.txt from that platform")
+    base.add_argument("--platform", required=True, help="linux, macos, ...")
+    base.set_defaults(func=cmd_baseline)
     args = ap.parse_args()
     sys.exit(args.func(args))
 

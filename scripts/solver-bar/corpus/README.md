@@ -31,8 +31,31 @@ python scripts/solver-bar/corpus.py run --update
 
 `cargo test -p drift-app --lib corpus_build` (in the normal test run) fails when a drawing
 isn't what its script makes, when a sketch is fully defined, or when the corpus no longer
-holds every relation kind. `DRIFT_CORPUS_LIST=1` with `--nocapture` prints each sketch's
+holds every relation kind. The kinds come from `Constraint` itself (a match with no catch-all
+arm), so a new relation kind doesn't compile until it is named in `corpus_build.rs`, and
+then fails the test until a sketch holds it. `DRIFT_CORPUS_LIST=1` with `--nocapture` prints each sketch's
 size and degrees of freedom, and the count of each relation kind.
+
+`--update` takes a whole sweep only: it refuses one narrowed by `CORPUS_ONLY`,
+`CORPUS_TARGET`, `CORPUS_PATH` or `CORPUS_PRIVATE_ONLY`, or one that misses a target the
+baseline has.
+
+## The baseline on each platform
+
+`corpus-baseline.txt` is measured on one Windows PC. Round-off decides a drag at a fold and
+libm differs between platforms, so `corpus-baseline.<platform>.txt` holds the rows that
+differ elsewhere, and `run` says which files it judged against. The Linux rows are CI's
+(`Sketch corpus (ubuntu)`, pinned to ubuntu-24.04); write them from that job's record, with
+no Linux machine needed:
+
+```
+gh run download <run> -n solver-bar-corpus-linux -D target/corpus-linux
+python scripts/solver-bar/corpus.py baseline --from target/corpus-linux/record.txt --platform linux
+```
+
+Only one machine per platform is measured. Another Windows CPU, a Mac, a new runner image,
+toolchain or glibc may differ by a row or two the same way; such rows come from that
+machine's record with `baseline --from`, not from a code change.
 
 A script's `#>` lines are comments to the script language and instructions to the builder,
 for what the language has no statement for:
@@ -62,5 +85,7 @@ DRIFT_CORPUS_IMPORT=<file.drift> DRIFT_CORPUS_AS=real-<name> cargo test -p drift
 ## Private drawings
 
 Set `DRIFT_CORPUS_PRIVATE` to a folder of `.drift` files and the sweep takes them too, as
-`private-001` and so on. They are never committed, never named, and their results are
+`private-` and eight hex digits of a hash of the file's contents (so a drawing keeps its number
+when others are added or removed, and `diff` of two records compares the same drawing). They
+are never committed, never named, and their results are
 reported in aggregate only: this repository is public.

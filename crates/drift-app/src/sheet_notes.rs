@@ -523,6 +523,7 @@ pub(crate) mod tests {
         // A circle, a point 400 above the line, and a second line at 45° from its start.
         let c = doc.add_point(V(500.0, 250.0));
         let circle = doc.add_circle(c, 200.0).unwrap();
+        let ring = doc.add_circle(c, 230.0).unwrap();
         let above = doc.add_point(V(250.0, 400.0));
         let far = doc.add_point(V(500.0, 500.0));
         let slope = doc.add_line(a, far).unwrap();
@@ -555,6 +556,11 @@ pub(crate) mod tests {
                 curve: circle,
                 value: 0.0,
             },
+            Constraint::RadialGap {
+                a: ring,
+                b: circle,
+                value: 0.0,
+            },
             Constraint::Angle {
                 a: line,
                 b: slope,
@@ -568,8 +574,8 @@ pub(crate) mod tests {
         let d = p.page(sheet);
         let shown: Vec<String> = texts(&d).into_iter().map(|t| t.0).collect();
         // Each reads what the model measures, at 1:10 as at any scale.
-        assert_eq!(shown.len(), 7, "{shown:?}");
-        for want in ["500", "400", "250", "R200", "Ø400", "45°"] {
+        assert_eq!(shown.len(), 8, "{shown:?}");
+        for want in ["500", "400", "250", "R200", "Ø400", "30", "45°"] {
             assert!(shown.iter().any(|t| t == want), "{want} in {shown:?}");
         }
         // (The slanted distance from the origin to (250, 400) is not a round number.)
@@ -584,7 +590,7 @@ pub(crate) mod tests {
             },
         };
         let layouts = layout_sheet_annotations(&painter(), &p.ed.doc, &s, &paper);
-        assert_eq!(layouts.len(), 7);
+        assert_eq!(layouts.len(), 8);
         for l in &layouts {
             let SheetShape::Dimension(dim) = &l.shape else {
                 panic!("a dimension");

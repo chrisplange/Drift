@@ -78,6 +78,8 @@ pub enum Equation {
     LengthValue { length: Length, value: f64 },
     /// `a − b = 0`
     EqualLength { a: Length, b: Length },
+    /// `a − b − value = 0`: two lengths a set amount apart (two concentric radii's gap).
+    LengthGap { a: Length, b: Length, value: f64 },
     /// `sign·(b − a) − value = 0` for two scalar parameters (horizontal / vertical distances).
     /// `sign` (±1) records which side `b` was on, so the solution doesn't flip over.
     Difference {
@@ -173,6 +175,7 @@ impl Equation {
         match *self {
             Equation::OffsetFrom { value, .. }
             | Equation::LengthValue { value, .. }
+            | Equation::LengthGap { value, .. }
             | Equation::Difference { value, .. }
             | Equation::PointLine { value, .. } => Some(value),
             _ => None,
@@ -190,7 +193,7 @@ impl Equation {
     pub fn params(&self) -> Vec<usize> {
         match self {
             Equation::LengthValue { length, .. } => length.params(),
-            Equation::EqualLength { a, b } => {
+            Equation::EqualLength { a, b } | Equation::LengthGap { a, b, .. } => {
                 let mut p = a.params();
                 p.extend(b.params());
                 p
@@ -409,6 +412,9 @@ impl Equation {
             }
             Equation::LengthValue { length, value } => length.eval(val, 1.0, grad) - value,
             Equation::EqualLength { a, b } => a.eval(val, 1.0, grad) - b.eval(val, -1.0, grad),
+            Equation::LengthGap { a, b, value } => {
+                a.eval(val, 1.0, grad) - b.eval(val, -1.0, grad) - value
+            }
             Equation::Midpoint { p, a, b } => {
                 grad.extend([(p, 1.0), (a, -0.5), (b, -0.5)]);
                 val(p) - 0.5 * (val(a) + val(b))
@@ -617,6 +623,11 @@ mod tests {
             Equation::EqualLength {
                 a: Length::Points([0, 1, 4, 5]),
                 b: Length::Param(8),
+            },
+            Equation::LengthGap {
+                a: Length::Points([0, 1, 4, 5]),
+                b: Length::Param(8),
+                value: 0.4,
             },
             Equation::angle(line1, line2, 0.0),
             Equation::angle(line1, line2, FRAC_PI_2),

@@ -350,7 +350,7 @@ impl Document {
         for (id, c) in constraints {
             match doc.validate(&c) {
                 Ok(()) => {
-                    kept.insert(id, c);
+                    kept.insert(id, doc.inner_first(c));
                 }
                 Err(DocumentError::Degenerate(why)) => dropped.push((id, why)),
                 Err(e) => return Err(e),
@@ -446,9 +446,9 @@ impl Document {
         let constraints: BTreeMap<_, _> = constraints.into_iter().collect();
         let next_id = entities.keys().last().map_or(1, |id| id.0 + 1);
         let next_constraint_id = constraints.keys().last().map_or(1, |id| id.0 + 1);
-        let doc = Self {
+        let mut doc = Self {
             entities: entities.into(),
-            constraints: constraints.into(),
+            constraints: BTreeMap::new().into(),
             next_id,
             next_constraint_id,
             ..Self::default()
@@ -458,9 +458,15 @@ impl Document {
                 doc.point(point)?;
             }
         }
-        for constraint in doc.constraints.values() {
+        for constraint in constraints.values() {
             doc.validate(constraint)?;
         }
+        // (Read as added: see `inner_first`.)
+        let constraints: BTreeMap<_, _> = constraints
+            .into_iter()
+            .map(|(id, c)| (id, doc.inner_first(c)))
+            .collect();
+        doc.constraints = constraints.into();
         Ok(doc)
     }
 

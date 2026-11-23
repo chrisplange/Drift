@@ -201,6 +201,16 @@ pub enum Constraint {
         line: EntityId,
         value: f64,
     },
+    /// Driving dimension: the gap between two concentric circles/arcs, the difference of
+    /// their radii (a ring's wall): `b`'s radius less `a`'s, always positive. Added, the
+    /// smaller as drawn becomes `a` (see `Document::add_constraint`), so `a` stays the inner
+    /// one and `b` the outer, whichever was picked first. With neither held, a typed gap moves
+    /// the outer one.
+    RadialGap {
+        a: EntityId,
+        b: EntityId,
+        value: f64,
+    },
     /// Driving dimension: angle between two lines, in degrees, measured from `a` to `b`
     /// counter-clockwise. Lines are undirected, so the angle is taken modulo 180°.
     Angle {
@@ -237,7 +247,9 @@ impl Constraint {
             }
             Constraint::Smooth { point, a, b } => vec![(point, Point), (a, Point), (b, Point)],
             Constraint::Tangent { a, b } => vec![(a, LineOrCircular), (b, Curve)],
-            Constraint::Concentric { a, b } | Constraint::Coradial { a, b } => {
+            Constraint::Concentric { a, b }
+            | Constraint::Coradial { a, b }
+            | Constraint::RadialGap { a, b, .. } => {
                 vec![(a, Circular), (b, Circular)]
             }
             Constraint::Collinear { a, b } => vec![(a, Line), (b, Line)],
@@ -289,6 +301,7 @@ impl Constraint {
             Constraint::Distance { .. } | Constraint::PointLineDistance { .. } => "Distance",
             Constraint::Radius { .. } => "Radius",
             Constraint::Diameter { .. } => "Diameter",
+            Constraint::RadialGap { .. } => "Gap",
             Constraint::HorizontalDistance { .. } => "Horizontal distance",
             Constraint::VerticalDistance { .. } => "Vertical distance",
             Constraint::Angle { .. } => "Angle",
@@ -308,7 +321,8 @@ impl Constraint {
             | Constraint::Diameter { value, .. }
             | Constraint::HorizontalDistance { value, .. }
             | Constraint::VerticalDistance { value, .. }
-            | Constraint::PointLineDistance { value, .. } => Some(value),
+            | Constraint::PointLineDistance { value, .. }
+            | Constraint::RadialGap { value, .. } => Some(value),
             Constraint::Angle { degrees, .. } => Some(degrees),
             _ => None,
         }
@@ -330,7 +344,8 @@ impl Constraint {
             | Constraint::Diameter { value, .. }
             | Constraint::HorizontalDistance { value, .. }
             | Constraint::VerticalDistance { value, .. }
-            | Constraint::PointLineDistance { value, .. } => *value = new,
+            | Constraint::PointLineDistance { value, .. }
+            | Constraint::RadialGap { value, .. } => *value = new,
             Constraint::Angle { degrees, .. } => *degrees = new,
             _ => {}
         }
@@ -345,7 +360,8 @@ impl Constraint {
             | Constraint::Diameter { value, .. }
             | Constraint::HorizontalDistance { value, .. }
             | Constraint::VerticalDistance { value, .. }
-            | Constraint::PointLineDistance { value, .. } => value.is_finite() && value > 0.0,
+            | Constraint::PointLineDistance { value, .. }
+            | Constraint::RadialGap { value, .. } => value.is_finite() && value > 0.0,
             Constraint::Angle { degrees, .. } => degrees.is_finite(),
             Constraint::Fix { at, .. } => at.is_finite(),
             Constraint::FixX { x: v, .. } | Constraint::FixY { y: v, .. } => v.is_finite(),
@@ -442,6 +458,11 @@ impl Constraint {
             PointLineDistance { point, line, value } => PointLineDistance {
                 point: f(point),
                 line: f(line),
+                value,
+            },
+            RadialGap { a, b, value } => RadialGap {
+                a: f(a),
+                b: f(b),
                 value,
             },
             Angle { a, b, degrees } => Angle {

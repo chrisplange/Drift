@@ -21,18 +21,9 @@ fn keyboard_page(query: &str) -> Option<Harness<'static, DriftApp>> {
     Some(h)
 }
 
-/// Click the Change button on the row of the command titled `title`.
-fn change(h: &mut Harness<'static, DriftApp>, title: &str) {
-    // (The tool rail has a button by the same name: the row's is the one beside a Change.)
-    let rows: Vec<f32> = h
-        .get_all_by_label(title)
-        .map(|n| n.rect().center().y)
-        .collect();
-    let gap = |y: f32| rows.iter().map(|r| (r - y).abs()).fold(f32::MAX, f32::min);
-    h.get_all_by_label("Change")
-        .min_by(|a, b| gap(a.rect().center().y).total_cmp(&gap(b.rect().center().y)))
-        .unwrap()
-        .click();
+/// Click the key cap `key` of the command titled `title`, to change it.
+fn change(h: &mut Harness<'static, DriftApp>, title: &str, key: &str) {
+    h.get_by_label(&format!("Change {title} key {key}")).click();
     h.run();
 }
 
@@ -46,12 +37,15 @@ fn reassign_a_key_and_use_it() {
     let Some(mut h) = keyboard_page("rectangle") else {
         return;
     };
-    change(&mut h, "Rectangle");
-    assert!(h.query_by_label_contains("Press a key").is_some());
+    change(&mut h, "Rectangle", "R");
+    assert!(h.query_by_label_contains("press a key").is_some());
     h.key_press(Key::J);
     h.run();
     let rect = crate::commands::spec_by_id("draw.rectangle").unwrap();
+    // In place of R: R no longer picks it.
+    assert_eq!(rect.shortcuts().len(), 1);
     assert_eq!(rect.shortcuts()[0].key, Key::J);
+    assert!(h.query_by_label_contains("Made your own preset").is_some());
     assert!(keymap::with(|m| matches!(m.active, Active::User(0))));
     // Shown with the new key, and the canvas runs it.
     assert_eq!(rect.key_text(false), "J");
@@ -69,11 +63,11 @@ fn a_clash_is_asked_about() {
     let Some(mut h) = keyboard_page("rectangle") else {
         return;
     };
-    change(&mut h, "Rectangle");
+    change(&mut h, "Rectangle", "R");
     h.key_press(Key::C);
     h.run();
     // Nothing changed yet: the user chooses.
-    assert!(h.query_by_label_contains("is already Circle").is_some());
+    assert!(h.query_by_label_contains("is Circle's only key").is_some());
     let circle = crate::commands::spec_by_id("draw.circle").unwrap();
     assert_eq!(circle.shortcuts()[0].key, Key::C);
     h.get_by_label("Reassign").click();
@@ -82,10 +76,13 @@ fn a_clash_is_asked_about() {
     let rect = crate::commands::spec_by_id("draw.rectangle").unwrap();
     assert_eq!(rect.shortcuts()[0].key, Key::C);
     // A key the tools keep can't be taken.
-    change(&mut h, "Rectangle");
+    change(&mut h, "Rectangle", "C");
     h.key_press(Key::X);
     h.run();
-    assert!(h.query_by_label_contains("can't run a command").is_some());
+    assert!(
+        h.query_by_label_contains("is kept for locking to X")
+            .is_some()
+    );
 }
 
 #[test]
@@ -93,7 +90,7 @@ fn the_keymap_round_trips_through_the_settings() {
     let Some(mut h) = keyboard_page("rectangle") else {
         return;
     };
-    change(&mut h, "Rectangle");
+    change(&mut h, "Rectangle", "R");
     h.key_press(Key::J);
     h.run();
     let saved = keymap::current();

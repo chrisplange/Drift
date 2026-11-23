@@ -225,7 +225,10 @@ impl DriftApp {
                                             theme::primary_button("New sketch", dark),
                                         )
                                         .on_hover_text(
-                                            "Start drawing: pick a tool, or press L for a line",
+                                            &match crate::commands::key_of("draw.line").as_str() {
+                                                "" => "Start drawing: pick a tool".to_owned(),
+                                                k => format!("Start drawing: pick a tool, or press {k} for a line"),
+                                            },
                                         )
                                         .clicked()
                                     {
@@ -814,16 +817,17 @@ impl DriftApp {
             &mut self.drawing.editor.prefs.auto_relations,
             "Add relations automatically while drawing",
         )
-        .on_hover_text(
-            "Horizontal, vertical, coincident, tangent and so on, as you snap · Shift+Alt+R",
-        );
+        .on_hover_text(format!(
+            "Horizontal, vertical, coincident, tangent and so on, as you snap{}",
+            crate::commands::key_suffix("view.auto_relations")
+        ));
         crate::theme::checkbox(
             ui,
             &mut self.drawing.editor.prefs.auto_merge,
             "Join points dropped on points",
         )
         .on_hover_text(
-            "Auto merge: a dragged point dropped on another, or a line or arc drawn on another shape's point, shares it (on the same layer only). Ctrl flips it for one drop · Shift+Alt+M",
+            format!("Auto merge: a dragged point dropped on another, or a line or arc drawn on another shape's point, shares it (on the same layer only). Ctrl flips it for one drop{}", crate::commands::key_suffix("view.auto_merge")),
         );
         crate::theme::checkbox(
             ui,

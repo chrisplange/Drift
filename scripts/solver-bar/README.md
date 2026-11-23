@@ -14,7 +14,7 @@ Build in release, and run one test per process.
 | 6 | Linux | the `Solver bar` workflow: items 1 and 4 on ubuntu, nightly and on PRs that touch the solver, drift-core, the editor or the bar |
 | (PR 6) | Relation adding | `drag_props::relation_census::relation_census` (`CENSUS_N` cases, default 4,000; `CENSUS_CASE` replays one, printing the drawing before and after), run on both builds, then `relations.py BASE.txt PR.txt`: relations newly refused (exit 1) or added, and per case what moved and which lengths and radii changed |
 | 7 | The binding drag rule | `drag_props::held_shapes::` (in the normal run), and #377's census: drags that went while an arc's radius changed, radii grown, and in a comparison every stop -> went split by whether a radius changed |
-| 8 | The sketch corpus | `python scripts/solver-bar/corpus.py run`: sweeps the drawings in `corpus/` (51 sketches: profiles, brackets, linkages, plans, patterns, every relation and dimension kind, circles and ellipses) and fails on any drag whose verdict differs from `corpus-baseline.txt`; `corpus.py diff BASE/record.txt PR/record.txt` compares two builds drag by drag (see below) |
+| 8 | The sketch corpus | `python scripts/solver-bar/corpus.py run`: sweeps the drawings in `corpus/` (52 sketches: profiles, brackets, linkages, plans, patterns, every relation and dimension kind, circles and ellipses) and fails on any drag whose verdict differs from `corpus-baseline.txt`; `corpus.py diff BASE/record.txt PR/record.txt` compares two builds drag by drag (see below) |
 
 ## The sketch corpus
 

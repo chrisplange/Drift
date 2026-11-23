@@ -331,7 +331,7 @@ not time.
 7. **The binding drag rule:** a drag that kept radii can't follow stops at the last valid shape;
    radii are never grown. Checked by `held_shapes::` and the census's stop classes.
 
-8. **The sketch corpus** (#187, added 2026-11-22): 51 drawn sketches (profiles, brackets,
+8. **The sketch corpus** (#187, added 2026-11-22): 52 drawn sketches (profiles, brackets,
    linkages, plans with walls and openings, patterns, a real drawing), every point and curve
    that can move dragged along ten pointer paths, every frame judged: rows met, no arc sweep
    flip, no way-round flip, held radii never grown, no jump over 50 times the pointer's move,

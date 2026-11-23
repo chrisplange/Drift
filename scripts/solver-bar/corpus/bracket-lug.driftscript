@@ -1,0 +1,13 @@
+# A lifting lug: a base, two flanks tangent to a round head, and a hole concentric with it.
+line base from -30,0 to 30,0
+line flanka from base.end to 19.6,43.9
+line flankb from -19.6,43.9 to base.start
+arc head centre 0,40 from flanka.end to flankb.start
+tangent flanka head
+tangent flankb head
+circle eye r 8 at 0,40
+concentric eye head
+horizontal base
+dim base = 60
+dim r head = 20
+fix base.start

@@ -1,0 +1,23 @@
+# A plate with two parallel adjusting slots of equal size.
+rect plate 120 x 60 at 0,0
+arc sa1 centre 20,20 from 20,25 to 20,15
+arc sa2 centre 50,20 from 50,15 to 50,25
+line sal from sa1.end to sa2.start
+line sau from sa2.end to sa1.start
+tangent sal sa1
+tangent sal sa2
+tangent sau sa1
+tangent sau sa2
+arc sb1 centre 70,40 from 70,45 to 70,35
+arc sb2 centre 100,40 from 100,35 to 100,45
+line sbl from sb1.end to sb2.start
+line sbu from sb2.end to sb1.start
+tangent sbl sb1
+tangent sbl sb2
+tangent sbu sb1
+tangent sbu sb2
+equal sa1 sa2 sb1 sb2
+parallel sal sbl
+equal sal sbl
+parallel sal plate.south
+dim r sa1 = 5

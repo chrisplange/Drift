@@ -1,0 +1,8 @@
+# An ellipse with two points riding on it and a chord between them; its centre is held in x
+# only.
+point pa at 32,15
+point pb at -24,-20
+line chord from pa to pb
+#> el = add_geometry {"items":[{"type":"ellipse","center":[0,0],"major":[40,0],"minor_radius":25}],"auto_relations":false}
+#> add_relations {"relations":[{"type":"on_curve","point":"$pa","curve":"$el"},{"type":"on_curve","point":"$pb","curve":"$el"}]}
+#> constraint fix_x $el.center

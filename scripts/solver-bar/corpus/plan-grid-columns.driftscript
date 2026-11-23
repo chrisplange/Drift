@@ -1,0 +1,5 @@
+# A column grid: five by three bays of round columns at a spacing one variable sets. The
+# grid isn't pinned.
+let S = 6000
+circle col r 200 at 0,0
+array cols of col 5 x S, 3 x S

@@ -1,0 +1,11 @@
+# A triangle with a point inside it kept at set distances from two sides, and a marker kept
+# level and plumb with two corners by points alone.
+point corner at 120,0
+point apex at 40,90
+polyline tri (0,0) corner apex closed
+point inside at 45,30
+point marker at 120,90
+#> add_dimensions {"dimensions":[{"type":"point_line","point":"$inside","line":"$tri[1]","value":30},{"type":"point_line","point":"$inside","line":"$tri[3]","value":25}]}
+#> add_relations {"relations":[{"type":"horizontal","a":"$marker","b":"$apex"},{"type":"vertical","a":"$marker","b":"$corner"}]}
+dim tri[1] = 120
+fix tri.start

@@ -1,0 +1,15 @@
+# Eight posts round a centre, each kept on the ring and all of one size.
+construction circle ring r 50 at 0,0
+fix ring.center
+circle post r 5 at 50,0
+on post.center ring
+array posts of post 8 around 0,0
+on posts[2].center ring
+on posts[3].center ring
+on posts[4].center ring
+on posts[5].center ring
+on posts[6].center ring
+on posts[7].center ring
+on posts[8].center ring
+equal posts[1] posts[2] posts[3] posts[4]
+equal posts[5] posts[6] posts[7] posts[8]

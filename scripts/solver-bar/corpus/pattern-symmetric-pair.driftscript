@@ -1,0 +1,13 @@
+# Two triangles mirrored about a plumb axis: every corner has its twin.
+construction line axis from 0,-10 to 0,70
+vertical axis
+line a1 from 20,0 to 60,10
+line a2 from a1.end to 30,50
+line a3 from a2.end to a1.start
+line b1 from -20,0 to -60,10
+line b2 from b1.end to -30,50
+line b3 from b2.end to b1.start
+symmetric a1.start b1.start about axis
+symmetric a1.end b1.end about axis
+symmetric a2.end b2.end about axis
+fix axis.start

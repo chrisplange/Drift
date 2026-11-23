@@ -1,0 +1,8 @@
+# A four-bar linkage: a fixed ground link, a crank, a coupler and a rocker, each a bar of
+# set length. One degree of freedom: the crank's angle.
+point pa at 0,0 fixed
+point pd at 100,0 fixed
+construction line ground from pa to pd
+line crank from pa to 20,30 length 36
+line coupler from crank.end to 90,60 length 80
+line rocker from pd to coupler.end length 60

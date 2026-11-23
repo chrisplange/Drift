@@ -1,0 +1,31 @@
+{
+  "format": "drift",
+  "version": 46,
+  "reader": 46,
+  "meta": {"units":"mm"},
+  "layers": [
+    {"id":"l0","name":"Layer 1","weight":0.25,"linetype":"continuous"}
+  ],
+  "entities": [
+    {"type":"point","id":"e1","at":[120.0,0.0]},
+    {"type":"point","id":"e2","at":[40.0,90.0]},
+    {"type":"point","id":"e3","at":[0.0,0.0]},
+    {"type":"line","id":"e4","a":"e3","b":"e1"},
+    {"type":"line","id":"e5","a":"e1","b":"e2"},
+    {"type":"line","id":"e6","a":"e2","b":"e3"},
+    {"type":"point","id":"e7","at":[40.69127167165585,30.0]},
+    {"type":"point","id":"e8","at":[120.0,90.0]}
+  ],
+  "constraints": [
+    {"type":"horizontal","id":"c1","line":"e4"},
+    {"type":"distance","id":"c2","a":"e3","b":"e1","value":120.0,"label":[0.0,-10.0],"paper_label":[0.0,-10.0]},
+    {"type":"fix","id":"c3","point":"e3","at":[0.0,0.0]},
+    {"type":"point_line_distance","id":"c4","line":"e4","point":"e7","value":30.0},
+    {"type":"point_line_distance","id":"c5","line":"e6","point":"e7","value":25.0},
+    {"type":"horizontal_points","id":"c6","a":"e8","b":"e2"},
+    {"type":"vertical_points","id":"c7","a":"e8","b":"e1"}
+  ],
+  "figures": [
+    {"id":"d1","curves":["e4","e5","e6"]}
+  ]
+}

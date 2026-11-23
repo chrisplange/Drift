@@ -1,0 +1,18 @@
+# A T section, mirrored about its centre line.
+construction line axis from 0,-10 to 0,70
+vertical axis
+line cap from -30,60 to 30,60
+line capr from cap.end to 30,52
+line underr from capr.end to 4,52
+line stemr from underr.end to 4,0
+line foot from stemr.end to -4,0
+line steml from foot.end to -4,52
+line underl from steml.end to -30,52
+line capl from underl.end to cap.start
+symmetric cap.start cap.end about axis
+symmetric underr.start underl.end about axis
+symmetric underr.end underl.start about axis
+symmetric foot.start foot.end about axis
+dim cap = 60
+dim foot = 8
+fix axis.start

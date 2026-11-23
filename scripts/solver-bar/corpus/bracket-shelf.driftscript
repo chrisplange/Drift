@@ -1,0 +1,8 @@
+# A shelf bracket: two square legs and a curved brace between their ends.
+line upright from 0,0 to 0,120
+line shelf from 0,120 to 150,120
+arc brace centre 150,0 from upright.start to shelf.end
+vertical upright
+horizontal shelf
+dim upright = 120
+fix upright.start

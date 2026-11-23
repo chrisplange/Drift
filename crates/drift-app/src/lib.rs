@@ -12,6 +12,8 @@ mod annotations;
 mod app;
 mod canvas;
 mod commands;
+#[cfg(test)]
+mod corpus_build;
 mod dock;
 #[cfg(test)]
 mod edit_session_tests;

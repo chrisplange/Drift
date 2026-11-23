@@ -1,0 +1,7 @@
+# A row of five equal holes at a set pitch in a strip.
+rect strip about 240 x 40 at 0,0
+circle hole r 6 at 30,20
+array holes of hole 5 x 45
+horizontal strip.south
+dim strip.south = 240
+dim hole.center to strip.south = 20

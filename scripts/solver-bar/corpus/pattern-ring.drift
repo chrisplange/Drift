@@ -1,0 +1,49 @@
+{
+  "format": "drift",
+  "version": 46,
+  "reader": 46,
+  "meta": {"units":"mm"},
+  "layers": [
+    {"id":"l0","name":"Layer 1","weight":0.25,"linetype":"continuous"}
+  ],
+  "entities": [
+    {"type":"point","id":"e1","at":[0.0,0.0]},
+    {"type":"circle","id":"e2","center":"e1","radius":50.0,"style":"construction"},
+    {"type":"point","id":"e3","at":[50.0,0.0]},
+    {"type":"circle","id":"e4","center":"e3","radius":5.0},
+    {"type":"point","id":"e5","at":[35.35533905932738,35.35533905932738]},
+    {"type":"circle","id":"e6","center":"e5","radius":5.0},
+    {"type":"point","id":"e7","at":[0.0,50.0]},
+    {"type":"circle","id":"e8","center":"e7","radius":5.0},
+    {"type":"point","id":"e9","at":[-35.35533905932737,35.35533905932738]},
+    {"type":"circle","id":"e10","center":"e9","radius":5.0},
+    {"type":"point","id":"e11","at":[-50.0,0.0]},
+    {"type":"circle","id":"e12","center":"e11","radius":5.0},
+    {"type":"point","id":"e13","at":[-35.355339059327385,-35.35533905932737]},
+    {"type":"circle","id":"e14","center":"e13","radius":5.0},
+    {"type":"point","id":"e15","at":[0.0,-50.0]},
+    {"type":"circle","id":"e16","center":"e15","radius":5.0},
+    {"type":"point","id":"e17","at":[35.35533905932737,-35.355339059327385]},
+    {"type":"circle","id":"e18","center":"e17","radius":5.0}
+  ],
+  "constraints": [
+    {"type":"radius","id":"c1","curve":"e2","value":50.0},
+    {"type":"fix","id":"c2","point":"e1","at":[0.0,0.0]},
+    {"type":"radius","id":"c3","curve":"e4","value":5.0},
+    {"type":"point_on_curve","id":"c4","point":"e3","curve":"e2"},
+    {"type":"radius","id":"c5","curve":"e6","value":5.0},
+    {"type":"radius","id":"c6","curve":"e8","value":5.0},
+    {"type":"radius","id":"c7","curve":"e10","value":5.0},
+    {"type":"radius","id":"c8","curve":"e12","value":5.0},
+    {"type":"radius","id":"c9","curve":"e14","value":5.0},
+    {"type":"radius","id":"c10","curve":"e16","value":5.0},
+    {"type":"radius","id":"c11","curve":"e18","value":5.0},
+    {"type":"point_on_curve","id":"c12","point":"e5","curve":"e2"},
+    {"type":"point_on_curve","id":"c13","point":"e7","curve":"e2"},
+    {"type":"point_on_curve","id":"c14","point":"e9","curve":"e2"},
+    {"type":"point_on_curve","id":"c15","point":"e11","curve":"e2"},
+    {"type":"point_on_curve","id":"c16","point":"e13","curve":"e2"},
+    {"type":"point_on_curve","id":"c17","point":"e15","curve":"e2"},
+    {"type":"point_on_curve","id":"c18","point":"e17","curve":"e2"}
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "format": "drift",
+  "version": 46,
+  "reader": 46,
+  "meta": {"units":"mm"},
+  "layers": [
+    {"id":"l0","name":"Layer 1","weight":0.25,"linetype":"continuous"}
+  ],
+  "entities": [
+    {"type":"point","id":"e1","at":[0.0,0.0]},
+    {"type":"point","id":"e2","at":[6000.0,0.0]},
+    {"type":"point","id":"e3","at":[6000.0,3000.0]},
+    {"type":"point","id":"e4","at":[3500.0,3000.0]},
+    {"type":"point","id":"e5","at":[3500.0,5000.0]},
+    {"type":"point","id":"e6","at":[0.0,5000.0]},
+    {"type":"line","id":"e7","a":"e1","b":"e2"},
+    {"type":"line","id":"e8","a":"e2","b":"e3"},
+    {"type":"line","id":"e9","a":"e3","b":"e4"},
+    {"type":"line","id":"e10","a":"e4","b":"e5"},
+    {"type":"line","id":"e11","a":"e5","b":"e6"},
+    {"type":"line","id":"e12","a":"e6","b":"e1"}
+  ],
+  "constraints": [
+    {"type":"horizontal","id":"c1","line":"e7"},
+    {"type":"vertical","id":"c2","line":"e8"},
+    {"type":"horizontal","id":"c3","line":"e9"},
+    {"type":"vertical","id":"c4","line":"e10"},
+    {"type":"horizontal","id":"c5","line":"e11"},
+    {"type":"vertical","id":"c6","line":"e12"},
+    {"type":"distance","id":"c13","a":"e1","b":"e2","value":6000.0,"label":[0.0,-480.0],"paper_label":[0.0,-480.0]},
+    {"type":"distance","id":"c14","a":"e6","b":"e1","value":5000.0,"label":[-480.0,-0.0],"paper_label":[-480.0,-0.0]},
+    {"type":"fix","id":"c15","point":"e1","at":[0.0,0.0]}
+  ],
+  "figures": [
+    {"id":"d1","curves":["e7","e8","e9","e10","e11","e12"]}
+  ]
+}

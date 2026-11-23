@@ -1,0 +1,11 @@
+# A scissor lift stage: two equal bars pinned at their middles, feet on a level floor line.
+construction line floor from -10,0 to 130,0 fixed
+fix floor.end
+line bara from 0,0 to 100,60 length 116.6
+line barb from 100,0 to 0,60 length 116.6
+point pin at 50,30
+midpoint pin of bara
+midpoint pin of barb
+on bara.start floor
+on barb.start floor
+fix bara.start

@@ -1,0 +1,8 @@
+# Three free-standing walls and an opening: nothing pinned but one end, lengths free.
+wall wa from 0,0 to 6000,0 thick 200
+wall wb from 0,0 to 0,4000 thick 200 left
+wall wc from 6000,0 to 6000,4000 thick 100 length 4000
+opening o1 1200 in wa.left
+perpendicular wa.left wb.left
+parallel wb.left wc.left
+fix wa.left.start

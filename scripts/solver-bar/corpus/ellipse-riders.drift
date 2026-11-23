@@ -1,0 +1,26 @@
+{
+  "format": "drift",
+  "version": 46,
+  "reader": 46,
+  "meta": {"units":"mm"},
+  "layers": [
+    {"id":"l0","name":"Layer 1","weight":0.25,"linetype":"continuous"}
+  ],
+  "entities": [
+    {"type":"point","id":"e1","at":[32.0,15.0]},
+    {"type":"point","id":"e2","at":[-24.0,-20.0]},
+    {"type":"line","id":"e3","a":"e1","b":"e2"},
+    {"type":"point","id":"e4","at":[0.0,0.0]},
+    {"type":"point","id":"e5","at":[40.0,0.0]},
+    {"type":"point","id":"e6","at":[0.0,25.0]},
+    {"type":"ellipse","id":"e7","center":"e4","major":"e5","minor":"e6"}
+  ],
+  "constraints": [
+    {"type":"point_on_curve","id":"c1","point":"e1","curve":"e7"},
+    {"type":"point_on_curve","id":"c2","point":"e2","curve":"e7"},
+    {"type":"fix_x","id":"c3","point":"e4","value":0.0}
+  ],
+  "figures": [
+    {"id":"d1","curves":["e3"]}
+  ]
+}

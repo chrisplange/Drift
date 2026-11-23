@@ -1,0 +1,14 @@
+# A crank and slider: the crank turns about a fixed pivot, and the rod's far end slides
+# along a fixed level guide.
+point pivot at 0,0 fixed
+construction line guide from 40,0 to 200,0 fixed
+fix guide.end
+line crank from pivot to 25,25 length 35
+line rod from crank.end to 120,0 length 100
+on rod.end guide
+rect slider about 30 x 20 centred at 120,0
+midpoint rod.end of slider.west
+horizontal slider.south
+equal slider.west slider.east
+dim slider.south = 30
+dim slider.west = 20

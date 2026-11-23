@@ -1,0 +1,11 @@
+# Three rooms in an L: a living room, a kitchen beside it and a study above, with a
+# partition in the living room whose end is free. Nothing is pinned.
+room living 5000 x 4000 at 0,0 walls 150
+room kitchen 3000 x 4000 right of living walls 150
+room study 5000 x 3000 above living walls 150
+opening o1 1800 in living.east
+door d1 900 in living.north
+window w1 1500 in living.south centred
+window w2 1200 in study.north
+line partition from 2000,0 to 2000,2200
+on partition.start living.south

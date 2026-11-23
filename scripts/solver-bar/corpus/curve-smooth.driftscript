@@ -1,0 +1,7 @@
+# Two curves meeting smoothly at an anchor, between two lines.
+line lead from -60,0 to -30,0
+line tail from 30,0 to 60,0
+#> ca = add_geometry {"items":[{"type":"bezier","from":"$lead.end","c1":[-20,0],"c2":[-10,20],"to":[0,20]}],"auto_relations":false}
+#> cb = add_geometry {"items":[{"type":"bezier","from":"$ca.b","c1":[10,20],"c2":[20,0],"to":"$tail.start"}],"auto_relations":false}
+#> constraint smooth $ca.b $ca.c2 $cb.c1
+horizontal lead

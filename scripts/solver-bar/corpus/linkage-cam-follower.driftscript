@@ -1,0 +1,10 @@
+# An eccentric cam and a roller follower: the cam's centre turns about a fixed shaft, and
+# the roller stays tangent to it with its centre on a plumb guide.
+point shaft at 0,0 fixed
+circle cam r 30 at 8,6
+line throw from shaft to cam.center length 10
+construction line guide from 0,20 to 0,90 fixed
+fix guide.end
+circle roller r 8 at 0,43.2
+on roller.center guide
+tangent cam roller

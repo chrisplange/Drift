@@ -1,0 +1,10 @@
+# A hinge leaf: a plate with a knuckle (a circle tangent to its top and side) and a pin hole
+# concentric with it.
+rect leaf about 60 x 40 at 0,0
+circle knuckle r 8 at 52,32
+tangent leaf.north knuckle
+tangent leaf.east knuckle
+#> pin = add_geometry {"items":[{"type":"circle","center":[52,32],"radius":3}],"join":false}
+#> add_relations {"relations":[{"type":"concentric","a":"$pin","b":"$knuckle"}]}
+dim leaf.south = 60
+fix leaf.sw

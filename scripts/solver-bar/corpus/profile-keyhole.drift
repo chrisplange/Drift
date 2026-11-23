@@ -1,0 +1,32 @@
+{
+  "format": "drift",
+  "version": 46,
+  "reader": 46,
+  "meta": {"units":"mm"},
+  "layers": [
+    {"id":"l0","name":"Layer 1","weight":0.25,"linetype":"continuous"}
+  ],
+  "entities": [
+    {"type":"point","id":"e1","at":[-7.173146099023131e-15,40.0001693591732]},
+    {"type":"point","id":"e2","at":[5.000000000000018,31.339915320413393]},
+    {"type":"point","id":"e3","at":[-5.000000000000005,31.339915320413404]},
+    {"type":"arc","id":"e4","center":"e1","start":"e2","end":"e3"},
+    {"type":"point","id":"e5","at":[5.000000000000018,0.0]},
+    {"type":"line","id":"e6","a":"e2","b":"e5"},
+    {"type":"point","id":"e7","at":[-5.000000000000005,0.0]},
+    {"type":"line","id":"e8","a":"e7","b":"e3"},
+    {"type":"point","id":"e9","at":[-5.742867786977139e-15,0.0]},
+    {"type":"arc","id":"e10","center":"e9","start":"e7","end":"e5"}
+  ],
+  "constraints": [
+    {"type":"vertical","id":"c1","line":"e6"},
+    {"type":"vertical","id":"c2","line":"e8"},
+    {"type":"tangent","id":"c5","a":"e8","b":"e10"},
+    {"type":"tangent","id":"c6","a":"e6","b":"e10"},
+    {"type":"radius","id":"c7","curve":"e4","value":10.0},
+    {"type":"radius","id":"c8","curve":"e10","value":5.0}
+  ],
+  "figures": [
+    {"id":"d1","curves":["e4","e6","e8","e10"]}
+  ]
+}

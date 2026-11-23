@@ -1,7 +1,7 @@
 # The solver's acceptance bar
 
-Every solver or drag PR in `docs/solver-audit.md`'s plan is judged against the same seven
-numbers (section 5). This folder runs them. Every PR puts its numbers next to its base's.
+Every solver or drag PR in `docs/solver-audit.md`'s plan is judged against the same
+numbers (section 5): its seven, and the sketch corpus (#187). This folder runs them. Every PR puts its numbers next to its base's.
 Build in release, and run one test per process.
 
 | # | Item | How |
@@ -14,6 +14,39 @@ Build in release, and run one test per process.
 | 6 | Linux | the `Solver bar` workflow: items 1 and 4 on ubuntu, nightly and on PRs that touch the solver, drift-core, the editor or the bar |
 | (PR 6) | Relation adding | `drag_props::relation_census::relation_census` (`CENSUS_N` cases, default 4,000; `CENSUS_CASE` replays one, printing the drawing before and after), run on both builds, then `relations.py BASE.txt PR.txt`: relations newly refused (exit 1) or added, and per case what moved and which lengths and radii changed |
 | 7 | The binding drag rule | `drag_props::held_shapes::` (in the normal run), and #377's census: drags that went while an arc's radius changed, radii grown, and in a comparison every stop -> went split by whether a radius changed |
+| 8 | The sketch corpus | `python scripts/solver-bar/corpus.py run`: sweeps the drawings in `corpus/` (52 sketches: profiles, brackets, linkages, plans, patterns, every relation and dimension kind, circles and ellipses) and fails on any drag whose verdict differs from `corpus-baseline.txt`; `corpus.py diff BASE/record.txt PR/record.txt` compares two builds drag by drag (see below) |
+
+## The sketch corpus
+
+The censuses draw every sketch from one random generator. The corpus is drawings as people
+make them ([`corpus/`](corpus/README.md)), and its sweep drags every point and curve that
+can move along ten pointer paths (four short along the axes, four long on the diagonals, a
+full circle, and one through the middle of the part and back), judging every frame: rows
+met, no arc sweep flip, no way-round flip, held radii never grown, no jump over 50 times the
+pointer's move, and a refused frame changing nothing (the checks and their letters are in
+`crates/drift-edit/src/drag_props/corpus.rs`).
+
+```bash
+python scripts/solver-bar/corpus.py run --out pr      # builds, sweeps in parallel, judges
+python scripts/solver-bar/corpus.py diff base/record.txt pr/record.txt
+```
+
+`run` writes `record.txt` (one line per drag: its verdict, the counts behind it, frames
+refused, solves, the solver's exits, and a digest of where the dragged part ended, to the
+bit) and `summary.md`, the table for a PR body. It exits with status 1 when a drag's verdict
+differs from `corpus-baseline.txt` either way. A PR that changes a verdict on purpose runs
+it with `--update` and commits the baseline; `corpus-baseline.linux.txt` holds the rows that
+differ on Linux. `diff` is how two builds are compared: checks newly failed or passed,
+frames refused, and drags that ended elsewhere.
+
+One drag again, frame by frame:
+
+```bash
+CORPUS_ONLY=linkage-pantograph CORPUS_TARGET=e9 CORPUS_PATH=long-ne CORPUS_TRACE=1   "$exe" drag_props::corpus::corpus_sweep --exact --ignored --nocapture
+```
+
+With `DRIFT_CORPUS_PRIVATE` set to a folder of `.drift` files, those are swept too, numbered
+and never named; their lines go to `private.txt` and the tables count them in aggregate.
 
 ## Censuses
 

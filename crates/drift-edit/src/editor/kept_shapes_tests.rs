@@ -493,3 +493,268 @@ fn a_typed_angle_on_an_open_corner_keeps_its_side() {
         assert!(off.min(360.0 - off) < 1e-6, "{degrees}: rays at {ray}");
     }
 }
+
+/// A fillet at the free end keeps its radius while the top turns: the round is carried
+/// round with the top, and the third side beyond it turns to meet it (the turning solve
+/// only released lines met at the top's own ends, so the third side kept its direction past
+/// the round, the turn was refused, and the solve before it grew R8 to 12.88 at 120°, 17.00
+/// at 145° and 21.91 at 160°).
+#[test]
+fn a_typed_angle_turning_a_filleted_side_grows_no_fillet() {
+    for degrees in [120.0, 145.0, 160.0] {
+        let mut t = triangle(false);
+        let arc = t.ed.fillet(t.free, 8.0).unwrap();
+        let Some(EntityKind::Arc {
+            center, start, end, ..
+        }) = t.ed.doc.get(arc).map(|e| e.kind)
+        else {
+            panic!("no round");
+        };
+        let top = length(&t.ed, t.corner, end);
+        t.ed.set_dimension(t.angle, degrees).unwrap();
+        let r = drift_solver::radius_of(&t.ed.doc, arc).unwrap();
+        assert!((r - 8.0).abs() < 1e-6, "{degrees}°: R {r}");
+        let now = length(&t.ed, t.corner, end);
+        assert!((now - top).abs() < 1e-6, "{degrees}°: top {top} -> {now}");
+        assert!(t.ed.doc.point(t.corner).unwrap().distance(v(136.0, 77.0)) < 1e-9);
+        assert!(t.ed.doc.point(t.foot).unwrap().distance(v(136.0, 14.0)) < 1e-9);
+        // (Still tangent to the top where they meet.)
+        let (c, e, k) = (
+            t.ed.doc.point(center).unwrap(),
+            t.ed.doc.point(end).unwrap(),
+            t.ed.doc.point(t.corner).unwrap(),
+        );
+        let off = (e - c).normalize().dot((e - k).normalize()).abs();
+        assert!(off < 1e-6, "{degrees}°: off tangent {off}");
+        // (And to the third side where that meets it: still a fillet, not a corner. The
+        // first fix left it 20°-46° off: Fable review of #520, finding 2.)
+        let (s, f) = (
+            t.ed.doc.point(start).unwrap(),
+            t.ed.doc.point(t.foot).unwrap(),
+        );
+        let off = (s - c).normalize().dot((s - f).normalize()).abs();
+        assert!(
+            off < 1e-6,
+            "{degrees}°: off tangent to the third side {off}"
+        );
+    }
+}
+
+/// A line hanging off the far end of the round is carried round with it, as it is (the
+/// first fix stretched a 29 mm tail to 56 / 77 mm at 120 / 145°, turned about its free end:
+/// Fable review of #520, finding 1).
+#[test]
+fn a_typed_angle_carries_a_line_hanging_off_the_round() {
+    for degrees in [120.0, 145.0] {
+        let mut ed = Editor::default();
+        ed.doc.begin();
+        let corner = ed.doc.add_point(v(136.0, 77.0));
+        let foot = ed.doc.add_point(v(136.0, 14.0));
+        let free = ed.doc.add_point(v(188.0, 77.0));
+        let tail = ed.doc.add_point(v(188.0, 40.0));
+        let upright = ed.doc.add_line(corner, foot).unwrap();
+        let top = ed.doc.add_line(corner, free).unwrap();
+        ed.doc.add_line(free, tail).unwrap();
+        ed.commit("Chain");
+        let angle = measured_angle(&mut ed, upright, top);
+        let arc = ed.fillet(free, 8.0).unwrap();
+        let Some(EntityKind::Arc { start, .. }) = ed.doc.get(arc).map(|e| e.kind) else {
+            panic!("no round");
+        };
+        let was = length(&ed, start, tail);
+        ed.set_dimension(angle, degrees).unwrap();
+        let r = drift_solver::radius_of(&ed.doc, arc).unwrap();
+        assert!((r - 8.0).abs() < 1e-6, "{degrees}°: R {r}");
+        let now = length(&ed, start, tail);
+        assert!((now - was).abs() < 1e-6, "{degrees}°: tail {was} -> {now}");
+    }
+}
+
+/// A fillet at the angle's own corner stays as it is, and the top keeps its length: the
+/// two lines share no point then, the top turns about its middle, and the round, tangent to
+/// the top, ends on the upright. Carrying it round tilted the upright and the turn was
+/// refused: with auto-relations the top flung from 46 to 106 / 634 / 401 mm at 120 / 145 /
+/// 160° (Opus review of #520, finding 1). (Without them, 60–145° reshape on main too: a
+/// follow-up; 160° is clean.)
+#[test]
+fn a_typed_angle_carries_no_fillet_at_its_own_corner() {
+    for (auto, degrees) in [
+        (true, 60.0),
+        (true, 120.0),
+        (true, 145.0),
+        (true, 160.0),
+        (false, 160.0),
+    ] {
+        let mut t = triangle(false);
+        t.ed.prefs.auto_relations = auto;
+        let arc = t.ed.fillet(t.corner, 6.0).unwrap();
+        let top =
+            t.ed.doc
+                .users_of(t.free)
+                .find(|l| {
+                    matches!(t.ed.doc.get(*l).map(|e| e.kind),
+                    Some(EntityKind::Line { b, .. }) if b == t.free)
+                })
+                .unwrap();
+        let Some(EntityKind::Line { a: near, .. }) = t.ed.doc.get(top).map(|e| e.kind) else {
+            panic!("no top");
+        };
+        let was = length(&t.ed, near, t.free);
+        t.ed.set_dimension(t.angle, degrees).unwrap();
+        let r = drift_solver::radius_of(&t.ed.doc, arc).unwrap();
+        assert!((r - 6.0).abs() < 1e-6, "auto {auto}, {degrees}°: R {r}");
+        let c = *t.ed.doc.constraint(t.angle).unwrap();
+        let read = drift_solver::measure(&t.ed.doc, &c).unwrap();
+        assert!(
+            (read - degrees).abs() < 1e-6,
+            "auto {auto}, {degrees}°: reads {read}"
+        );
+        let now = length(&t.ed, near, t.free);
+        assert!(
+            (now - was).abs() < 1e-6,
+            "auto {auto}, {degrees}°: top {was} -> {now}"
+        );
+    }
+}
+
+/// A fillet at the angle's own corner, auto-relations off, at `degrees`: the round's radius
+/// and where the free end lands.
+fn vertex_fillet_off(degrees: f64) -> (f64, DVec2) {
+    let mut t = triangle(false);
+    t.ed.prefs.auto_relations = false;
+    let arc = t.ed.fillet(t.corner, 6.0).unwrap();
+    t.ed.set_dimension(t.angle, degrees).unwrap();
+    (
+        drift_solver::radius_of(&t.ed.doc, arc).unwrap(),
+        t.ed.doc.point(t.free).unwrap(),
+    )
+}
+
+/// Guard: where a fillet at the angle's own corner (auto-relations off) still reshapes, the
+/// turning solve leaves it exactly as the first solve alone lands it, as on main (b92d400,
+/// with #518), where it was refused too: this PR makes none of it worse. Compared in the
+/// same run rather than against numbers from one platform: the first solve doesn't land
+/// here, and where it stops differs between Windows, Ubuntu and macOS (60°: the free end
+/// 0.4 mm apart). #522 is to fix it (see
+/// `a_typed_angle_reshapes_no_corner_fillet_without_relations`); then this guard goes.
+#[test]
+fn a_vertex_fillet_without_relations_reshapes_no_worse_than_main() {
+    use super::constraints::TURNING;
+    for degrees in [60.0, 120.0, 145.0] {
+        let (r, at) = vertex_fillet_off(degrees);
+        TURNING.with(|t| t.set(false));
+        let (r0, at0) = vertex_fillet_off(degrees);
+        TURNING.with(|t| t.set(true));
+        assert!(
+            (r - r0).abs() <= 1e-9 * r0,
+            "{degrees}°: R {r}, first solve {r0}"
+        );
+        assert!(
+            at.distance(at0) <= 1e-9 * at0.length(),
+            "{degrees}°: {at:?}, first solve {at0:?}"
+        );
+    }
+}
+
+/// What #522 wants of the same sketch: no fling and the round's radius unchanged (the top,
+/// 46 mm from the round to the free end, keeps its length), the angle reading its value.
+#[test]
+#[ignore = "#522"]
+fn a_typed_angle_reshapes_no_corner_fillet_without_relations() {
+    for degrees in [60.0, 120.0, 145.0] {
+        let mut t = triangle(false);
+        t.ed.prefs.auto_relations = false;
+        let arc = t.ed.fillet(t.corner, 6.0).unwrap();
+        let near =
+            t.ed.doc
+                .users_of(t.free)
+                .find_map(|l| match t.ed.doc.get(l).map(|e| e.kind) {
+                    Some(EntityKind::Line { a, b }) if b == t.free => Some(a),
+                    _ => None,
+                })
+                .unwrap();
+        let was = length(&t.ed, near, t.free);
+        t.ed.set_dimension(t.angle, degrees).unwrap();
+        let r = drift_solver::radius_of(&t.ed.doc, arc).unwrap();
+        assert!((r - 6.0).abs() < 1e-6, "{degrees}°: R {r}");
+        let now = length(&t.ed, near, t.free);
+        assert!((now - was).abs() < 1e-6, "{degrees}°: top {was} -> {now}");
+        let c = *t.ed.doc.constraint(t.angle).unwrap();
+        let read = drift_solver::measure(&t.ed.doc, &c).unwrap();
+        assert!((read - degrees).abs() < 1e-6, "{degrees}°: reads {read}");
+    }
+}
+
+/// A slot (two 50 mm sides, two R10 half rounds, no relations) turned by an angle on its
+/// lower side turns whole: each round's far end is the other side's end, which the turn
+/// moves too, so nothing slides (sliding toward where that end was bent the upper side to
+/// 45.76 mm at 100° and left near square corners at 150°: Fable re-review of #520).
+#[test]
+fn a_typed_angle_turns_a_slot_whole() {
+    for degrees in [100.0, 150.0] {
+        let mut ed = Editor::default();
+        ed.doc.begin();
+        let p = |ed: &mut Editor, x, y| ed.doc.add_point(v(x, y));
+        let (a, b, c, d) = (
+            p(&mut ed, 0.0, 0.0),
+            p(&mut ed, 50.0, 0.0),
+            p(&mut ed, 50.0, 20.0),
+            p(&mut ed, 0.0, 20.0),
+        );
+        let lower = ed.doc.add_line(a, b).unwrap();
+        ed.doc.add_line(c, d).unwrap();
+        let (cr, cl) = (p(&mut ed, 50.0, 10.0), p(&mut ed, 0.0, 10.0));
+        let right = ed.doc.add_arc(cr, b, c).unwrap();
+        let left = ed.doc.add_arc(cl, d, a).unwrap();
+        let (r0, r1) = (p(&mut ed, -20.0, -30.0), p(&mut ed, 80.0, -30.0));
+        let reference = ed.doc.add_line(r0, r1).unwrap();
+        ed.commit("Slot");
+        let angle = measured_angle(&mut ed, reference, lower);
+        ed.set_dimension(angle, degrees).unwrap();
+        for (x, y) in [(a, b), (c, d)] {
+            let l = length(&ed, x, y);
+            assert!((l - 50.0).abs() < 1e-6, "{degrees}°: side {l}");
+        }
+        for (round, centre, ends) in [(right, cr, [b, c]), (left, cl, [d, a])] {
+            let r = drift_solver::radius_of(&ed.doc, round).unwrap();
+            assert!((r - 10.0).abs() < 1e-6, "{degrees}°: R {r}");
+            // (Tangent to both sides where it meets them.)
+            let o = ed.doc.point(centre).unwrap();
+            for e in ends {
+                let q = ed.doc.point(e).unwrap();
+                let along = ed.doc.point(if e == b || e == a { a } else { c }).unwrap()
+                    - ed.doc.point(if e == b || e == a { b } else { d }).unwrap();
+                let off = (q - o).normalize().dot(along.normalize()).abs();
+                assert!(off < 1e-6, "{degrees}°: off tangent {off}");
+            }
+        }
+    }
+}
+
+/// A line hanging from the round's far end, where the third side also meets the round,
+/// goes with the far end as it is (it was turned rigidly while the far end slid to the
+/// third side's tangent point: 15.81 mm grew to 23 mm at 170°, Opus re-review of #520).
+#[test]
+fn a_typed_angle_carries_a_line_hanging_where_a_side_meets_the_round() {
+    for degrees in [30.0, 60.0, 100.0, 120.0, 145.0, 160.0, 170.0] {
+        let mut t = triangle(false);
+        let arc = t.ed.fillet(t.free, 8.0).unwrap();
+        let Some(EntityKind::Arc { start, .. }) = t.ed.doc.get(arc).map(|e| e.kind) else {
+            panic!("no round");
+        };
+        let at = t.ed.doc.point(start).unwrap();
+        t.ed.doc.begin();
+        let tip = t.ed.doc.add_point(at + v(5.0, 15.0));
+        t.ed.doc.add_line(start, tip).unwrap();
+        t.ed.commit("Hang");
+        let was = length(&t.ed, start, tip);
+        t.ed.set_dimension(t.angle, degrees).unwrap();
+        let now = length(&t.ed, start, tip);
+        assert!(
+            (now - was).abs() < 1e-6,
+            "{degrees}°: hanging {was} -> {now}"
+        );
+        let r = drift_solver::radius_of(&t.ed.doc, arc).unwrap();
+        assert!((r - 8.0).abs() < 1e-6, "{degrees}°: R {r}");
+    }
+}

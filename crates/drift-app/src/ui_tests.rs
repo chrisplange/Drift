@@ -32,6 +32,8 @@ mod import;
 /// The Inspector's first row is the Layer, for every kind of pick (#300).
 #[cfg(not(feature = "demo"))]
 mod inspector_layer;
+/// Assignable keys and presets (#499).
+mod keymap;
 /// Picking an object shows its layer, or makes it current (drift-releases#19).
 mod layer_on_pick;
 /// Alt-click a layer's lock or snap to set the other layers.

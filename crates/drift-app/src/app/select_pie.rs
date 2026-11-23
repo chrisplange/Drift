@@ -53,10 +53,12 @@ impl DriftApp {
     /// S: a tap takes the Select tool, a hold opens the Selection filter pie. While it is down
     /// or the ring is open the keys are its own. Returns true if the keyboard was used here.
     pub(crate) fn select_pie_keys(&mut self, ctx: &egui::Context) -> bool {
+        // The Select tool's key, the user's (#499): S unless changed.
         let (pressed, released, escape, pointer, now) = ctx.input(|i| {
+            let (pressed, released) = crate::keymap::pressed_released(i, "edit.select");
             (
-                i.modifiers.is_none() && i.key_pressed(Key::S),
-                i.key_released(Key::S),
+                pressed,
+                released,
                 i.key_pressed(Key::Escape),
                 i.pointer.latest_pos(),
                 i.time,

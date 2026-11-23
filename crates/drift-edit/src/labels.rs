@@ -19,9 +19,9 @@ pub fn dimension_anchor(doc: &Document, c: &Constraint) -> Option<DVec2> {
             let q = p(point)?;
             (q + foot(doc, q, line)?) * 0.5
         }
-        Constraint::Radius { curve, .. } | Constraint::Diameter { curve, .. } => {
-            center_of(doc, curve)?
-        }
+        Constraint::Radius { curve, .. }
+        | Constraint::Diameter { curve, .. }
+        | Constraint::RadialGap { a: curve, .. } => center_of(doc, curve)?,
         Constraint::Angle { a, b, .. } => angle_vertex(doc, a, b)?,
         _ => return None,
     })

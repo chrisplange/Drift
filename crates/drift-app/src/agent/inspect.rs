@@ -119,6 +119,7 @@ pub(super) fn describe_constraint(doc: &Document, id: ConstraintId) -> Value {
         | Constraint::Distance { a, b, .. }
         | Constraint::HorizontalDistance { a, b, .. }
         | Constraint::VerticalDistance { a, b, .. }
+        | Constraint::RadialGap { a, b, .. }
         | Constraint::Angle { a, b, .. } => vec![("a", e(a)), ("b", e(b))],
         Constraint::Horizontal { line } | Constraint::Vertical { line } => {
             vec![("line", e(line))]
@@ -199,6 +200,7 @@ pub(super) fn type_name(c: &Constraint) -> &'static str {
         Constraint::Diameter { .. } => "diameter",
         Constraint::HorizontalDistance { .. } => "horizontal_distance",
         Constraint::VerticalDistance { .. } => "vertical_distance",
+        Constraint::RadialGap { .. } => "radial_gap",
         Constraint::Angle { .. } => "angle",
     }
 }

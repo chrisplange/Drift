@@ -184,6 +184,16 @@ fn dimension(doc: &Document, d: &Value) -> Result<Constraint, String> {
             curve: e("curve")?,
             value: 1.0,
         },
+        "radial_gap" => {
+            let (a, b) = (e("a")?, e("b")?);
+            if !drift_solver::concentric_pair(doc, a, b) {
+                return Err(
+                    "radial_gap needs two circles or arcs of different sizes round one centre"
+                        .into(),
+                );
+            }
+            Constraint::RadialGap { a, b, value: 1.0 }
+        }
         "angle" => Constraint::Angle {
             a: e("a")?,
             b: e("b")?,

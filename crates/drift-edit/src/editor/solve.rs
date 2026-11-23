@@ -256,16 +256,48 @@ impl Editor {
         let held: HashSet<EntityId> = keep
             .map(|k| self.joined(self.doc.defining_points([k])))
             .unwrap_or_default();
-        let ends: Vec<EntityId> = turning
+        let ends: Vec<(EntityId, EntityId)> = turning
             .iter()
             .filter_map(|id| match self.doc.get(*id)?.kind {
-                EntityKind::Line { a, b } => Some([a, b]),
+                EntityKind::Line { a, b } => Some([(*id, a), (*id, b)]),
                 _ => None,
             })
             .flatten()
-            .filter(|p| !held.contains(p))
+            .filter(|(_, p)| !held.contains(p))
             .collect();
-        let moving = self.joined(ends);
+        // A round met tangentially at a moving end (a fillet) is carried round with the
+        // line, so its far end moves too, and the line beyond it turns rather than the
+        // round growing to meet it. Not from the corner two turning lines share (it is
+        // turned about, not moved), and not a round ending on a line the size names or
+        // where `keep` holds (see `carried_rounds`).
+        let mut moving = self.joined(ends.iter().map(|(_, p)| *p));
+        let line_ends: Vec<(EntityId, EntityId)> = turning
+            .iter()
+            .filter_map(|id| match self.doc.get(*id)?.kind {
+                EntityKind::Line { a, b } => Some([(*id, a), (*id, b)]),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        let mut fixed = held.clone();
+        fixed.extend(self.joined(line_ends.iter().map(|(_, p)| *p)));
+        let beyond: Vec<EntityId> = ends
+            .iter()
+            .filter(|&&(line, p)| {
+                let at = self.joined([p]);
+                !line_ends
+                    .iter()
+                    .any(|&(other, q)| other != line && at.contains(&q))
+            })
+            .flat_map(|&(line, p)| {
+                let fixed = &fixed;
+                self.joined([p])
+                    .into_iter()
+                    .flat_map(move |q| self.carried_rounds(line, q, fixed))
+            })
+            .map(|(_, far)| far)
+            .collect();
+        moving.extend(self.joined(beyond));
         moving
             .iter()
             .flat_map(|p| self.doc.users_of(*p).collect::<Vec<_>>())
@@ -276,6 +308,76 @@ impl Editor {
                     !self.hangs(other)
                 }
                 _ => false,
+            })
+            .collect()
+    }
+
+    /// The arcs that end at `p` tangent to `line` there (a fillet's round, by a Tangent
+    /// relation or as drawn), each with its far end: a turn of `line` carries such a round
+    /// round.
+    pub(crate) fn rounds_carried_by(
+        &self,
+        line: EntityId,
+        p: EntityId,
+    ) -> Vec<(EntityId, EntityId)> {
+        let Some(EntityKind::Line { a, b }) = self.doc.get(line).map(|e| e.kind) else {
+            return Vec::new();
+        };
+        let (Ok(pa), Ok(pb)) = (self.doc.point(a), self.doc.point(b)) else {
+            return Vec::new();
+        };
+        let Some(along) = (pb - pa).try_normalize() else {
+            return Vec::new();
+        };
+        let related = |arc: EntityId| {
+            self.doc.constraints_on(arc).any(|c| {
+                matches!(
+                    self.doc.constraint(c),
+                    Some(Constraint::Tangent { a, b })
+                        if (*a == line && *b == arc) || (*a == arc && *b == line)
+                )
+            })
+        };
+        self.doc
+            .users_of(p)
+            .filter_map(|arc| match self.doc.get(arc)?.kind {
+                EntityKind::Arc { center, start, end } if start == p || end == p => {
+                    let far = if start == p { end } else { start };
+                    let drawn = (|| {
+                        let (c, q) = (self.doc.point(center).ok()?, self.doc.point(p).ok()?);
+                        let r = (q - c).try_normalize()?;
+                        Some(r.dot(along).abs() < 1e-4)
+                    })()
+                    .unwrap_or(false);
+                    (related(arc) || drawn).then_some((arc, far))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// [`rounds_carried_by`](Self::rounds_carried_by) `line` at `p`, but not a round whose
+    /// far end or centre is `fixed` (held where it is, or an end of a line the size names: a
+    /// fillet at the angle's own corner ends on the other line, which carrying it would
+    /// tilt).
+    /// What both the turn ([`Editor::turn_to`]) and the lines it releases
+    /// ([`released_by_turning`](Self::released_by_turning)) go by.
+    pub(crate) fn carried_rounds(
+        &self,
+        line: EntityId,
+        p: EntityId,
+        fixed: &HashSet<EntityId>,
+    ) -> Vec<(EntityId, EntityId)> {
+        self.rounds_carried_by(line, p)
+            .into_iter()
+            .filter(|(arc, far)| {
+                let centre_held = match self.doc.get(*arc).map(|e| e.kind) {
+                    Some(EntityKind::Arc { center, .. }) => {
+                        self.joined([center]).iter().any(|c| fixed.contains(c))
+                    }
+                    _ => true,
+                };
+                !fixed.contains(far) && !centre_held
             })
             .collect()
     }
@@ -406,8 +508,41 @@ impl Editor {
     /// edit, even if the edit breaks it further ([`SolveReport::exposed`]): a solve of such a
     /// part shares its misfit with it whatever the edit did.
     pub(crate) fn new_conflicts(&self, report: &SolveReport) -> bool {
-        !report.converged
-            && (report.unwritten || self.new_conflict_named(report) || self.newly_failing(report))
+        (!report.converged
+            && (report.unwritten || self.new_conflict_named(report) || self.newly_failing(report)))
+            || self.left_a_gap_unmet()
+    }
+
+    /// Whether a gap between circles isn't what it says: a solve that needs a circle's radius
+    /// at or through zero (an inner circle a gap or a sized outer one squeezes away) can't
+    /// write it, and the solve still counts as landed with the old radius left in place
+    /// (reviews of #521). (Not caught there for all: a tangency's form re-chosen on the next
+    /// solve relies on that write being passed over.) Nor an inner one squeezed to nothing
+    /// (an arc round the origin, whose degeneracy tolerance scales with its centre's
+    /// coordinates, got through at 2.6e-8). Only a gap the edit left so: one the drawing's
+    /// analysis already finds conflicting is the drawing's, and blocks nothing.
+    fn left_a_gap_unmet(&self) -> bool {
+        let before = &self.analysis().conflicts;
+        self.doc.constraints().any(|(id, c)| match *c {
+            Constraint::RadialGap { a, b, value }
+                if !self.doc.is_driven(id) && !before.contains(&id) =>
+            {
+                match (
+                    drift_solver::radius_of(&self.doc, a),
+                    drift_solver::radius_of(&self.doc, b),
+                ) {
+                    (Some(ra), Some(rb)) => {
+                        let extent = crate::labels::center_of(&self.doc, a)
+                            .map_or(0.0, |c| c.abs().max_element())
+                            + rb;
+                        (rb - ra - value).abs() > 1e-6 * rb.max(1.0)
+                            || ra <= drift_core::tolerance::same(extent)
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
+        })
     }
 
     /// Whether `report` names a conflict the drawing didn't have before this edit.
@@ -591,12 +726,16 @@ impl Editor {
         let Some(old) = drift_solver::radius_of(&self.doc, circle) else {
             return false;
         };
+        // (Measured before the new radius is set: a drag stops short of crushing anything,
+        // such as the inner circle a gap holds the dragged one to.)
+        let degenerate_before = drift_solver::degenerate_entities(&self.doc);
         if self.doc.set_radius(circle, radius).is_err() {
             return false;
         }
         let dragged = [Param::Radius(circle)];
         let report = self.solve(&dragged);
         let ok = !self.new_conflicts(&report)
+            && !self.new_degeneracy(&degenerate_before)
             && drift_solver::radius_of(&self.doc, circle)
                 .is_some_and(|r| (r - radius).abs() <= 1e-6 * radius.max(1.0));
         if !ok {

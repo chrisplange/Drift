@@ -172,9 +172,11 @@ fn every_fixture_opens_keeps_its_contents_and_saves_as_current() {
         let kept_corner = usize::from(version >= 44);
         let has_offsets = (version, addition) >= (44, 1);
         let offset_sources = if has_offsets { 10 } else { 0 };
+        // (From 46 a collar round the column, its wall dimensioned.)
+        let collar = usize::from(version >= 46);
         assert_eq!(
             plain,
-            ENTITIES + kept_corner + offset_sources,
+            ENTITIES + kept_corner + offset_sources + collar,
             "{}",
             at("entities")
         );
@@ -184,7 +186,7 @@ fn every_fixture_opens_keeps_its_contents_and_saves_as_current() {
         let sides = if version >= 44 { 3 } else { 0 };
         assert_eq!(
             doc.constraint_count(),
-            CONSTRAINTS + fixes + sides,
+            CONSTRAINTS + fixes + sides + collar,
             "{}",
             at("constraints")
         );
@@ -812,6 +814,14 @@ fn fixture_drawing() -> Document {
     add_walls(&mut doc, walls);
     add_offsets(&mut doc);
     add_sheet_annotations(&mut doc, corners[0], corners[1], sides[1]);
+    // A ring round the column, its wall dimensioned (46: `radial_gap`).
+    let collar = doc.add_circle(column_centre, 200.0).unwrap();
+    doc.add_constraint(Constraint::RadialGap {
+        a: column,
+        b: collar,
+        value: 50.0,
+    })
+    .unwrap();
     doc
 }
 

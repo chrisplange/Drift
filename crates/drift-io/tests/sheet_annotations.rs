@@ -21,6 +21,8 @@ struct Drawing {
     lines: Vec<EntityId>,
     circle: EntityId,
     arc: EntityId,
+    /// A circle round the first one's centre (a gap is measured across the two).
+    ring: EntityId,
     sheet: SheetId,
     /// The ids of the first sheet's three viewports.
     ports: [PortId; 3],
@@ -43,6 +45,7 @@ fn drawing() -> Drawing {
     );
     let centre = doc.add_point(V(500.0, 500.0));
     let arc = doc.add_arc(centre, s, e).unwrap();
+    let ring = doc.add_circle(c, 500.0).unwrap();
     let crop = Bounds {
         min: V(-500.0, -500.0),
         max: V(4500.0, 3500.0),
@@ -62,6 +65,7 @@ fn drawing() -> Drawing {
         lines,
         circle,
         arc,
+        ring,
         sheet,
         ports,
     }
@@ -90,6 +94,11 @@ impl Drawing {
             },
             Constraint::Diameter {
                 curve: self.circle,
+                value: 0.0,
+            },
+            Constraint::RadialGap {
+                a: self.ring,
+                b: self.circle,
                 value: 0.0,
             },
             Constraint::Angle {
@@ -232,7 +241,7 @@ fn every_kind_of_sheet_annotation_round_trips() {
     let (back, _) = load(&text).unwrap();
     assert_eq!(back.annotations().count(), 0);
     assert_eq!(back.constraints().count(), 0);
-    assert_eq!(back.sheet(d.sheet).unwrap().annotations.len(), 9);
+    assert_eq!(back.sheet(d.sheet).unwrap().annotations.len(), 10);
     // New ids after loading never collide with the file's.
     let mut back = back;
     let fresh = back

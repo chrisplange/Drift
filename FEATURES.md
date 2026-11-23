@@ -58,7 +58,7 @@ Seeded 2026-11-09 from the command registry, importers/exporters, agent schema a
 ## Solver: relations and dimensions
 - Relations: coincident, horizontal, vertical, parallel, perpendicular, equal, tangent, concentric, coradial, collinear, point on curve, symmetric, smooth, midpoint, equal distance. `crates/drift-core/src/constraint.rs`
 - Fix: point, X only, Y only, radius. `crates/drift-core/src/constraint.rs`
-- Driving dimensions: distance, horizontal/vertical, point-to-line, radius, diameter, angle. `crates/drift-core/src/constraint.rs`
+- Driving dimensions: distance, horizontal/vertical, point-to-line, radius, diameter, the gap between two concentric circles or arcs (pick one, then the other), angle. `crates/drift-core/src/constraint.rs`
 - Sparse incremental solver. `crates/drift-solver/src/lib.rs`
 - Automatic relations while drawing. `crates/drift-core/src/rules.rs`
 - Status colours: free, fully defined, conflicting. `crates/drift-app/src/commands.rs`

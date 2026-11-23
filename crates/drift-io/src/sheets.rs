@@ -228,13 +228,14 @@ struct MeasureRecord {
 }
 
 /// The kinds of dimension a sheet dimension can be.
-const MEASURES: [&str; 7] = [
+const MEASURES: [&str; 8] = [
     "distance",
     "horizontal_distance",
     "vertical_distance",
     "point_line_distance",
     "radius",
     "diameter",
+    "radial_gap",
     "angle",
 ];
 

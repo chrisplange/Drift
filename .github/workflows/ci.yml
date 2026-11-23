@@ -62,20 +62,40 @@ jobs:
       # macOS.
       DRIFT_REQUIRE_GPU: "1"
     steps:
+      # A pull request that changes only Markdown files skips the tests. The steps are skipped
+      # rather than the job, so the required `Test (<os>)` checks still report and pass.
+      - name: Does this change need the tests
+        id: changes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          code=true
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            files=$(gh pr diff ${{ github.event.pull_request.number }} --name-only -R "${{ github.repository }}")
+            if [ -n "$files" ] && ! echo "$files" | grep -qv '\.md$'; then
+              code=false
+              echo "::notice::Only Markdown files changed; skipping the tests."
+            fi
+          fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
+        if: steps.changes.outputs.code == 'true'
       - uses: dtolnay/rust-toolchain@stable
+        if: steps.changes.outputs.code == 'true'
       - uses: Swatinem/rust-cache@v2
+        if: steps.changes.outputs.code == 'true'
       - name: Install software Vulkan (lavapipe) for GPU render tests
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && steps.changes.outputs.code == 'true'
         run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers
       - name: cargo test --workspace
-        if: runner.os != 'Windows'
+        if: runner.os != 'Windows' && steps.changes.outputs.code == 'true'
         run: cargo test --workspace
       # Windows: the same tests, with one retry for drift-app's alone. Its test binary sometimes
       # dies mid UI tests under the WARP software renderer, at a different test each time
       # (#353), so no single test can be quarantined. Every other crate gets no retry.
       - name: cargo test --workspace (Windows, drift-app retried once for #353)
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && steps.changes.outputs.code == 'true'
         shell: bash
         run: |
           cargo test --workspace --exclude drift-app
@@ -84,10 +104,12 @@ jobs:
           cargo test -p drift-app
       # The editor, edits and tools without a window (no GPU; also part of the line above).
       - run: cargo test -p drift-edit
+        if: steps.changes.outputs.code == 'true'
       # The browser demo: saving, exporting and printing show a note, and copies stay inside.
       - run: cargo test -p drift-app --features demo --test demo
+        if: steps.changes.outputs.code == 'true'
       - name: Upload render test images
-        if: always()
+        if: always() && steps.changes.outputs.code == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: render-tests-${{ matrix.os }}

@@ -193,6 +193,11 @@ impl DriftApp {
         // chained arc: Space steps tangent, reverse tangent, free (#500).
         claimed(Key::Space, ToolKey::Space);
         claimed(Key::Backspace, ToolKey::Backspace);
+        // Preferences → G picks a base point first: the grab goes straight to B's base-point
+        // pick (#532).
+        if g_claimed && self.g_base_point {
+            self.tool_modal_key(ToolKey::B);
+        }
         // G with another tool in hand moves what is picked: the select tool takes over.
         let picked = !self.drawing.editor.selection.is_empty()
             || !self.drawing.editor.selected_instances.is_empty()
@@ -204,7 +209,9 @@ impl DriftApp {
             && !self.tool.is_busy()
         {
             self.set_tool(ToolKind::Select);
-            self.tool_modal_key(ToolKey::G);
+            if self.tool_modal_key(ToolKey::G) && self.g_base_point {
+                self.tool_modal_key(ToolKey::B);
+            }
         }
         if self.tool.is_modal() {
             // Only Esc and Enter (and the modal keys above) act during a grab.

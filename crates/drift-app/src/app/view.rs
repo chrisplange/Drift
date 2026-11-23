@@ -112,17 +112,42 @@ impl DriftApp {
             };
             let ed = &self.drawing.editor;
             let tool = &self.tool;
-            pointer.snap = ed.snap_excluding(
-                raw,
-                options,
-                |id| tool.snap_excludes(ed, id),
-                |copy| tool.snap_excludes_copy(copy),
-            );
+            let snap_at = |at: DVec2, options: SnapOptions| {
+                ed.snap_excluding(
+                    at,
+                    options,
+                    |id| tool.snap_excludes(ed, id),
+                    |copy| tool.snap_excludes_copy(copy),
+                )
+            };
+            pointer.snap = snap_at(raw, options);
+            // While moving or turning, last frame's snap holds against a new one for a little
+            // way (#498), so a drag along the grid past a vertex doesn't flicker between them.
+            // It holds only while it is still there to snap to: the same snap, found again at
+            // its own spot.
+            if tool.kind() == ToolKind::Select
+                && let Some(prev) = self.drawing.view.pointer.and_then(|p| p.snap)
+                && drift_geom::snap_holds(prev, pointer.snap, raw, pointer.tolerance)
+                && let Some(again) = snap_at(
+                    prev.at,
+                    SnapOptions {
+                        tolerance: pointer.tolerance * 1e-3,
+                        ..options
+                    },
+                )
+                && again.kind == prev.kind
+                && again.at.distance(prev.at) <= pointer.tolerance * 1e-3
+            {
+                pointer.snap = Some(again);
+            }
             // Inference lines apply unless an exact snap decides the position; with grid
             // snapping they start from the grid point, so both coordinates stay on the grid.
+            // None starts from where something moving with the drag is, or started (#498).
             if pointer.exact_snap().is_none() {
                 let from = pointer.snap.map_or(raw, |grid| grid.at);
-                pointer.guide = self.inference(from, pointer.tolerance);
+                let tol = pointer.tolerance;
+                pointer.guide =
+                    self.inference(from, tol, |q| tool.guide_excludes(ed, q, tol * 1e-3));
             }
         }
         if snap {
@@ -131,12 +156,18 @@ impl DriftApp {
         pointer
     }
 
-    /// Align `at` horizontally / vertically with recently snapped points (inference lines).
-    pub(crate) fn inference(&self, at: DVec2, tol: f64) -> Option<Guide> {
+    /// Align `at` horizontally / vertically with recently snapped points (inference lines),
+    /// passing over those `skip` names.
+    pub(crate) fn inference(
+        &self,
+        at: DVec2,
+        tol: f64,
+        skip: impl Fn(DVec2) -> bool,
+    ) -> Option<Guide> {
         let mut x_ref: Option<(f64, DVec2)> = None;
         let mut y_ref: Option<(f64, DVec2)> = None;
         for &q in &self.drawing.inference_points {
-            if (at - q).length() <= tol {
+            if (at - q).length() <= tol || skip(q) {
                 continue;
             }
             let (dx, dy) = ((at.x - q.x).abs(), (at.y - q.y).abs());

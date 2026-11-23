@@ -8975,3 +8975,48 @@ fn a_gap_squeezes_no_arc_round_the_origin_to_nothing() {
     let r = drift_solver::radius_of(&ed.doc, arc).unwrap();
     assert!((r - 40.0).abs() < 1e-9, "R {r}");
 }
+
+/// #498: in a point drag, what the solve pulls along with the dragged point (a neighbour kept
+/// vertical, and its other line) is no snap target, nor a guide's start, where it is or where
+/// it was; what stays put still is. Once the drag ends, nothing is passed over.
+#[test]
+fn what_a_drag_pulls_along_is_no_snap_target() {
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let p0 = ed.doc.add_point(v(0.0, 0.0));
+    let p1 = ed.doc.add_point(v(10.0, 0.0));
+    let p2 = ed.doc.add_point(v(10.0, 10.0));
+    let a = ed.doc.add_line(p0, p1).unwrap();
+    let b = ed.doc.add_line(p1, p2).unwrap();
+    ed.commit("Corner");
+    ed.add_constraints(
+        "Relations",
+        &[
+            Constraint::Horizontal { line: a },
+            Constraint::Vertical { line: b },
+        ],
+    )
+    .unwrap();
+    let mut sel = SelectTool::default();
+    let m = Modifiers::default();
+    let grab = ptr(&ed, &sel, v(10.0, 10.0));
+    sel.handle(Input::DragStart(grab, m), &mut ed);
+    let p = ptr(&ed, &sel, v(5.0, 10.0));
+    sel.handle(Input::Drag(p), &mut ed);
+    // The corner below followed, to keep its line upright.
+    let pulled = ed.doc.point(p1).unwrap();
+    assert!(pulled.distance(v(10.0, 0.0)) > 1.0, "{pulled:?}");
+    assert!(sel.snap_excludes(&ed, p2) && sel.snap_excludes(&ed, b));
+    assert!(sel.snap_excludes(&ed, p1), "pulled along");
+    assert!(sel.snap_excludes(&ed, a), "its line changed with it");
+    assert!(sel.guide_excludes(&ed, v(10.0, 0.0), 1e-6), "where it was");
+    assert!(sel.guide_excludes(&ed, pulled, 1e-6), "where it is");
+    let stayed = ed.doc.point(p0).unwrap() == v(0.0, 0.0);
+    assert_eq!(sel.snap_excludes(&ed, p0), !stayed);
+    assert_eq!(sel.guide_excludes(&ed, v(0.0, 0.0), 1e-6), !stayed);
+    sel.handle(Input::DragEnd(p, m), &mut ed);
+    let hover = ptr(&ed, &sel, v(30.0, 30.0));
+    sel.handle(Input::Hover(hover), &mut ed);
+    assert!(!sel.snap_excludes(&ed, p1) && !sel.snap_excludes(&ed, a));
+    assert!(!sel.guide_excludes(&ed, v(10.0, 0.0), 1e-6));
+}

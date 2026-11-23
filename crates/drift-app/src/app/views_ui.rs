@@ -257,9 +257,7 @@ impl DriftApp {
         }
         let options = drift_geom::SnapOptions {
             tolerance: PICK_RADIUS / self.drawing.view.camera.scale,
-            grid: self
-                .grid_snap
-                .then(|| drift_render::grid_info(&self.drawing.view.camera, self.imperial()).minor),
+            grid: self.grid_snap.then(|| self.grid().minor),
             from: None,
         };
         let best = dragged_points(drag.was.crop(), drag.grip)

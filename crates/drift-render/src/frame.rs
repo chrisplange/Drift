@@ -104,6 +104,8 @@ pub struct Viewport {
     pub srgb_target: bool,
     /// Use imperial grid steps (fractions of an inch, inches, feet) instead of powers of ten.
     pub imperial_grid: bool,
+    /// Auto or fixed grid spacing.
+    pub grid: GridSpec,
     /// Draw every curve one device pixel wide, whatever its weight (Revit's thin lines).
     pub thin_lines: bool,
     /// Draw the grid lines.
@@ -373,6 +375,56 @@ const IMPERIAL_STEPS: [(f64, f64); 9] = [
 /// screen. Metric steps are powers of ten (major every 10); imperial steps follow
 /// [`IMPERIAL_STEPS`] up to a foot, then powers of ten feet.
 pub fn grid_info(camera: &Camera, imperial: bool) -> GridInfo {
+    grid_info_for(camera, imperial, GridSpec::Auto)
+}
+
+/// How the grid's spacing is chosen.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum GridSpec {
+    /// Steps picked from the zoom ([`grid_info`]).
+    #[default]
+    Auto,
+    /// A major square of `spacing` mm split into `divisions` minor steps.
+    Fixed { spacing: f64, divisions: u32 },
+}
+
+/// Grid spacing for a camera and a [`GridSpec`]. A fixed grid zoomed out too far to show
+/// its divisions thins its minor lines by whole factors of the divisions (so they stay on
+/// the major lines), then by whole multiples of the major spacing (1, 2, 5, 10, 20, ...)
+/// so it never fills the canvas.
+pub fn grid_info_for(camera: &Camera, imperial: bool, spec: GridSpec) -> GridInfo {
+    let GridSpec::Fixed { spacing, divisions } = spec else {
+        return auto_grid(camera, imperial);
+    };
+    if !(spacing.is_finite() && spacing > 0.0) || divisions == 0 {
+        return auto_grid(camera, imperial);
+    }
+    let min = MIN_GRID_SPACING_PT / camera.scale;
+    let n = divisions;
+    let step = spacing / f64::from(n);
+    if let Some(k) = (1..=n).find(|k| n % k == 0 && step * f64::from(*k) >= min)
+        && k < n
+    {
+        return GridInfo {
+            minor: step * f64::from(k),
+            major: spacing,
+        };
+    }
+    // Whole multiples of the major spacing: 1, 2, 5, 10, 20, 50, ...
+    let mut m = 1.0;
+    let mut i = 0;
+    while spacing * m < min && m < 1e12 {
+        m *= if i % 3 == 1 { 2.5 } else { 2.0 };
+        i += 1;
+    }
+    let minor = spacing * m;
+    GridInfo {
+        minor,
+        major: minor * if n > 1 { f64::from(n) } else { 10.0 },
+    }
+}
+
+fn auto_grid(camera: &Camera, imperial: bool) -> GridInfo {
     let min = MIN_GRID_SPACING_PT / camera.scale;
     if imperial {
         const INCH: f64 = drift_core::units::MM_PER_INCH;
@@ -411,7 +463,7 @@ impl Builder<'_> {
     fn globals(&self) -> Globals {
         let palette = self.palette;
         let scale_px = self.scale_px();
-        let grid = grid_info(self.camera, self.viewport.imperial_grid);
+        let grid = grid_info_for(self.camera, self.viewport.imperial_grid, self.viewport.grid);
         let center = self.camera.center;
         let phase = |spacing: f64| {
             [
@@ -849,6 +901,7 @@ mod tests {
             pixels_per_point: 1.0,
             srgb_target: false,
             imperial_grid: false,
+            grid: GridSpec::Auto,
             thin_lines: false,
             show_grid: true,
             show_axes: true,
@@ -1065,6 +1118,44 @@ mod tests {
         ];
         let frame = build_frame(&items, &camera, viewport(), &Palette::dark());
         assert!(frame.arcs.is_empty() && frame.segments.is_empty());
+    }
+
+    #[test]
+    fn fixed_grid_shows_divisions_then_thins_by_whole_multiples() {
+        let spec = GridSpec::Fixed {
+            spacing: 600.0,
+            divisions: 4,
+        };
+        let at = |scale: f64| {
+            let camera = Camera {
+                scale,
+                ..Camera::default()
+            };
+            grid_info_for(&camera, false, spec)
+        };
+        assert_eq!(
+            at(1.0),
+            GridInfo {
+                minor: 150.0,
+                major: 600.0
+            }
+        );
+        // 150 mm is under 10 pt at 0.05; 300 mm (two divisions) isn't.
+        assert_eq!(
+            at(0.05),
+            GridInfo {
+                minor: 300.0,
+                major: 600.0
+            }
+        );
+        for k in 1..60 {
+            let scale = 0.05 * 0.8f64.powi(k);
+            let grid = at(scale);
+            assert!(grid.minor * scale >= MIN_GRID_SPACING_PT);
+            let m = grid.minor / 600.0;
+            assert!(m >= 0.25 && (m.fract() == 0.0 || m == 0.5), "{m}");
+            assert!((grid.major / grid.minor).fract() == 0.0);
+        }
     }
 
     #[test]

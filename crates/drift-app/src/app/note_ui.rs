@@ -346,9 +346,7 @@ impl DriftApp {
         let tolerance = PICK_RADIUS / self.drawing.view.camera.scale;
         let options = drift_geom::SnapOptions {
             tolerance,
-            grid: self
-                .grid_snap
-                .then(|| drift_render::grid_info(&self.drawing.view.camera, self.imperial()).minor),
+            grid: self.grid_snap.then(|| self.grid().minor),
             from: None,
         };
         let mut p = Pointer::new(raw, tolerance);

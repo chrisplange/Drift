@@ -212,7 +212,7 @@ impl DriftApp {
         {
             return;
         }
-        let step = grid_info(&self.drawing.view.camera, self.imperial()).minor;
+        let step = self.grid().minor;
         let mut delta = DVec2::ZERO;
         ctx.input(|i| {
             if i.modifiers.command || i.modifiers.alt {

@@ -26,6 +26,7 @@ pub struct CanvasContent<'a> {
 pub struct CanvasOptions {
     pub dark_mode: bool,
     pub imperial_grid: bool,
+    pub grid: drift_render::GridSpec,
     pub thin_lines: bool,
     pub show_grid: bool,
     pub show_axes: bool,
@@ -73,6 +74,7 @@ impl CanvasPainter {
             pixels_per_point,
             srgb_target: self.srgb_target,
             imperial_grid: options.imperial_grid,
+            grid: options.grid,
             thin_lines: options.thin_lines,
             show_grid: options.show_grid,
             show_axes: options.show_axes,

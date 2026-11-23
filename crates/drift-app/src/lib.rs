@@ -58,7 +58,7 @@ use drift_core::{
 use drift_geom::SnapOptions;
 use drift_io::Metadata;
 use drift_platform::{FileEvent, FilePath, FileType, Files};
-use drift_render::{Camera, grid_info};
+use drift_render::Camera;
 use eframe::egui::{self, Key, KeyboardShortcut, Modifiers as EguiModifiers, PointerButton};
 
 use drift_edit::prefs::KEY_VIEW;
@@ -689,6 +689,12 @@ pub struct DriftApp {
     /// Colour geometry by constraint status (under / fully defined) rather than by layer.
     status_colors: bool,
     show_grid: bool,
+    /// Grid: fixed spacing (off: Auto, steps picked from the zoom).
+    grid_fixed: bool,
+    /// Fixed grid: the major square in mm, the text it was typed as, and its divisions.
+    grid_spacing: f64,
+    grid_spacing_text: String,
+    grid_divisions: u32,
     show_axes: bool,
     /// Built-in and imported hatch patterns.
     hatch_patterns: fills::PatternLibrary,
@@ -915,6 +921,10 @@ impl DriftApp {
             thin_lines: false,
             status_colors: true,
             show_grid: true,
+            grid_fixed: false,
+            grid_spacing: 304.8,
+            grid_spacing_text: "1'".into(),
+            grid_divisions: 12,
             show_axes: true,
             hatch_patterns: Default::default(),
             last_hatch: None,

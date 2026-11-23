@@ -101,6 +101,7 @@ fn docs_screenshots() {
     checker();
     menus();
     pick_filters();
+    selection_filter_pie();
     shapes();
     importing();
     walls_and_openings();
@@ -1029,6 +1030,64 @@ fn pick_filters() {
     );
     drag(&mut h, from, to);
     shot("pick-filters.png", &mut h);
+}
+
+/// Hold S over the example with Text and Annotations off and lean towards Edges: the
+/// Selection filter pie, about to pick edges alone (#481).
+fn hold_selection_filter_pie(h: &mut Harness<'_, DriftApp>) {
+    use drift_edit::editor::{PickFilter, PickKind};
+    open_example(h);
+    h.state_mut().status = None;
+    h.state_mut().set_pick_filter(
+        PickFilter::ALL
+            .with(PickKind::Text, false)
+            .with(PickKind::Annotations, false),
+    );
+    let at = h.state().drawing.view.canvas_rect.center();
+    h.hover_at(at);
+    h.run();
+    // (Held, S keeps a repaint coming for the ring's timer: step rather than run.)
+    h.key_down(Key::S);
+    h.run_steps(3);
+    h.hover_at(at + egui::vec2(70.0, 4.0));
+    h.run_steps(3);
+}
+
+fn selection_filter_pie() {
+    let mut h = harness().unwrap();
+    hold_selection_filter_pie(&mut h);
+    let image = h.render().expect("render");
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/guide/images");
+    image
+        .save(dir.join("selection-filter-pie.png"))
+        .expect("save png");
+}
+
+/// The Selection filter pie at 3440x1440 and at 4K with 150% scaling, for review (#481):
+/// written to `target/tmp`; and the guide's shot of it, without the whole docs run.
+#[test]
+#[ignore]
+fn selection_filter_pie_at_large_sizes() {
+    if !crate::test_gpu::available() {
+        return;
+    }
+    selection_filter_pie();
+    for (name, size, scale) in [
+        ("selection-filter-pie-3440x1440.png", [3440.0, 1440.0], 1.0),
+        ("selection-filter-pie-4k-150.png", [2560.0, 1440.0], 1.5),
+    ] {
+        let mut h = Harness::builder()
+            .with_size(size)
+            .with_pixels_per_point(scale)
+            .wgpu_setup(crate::test_gpu::setup())
+            .build_eframe(|cc| DriftApp::new(cc));
+        h.run();
+        hold_selection_filter_pie(&mut h);
+        let image = h.render().expect("render");
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp");
+        std::fs::create_dir_all(&dir).expect("create target/tmp");
+        image.save(dir.join(name)).expect("save png");
+    }
 }
 
 fn shapes() {

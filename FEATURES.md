@@ -116,11 +116,12 @@ Seeded 2026-11-09 from the command registry, importers/exporters, agent schema a
 - Selection filters: points, edges, areas, fills, text, annotations, blocks/groups. `crates/drift-app/src/commands.rs`
 - Box select and Shift/Ctrl modifiers. `crates/drift-edit/src/tools/select.rs`
 - Pan, zoom, zoom to fit, zoom to selection. `crates/drift-edit/src/tools/view.rs`
-- Grid and origin axes. `crates/drift-app/src/commands.rs`
+- Grid and origin axes; grid spacing Auto or fixed (typed length, divisions per major square, View → Grid spacing). `crates/drift-app/src/commands.rs`, `crates/drift-render/src/frame.rs`
 - Right-click pie / context menus. `crates/drift-app/src/app/pie.rs`
 
 ## UI
 - Command palette with CAD aliases (LINE, TRIM, HATCH…). `crates/drift-app/src/app/palette.rs`
+- Assignable keyboard shortcuts with presets (Drift default, AutoCAD-style, your own): Preferences → Keyboard. `crates/drift-app/src/keymap.rs`
 - Dockable panels: Inspector, Layers, Blocks, Sheets, Parameters; reset layout. `crates/drift-app/src/app/dock_ui.rs`
 - Themes: light, dark, Midnight, Obsidian, follow system. `crates/drift-app/src/commands.rs`
 - Preferences and drawing settings. `crates/drift-app/src/app/start_ui.rs`

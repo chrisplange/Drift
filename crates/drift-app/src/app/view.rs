@@ -6,6 +6,73 @@ use crate::*;
 const EXTENSION_GRIP_REACH: f32 = 6.0;
 
 impl DriftApp {
+    /// The grid setting: Auto, or the fixed spacing and divisions.
+    pub(crate) fn grid_spec(&self) -> drift_render::GridSpec {
+        if self.grid_fixed {
+            drift_render::GridSpec::Fixed {
+                spacing: self.grid_spacing,
+                divisions: self.grid_divisions,
+            }
+        } else {
+            drift_render::GridSpec::Auto
+        }
+    }
+
+    /// The grid as drawn now (snap and nudges follow its minor step).
+    pub(crate) fn grid(&self) -> drift_render::GridInfo {
+        drift_render::grid_info_for(&self.drawing.view.camera, self.imperial(), self.grid_spec())
+    }
+
+    /// Set the fixed grid's spacing from typed text (`600`, `1'`, `3.6 m`; a bare number is
+    /// in the drawing's length unit). False if the text isn't a positive length.
+    pub(crate) fn set_grid_spacing(&mut self, text: &str) -> bool {
+        let none = |_: &str| None;
+        let unit = self.drawing.editor.doc.units().length;
+        match drift_core::expr::evaluate_input(text, drift_core::Kind::Length, unit, &none) {
+            Ok(r) if r.value > 1e-6 && r.value.is_finite() => {
+                self.grid_spacing = r.value;
+                self.grid_spacing_text = r.text;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// The grid's spacing as view preferences (#506). The typed text holds no `;`.
+    pub(crate) fn grid_prefs(&self) -> [String; 4] {
+        [
+            format!("gfixed={}", u8::from(self.grid_fixed)),
+            format!("gspace={}", self.grid_spacing),
+            format!("gdiv={}", self.grid_divisions),
+            format!("gtext={}", self.grid_spacing_text.replace(';', "")),
+        ]
+    }
+
+    /// Read one of [`Self::grid_prefs`]; false for another key.
+    pub(crate) fn apply_grid_pref(&mut self, key: &str, value: &str) -> bool {
+        match key {
+            "gfixed" => self.grid_fixed = value == "1",
+            "gspace" => {
+                if let Ok(v) = value.parse::<f64>()
+                    && v.is_finite()
+                    && v > 0.0
+                {
+                    self.grid_spacing = v;
+                }
+            }
+            "gdiv" => {
+                if let Ok(n) = value.parse::<u32>()
+                    && (1..=1000).contains(&n)
+                {
+                    self.grid_divisions = n;
+                }
+            }
+            "gtext" => self.grid_spacing_text = value.to_string(),
+            _ => return false,
+        }
+        true
+    }
+
     /// A plain Select click at `at` on an annotation (a dimension, relation or note): whether
     /// it goes on to the next of what is under the pointer there, for the select tool to
     /// pick, rather than picking the annotation (click again to pick the next; see
@@ -37,9 +104,7 @@ impl DriftApp {
         if snap && self.tool.wants_snap() {
             let options = SnapOptions {
                 tolerance: pointer.tolerance,
-                grid: self
-                    .grid_snap
-                    .then(|| grid_info(&self.drawing.view.camera, self.imperial()).minor),
+                grid: self.grid_snap.then(|| self.grid().minor),
                 from: self
                     .perp_tangent_snap
                     .then(|| self.tool.snap_from())
@@ -374,6 +439,37 @@ impl DriftApp {
                 .filter(|_| dims_ok)
                 .find(|d| d.text_rect.expand(annotations::TEXT_REACH).contains(p))
         };
+        // Its text, or near one of its extension lines (as near as a curve picks, #533). Only
+        // the text drags the label; a press on an extension line is left to the tool.
+        // A point under the pointer comes before an extension line (which starts close by its
+        // measured point).
+        let reach = crate::PICK_RADIUS as f32;
+        // (Looked up now, for where the pointer is and where a click lands, before the
+        // editor changes below.)
+        let points_under: Vec<egui::Pos2> = {
+            let ed = &self.drawing.editor;
+            let scale = self.drawing.view.camera.scale;
+            [pos, release_pos(ui, PointerButton::Primary)]
+                .into_iter()
+                .flatten()
+                .filter(|p| {
+                    let pointer = Pointer::new(map.to_world(*p), crate::PICK_RADIUS / scale);
+                    drift_edit::tools::point_under(ed, &pointer)
+                })
+                .collect()
+        };
+        // A note or mark under the pointer comes first too (it was looked for before this).
+        let note_under = self.drawing.editor.hovered_annotation.is_some();
+        let point_under = |p: egui::Pos2| note_under || points_under.contains(&p);
+        let dim_or_extension_at = |p: egui::Pos2| {
+            dim_at(p).or_else(|| {
+                dims.iter()
+                    .filter(|_| !point_under(p))
+                    .rev()
+                    .filter(|_| dims_ok)
+                    .find(|d| d.extension_hit(p, reach))
+            })
+        };
         let glyph_at = |p: egui::Pos2| {
             glyphs
                 .iter()
@@ -382,7 +478,7 @@ impl DriftApp {
                 .find(|g| g.rect.contains(p))
         };
         let hit = |p: egui::Pos2| {
-            dim_at(p)
+            dim_or_extension_at(p)
                 .and_then(|d| d.id)
                 .or_else(|| glyph_at(p).map(|g| g.id))
         };
@@ -1353,6 +1449,7 @@ impl DriftApp {
             crate::canvas::CanvasOptions {
                 dark_mode: ui.visuals().dark_mode,
                 imperial_grid: self.imperial(),
+                grid: self.grid_spec(),
                 thin_lines: self.thin_lines,
                 show_grid: self.show_grid,
                 show_axes: self.show_axes,

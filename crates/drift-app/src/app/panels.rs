@@ -445,6 +445,9 @@ fn size_rows(ui: &mut egui::Ui, ed: &Editor, id: drift_core::EntityId) -> Option
 /// (so the sheet tabs keep some room).
 const SEARCH_FIELD_FROM: f32 = 960.0;
 
+/// The common divisions of a fixed grid's major square.
+const GRID_DIVISION_PRESETS: [u32; 7] = [2, 4, 5, 8, 10, 12, 16];
+
 /// The menus' names, in their order.
 const MENUS: [&str; 8] = [
     "File", "Edit", "View", "Draw", "Build", "Modify", "Annotate", "Help",
@@ -482,7 +485,7 @@ impl DriftApp {
         // A menu's shortcut runs that very item, so a cycle's later tools (Ellipse after
         // Circle's C) show none: the key is on the cycle's first tool, and the tooltip says
         // what pressing it again does.
-        let later_in_cycle = matches!(command, Command::Tool(kind) if kind.cycle_head() != kind && spec.keys.is_empty());
+        let later_in_cycle = matches!(command, Command::Tool(kind) if kind.cycle_head() != kind && spec.shortcuts().is_empty());
         let keys = if later_in_cycle {
             String::new()
         } else {
@@ -521,6 +524,60 @@ impl DriftApp {
     }
 
     /// View → Relations: which relations show their symbols (Alt+R steps through them).
+    /// View → Grid: Auto or a fixed spacing, and the divisions of a major square.
+    fn grid_menu(&mut self, ui: &mut egui::Ui) {
+        let room = egui::Atom::custom(egui::Id::new("menu_check"), egui::vec2(14.0, 14.0));
+        ui.menu_button((room, "Grid spacing"), |ui| {
+            if theme::menu_check(ui, !self.grid_fixed, "Auto", "").clicked() {
+                self.grid_fixed = false;
+            }
+            if theme::menu_check(ui, self.grid_fixed, "Fixed spacing", "").clicked() {
+                self.grid_fixed = true;
+            }
+            ui.separator();
+            ui.add_enabled_ui(self.grid_fixed, |ui| {
+                let id = egui::Id::new("grid_spacing_text");
+                let mut text = ui
+                    .data(|d| d.get_temp::<String>(id))
+                    .unwrap_or_else(|| self.grid_spacing_text.clone());
+                let mut bad = false;
+                ui.horizontal(|ui| {
+                    ui.label("Spacing");
+                    let r = ui.add(
+                        egui::TextEdit::singleline(&mut text)
+                            .desired_width(80.0)
+                            .hint_text("600, 1', 3.6 m"),
+                    );
+                    if r.lost_focus() {
+                        bad = !self.set_grid_spacing(&text);
+                        text.clone_from(&self.grid_spacing_text);
+                    }
+                    r.on_hover_text("The major square: a length with units (a bare number is in the drawing's unit)");
+                });
+                if bad {
+                    ui.label(egui::RichText::new("Not a length").weak());
+                }
+                ui.data_mut(|d| d.insert_temp(id, text));
+                ui.horizontal(|ui| {
+                    ui.label("Divisions");
+                    let mut n = self.grid_divisions;
+                    ui.add(egui::DragValue::new(&mut n).range(1..=1000));
+                    self.grid_divisions = n.max(1);
+                });
+                ui.horizontal_wrapped(|ui| {
+                    for n in GRID_DIVISION_PRESETS {
+                        if ui
+                            .selectable_label(self.grid_divisions == n, n.to_string())
+                            .clicked()
+                        {
+                            self.grid_divisions = n;
+                        }
+                    }
+                });
+            });
+        });
+    }
+
     fn relations_menu(&mut self, ui: &mut egui::Ui) {
         let Some(spec) = commands::spec(Command::Relations) else {
             return;
@@ -912,6 +969,7 @@ impl DriftApp {
                     Some(C::Toggle(ViewFlag::Hidden)),
                 ],
             );
+            self.grid_menu(ui);
             self.relations_menu(ui);
             self.command_items(
                 ui,
@@ -1142,7 +1200,7 @@ impl DriftApp {
         }
         // A single point has no size to fit: show some room around it.
         if bounds.min == bounds.max {
-            let pad = DVec2::splat(grid_info(&self.drawing.view.camera, self.imperial()).major);
+            let pad = DVec2::splat(self.grid().major);
             bounds.min -= pad;
             bounds.max += pad;
         }
@@ -2255,7 +2313,7 @@ impl DriftApp {
                         self.drawing.editor.set_units(units);
                     }
                     theme::bar_divider(ui);
-                    let minor = grid_info(&self.drawing.view.camera, self.imperial()).minor;
+                    let minor = self.grid().minor;
                     let grid = if units.length.is_metric() {
                         format!("{} mm", format_length(minor))
                     } else {
@@ -2287,7 +2345,7 @@ impl DriftApp {
                         Glyph::Status,
                         "Status colors",
                         &mut self.status_colors,
-                        "Sketch status colors (on) or layer and line colors (off) · Shift+C",
+                        &format!("Sketch status colors (on) or layer and line colors (off){}", crate::commands::key_suffix("view.status_colours")),
                     );
                     toggle(
                         ui,
@@ -2301,7 +2359,7 @@ impl DriftApp {
                         Glyph::Endpoints,
                         "End points",
                         &mut self.drawing.editor.prefs.always_endpoints,
-                        "Always show end points (off: only on hovered or picked curves) · Shift+Alt+V",
+                        &format!("Always show end points (off: only on hovered or picked curves){}", crate::commands::key_suffix("view.endpoints")),
                     );
                     toggle(
                         ui,
@@ -2323,14 +2381,14 @@ impl DriftApp {
                         Glyph::AutoRelations,
                         "Auto relations",
                         &mut self.drawing.editor.prefs.auto_relations,
-                        "Auto relations: add relations as you draw and modify (horizontal, coincident, tangent...). Off: plain geometry · Shift+Alt+R",
+                        &format!("Auto relations: add relations as you draw and modify (horizontal, coincident, tangent...). Off: plain geometry{}", crate::commands::key_suffix("view.auto_relations")),
                     );
                     toggle(
                         ui,
                         Glyph::AutoMerge,
                         "Auto merge",
                         &mut self.drawing.editor.prefs.auto_merge,
-                        "Auto merge: a point dropped on another point joins it, and lines and arcs drawn on a point share it (on the same layer only). Off: only placed there. Ctrl flips it for one drop · Shift+Alt+M",
+                        &format!("Auto merge: a point dropped on another point joins it, and lines and arcs drawn on a point share it (on the same layer only). Off: only placed there. Ctrl flips it for one drop{}", crate::commands::key_suffix("view.auto_merge")),
                     );
                     // Angle snapping sits with grid snapping: a click opens its steps.
                     let angle_snap = &mut self.angle_snap;
@@ -2371,7 +2429,7 @@ impl DriftApp {
                         Glyph::Snap,
                         "Snap to grid",
                         &mut self.grid_snap,
-                        &format!("Snap to grid ({grid}) · Shift+G"),
+                        &format!("Snap to grid ({grid}){}", crate::commands::key_suffix("view.snap")),
                     );
                     // The pointer's position, leftmost of the cluster: the first to go when
                     // the window is narrow, so the hint keeps its room.

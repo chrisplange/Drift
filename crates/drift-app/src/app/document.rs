@@ -246,6 +246,7 @@ impl DriftApp {
         }
         prefs.extend(self.layout.prefs());
         prefs.push(format!("quickbar={}", u8::from(self.show_quick_bar)));
+        prefs.extend(self.grid_prefs());
         // The tool rail with names (off: the slim rail of icons).
         prefs.push(format!("railnames={}", u8::from(self.rail_names)));
         prefs.join(";")
@@ -259,7 +260,10 @@ impl DriftApp {
                 continue;
             };
             let on = value == "1";
-            if self.crosshair.apply(key, value) || rules_pref(&mut self.new_rules, key, value) {
+            if self.crosshair.apply(key, value)
+                || self.apply_grid_pref(key, value)
+                || rules_pref(&mut self.new_rules, key, value)
+            {
                 continue;
             }
             match key {

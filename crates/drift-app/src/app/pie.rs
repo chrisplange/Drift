@@ -45,8 +45,8 @@ fn key_for(label: &str) -> Option<Key> {
 }
 
 /// How far from the middle the pointer has to be to choose, and where the labels sit.
-const DEAD_ZONE: f32 = 22.0;
-const RADIUS: f32 = 96.0;
+pub(crate) const DEAD_ZONE: f32 = 22.0;
+pub(crate) const RADIUS: f32 = 96.0;
 
 /// The symbol of a relation, by the name it is offered under.
 pub(crate) fn glyph(label: &str) -> GlyphKind {
@@ -100,7 +100,7 @@ pub(crate) fn place_at(center: egui::Pos2, pointer: egui::Pos2) -> Option<usize>
 }
 
 /// The middle of a place's label.
-fn place_pos(center: egui::Pos2, place: usize) -> egui::Pos2 {
+pub(crate) fn place_pos(center: egui::Pos2, place: usize) -> egui::Pos2 {
     let a = place as f32 * std::f32::consts::FRAC_PI_4;
     center + egui::vec2(a.cos(), -a.sin()) * RADIUS
 }
@@ -139,13 +139,15 @@ impl DriftApp {
         });
     }
 
-    /// Q opens the pie at the pointer; while it is open the keys are its own. Returns true if
+    /// Q (or the key the user gave it) opens the pie at the pointer; while it is open the keys are its own. Returns true if
     /// the keyboard was used here.
     pub(crate) fn pie_keys(&mut self, ctx: &egui::Context) -> bool {
+        // Its key is the user's (#499): Q unless changed.
         let (pressed, released, escape, pointer) = ctx.input(|i| {
+            let (pressed, released) = crate::keymap::pressed_released(i, "edit.relations_pie");
             (
-                i.modifiers.is_none() && i.key_pressed(Key::Q),
-                i.key_released(Key::Q),
+                pressed,
+                released,
                 i.key_pressed(Key::Escape),
                 i.pointer.latest_pos(),
             )
@@ -173,8 +175,11 @@ impl DriftApp {
             if self.drawing.editor.selection.is_empty()
                 && self.drawing.editor.selected_midpoints.is_empty()
             {
+                let key = crate::commands::spec(crate::commands::Command::RelationsPie)
+                    .map(|s| s.key_text(cfg!(target_os = "macos")))
+                    .unwrap_or_default();
                 self.set_status(
-                    "Select what to relate first, then press Q".into(),
+                    format!("Select what to relate first, then press {key}"),
                     false,
                     now,
                 );

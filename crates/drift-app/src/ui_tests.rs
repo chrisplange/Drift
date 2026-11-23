@@ -32,6 +32,8 @@ mod import;
 /// The Inspector's first row is the Layer, for every kind of pick (#300).
 #[cfg(not(feature = "demo"))]
 mod inspector_layer;
+/// Assignable keys and presets (#499).
+mod keymap;
 /// Picking an object shows its layer, or makes it current (drift-releases#19).
 mod layer_on_pick;
 /// Alt-click a layer's lock or snap to set the other layers.
@@ -4866,6 +4868,10 @@ fn end_points_light_up_and_hide_until_used() {
             .filter(|i| i.vertex)
             .count()
     };
+    // (The pointer is left where the menu's item was, over the canvas: off it, so it
+    // hovers nothing, not even a dimension's extension line.)
+    h.hover_at(egui::pos2(1.0, 1.0));
+    h.run();
     assert_eq!(markers(&h), 0);
     // Hover a corner where a line meets a fillet: it lights up.
     let corner = DVec2::new(10.0, 0.0);
@@ -10604,7 +10610,11 @@ fn saved_preferences_read_back_unchanged() {
         .view_prefs()
         .replace("rels=all;", "")
         .replace("merge=0;", "");
-    assert_eq!(written.strip_suffix(";railnames=0"), Some(SAVED));
+    // (And the grid's spacing since #506: appended, Auto unless set.)
+    assert_eq!(
+        written.strip_suffix(";gfixed=0;gspace=304.8;gdiv=12;gtext=1';railnames=0"),
+        Some(SAVED)
+    );
 }
 
 #[test]
@@ -10695,4 +10705,67 @@ fn annotation_scale_screenshots() {
         h.run();
         shoot(&mut h, "shelves");
     }
+}
+
+/// #506: a fixed 600 mm grid with 4 divisions snaps every 150 mm, its spacing reads typed
+/// lengths in either unit system, and Auto brings back the zoom-picked grid.
+#[test]
+fn fixed_grid_snaps_to_its_divisions_and_auto_restores() {
+    let Some(mut h) = harness() else { return };
+    let mut units = h.state().drawing.editor.doc.units();
+    // Imperial: a foot typed with its unit is a foot.
+    units.length = drift_core::LengthFormat::Architectural;
+    h.state_mut().drawing.editor.set_units(units);
+    assert!(h.state().imperial());
+    assert!(h.state_mut().set_grid_spacing("1'"));
+    assert!((h.state().grid_spacing - 304.8).abs() < 1e-9);
+    assert!(h.state_mut().set_grid_spacing("3.6 m"));
+    assert!((h.state().grid_spacing - 3600.0).abs() < 1e-9);
+    assert!(!h.state_mut().set_grid_spacing("wide"));
+    // Metric: a bare number is millimetres.
+    units.length = drift_core::LengthFormat::Millimetre;
+    h.state_mut().drawing.editor.set_units(units);
+    assert!(h.state_mut().set_grid_spacing("600"));
+    h.state_mut().grid_fixed = true;
+    h.state_mut().grid_divisions = 4;
+    h.state_mut().grid_snap = true;
+    h.state_mut().drawing.view.fit_target = None;
+    h.state_mut().drawing.view.camera.center = DVec2::new(300.0, 200.0);
+    h.state_mut().drawing.view.camera.scale = 0.5;
+    h.run();
+    let auto = drift_render::grid_info(&h.state().drawing.view.camera, false);
+    let grid = h.state().grid();
+    assert_eq!((grid.minor, grid.major), (150.0, 600.0));
+    h.state_mut().set_tool(ToolKind::Line);
+    h.run();
+    click_world(&mut h, DVec2::new(140.0, 160.0));
+    click_world(&mut h, DVec2::new(440.0, 310.0));
+    h.key_press(Key::Escape);
+    h.run();
+    let points: Vec<DVec2> = h
+        .state()
+        .drawing
+        .editor
+        .doc
+        .iter()
+        .filter_map(|(_, e)| match e.kind {
+            EntityKind::Point(p) => Some(p),
+            _ => None,
+        })
+        .collect();
+    for want in [DVec2::new(150.0, 150.0), DVec2::new(450.0, 300.0)] {
+        assert!(
+            points.iter().any(|p| p.distance(want) < 1e-6),
+            "{want:?} in {points:?}"
+        );
+    }
+    // Zoomed far out the fixed grid thins by whole multiples, never below the minimum.
+    h.state_mut().drawing.view.camera.scale = 0.001;
+    let far = h.state().grid();
+    assert!(far.minor * 0.001 >= 10.0 && (far.minor / 600.0).fract() == 0.0);
+    h.state_mut().drawing.view.camera.scale = 0.5;
+    // Auto restores today's grid.
+    h.state_mut().grid_fixed = false;
+    h.run();
+    assert_eq!(h.state().grid(), auto);
 }

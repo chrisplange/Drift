@@ -21,6 +21,7 @@ mod edit_session_tests;
 mod export_crop_tests;
 pub mod fonts;
 mod icons;
+mod keymap;
 mod layers_ui;
 pub(crate) mod links;
 #[cfg(test)]
@@ -57,7 +58,7 @@ use drift_core::{
 use drift_geom::SnapOptions;
 use drift_io::Metadata;
 use drift_platform::{FileEvent, FilePath, FileType, Files};
-use drift_render::{Camera, grid_info};
+use drift_render::Camera;
 use eframe::egui::{self, Key, KeyboardShortcut, Modifiers as EguiModifiers, PointerButton};
 
 use drift_edit::prefs::KEY_VIEW;
@@ -143,6 +144,8 @@ const KEY_RECENT: &str = "drift.recent";
 const KEY_DARK_LOOK: &str = "drift.dark_look";
 /// Preferences → General → Animate solves ("1" or "0").
 const KEY_ANIMATE_SOLVES: &str = "drift.animate_solves";
+/// Preferences → General → G picks a base point first ("1" or "0").
+const KEY_G_BASE_POINT: &str = "drift.g_base_point";
 /// How many recent files are remembered.
 const MAX_RECENT: usize = 10;
 
@@ -609,6 +612,8 @@ pub struct DriftApp {
     screen_font: fonts::ScreenFont,
     /// The relations pie (Q), while it is open.
     pie: Option<app::pie::Pie>,
+    /// The Selection filter pie (hold S), from S going down.
+    select_pie: Option<app::select_pie::SelectPie>,
     /// Text filtering the shortcuts list.
     shortcut_filter: String,
     /// Where the side panels are (docked, floating or hidden).
@@ -647,6 +652,9 @@ pub struct DriftApp {
     /// Preferences → General → Animate solves: geometry a solve moves eases into place
     /// (#514). Kept with the app's settings, not in drawings.
     animate_solves: bool,
+    /// Preferences → General → G picks a base point first: G starts the B base-point move
+    /// (pick a base point, then the destination) instead of the free grab (#532).
+    g_base_point: bool,
     /// The solves easing into place on the canvas.
     solve_motion: motion::SolveMotion,
     /// File → Drawing settings: the units and drafting style saved with the drawing.
@@ -681,6 +689,12 @@ pub struct DriftApp {
     /// Colour geometry by constraint status (under / fully defined) rather than by layer.
     status_colors: bool,
     show_grid: bool,
+    /// Grid: fixed spacing (off: Auto, steps picked from the zoom).
+    grid_fixed: bool,
+    /// Fixed grid: the major square in mm, the text it was typed as, and its divisions.
+    grid_spacing: f64,
+    grid_spacing_text: String,
+    grid_divisions: u32,
     show_axes: bool,
     /// Built-in and imported hatch patterns.
     hatch_patterns: fills::PatternLibrary,
@@ -865,6 +879,7 @@ impl DriftApp {
             font_filter: String::new(),
             screen_font: Default::default(),
             pie: None,
+            select_pie: None,
             shortcut_filter: String::new(),
             layout: Default::default(),
             dock_view: Default::default(),
@@ -886,6 +901,7 @@ impl DriftApp {
             show_licences: false,
             show_settings: false,
             animate_solves: true,
+            g_base_point: false,
             solve_motion: Default::default(),
             show_drawing_settings: false,
             clipboard: None,
@@ -905,6 +921,10 @@ impl DriftApp {
             thin_lines: false,
             status_colors: true,
             show_grid: true,
+            grid_fixed: false,
+            grid_spacing: 304.8,
+            grid_spacing_text: "1'".into(),
+            grid_divisions: 12,
             show_axes: true,
             hatch_patterns: Default::default(),
             last_hatch: None,
@@ -1001,6 +1021,7 @@ impl DriftApp {
             && app.soak.is_none()
         {
             app.restore_session(storage);
+            keymap::load(storage);
         }
         app
     }
@@ -1401,6 +1422,7 @@ impl eframe::App for DriftApp {
         storage.set_string(KEY_VIEW, self.view_prefs());
         storage.set_string(KEY_DARK_LOOK, theme::dark_look().key().into());
         self.new_drawing.save(storage);
+        keymap::save(storage);
         self.save_motion_pref(storage);
         let recent: Vec<String> = self
             .recent
@@ -1445,12 +1467,19 @@ impl DriftApp {
         if let Some(on) = storage.get_string(KEY_ANIMATE_SOLVES) {
             self.animate_solves = on != "0";
         }
+        if let Some(on) = storage.get_string(KEY_G_BASE_POINT) {
+            self.g_base_point = on == "1";
+        }
     }
 
     fn save_motion_pref(&self, storage: &mut dyn eframe::Storage) {
         storage.set_string(
             KEY_ANIMATE_SOLVES,
             if self.animate_solves { "1" } else { "0" }.into(),
+        );
+        storage.set_string(
+            KEY_G_BASE_POINT,
+            if self.g_base_point { "1" } else { "0" }.into(),
         );
     }
 }

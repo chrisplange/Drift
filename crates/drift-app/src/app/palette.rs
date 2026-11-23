@@ -240,6 +240,15 @@ impl DriftApp {
                 }
             }
             Command::Relations => self.show_relations = self.show_relations.next(),
+            Command::RelationsPie => {
+                if self.drawing.editor.selection.is_empty()
+                    && self.drawing.editor.selected_midpoints.is_empty()
+                {
+                    self.set_status("Select what to relate first".into(), false, now);
+                } else {
+                    self.open_pie(ctx);
+                }
+            }
             Command::Panel(p) => self.toggle_panel(p),
             Command::HideAllPanels => self.dock_view.hide_all = !self.dock_view.hide_all,
             Command::ResetPanels => {

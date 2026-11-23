@@ -16,6 +16,11 @@ drift-core.workspace = true
 # bar's census (docs/solver-audit.md, section 5). drift-edit's tests turn it on; no build of
 # the app should.
 exit-counts = []
+# Test-only: each heuristic of the solve and the drag can be switched off, one at a time,
+# by `DRIFT_ABLATE` (`ablation`), for the heuristic ledger (docs/solver-heuristics.md, #187).
+# Nothing turns it on but `scripts/solver-bar/ablate.py`'s own builds; no build of the app
+# should. Without it every switch is `false` at compile time.
+ablate = []
 
 [dev-dependencies]
 proptest = "1"

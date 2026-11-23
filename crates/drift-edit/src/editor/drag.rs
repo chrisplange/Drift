@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use drift_core::{Constraint, ConstraintId, DVec2, EntityId, EntityKind};
+use drift_solver::ablation::{self, Switch};
 use drift_solver::{Param, SolveOptions};
 
 use super::{Editor, Geometry};
@@ -101,6 +102,25 @@ const LINE_HOLD: f64 = 100.0;
 /// `COLLAPSED_RADIUS`, F1). A drag that can't land stops short of it (see
 /// [`Editor::breaks_held_shape`]).
 const COLLAPSED_LINE: f64 = 1e-6;
+
+/// [`DRAG_SOLVES`] and [`UNFINISHED_WORK`] as a drag reads them: themselves, but where the
+/// heuristic ledger's ablation has thrown their switch (test builds with the `ablate` feature
+/// only; see `drift_solver::ablation`).
+#[inline(always)]
+fn frame_solves() -> u32 {
+    ablation::or(Switch::DragSolvesTimes10, DRAG_SOLVES, 10 * DRAG_SOLVES)
+}
+
+#[inline(always)]
+fn unfinished_work() -> usize {
+    if ablation::off(Switch::UnfinishedWorkTimes10) {
+        10 * UNFINISHED_WORK
+    } else if ablation::off(Switch::UnfinishedWorkNone) {
+        0
+    } else {
+        UNFINISHED_WORK
+    }
+}
 
 /// Whether a relation holds geometry where it is, so that the part it is in can't be moved
 /// whole. Every other relation is between the part's own geometry (or a size: a fixed
@@ -519,7 +539,9 @@ impl Editor {
         };
         let to = offset + delta;
         // (Refused already in this drag, at this very offset: refused again, with no solve.)
-        let known = refused == Some((to, self.drag_to_a_place)) && !self.drag_always_look;
+        let known = refused == Some((to, self.drag_to_a_place))
+            && !self.drag_always_look
+            && !ablation::off(Switch::RefusedAgain);
         let mut ok = !known;
         let mut pushed = false;
         self.drag_solves = 0;
@@ -547,7 +569,7 @@ impl Editor {
             self.restore_geometry(&part.start);
         }
         // (The tries at keeping a length share one budget across the parts.)
-        let mut length_left = (LENGTH_TRY_SOLVES, UNFINISHED_WORK);
+        let mut length_left = (LENGTH_TRY_SOLVES, unfinished_work());
         for part in parts.iter().filter(|p| !p.moves_whole && !known) {
             let mut frame = DragFrame {
                 start_circles: &part.start.circles,
@@ -566,10 +588,10 @@ impl Editor {
                 holding: &part.holding,
                 unpinned: part.unpinned,
                 fold: false,
-                solves_left: DRAG_SOLVES,
-                unfinished_left: UNFINISHED_WORK,
-                fold_solves_left: DRAG_SOLVES,
-                fold_unfinished_left: UNFINISHED_WORK,
+                solves_left: frame_solves(),
+                unfinished_left: unfinished_work(),
+                fold_solves_left: frame_solves(),
+                fold_unfinished_left: unfinished_work(),
                 length_solves_left: length_left.0,
                 length_unfinished_left: length_left.1,
                 wandered: 0,
@@ -580,7 +602,7 @@ impl Editor {
             };
             ok = self.drag_from_start(&mut frame, to, part)
                 && !self.breaks_held_shape(part, to, frame.bar);
-            self.drag_solves += 2 * DRAG_SOLVES + length_left.0
+            self.drag_solves += 2 * frame_solves() + length_left.0
                 - frame.solves_left
                 - frame.fold_solves_left
                 - frame.length_solves_left;
@@ -1179,7 +1201,9 @@ impl Editor {
     /// `drift_solver::landed_within`): what a solve that lands leaves, far below any misfit
     /// that matters.
     fn breaks_held_shape(&self, part: &DragPart, offset: DVec2, bar: f64) -> bool {
-        if part.held_radii.is_empty() && part.held_lines.is_empty() {
+        if ablation::off(Switch::HeldShapeStop)
+            || (part.held_radii.is_empty() && part.held_lines.is_empty())
+        {
             return false;
         }
         let landed = self.landed_where_free(part, offset, bar);
@@ -1192,11 +1216,11 @@ impl Editor {
         let grew = part.held_radii.iter().any(|&(id, was)| {
             drift_solver::radius_of(&self.doc, id).is_some_and(|r| {
                 r - was
-                    > (drift_solver::FOLD_MET * was)
+                    > (drift_solver::fold_met() * was)
                         .max(drift_solver::landed_within(bar, DVec2::splat(was)))
             })
         });
-        if grew {
+        if grew && !ablation::off(Switch::NeverGrow) {
             return true;
         }
         // Nor is a line the drag doesn't move crushed to nothing at the pace of #278's escape,
@@ -1231,11 +1255,12 @@ impl Editor {
         let flung_short =
             |&(was, now, flung): &(f64, f64, f64)| was - now > most_line / 2.0 && flung > most_line;
         let crushed = |&(was, now, _): &(f64, f64, f64)| now <= COLLAPSED_LINE * was;
-        if part
-            .held_lines
-            .iter()
-            .filter_map(line_state)
-            .any(|l| flung_short(&l) && crushed(&l))
+        if !ablation::off(Switch::CrushedLineStop)
+            && part
+                .held_lines
+                .iter()
+                .filter_map(line_state)
+                .any(|l| flung_short(&l) && crushed(&l))
         {
             return true;
         }
@@ -1243,20 +1268,22 @@ impl Editor {
             return false;
         }
         let most = SHAPE_HOLD * offset.length();
-        let radius_broken = part.held_radii.iter().any(|&(id, was)| {
-            let now = match self.doc.get(id).map(|e| e.kind) {
-                Some(EntityKind::Circle { radius, .. }) => Some(radius),
-                Some(EntityKind::Arc { .. }) => drift_solver::radius_of(&self.doc, id),
-                _ => None,
-            };
-            now.is_some_and(|r| (r - was).abs() > most)
-        });
+        let radius_broken = !ablation::off(Switch::UnlandedRadiusHold)
+            && part.held_radii.iter().any(|&(id, was)| {
+                let now = match self.doc.get(id).map(|e| e.kind) {
+                    Some(EntityKind::Circle { radius, .. }) => Some(radius),
+                    Some(EntityKind::Arc { .. }) => drift_solver::radius_of(&self.doc, id),
+                    _ => None,
+                };
+                now.is_some_and(|r| (r - was).abs() > most)
+            });
         radius_broken
-            || part
-                .held_lines
-                .iter()
-                .filter_map(line_state)
-                .any(|l| flung_short(&l) || crushed(&l))
+            || (!ablation::off(Switch::CrushedLineStop)
+                && part
+                    .held_lines
+                    .iter()
+                    .filter_map(line_state)
+                    .any(|l| flung_short(&l) || crushed(&l)))
     }
 
     /// The parts of `parts` that go exactly where they are moved, as one move.
@@ -1383,7 +1410,7 @@ impl Editor {
         let step = (size / 4.0).max(whole / 16.0);
         let solves =
             frame.needs_solve || self.stretches_hanging_line(frame.ids, frame.dragged_set, start);
-        if self.drag_to_a_place {
+        if self.drag_to_a_place || ablation::off(Switch::Strides) {
             // (To a typed place: in one solve first, see `drag_to`.)
             let ok = self.drag_frame(frame, offset, start);
             if ok && frame.wandered < WANDERED {
@@ -1412,16 +1439,21 @@ impl Editor {
             return self.drag_towards(frame, DVec2::ZERO, offset, start, 0);
         }
         if self.drag_in_strides(frame, offset, start, step) {
-            self.settle_by_the_pointer(frame, offset, part);
+            if !ablation::off(Switch::SettleByThePointer) {
+                self.settle_by_the_pointer(frame, offset, part);
+            }
             return true;
         }
         self.restore_geometry(start);
+        if ablation::off(Switch::OneSolveFallback) {
+            return false;
+        }
         frame.pushed = Pushed::default();
         frame.wandered = 0;
         // (With the work for solves that don't finish that one solve first had: spent by the
         // steps that failed, the one solve was refused where it first didn't finish, not taken
         // in halves, and a frame that went before was refused.)
-        frame.unfinished_left = UNFINISHED_WORK;
+        frame.unfinished_left = unfinished_work();
         self.drag_frame(frame, offset, start) && frame.wandered < WANDERED
     }
 
@@ -1482,13 +1514,14 @@ impl Editor {
         // a solve from points put this far off can report itself finished with a midpoint
         // off its line's middle, census case 7930. The steps' own result was met.)
         let settled = self.drag_frame_today(frame, DVec2::ZERO, &here)
-            && drift_solver::meets_within(
-                &self.doc,
-                frame.scope,
-                frame.relations,
-                frame.lowering.as_deref(),
-                Some(frame.touching),
-            );
+            && (ablation::off(Switch::SettleMeetsRelations)
+                || drift_solver::meets_within(
+                    &self.doc,
+                    frame.scope,
+                    frame.relations,
+                    frame.lowering.as_deref(),
+                    Some(frame.touching),
+                ));
         // (Nor where it moves anything the drag doesn't drag more than a hundred times as far
         // as it moved the dragged, `LINE_HOLD`: it is there to slide the dragged along what
         // holds them, and a solve that puts them on their targets by flinging something else
@@ -1505,13 +1538,15 @@ impl Editor {
                     other = other.max(moved);
                 }
             }
-            other <= LINE_HOLD * dragged
+            ablation::off(Switch::SettleFlingsNothing) || other <= LINE_HOLD * dragged
         };
         // (Nor where it breaks a shape the drag holds, which the frame would be refused for:
         // the steps' shape goes in its place. #377's case 5283: the steps left a held arc of
         // 12 at 11.81, the settle grew it to 12.17 to land, and the fifth frame of five was
         // refused; `a_settle_that_grows_a_held_arc_is_undone_and_the_frame_goes`.)
-        let settled = settled && !self.breaks_held_shape(part, offset, frame.bar);
+        let settled = settled
+            && (ablation::off(Switch::SettleKeepsHeldShapes)
+                || !self.breaks_held_shape(part, offset, frame.bar));
         if !settled {
             self.restore_geometry(&ended);
             self.index
@@ -1596,6 +1631,7 @@ impl Editor {
         if !went {
             frame.kept_wandered = before;
             let halved = depth < 4
+                && !ablation::off(Switch::HalveFailedSteps)
                 && self.drag_towards(frame, at, half, start, depth + 1)
                 && self.drag_towards(frame, half, to, start, depth + 1);
             if halved && depth == 0 {
@@ -1603,7 +1639,11 @@ impl Editor {
             }
             return halved;
         }
-        if wandered >= WANDERED && depth < 4 && frame.unfinished_left > 0 {
+        if wandered >= WANDERED
+            && depth < 4
+            && frame.unfinished_left > 0
+            && !ablation::off(Switch::HalveWanderingSteps)
+        {
             let ended = self.geometry_of(frame.scope);
             let pushed_whole = std::mem::replace(&mut frame.pushed, pushed.clone());
             self.restore_geometry(&here);
@@ -1729,8 +1769,9 @@ impl Editor {
         if frame.fold
             || !frame.unpinned
             || self.drag_no_fold
+            || ablation::off(Switch::FoldTry)
             || frame.fold_solves_left == 0
-            || frame.scope.len() * drift_solver::MAX_ITERATIONS > frame.fold_unfinished_left
+            || frame.scope.len() * drift_solver::max_iterations() > frame.fold_unfinished_left
             || (ok && self.landed(frame, delta, before))
         {
             return ok;
@@ -1790,9 +1831,10 @@ impl Editor {
         pushed_before: Pushed,
     ) {
         if self.drag_no_length_try
+            || ablation::off(Switch::LengthTry)
             || frame.fold
             || frame.length_solves_left == 0
-            || frame.scope.len() * drift_solver::MAX_ITERATIONS > frame.length_unfinished_left
+            || frame.scope.len() * drift_solver::max_iterations() > frame.length_unfinished_left
         {
             return;
         }
@@ -1835,7 +1877,7 @@ impl Editor {
         frame.wandered = wandered;
         frame.kept_wandered = kept_wandered;
         if went
-            && kept_to(self, drift_solver::FOLD_MET)
+            && kept_to(self, drift_solver::fold_met())
             && drift_solver::meets_within(
                 &self.doc,
                 frame.scope,
@@ -1873,16 +1915,21 @@ impl Editor {
             return true;
         }
         // (With what the frame's steps before this one pushed: see `Pushed`.)
+        let none = Pushed::default();
+        let pushed_so_far = if ablation::off(Switch::PushedStaysPushed) {
+            &none
+        } else {
+            &frame.pushed
+        };
         let mut ids = frame.ids.to_vec();
         ids.extend(
-            frame
-                .pushed
+            pushed_so_far
                 .curves
                 .iter()
                 .copied()
                 .filter(|id| !frame.ids.contains(id)),
         );
-        let mut carried_points = frame.pushed.points.clone();
+        let mut carried_points = pushed_so_far.points.clone();
         let mut turned = Vec::new();
         let mut ok =
             self.drag_in_steps(frame, &ids, delta, &carried_points, before, 0, &mut turned);
@@ -1894,7 +1941,8 @@ impl Editor {
         // moved end is pushed once it can't shrink any further. (Carried, not dragged: a
         // line hanging from the pushed arc still keeps its length, as one hanging from the
         // selection does.)
-        while !ok && frame.curves && !turned.is_empty() {
+        while !ok && frame.curves && !turned.is_empty() && !ablation::off(Switch::CarryTurnedCurves)
+        {
             let carried: Vec<EntityId> = std::mem::take(&mut turned)
                 .into_iter()
                 .filter(|id| !ids.contains(id))
@@ -1921,6 +1969,7 @@ impl Editor {
         // dragged point is held on a curve at a fold (#282, #283).
         if !frame.holding.is_empty()
             && !self.drag_no_carry
+            && !ablation::off(Switch::CarryHolding)
             && !(ok && self.landed(frame, delta, before))
         {
             ok = self.carry_holding(frame, &mut ids, &mut carried_points, delta, before, ok);
@@ -2045,7 +2094,8 @@ impl Editor {
                 EntityKind::Line { a, b } if !dragged_point(a) && !dragged_point(b) => {
                     let was = self.doc.point(b).ok()? - self.doc.point(a).ok()?;
                     // (Squeezed shut, it has no way round left: see `SQUEEZED_SHUT`.)
-                    (was.length() > SQUEEZED_SHUT * began).then_some((line, a, b, was))
+                    (ablation::off(Switch::SqueezedShut) || was.length() > SQUEEZED_SHUT * began)
+                        .then_some((line, a, b, was))
                 }
                 _ => None,
             })
@@ -2086,7 +2136,9 @@ impl Editor {
                 let _ = self.doc.set_point(id, from + delta);
             }
         }
-        self.keep_smooth_anchors(frame.smooth, ids, delta);
+        if !ablation::off(Switch::SmoothAnchors) {
+            self.keep_smooth_anchors(frame.smooth, ids, delta);
+        }
         frame.solves_left -= 1;
         self.drag_solved += frame.scope.len();
         let report = drift_solver::solve(
@@ -2099,19 +2151,28 @@ impl Editor {
                 // its own would otherwise shrink or swell its arc as a first guess): arcs and
                 // circles alike, at their size as the drag began (a drag's kept radii are held;
                 // the solve lets go of a circle whose rim is dragged).
-                radii: before
-                    .radii
-                    .iter()
-                    .map(|(&id, &r)| (id, r))
-                    .chain(frame.start_circles.iter().copied())
-                    .collect(),
+                radii: if ablation::off(Switch::KeptRadii) {
+                    HashMap::new()
+                } else {
+                    before
+                        .radii
+                        .iter()
+                        .map(|(&id, &r)| (id, r))
+                        .chain(frame.start_circles.iter().copied())
+                        .collect()
+                },
                 // Lines carried along by a move of curves keep their length the same way.
-                lengths: before.lengths.clone(),
+                lengths: if ablation::off(Switch::KeptLengths) {
+                    HashMap::new()
+                } else {
+                    before.lengths.clone()
+                },
                 lowering: frame.lowering.clone(),
                 relations: Some(frame.relations.clone()),
                 touching: Some(frame.touching.clone()),
                 fold: frame.fold,
-                bar_cap: (frame.first_bar > 0.0).then_some(frame.first_bar),
+                bar_cap: (frame.first_bar > 0.0 && !ablation::off(Switch::BarCap))
+                    .then_some(frame.first_bar),
                 ..Default::default()
             },
         );
@@ -2124,7 +2185,7 @@ impl Editor {
         if let Some(bars) = &mut self.drag_bars {
             bars.push(report.bar);
         }
-        let unfinished = self.unfinished(&report);
+        let unfinished = self.unfinished(&report) && !ablation::off(Switch::UnfinishedIsRefused);
         // (A solve that wandered is work of the same kind: a step it makes is taken again in
         // halves, see `drag_towards`, while there is work left for it.)
         if unfinished || report.wandered >= WANDERED {
@@ -2135,9 +2196,14 @@ impl Editor {
         if unfinished {
             self.drag_unfinished += 1;
         }
+        let (no_carried, no_lowered) = (
+            ablation::off(Switch::CarriedLineFlip),
+            ablation::off(Switch::LoweredLineFlip),
+        );
         let mut flipped: Vec<EntityId> = carried_lines
             .iter()
-            .chain(&lowered_lines)
+            .filter(|_| !no_carried)
+            .chain(lowered_lines.iter().filter(|_| !no_lowered))
             .filter(
                 |&&(_, a, b, was)| match (self.doc.point(a), self.doc.point(b)) {
                     (Ok(a), Ok(b)) => (b - a).dot(was) <= 0.0,
@@ -2146,14 +2212,17 @@ impl Editor {
             )
             .map(|&(line, ..)| line)
             .collect();
-        if !unfinished && flipped.is_empty() && !orientation.turned(&self.doc) {
+        if !unfinished
+            && flipped.is_empty()
+            && (ablation::off(Switch::TurnedIsRefused) || !orientation.turned(&self.doc))
+        {
             frame.kept_wandered = frame.kept_wandered.max(report.wandered);
             return true;
         }
         // (A step of no length has no halves: each is the same solve from the same place, to
         // fail the same way. The settle's solve is one, `settle_by_the_pointer`, its dragged
         // points put by `Geometry::asked`; halved, one that failed ran 7 times.)
-        let depth = if delta == DVec2::ZERO {
+        let depth = if delta == DVec2::ZERO || ablation::off(Switch::SplitSteps) {
             MAX_SPLITS
         } else {
             depth

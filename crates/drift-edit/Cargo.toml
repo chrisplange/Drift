@@ -31,6 +31,9 @@ demo = ["drift-io/demo", "drift-platform/demo"]
 # `fill_new_shape`, the `test_sketches` module and the `editor::probes` accessors. drift-app
 # turns it on for its own tests; nothing else should.
 test-support = []
+# Test-only: the heuristic ledger's switches (`drift_solver::ablation`), for
+# `scripts/solver-bar/ablate.py`. No build of the app should turn it on.
+ablate = ["drift-solver/ablate"]
 
 [lints]
 workspace = true

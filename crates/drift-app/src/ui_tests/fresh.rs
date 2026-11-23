@@ -140,6 +140,8 @@ const SCENES: &[Scene] = &[
         h.state_mut().show_panel(Panel::Sheets);
         h.run();
         h.get_by_label("New sheet").click();
+        h.run();
+        h.state_mut().show_newest_sheet();
         whole_view(h);
         h.event(Event::PointerGone);
         h.run();
@@ -148,7 +150,7 @@ const SCENES: &[Scene] = &[
     ("many-sheets", |h| {
         open_example(h);
         for _ in 0..9 {
-            h.state_mut().new_sheet();
+            h.state_mut().new_sheet_shown();
         }
         h.run();
         h.event(Event::PointerGone);
@@ -348,8 +350,8 @@ const SCENES: &[Scene] = &[
     }),
     ("sheets-panel", |h| {
         open_example(h);
-        h.state_mut().new_sheet();
-        h.state_mut().new_sheet();
+        h.state_mut().new_sheet_shown();
+        h.state_mut().new_sheet_shown();
         h.state_mut().show_panel(Panel::Sheets);
         h.run();
         h.get_by_label("Model").click();
@@ -535,7 +537,7 @@ const SCENES: &[Scene] = &[
     }),
     ("sheet-revision", |h| {
         open_example(h);
-        h.state_mut().new_sheet();
+        h.state_mut().new_sheet_shown();
         whole_view(h);
         h.get_by_label("Add revision").click();
         h.event(Event::PointerGone);
@@ -543,7 +545,7 @@ const SCENES: &[Scene] = &[
     }),
     ("dock-240-sheet", |h| {
         open_example(h);
-        h.state_mut().new_sheet();
+        h.state_mut().new_sheet_shown();
         whole_view(h);
         h.get_by_label("Add revision").click();
         narrow_dock(h);

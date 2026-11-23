@@ -80,6 +80,8 @@ fn the_top_bar_is_one_row_with_the_tabs_in_the_middle() {
     // A sheet's tab joins the model's, and the tab shown is the selected one.
     h.get_by_label("Add a sheet").click();
     h.run();
+    h.state_mut().show_newest_sheet();
+    h.run();
     h.run();
     let sheet = tab(&h, "A-101  Sheet 1").expect("the new sheet's tab");
     assert!(rect(&h, "Model").right() <= sheet.left() + 0.5);
@@ -134,7 +136,7 @@ fn sheets_without_room_for_a_tab_go_under_more_sheets() {
     let Some(mut h) = harness() else { return };
     assert!(h.query_by_label("More sheets").is_none());
     for _ in 0..9 {
-        h.state_mut().new_sheet();
+        h.state_mut().new_sheet_shown();
     }
     h.run();
     h.run();
@@ -277,7 +279,7 @@ fn the_status_bar_reads_hint_snaps_shows_and_zoom() {
     assert!((h.state().drawing.view.camera.scale / scale - 1.0).abs() < 1e-9);
 
     // On a sheet the same buttons zoom the sheet, and leave the model's view alone.
-    h.state_mut().new_sheet();
+    h.state_mut().new_sheet_shown();
     h.run();
     h.run();
     let paper = h.state().drawing.view.preview.zoom;
@@ -295,7 +297,7 @@ fn the_status_bar_reads_hint_snaps_shows_and_zoom() {
 fn a_tab_dropped_on_its_own_spot_moves_no_sheet() {
     let Some(mut h) = harness() else { return };
     for _ in 0..9 {
-        h.state_mut().new_sheet();
+        h.state_mut().new_sheet_shown();
     }
     h.run();
     h.run();
@@ -359,7 +361,7 @@ fn undo_and_redo_with_nothing_to_undo_read_as_disabled() {
             .accesskit_node()
             .is_disabled()
     );
-    h.state_mut().new_sheet();
+    h.state_mut().new_sheet_shown();
     h.run();
     h.run();
     assert!(
@@ -383,7 +385,7 @@ fn a_sheets_paper_and_scale_are_in_the_status_bar() {
     };
     h.run();
     assert!(h.query_by_label("A3 landscape · No views").is_none());
-    h.state_mut().new_sheet();
+    h.state_mut().new_sheet_shown();
     h.run();
     h.run();
     let canvas = h.state().drawing.view.canvas_rect;

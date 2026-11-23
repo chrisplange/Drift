@@ -809,7 +809,7 @@ pub fn glyph(painter: &egui::Painter, rect: Rect, glyph: Glyph, color: Color32) 
 }
 
 /// The glyph of a kind the Selection filter picks, beside its name wherever the filter is set
-/// (the bar's control and its list; the hold-key pie, #481, is meant to reuse it). The
+/// (the bar's control and its list, and the hold-S pie, #481). The
 /// drawing tools' icons where there is one: Text, Fill, Block, Dimension.
 pub fn pick_kind(
     painter: &egui::Painter,

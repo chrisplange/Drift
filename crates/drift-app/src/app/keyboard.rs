@@ -143,6 +143,10 @@ impl DriftApp {
         if self.pie_keys(ctx) {
             return;
         }
+        // S: a tap is the Select tool, a hold the Selection filter pie.
+        if self.select_pie_keys(ctx) {
+            return;
+        }
         self.edit_keys(ctx);
         // ? (the shortcuts), Ctrl+A and F2 (rename, which stops the rest).
         if self.key_commands(ctx, Phase::Early) {
@@ -361,7 +365,7 @@ impl DriftApp {
 
     /// A tool's key: picks the tool, or steps through its cycle (C: circle, ellipse, partial
     /// ellipse; A: the arcs; F: fillet, chamfer; U: the kinds of slot; H: hatch or solid).
-    fn tool_key(&mut self, ctx: &egui::Context, mut kind: ToolKind) {
+    pub(crate) fn tool_key(&mut self, ctx: &egui::Context, mut kind: ToolKind) {
         let current = self.tool.kind();
         if current == ToolKind::Wall {
             // W again: straight or arc walls; A / L mid-run: an arc or a straight segment

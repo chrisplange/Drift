@@ -1145,10 +1145,43 @@ impl Editor {
                         Some(EntityKind::Arc { center, .. }) => center,
                         _ => continue,
                     };
-                    for r in self.joined([centre]).into_iter().chain(self.joined([far])) {
-                        if let Some(o) = at(r) {
-                            moves.push((r, pivot + rot.rotate(o - pivot)));
+                    // (A centre held where it is stays: the round isn't carried.)
+                    let centres = self.joined([centre]);
+                    if centres.iter().any(|c| held.contains(c)) {
+                        continue;
+                    }
+                    let (Some(c0), Some(f0)) = (at(centre), at(far)) else {
+                        continue;
+                    };
+                    let c1 = pivot + rot.rotate(c0 - pivot);
+                    let mut f1 = pivot + rot.rotate(f0 - pivot);
+                    let fars = self.joined([far]);
+                    for f in &fars {
+                        for user in self.doc.users_of(*f).filter(|u| *u != arc) {
+                            let Some(EntityKind::Line { a: u0, b: u1 }) =
+                                self.doc.get(user).map(|e| e.kind)
+                            else {
+                                continue;
+                            };
+                            let other = if u0 == *f { u1 } else { u0 };
+                            let Some(o) = at(other) else { continue };
+                            if self.hangs(other) {
+                                // A line hanging from the far end turns with the round, as
+                                // it is.
+                                moves.push((other, pivot + rot.rotate(o - pivot)));
+                            } else if let Some(t) = tangent_from(o, c1, f1, (o - f0, f0 - c0)) {
+                                // The line beyond meets the round tangent again where it did,
+                                // from its other end: at the round's tangent point from there,
+                                // not at a corner the rigid turn left.
+                                f1 = t;
+                            }
                         }
+                    }
+                    for c in centres {
+                        moves.push((c, c1));
+                    }
+                    for f in fars {
+                        moves.push((f, f1));
                     }
                 }
                 // A line hanging from it is carried along as it is: the shapes the solve
@@ -1534,4 +1567,27 @@ impl Editor {
         }
         drift_geom::walls::lower::lower_constraint(&self.doc, c)?.err()
     }
+}
+
+/// Where a line from `from` meets the circle round `centre` through `near` tangent, at the
+/// touching point nearer `near`, if the line met it tangent before (`was`: the line's
+/// direction there and the radius out to that end, as they were). None where it didn't
+/// (a corner stays a corner) or `from` is inside the circle.
+fn tangent_from(from: DVec2, centre: DVec2, near: DVec2, was: (DVec2, DVec2)) -> Option<DVec2> {
+    let (along, radial) = (was.0.try_normalize()?, was.1.try_normalize()?);
+    if along.dot(radial).abs() >= 1e-4 {
+        return None;
+    }
+    let r = near.distance(centre);
+    let d = from - centre;
+    let l = d.length();
+    if !(r > 0.0 && l > r) {
+        return None;
+    }
+    let u = d / l;
+    let half = (r / l).acos();
+    [half, -half]
+        .into_iter()
+        .map(|t| centre + DVec2::from_angle(t).rotate(u) * r)
+        .min_by(|p, q| p.distance(near).total_cmp(&q.distance(near)))
 }

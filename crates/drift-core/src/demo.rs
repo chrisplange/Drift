@@ -10,6 +10,10 @@ use crate::{Constraint, Document, LineKind, SketchItem};
 /// slot, fully defined by relations and dimensions (tangent fillets, symmetric bolt holes, a
 /// slot built from tangent arcs). The outline and slot are closed chains that share their end
 /// points.
+#[expect(
+    clippy::expect_used,
+    reason = "fixed example geometry: every shape, relation and label is built from constants"
+)]
 pub fn mounting_plate() -> Document {
     let mut doc = Document::new();
     let v = DVec2::new;
@@ -373,7 +377,7 @@ mod tests {
                 let ends: Vec<_> = match e.kind {
                     EntityKind::Line { a, b } => vec![a, b],
                     EntityKind::Arc { start, end, .. } => vec![start, end],
-                    _ => unreachable!(),
+                    other => panic!("not a line or arc: {other:?}"),
                 };
                 for p in ends {
                     *uses.entry(p).or_insert(0) += 1;

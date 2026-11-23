@@ -20,6 +20,7 @@ pub(crate) mod guard;
 pub(crate) mod hatch_ui;
 pub(crate) mod import_ui;
 mod keyboard;
+pub(crate) mod keymap_ui;
 #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
 pub(crate) mod link_ui;
 pub(crate) mod mark_views;

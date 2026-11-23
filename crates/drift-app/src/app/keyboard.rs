@@ -271,7 +271,7 @@ impl DriftApp {
     /// Run the registry's commands whose keys were pressed, in `phase`. True if the rest of
     /// the keys should wait (the palette opened, a rename started, or a late command ran).
     fn key_commands(&mut self, ctx: &egui::Context, phase: Phase) -> bool {
-        for &(key, spec) in commands::dispatched() {
+        for &(key, spec) in commands::dispatched().iter() {
             let ours = match phase {
                 Phase::Global => spec.global,
                 Phase::Early => !spec.global && spec.in_grab,

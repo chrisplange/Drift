@@ -1150,7 +1150,13 @@ impl DriftApp {
                 ui.close();
             }
             if ui
-                .add(egui::Button::new("Relations…").shortcut_text("Q"))
+                .add(
+                    egui::Button::new("Relations…").shortcut_text(
+                        crate::commands::spec(crate::commands::Command::RelationsPie)
+                            .map(|s| s.key_text(cfg!(target_os = "macos")))
+                            .unwrap_or_default(),
+                    ),
+                )
                 .clicked()
             {
                 ui.close();

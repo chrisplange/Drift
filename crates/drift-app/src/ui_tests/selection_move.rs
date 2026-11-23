@@ -235,3 +235,69 @@ fn an_area_outlined_by_hidden_curves_is_not_picked() {
         .set_layers_visible(&[(layer0, false)], "Hide");
     assert!(h.state_mut().drawing.editor.region().is_none());
 }
+
+/// Pick line `l` by its midpoint at `mid` and press G with the pointer at `from`.
+fn press_g(h: &mut Harness<'_, DriftApp>, mid: DVec2, from: DVec2) {
+    click_world(h, mid);
+    h.hover_at(screen(h, from));
+    h.run();
+    h.key_press(Key::G);
+    h.run();
+    assert!(h.state().tool.is_modal(), "a move began");
+}
+
+#[test]
+fn g_grabs_freely_with_the_base_point_preference_off() {
+    let Some(mut h) = harness() else { return };
+    let v = DVec2::new;
+    let (_, a, _) = line(&mut h, v(0.0, 0.0), v(40.0, 20.0));
+    view(&mut h, v(-30.0, -30.0), v(90.0, 60.0));
+    assert!(!h.state().g_base_point, "off by default");
+    press_g(&mut h, v(20.0, 10.0), v(20.0, 10.0));
+    // The line follows the pointer at once.
+    h.hover_at(screen(&h, v(30.0, -5.0)));
+    h.run();
+    assert!(at(&h, a).distance(v(10.0, -15.0)) < 0.5, "{:?}", at(&h, a));
+    click_world(&mut h, v(30.0, -5.0));
+    assert!(!h.state().tool.is_modal());
+    assert!(at(&h, a).distance(v(10.0, -15.0)) < 0.5, "{:?}", at(&h, a));
+}
+
+#[test]
+fn g_picks_a_base_point_first_with_the_preference_on() {
+    let Some(mut h) = harness() else { return };
+    let v = DVec2::new;
+    let (_, a, b) = line(&mut h, v(0.0, 0.0), v(40.0, 20.0));
+    view(&mut h, v(-30.0, -30.0), v(90.0, 60.0));
+    h.state_mut().g_base_point = true;
+    press_g(&mut h, v(20.0, 10.0), v(20.0, 10.0));
+    // Nothing moves until the base point is picked.
+    h.hover_at(screen(&h, v(30.0, -5.0)));
+    h.run();
+    assert_eq!(at(&h, a), v(0.0, 0.0));
+    // Base point: the line's end (snapped), then the destination.
+    click_world(&mut h, v(0.3, 0.2));
+    assert!(
+        h.state().tool.is_modal(),
+        "still moving after the base point"
+    );
+    assert_eq!(at(&h, a), v(0.0, 0.0));
+    h.hover_at(screen(&h, v(25.0, -15.0)));
+    h.run();
+    click_world(&mut h, v(25.0, -15.0));
+    assert!(!h.state().tool.is_modal());
+    let moved = at(&h, a);
+    assert!(moved.distance(v(25.0, -15.0)) < 0.5, "{moved:?}");
+    assert!((at(&h, b) - v(40.0, 20.0)).distance(moved) < 1e-9);
+
+    // Esc while picking the base point leaves everything as it was.
+    let (pa, pb) = (at(&h, a), at(&h, b));
+    let mid = (pa + pb) / 2.0;
+    press_g(&mut h, mid, mid);
+    h.hover_at(screen(&h, mid + v(10.0, 10.0)));
+    h.run();
+    h.key_press(Key::Escape);
+    h.run();
+    assert!(!h.state().tool.is_modal(), "Esc cancels");
+    assert_eq!((at(&h, a), at(&h, b)), (pa, pb));
+}

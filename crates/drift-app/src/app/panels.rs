@@ -2287,7 +2287,7 @@ impl DriftApp {
                         Glyph::Status,
                         "Status colors",
                         &mut self.status_colors,
-                        "Sketch status colors (on) or layer and line colors (off) · Shift+C",
+                        &format!("Sketch status colors (on) or layer and line colors (off){}", crate::commands::key_suffix("view.status_colours")),
                     );
                     toggle(
                         ui,
@@ -2301,7 +2301,7 @@ impl DriftApp {
                         Glyph::Endpoints,
                         "End points",
                         &mut self.drawing.editor.prefs.always_endpoints,
-                        "Always show end points (off: only on hovered or picked curves) · Shift+Alt+V",
+                        &format!("Always show end points (off: only on hovered or picked curves){}", crate::commands::key_suffix("view.endpoints")),
                     );
                     toggle(
                         ui,
@@ -2323,14 +2323,14 @@ impl DriftApp {
                         Glyph::AutoRelations,
                         "Auto relations",
                         &mut self.drawing.editor.prefs.auto_relations,
-                        "Auto relations: add relations as you draw and modify (horizontal, coincident, tangent...). Off: plain geometry · Shift+Alt+R",
+                        &format!("Auto relations: add relations as you draw and modify (horizontal, coincident, tangent...). Off: plain geometry{}", crate::commands::key_suffix("view.auto_relations")),
                     );
                     toggle(
                         ui,
                         Glyph::AutoMerge,
                         "Auto merge",
                         &mut self.drawing.editor.prefs.auto_merge,
-                        "Auto merge: a point dropped on another point joins it, and lines and arcs drawn on a point share it (on the same layer only). Off: only placed there. Ctrl flips it for one drop · Shift+Alt+M",
+                        &format!("Auto merge: a point dropped on another point joins it, and lines and arcs drawn on a point share it (on the same layer only). Off: only placed there. Ctrl flips it for one drop{}", crate::commands::key_suffix("view.auto_merge")),
                     );
                     // Angle snapping sits with grid snapping: a click opens its steps.
                     let angle_snap = &mut self.angle_snap;
@@ -2371,7 +2371,7 @@ impl DriftApp {
                         Glyph::Snap,
                         "Snap to grid",
                         &mut self.grid_snap,
-                        &format!("Snap to grid ({grid}) · Shift+G"),
+                        &format!("Snap to grid ({grid}){}", crate::commands::key_suffix("view.snap")),
                     );
                     // The pointer's position, leftmost of the cluster: the first to go when
                     // the window is narrow, so the hint keeps its room.

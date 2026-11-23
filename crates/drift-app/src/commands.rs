@@ -652,6 +652,21 @@ impl Spec {
     }
 }
 
+/// The key the command `id` has now ("" for none), for hints that name it.
+pub(crate) fn key_of(id: &str) -> String {
+    spec_by_id(id).map_or_else(String::new, |s| s.key_text(cfg!(target_os = "macos")))
+}
+
+/// " · Shift+G": the key the command `id` has now, to end a tooltip ("" for none).
+pub(crate) fn key_suffix(id: &str) -> String {
+    let key = key_of(id);
+    if key.is_empty() {
+        key
+    } else {
+        format!(" · {key}")
+    }
+}
+
 /// The registry, in menu order within each category.
 pub(crate) fn registry() -> &'static [Spec] {
     static REGISTRY: LazyLock<Vec<Spec>> = LazyLock::new(table);
@@ -672,7 +687,6 @@ const OLD_IDS: &[(&str, &str)] = &[
 ];
 
 /// The registry's entry with the stable id `id`, or the one an old id now names.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn spec_by_id(id: &str) -> Option<&'static Spec> {
     let id = OLD_IDS
         .iter()
@@ -1345,7 +1359,7 @@ fn table() -> Vec<Spec> {
             C::Edit,
             K::Preferences,
             "Preferences…",
-            "Theme, pointer, drawing aids and updates",
+            "Theme, pointer, drawing aids, keyboard shortcuts and updates",
         )
         .keys(const { &[cmd(Key::Comma)] })
         .global()
@@ -2202,11 +2216,14 @@ pub(crate) fn docs_tables() -> String {
     out
 }
 
+/// The dispatch table: each key and its command.
+pub(crate) type Dispatch = std::rc::Rc<Vec<(Shortcut, &'static Spec)>>;
+
 /// The commands whose keys the canvas dispatches, the more specific shortcuts first. Made
 /// again when the user's keys change.
-pub(crate) fn dispatched() -> std::rc::Rc<Vec<(Shortcut, &'static Spec)>> {
+pub(crate) fn dispatched() -> Dispatch {
     thread_local! {
-        static KEYS: std::cell::RefCell<Option<(u64, std::rc::Rc<Vec<(Shortcut, &'static Spec)>>)>> =
+        static KEYS: std::cell::RefCell<Option<(u64, Dispatch)>> =
             const { std::cell::RefCell::new(None) };
     }
     let now = crate::keymap::generation();

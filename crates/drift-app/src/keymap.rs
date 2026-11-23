@@ -66,43 +66,29 @@ const fn k(command: bool, shift: bool, alt: bool, key: Key) -> Shortcut {
 const fn plain(key: Key) -> Shortcut {
     k(false, false, false, key)
 }
-const fn shift(key: Key) -> Shortcut {
-    k(false, true, false, key)
-}
 const fn cmd(key: Key) -> Shortcut {
     k(true, false, false, key)
 }
 
-/// AutoCAD-style: its function keys and Ctrl keys, and its one-letter command aliases where
-/// Drift has the command (L line, C circle, A arc, M move, E erase, O offset, F fillet,
-/// T text, H hatch, I insert, D dimension…; X is the tools', so explode is Shift+X). What AutoCAD keeps two letters for
-/// (TR trim, EX extend, MI mirror, RO rotate, SC scale) is in the command palette as typed.
+/// AutoCAD-style: AutoCAD's function and Ctrl keys (F3 snaps, F7 grid, F9 snap to grid,
+/// Ctrl+1 properties, Ctrl+0 clean screen, Ctrl+9 the command line), and its one-letter
+/// command aliases where they differ from Drift's: M moves, E erases, T writes text. L line,
+/// C circle, A arc, O offset, F fillet, H hatch, I insert and D dimension are Drift's keys
+/// already. What AutoCAD gives two letters (TR trim, EX extend, MI mirror, RO rotate, SC
+/// scale, PL polyline) is typed into the command palette, as in AutoCAD.
 const AUTOCAD: &[(&str, &[Shortcut])] = &[
-    // Drawing aids on the function keys.
+    ("view.perp_tangent", &[plain(Key::F3)]),
     ("view.grid", &[plain(Key::F7)]),
-    ("view.snap", &[plain(Key::F3)]),
-    ("view.perp_tangent", &[plain(Key::F10)]),
-    ("view.auto_relations", &[plain(Key::F8)]),
-    ("view.auto_merge", &[plain(Key::F9)]),
+    ("view.snap", &[plain(Key::F9)]),
     ("view.hide_panels", &[cmd(Key::Num0)]),
     ("view.panel.inspector", &[cmd(Key::Num1)]),
     ("view.palette", &[cmd(Key::K), cmd(Key::Num9)]),
-    // One letter for the commands AutoCAD gives one letter.
     ("modify.move", &[plain(Key::M)]),
-    ("modify.mirror", &[shift(Key::M)]),
     (
         "edit.delete",
         &[plain(Key::Delete), plain(Key::Backspace), plain(Key::E)],
     ),
-    ("modify.extend", &[shift(Key::E)]),
-    ("modify.trim", &[shift(Key::T)]),
     ("draw.text", &[plain(Key::T)]),
-    ("edit.explode", &[shift(Key::X)]),
-    ("modify.rotate", &[shift(Key::R)]),
-    ("modify.scale", &[shift(Key::S)]),
-    ("draw.point", &[shift(Key::P)]),
-    ("draw.pen", &[shift(Key::L)]),
-    ("draw.polygon", &[shift(Key::K)]),
 ];
 
 /// One of the user's presets: a built-in one with changes.
@@ -260,9 +246,9 @@ impl Keymap {
         }
     }
 
-    /// Give `spec` the key `key` (its first, the one menus show), taking it from whoever had
-    /// it. Its other keys stay.
-    pub(crate) fn assign(&mut self, spec: &Spec, key: Shortcut) {
+    /// Give `spec` the key `key`, taking it from whoever had it: in place of `replacing`
+    /// (one of its keys) or, with `None`, as one more key.
+    pub(crate) fn assign(&mut self, spec: &Spec, key: Shortcut, replacing: Option<Shortcut>) {
         if let Some(Clash::Command(other)) = self.clash(spec, key) {
             let keys: Vec<_> = self
                 .keys_of(other)
@@ -272,12 +258,48 @@ impl Keymap {
             self.set(other, keys);
         }
         let mut keys = self.keys_of(spec);
-        keys.retain(|k| *k != key);
-        keys.insert(0, key);
+        match replacing.and_then(|r| keys.iter().position(|k| *k == r)) {
+            Some(i) => keys[i] = key,
+            None => keys.push(key),
+        }
+        let mut seen = Vec::new();
+        keys.retain(|k| {
+            let fresh = !seen.contains(k);
+            seen.push(*k);
+            fresh
+        });
         self.set(spec, keys);
     }
 
+    /// `spec` without the key `key`.
+    pub(crate) fn remove(&mut self, spec: &Spec, key: Shortcut) {
+        let keys = self
+            .keys_of(spec)
+            .into_iter()
+            .filter(|k| *k != key)
+            .collect();
+        self.set(spec, keys);
+    }
+
+    /// How many commands the user's preset in use changes.
+    pub(crate) fn change_count(&self) -> usize {
+        match self.active {
+            Active::User(i) => self.user.get(i).map_or(0, |p| p.changes.len()),
+            Active::BuiltIn(_) => 0,
+        }
+    }
+
+    /// `spec`'s keys in the preset the one in use was made from (or is).
+    pub(crate) fn preset_keys(&self, spec: &Spec) -> Vec<Shortcut> {
+        let base = match self.active {
+            Active::BuiltIn(b) => b,
+            Active::User(i) => self.user.get(i).map_or(BuiltIn::Drift, |p| p.base),
+        };
+        Self::base_keys(base, spec)
+    }
+
     /// `spec` with no key.
+    #[cfg(test)]
     pub(crate) fn clear(&mut self, spec: &Spec) {
         self.set(spec, Vec::new());
     }
@@ -486,19 +508,15 @@ pub(crate) fn save(storage: &mut dyn eframe::Storage) {
     storage.set_string(KEY_KEYMAP, with(Keymap::to_text));
 }
 
-/// The shortcut a key press makes, for assigning: Ctrl (⌘) and the other modifiers held, or
-/// `None` for a modifier alone and keys Drift can't give a command (Esc cancels).
-pub(crate) fn shortcut_of(key: Key, modifiers: eframe::egui::Modifiers) -> Option<Shortcut> {
-    if matches!(key, Key::Escape) {
-        return None;
-    }
-    Some(Shortcut {
+/// The shortcut a key press makes, for assigning: Ctrl (⌘) and the other modifiers held.
+pub(crate) fn shortcut_of(key: Key, modifiers: eframe::egui::Modifiers) -> Shortcut {
+    Shortcut {
         command: modifiers.command,
         shift: modifiers.shift,
         alt: modifiers.alt,
         typed: false,
         key,
-    })
+    }
 }
 
 #[cfg(test)]
@@ -560,10 +578,10 @@ mod tests {
         let line = spec("draw.line");
         let circle = spec("draw.circle");
         assert_eq!(map.clash(line, plain(Key::C)), Some(Clash::Command(circle)));
-        map.assign(line, plain(Key::C));
+        map.assign(line, plain(Key::C), None);
         assert_eq!(map.active, Active::User(0));
         assert_eq!(map.active_name(), "My keys");
-        assert_eq!(map.keys_of(line), vec![plain(Key::C), plain(Key::L)]);
+        assert_eq!(map.keys_of(line), vec![plain(Key::L), plain(Key::C)]);
         assert!(map.keys_of(circle).is_empty());
         assert!(map.changed(line) && map.changed(circle));
         map.reset(circle);
@@ -572,6 +590,11 @@ mod tests {
         assert!(map.keys_of(line).is_empty());
         map.reset_all();
         assert_eq!(map.keys_of(line), vec![plain(Key::L)]);
+        // In place of a key: L goes.
+        map.assign(line, plain(Key::J), Some(plain(Key::L)));
+        assert_eq!(map.keys_of(line), vec![plain(Key::J)]);
+        map.remove(line, plain(Key::J));
+        assert!(map.keys_of(line).is_empty());
         assert_eq!(
             map.clash(line, plain(Key::X)),
             Some(Clash::Tools("locking to X while drawing"))
@@ -580,11 +603,17 @@ mod tests {
 
     #[test]
     fn the_keymap_round_trips_through_text() {
-        let mut map = Keymap::default();
-        map.active = Active::BuiltIn(BuiltIn::AutoCad);
-        map.assign(spec("draw.line"), cmd(Key::Num5));
+        let mut map = Keymap {
+            active: Active::BuiltIn(BuiltIn::AutoCad),
+            ..Keymap::default()
+        };
+        map.assign(spec("draw.line"), cmd(Key::Num5), Some(plain(Key::L)));
         map.clear(spec("help.shortcuts"));
-        map.assign(spec("view.grid"), k(false, true, true, Key::Questionmark));
+        map.assign(
+            spec("view.grid"),
+            k(false, true, true, Key::Questionmark),
+            None,
+        );
         let text = map.to_text();
         let back = Keymap::from_text(&text).expect("reads back");
         assert_eq!(back, map, "{text}");

@@ -3,7 +3,11 @@
 Press ? in Drift (or **Help → Keyboard shortcuts**) for this list, with a filter. On a Mac,
 use Cmd for Ctrl and Option for Alt.
 
-Keys aren't configurable yet.
+These are Drift's default keys. Change any of them in **Preferences → Keyboard**: click a
+key to change it, + to add one, and pick a preset (**Drift default** or **AutoCAD-style**,
+with F3 snaps, F7 grid, F9 snap to grid, Ctrl+1 the Inspector, M move, E erase, T text).
+Your changes are kept as your own preset; the shortcuts list, menus, tooltips and the
+command palette show your keys.
 
 The command palette (Ctrl+K) finds every command by name, and takes AutoCAD's command names
 and aliases too: MOVE or M, ROTATE or RO, SCALE or SC, TRIM or TR, EXTEND or EX, OFFSET or
@@ -44,8 +48,9 @@ does the last command or tool again, as in AutoCAD.
 | Shift+D | **Duplicate** | Copy the selection in place, then move the copy |
 | F2 | **Rename block or group…** | Rename the picked group, or the block of the picked copies |
 | Ctrl+A | **Select all** | Pick everything the Selection filter lets through |
+| Q | **Relations pie** | Relate what is picked: hold the key and flick towards a relation, or tap it and click |
 | S | **Select** | Pick, drag and box-select geometry; G moves the selection |
-| Ctrl+, | **Preferences…** | Theme, pointer, drawing aids and updates |
+| Ctrl+, | **Preferences…** | Theme, pointer, drawing aids, keyboard shortcuts and updates |
 
 ## View
 
@@ -163,8 +168,6 @@ With no key (use the Annotate menu or the command palette): **Section mark**, **
 | Tab | Highlight the chain under the pointer (click to pick it); with nothing under the pointer, widen the selection to whole chains |
 | Click near a line's middle | Pick its midpoint |
 | Arrow keys | Nudge one grid step; Shift+arrow, ten |
-| Q | Relations pie: hold and flick, or tap and click |
-| Hold S | Selection filter pie: flick towards a kind to pick only it, or to All for                  everything; let go in the middle to click kinds on and off (a tap of S is                  the Select tool) |
 | Double-click text | Type into it in place |
 | Enter or Space | With nothing in hand: the last command or tool again |
 | Esc | Cancel the operation (a copy just made with Shift+D or Paste is removed), finish editing a block or group, or clear the selection; with a dialog or window open, close it (and nothing else) |

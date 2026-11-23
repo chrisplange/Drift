@@ -508,6 +508,20 @@ pub(crate) fn save(storage: &mut dyn eframe::Storage) {
     storage.set_string(KEY_KEYMAP, with(Keymap::to_text));
 }
 
+/// Whether a key of the command `id` went down this frame (with exactly its modifiers), and
+/// whether one came up: for the keys read where they act (a pie's hold or tap).
+pub(crate) fn pressed_released(i: &eframe::egui::InputState, id: &str) -> (bool, bool) {
+    let keys = commands::spec_by_id(id)
+        .map(|s| s.shortcuts())
+        .unwrap_or_default();
+    let m = i.modifiers;
+    let pressed = keys.iter().any(|k| {
+        m.shift == k.shift && m.alt == k.alt && m.command == k.command && i.key_pressed(k.key)
+    });
+    let released = keys.iter().any(|k| i.key_released(k.key));
+    (pressed, released)
+}
+
 /// The shortcut a key press makes, for assigning: Ctrl (⌘) and the other modifiers held.
 pub(crate) fn shortcut_of(key: Key, modifiers: eframe::egui::Modifiers) -> Shortcut {
     Shortcut {

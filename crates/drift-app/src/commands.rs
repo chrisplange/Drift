@@ -2159,10 +2159,22 @@ pub(crate) fn shortcut_sections(mac: bool) -> Vec<(&'static str, Vec<ShortcutRow
             out.push((category.label(), rows));
         }
     }
+    // The Select tool's key, held, is the Selection filter pie: written with the user's key.
+    let select = key_of("edit.select");
     for (section, rows) in OTHER_KEYS {
         let rows = rows
             .iter()
-            .map(|(k, does)| (k.to_string(), String::new(), does.to_string()))
+            .map(|(k, does)| {
+                if *k == "Hold S" {
+                    (
+                        format!("Hold {select}"),
+                        String::new(),
+                        does.replace("tap of S", &format!("tap of {select}")),
+                    )
+                } else {
+                    (k.to_string(), String::new(), does.to_string())
+                }
+            })
             .collect();
         out.push((*section, rows));
     }

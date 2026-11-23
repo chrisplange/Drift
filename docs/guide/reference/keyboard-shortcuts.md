@@ -168,6 +168,7 @@ With no key (use the Annotate menu or the command palette): **Section mark**, **
 | Tab | Highlight the chain under the pointer (click to pick it); with nothing under the pointer, widen the selection to whole chains |
 | Click near a line's middle | Pick its midpoint |
 | Arrow keys | Nudge one grid step; Shift+arrow, ten |
+| Hold S | Selection filter pie: flick towards a kind to pick only it, or to All for                  everything; let go in the middle to click kinds on and off (a tap of S is                  the Select tool) |
 | Double-click text | Type into it in place |
 | Enter or Space | With nothing in hand: the last command or tool again |
 | Esc | Cancel the operation (a copy just made with Shift+D or Paste is removed), finish editing a block or group, or clear the selection; with a dialog or window open, close it (and nothing else) |

@@ -143,17 +143,11 @@ impl DriftApp {
     /// the keyboard was used here.
     pub(crate) fn pie_keys(&mut self, ctx: &egui::Context) -> bool {
         // Its key is the user's (#499): Q unless changed.
-        let keys = crate::commands::spec(crate::commands::Command::RelationsPie)
-            .map(|s| s.shortcuts())
-            .unwrap_or_default();
         let (pressed, released, escape, pointer) = ctx.input(|i| {
-            let m = i.modifiers;
-            let held = |k: &crate::commands::Shortcut| {
-                m.shift == k.shift && m.alt == k.alt && m.command == k.command
-            };
+            let (pressed, released) = crate::keymap::pressed_released(i, "edit.relations_pie");
             (
-                keys.iter().any(|k| held(k) && i.key_pressed(k.key)),
-                keys.iter().any(|k| i.key_released(k.key)),
+                pressed,
+                released,
                 i.key_pressed(Key::Escape),
                 i.pointer.latest_pos(),
             )

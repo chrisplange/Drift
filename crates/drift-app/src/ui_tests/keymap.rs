@@ -102,3 +102,28 @@ fn the_keymap_round_trips_through_the_settings() {
     let rect = crate::commands::spec_by_id("draw.rectangle").unwrap();
     assert_eq!(rect.shortcuts()[0].key, Key::J);
 }
+
+/// The tap-and-hold keys follow the user's key: Select's (a tap picks the tool, a hold the
+/// Selection filter pie), and S no longer does it.
+#[test]
+fn tap_and_hold_keys_follow_the_users_key() {
+    let Some(mut h) = harness() else { return };
+    keymap::install(keymap::Keymap::default());
+    let select = crate::commands::spec_by_id("edit.select").unwrap();
+    let s = select.shortcuts()[0];
+    keymap::update(|m| {
+        m.assign(
+            select,
+            crate::keymap::shortcut_of(Key::J, egui::Modifiers::NONE),
+            Some(s),
+        )
+    });
+    h.state_mut().set_tool(drift_edit::tools::ToolKind::Line);
+    h.run();
+    h.key_press(Key::S);
+    h.run();
+    assert_eq!(h.state().tool.kind(), drift_edit::tools::ToolKind::Line);
+    h.key_press(Key::J);
+    h.run();
+    assert_eq!(h.state().tool.kind(), drift_edit::tools::ToolKind::Select);
+}

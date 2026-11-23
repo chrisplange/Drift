@@ -852,6 +852,63 @@ mod reopened {
         }
         assert!(rolled_back > 30);
     }
+
+    /// #372: a commit's changes, sorted by key alone and kept in boxes, come out exactly as
+    /// the full walk made them (each change sorted where it was), over random edits, whole
+    /// moves and reopened steps.
+    #[test]
+    fn a_commit_matches_the_full_journal_walk() {
+        let mut seed: u64 = 0x372c_0331_7fa1_5eed;
+        let mut rnd = move |n: usize| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n.max(1) as u64) as usize
+        };
+        let commit_both = |doc: &mut Document, case: usize| {
+            let mut walk = doc.clone();
+            if !walk.restored {
+                walk.figure_new_curves();
+            }
+            let want = walk.changes_by_full_walk();
+            let got = doc.commit("Edit");
+            assert_eq!(got.changes(), want.as_slice(), "case {case}");
+            got
+        };
+        let mut moved_all = 0;
+        let mut reopened = 0;
+        for case in 0..400 {
+            let start = drawing();
+            let mut doc = start.clone();
+            doc.begin();
+            for _ in 0..rnd(8) {
+                let k = rnd(1 << 24);
+                edit(&mut doc, k, &start);
+            }
+            if rnd(3) == 0 {
+                // A whole move: every entity, as a big release has it.
+                moved_all += 1;
+                let all: Vec<EntityId> = doc.iter().map(|(id, _)| id).collect();
+                doc.translate(all, v(rnd(5) as f64 - 2.0, 0.5));
+            }
+            let tx = commit_both(&mut doc, case);
+            if rnd(2) == 0 {
+                reopened += 1;
+                doc.reopen(tx);
+                for _ in 0..rnd(6) {
+                    let k = rnd(1 << 24);
+                    edit(&mut doc, k, &start);
+                }
+                if rnd(2) == 0 {
+                    let some: Vec<EntityId> =
+                        doc.iter().map(|(id, _)| id).step_by(1 + rnd(3)).collect();
+                    doc.translate(some, v(0.0, rnd(3) as f64 - 1.0));
+                }
+                commit_both(&mut doc, case);
+            }
+        }
+        assert!(moved_all > 80 && reopened > 150, "{moved_all} {reopened}");
+    }
 }
 
 /// Layer 0 is a DWG / DXF requirement, not something a Drift drawing starts with (#423).

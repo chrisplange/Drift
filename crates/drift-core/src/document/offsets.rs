@@ -94,7 +94,7 @@ impl Document {
     /// Offset `id` as it was when the open transaction began.
     pub fn offset_before_transaction(&self, id: OffsetId) -> Option<Offset> {
         match self.journal.as_ref().and_then(|j| j.get(&Key::Offset(id))) {
-            Some(Some(Record::Offset(o))) => Some(o.clone()),
+            Some(Some(Record::Offset(o))) => Some((**o).clone()),
             Some(_) => None,
             None => self.offsets.get(&id).cloned(),
         }

@@ -1136,8 +1136,7 @@ impl Editor {
         // there turns with the line; the line beyond it then turns to meet it, see
         // `released_by_turning`).
         let mut turned: HashMap<EntityId, DVec2> = HashMap::new();
-        let mut rounds: Vec<(EntityId, HashSet<EntityId>, HashSet<EntityId>, DVec2, DVec2)> =
-            Vec::new();
+        let mut rounds: Vec<Carried> = Vec::new();
         for p in [p0, p1] {
             if shared_group.contains(&p) || held.contains(&p) {
                 continue;
@@ -1162,7 +1161,13 @@ impl Editor {
                     for f in &fars {
                         turned.insert(*f, rigid(f0));
                     }
-                    rounds.push((arc, centres, fars, c0, f0));
+                    rounds.push(Carried {
+                        arc,
+                        centres,
+                        fars,
+                        c0,
+                        f0,
+                    });
                 }
                 // A line hanging from it is carried along as it is: the shapes the solve
                 // keeps are read from where this leaves things.
@@ -1184,7 +1189,14 @@ impl Editor {
         // its other end where this turn leaves that (turned with it, as a slot's other side
         // is, the rigid turn is already tangent and nothing slides); a line hanging from the
         // far end goes with the far end, as it is.
-        for (arc, centres, fars, c0, f0) in rounds {
+        for Carried {
+            arc,
+            centres,
+            fars,
+            c0,
+            f0,
+        } in rounds
+        {
             let c1 = rigid(c0);
             let mut f1 = rigid(f0);
             let mut hanging: Vec<(EntityId, DVec2)> = Vec::new();
@@ -1579,6 +1591,16 @@ impl Editor {
         }
         drift_geom::walls::lower::lower_constraint(&self.doc, c)?.err()
     }
+}
+
+/// A round [`Editor::turn_to`] carries with the line it turns: the arc, the points joined
+/// at its centre and at its far end, and where those were.
+struct Carried {
+    arc: EntityId,
+    centres: HashSet<EntityId>,
+    fars: HashSet<EntityId>,
+    c0: DVec2,
+    f0: DVec2,
 }
 
 /// Where a line from `from` meets the circle round `centre` through `near` tangent, at the

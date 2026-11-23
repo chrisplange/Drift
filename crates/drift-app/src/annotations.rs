@@ -1141,6 +1141,28 @@ impl DimStyle {
 }
 
 impl DimLayout {
+    /// Whether `p` (on screen) is within `reach` of one of its extension lines, overshoot
+    /// and all: a click there picks the dimension, as a click near a curve picks it (#533).
+    pub fn extension_hit(&self, p: Pos2, reach: f32) -> bool {
+        let lines: Vec<[Pos2; 2]> = match &self.shape {
+            DimShape::Linear { .. } => (0..2)
+                .filter_map(|i| self.shape.extension_line(i))
+                .map(|[a, b]| [a, b + dir(a, b) * self.style.overshoot])
+                .collect(),
+            DimShape::Angular { extensions, .. } => extensions.iter().flatten().copied().collect(),
+            _ => Vec::new(),
+        };
+        lines.iter().any(|&[a, b]| {
+            let ab = b - a;
+            let t = if ab.length_sq() > 0.0 {
+                ((p - a).dot(ab) / ab.length_sq()).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            (a + ab * t - p).length() <= reach
+        })
+    }
+
     /// The layout taken through `z` (from paper onto the canvas, or back).
     pub fn mapped(self, z: &Zoom) -> Self {
         Self {

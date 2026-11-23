@@ -4866,6 +4866,10 @@ fn end_points_light_up_and_hide_until_used() {
             .filter(|i| i.vertex)
             .count()
     };
+    // (The pointer is left where the menu's item was, over the canvas: off it, so it
+    // hovers nothing, not even a dimension's extension line.)
+    h.hover_at(egui::pos2(1.0, 1.0));
+    h.run();
     assert_eq!(markers(&h), 0);
     // Hover a corner where a line meets a fillet: it lights up.
     let corner = DVec2::new(10.0, 0.0);

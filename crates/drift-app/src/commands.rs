@@ -12,9 +12,12 @@
 //! **The boundary.** The registry dispatches plain commands. Keys that mean something only
 //! inside a tool stay with the tools and are listed in [`OTHER_KEYS`] for the shortcuts list:
 //! X / Y axis locks, B base point, Tab between typed fields, typed values, G and R while
-//! something is picked (a grab or a turn: [`Spec::modal`] shows them), Q's pie (hold and
-//! flick), Esc, Enter and the arrows. Ctrl+C / X / V arrive as the system's clipboard events,
-//! so they are shown here but handled in `app/edit.rs`.
+//! something is picked (a grab or a turn: [`Spec::modal`] shows them), Esc, Enter and the
+//! arrows. Ctrl+C / X / V arrive as the system's clipboard events, so they are shown here but
+//! handled in `app/edit.rs`. Q's pie is a command whose key the pie reads itself (hold or tap).
+//!
+//! The keys in [`table`] are Drift's defaults; the user's own keys and presets (#499) are in
+//! `keymap.rs`, read through [`Spec::shortcuts`].
 
 use std::sync::LazyLock;
 
@@ -35,6 +38,8 @@ pub(crate) enum Command {
     Toggle(ViewFlag),
     /// Step which relations show their symbols: off, picked only, all.
     Relations,
+    /// The relations pie, to click (its key is held to flick, or tapped).
+    RelationsPie,
     Panel(Panel),
     HideAllPanels,
     ResetPanels,
@@ -475,8 +480,11 @@ pub(crate) struct Spec {
     pub aliases: &'static [&'static str],
     /// More words the palette searches.
     pub words: &'static str,
-    /// The keys, the first one shown in menus.
-    pub keys: &'static [Shortcut],
+    /// The keys Drift comes with, the first one shown in menus. What runs it is
+    /// [`Spec::shortcuts`]: the user's keys (#499).
+    pub default_keys: &'static [Shortcut],
+    /// Whether the user can give it other keys (the clipboard's keys are the system's).
+    pub assignable: bool,
     /// Whether the registry dispatches the keys (Ctrl+C / X / V come as clipboard events).
     pub dispatched: bool,
     /// Pressed on the canvas: the Ctrl shortcuts act before a text field is checked for.
@@ -521,7 +529,8 @@ impl Spec {
             description,
             aliases: &[],
             words: "",
-            keys: &[],
+            default_keys: &[],
+            assignable: true,
             dispatched: true,
             global: false,
             in_grab: false,
@@ -542,7 +551,7 @@ impl Spec {
     }
 
     fn keys(mut self, keys: &'static [Shortcut]) -> Self {
-        self.keys = keys;
+        self.default_keys = keys;
         self
     }
     fn global(mut self) -> Self {
@@ -563,6 +572,12 @@ impl Spec {
     }
     /// Shown, but the system's clipboard events do it.
     fn clipboard(mut self) -> Self {
+        self.dispatched = false;
+        self.assignable = false;
+        self
+    }
+    /// Its keys are read where they act (Q's pie: hold or tap), not by the dispatch.
+    fn own_keys(mut self) -> Self {
         self.dispatched = false;
         self
     }
@@ -594,7 +609,7 @@ impl Spec {
     /// The keys as a menu shows them: the first shortcut, or a tool's modal key. A tool in
     /// a cycle (C: circle, ellipse, partial ellipse) shows the cycle's key.
     pub(crate) fn key_text(&self, mac: bool) -> String {
-        if let Some(k) = self.keys.first() {
+        if let Some(k) = self.shortcuts().first() {
             return k.text(mac);
         }
         if !self.modal.is_empty() {
@@ -610,11 +625,17 @@ impl Spec {
 
     /// Every key, for the shortcuts list: "Ctrl+Shift+Z / Ctrl+Y", or the modal keys.
     pub(crate) fn all_keys(&self, mac: bool) -> String {
-        if self.keys.is_empty() {
+        let keys = self.shortcuts();
+        if keys.is_empty() {
             return self.modal.to_owned();
         }
-        let keys: Vec<String> = self.keys.iter().map(|k| k.text(mac)).collect();
+        let keys: Vec<String> = keys.iter().map(|k| k.text(mac)).collect();
         keys.join(" / ")
+    }
+
+    /// Its keys now: the user's (#499), Drift's own until changed.
+    pub(crate) fn shortcuts(&self) -> Vec<Shortcut> {
+        crate::keymap::with(|m| m.keys_of(self))
     }
 
     /// What the shortcuts list says it does: the description, and a cycle's other tools.
@@ -628,6 +649,21 @@ impl Spec {
             out.push_str(&again);
         }
         out
+    }
+}
+
+/// The key the command `id` has now ("" for none), for hints that name it.
+pub(crate) fn key_of(id: &str) -> String {
+    spec_by_id(id).map_or_else(String::new, |s| s.key_text(cfg!(target_os = "macos")))
+}
+
+/// " · Shift+G": the key the command `id` has now, to end a tooltip ("" for none).
+pub(crate) fn key_suffix(id: &str) -> String {
+    let key = key_of(id);
+    if key.is_empty() {
+        key
+    } else {
+        format!(" · {key}")
     }
 }
 
@@ -651,7 +687,6 @@ const OLD_IDS: &[(&str, &str)] = &[
 ];
 
 /// The registry's entry with the stable id `id`, or the one an old id now names.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn spec_by_id(id: &str) -> Option<&'static Spec> {
     let id = OLD_IDS
         .iter()
@@ -811,7 +846,7 @@ pub(crate) fn menu_breaks(category: Category) -> Vec<Command> {
 /// The key that picks a tool, for its tooltip and the toolbar (`None` for a tool in a cycle
 /// other than the first, and a tool with no key).
 pub(crate) fn tool_key(kind: ToolKind) -> Option<Shortcut> {
-    spec(Command::Tool(kind))?.keys.first().copied()
+    spec(Command::Tool(kind))?.shortcuts().first().copied()
 }
 
 /// The single key that picks a tool (`None` for Shift+T and tools without a key). A tool in
@@ -1304,6 +1339,17 @@ fn table() -> Vec<Spec> {
             "Keep the whole sketch as an option, to switch back to",
         )
         .words("variant parameters"),
+        Spec::new(
+            "edit.relations_pie",
+            C::Edit,
+            K::RelationsPie,
+            "Relations pie",
+            "Relate what is picked: hold the key and flick towards a relation, or tap it and click",
+        )
+        .keys(const { &[plain(Key::Q)] })
+        .own_keys()
+        .repeat(false)
+        .words("constraint relate"),
         tool("edit.select", C::Edit, ToolKind::Select)
             .keys(const { &[plain(Key::S)] })
             .repeat(false)
@@ -1313,7 +1359,7 @@ fn table() -> Vec<Spec> {
             C::Edit,
             K::Preferences,
             "Preferences…",
-            "Theme, pointer, drawing aids and updates",
+            "Theme, pointer, drawing aids, keyboard shortcuts and updates",
         )
         .keys(const { &[cmd(Key::Comma)] })
         .global()
@@ -2018,7 +2064,6 @@ pub(crate) const OTHER_KEYS: &[(&str, &[(&str, &str)])] = &[
             ),
             ("Click near a line's middle", "Pick its midpoint"),
             ("Arrow keys", "Nudge one grid step; Shift+arrow, ten"),
-            ("Q", "Relations pie: hold and flick, or tap and click"),
             (
                 "Hold S",
                 "Selection filter pie: flick towards a kind to pick only it, or to All for                  everything; let go in the middle to click kinds on and off (a tap of S is                  the Select tool)",
@@ -2107,17 +2152,29 @@ pub(crate) fn shortcut_sections(mac: bool) -> Vec<(&'static str, Vec<ShortcutRow
         let rows: Vec<_> = registry()
             .iter()
             .filter(|s| s.category == category && !s.when.hidden())
-            .filter(|s| !s.keys.is_empty() || !s.modal.is_empty())
+            .filter(|s| !s.shortcuts().is_empty() || !s.modal.is_empty())
             .map(|s| (s.all_keys(mac), s.title.to_owned(), s.does()))
             .collect();
         if !rows.is_empty() {
             out.push((category.label(), rows));
         }
     }
+    // The Select tool's key, held, is the Selection filter pie: written with the user's key.
+    let select = key_of("edit.select");
     for (section, rows) in OTHER_KEYS {
         let rows = rows
             .iter()
-            .map(|(k, does)| (k.to_string(), String::new(), does.to_string()))
+            .map(|(k, does)| {
+                if *k == "Hold S" {
+                    (
+                        format!("Hold {select}"),
+                        String::new(),
+                        does.replace("tap of S", &format!("tap of {select}")),
+                    )
+                } else {
+                    (k.to_string(), String::new(), does.to_string())
+                }
+            })
             .collect();
         out.push((*section, rows));
     }
@@ -2171,18 +2228,34 @@ pub(crate) fn docs_tables() -> String {
     out
 }
 
-/// The commands whose keys the canvas dispatches, the more specific shortcuts first.
-pub(crate) fn dispatched() -> &'static [(Shortcut, &'static Spec)] {
-    static KEYS: LazyLock<Vec<(Shortcut, &'static Spec)>> = LazyLock::new(|| {
+/// The dispatch table: each key and its command.
+pub(crate) type Dispatch = std::rc::Rc<Vec<(Shortcut, &'static Spec)>>;
+
+/// The commands whose keys the canvas dispatches, the more specific shortcuts first. Made
+/// again when the user's keys change.
+pub(crate) fn dispatched() -> Dispatch {
+    thread_local! {
+        static KEYS: std::cell::RefCell<Option<(u64, Dispatch)>> =
+            const { std::cell::RefCell::new(None) };
+    }
+    let now = crate::keymap::generation();
+    KEYS.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let Some((made, keys)) = &*cache
+            && *made == now
+        {
+            return keys.clone();
+        }
         let mut keys: Vec<_> = registry()
             .iter()
             .filter(|s| s.dispatched)
-            .flat_map(|s| s.keys.iter().map(move |k| (*k, s)))
+            .flat_map(|s| s.shortcuts().into_iter().map(move |k| (k, s)))
             .collect();
         keys.sort_by_key(|(k, _)| std::cmp::Reverse(k.weight()));
+        let keys = std::rc::Rc::new(keys);
+        *cache = Some((now, keys.clone()));
         keys
-    });
-    &KEYS
+    })
 }
 
 /// How well a palette query matches a command. Exact names first: a command's own key ("M"
@@ -2194,7 +2267,7 @@ pub(crate) fn rank(query: &str, spec: &Spec) -> Option<i32> {
     }
     // (G is Drift's move, though AutoCAD's G groups.)
     let own_key = spec
-        .keys
+        .shortcuts()
         .iter()
         .filter_map(|k| k.single())
         .any(|c| c.to_lowercase().eq(q.chars()));
@@ -2360,7 +2433,7 @@ mod tests {
     fn no_two_commands_share_a_shortcut() {
         let mut seen: Vec<(Shortcut, &str)> = Vec::new();
         for s in registry() {
-            for k in s.keys {
+            for k in s.default_keys {
                 if let Some((_, other)) = seen.iter().find(|(o, _)| o == k) {
                     panic!("{} and {} are both {}", other, s.id, k.text(false));
                 }
@@ -2376,7 +2449,7 @@ mod tests {
             "W is the Wall tool"
         );
         assert_eq!(
-            spec(Command::Toggle(ViewFlag::Thin)).unwrap().keys,
+            spec(Command::Toggle(ViewFlag::Thin)).unwrap().default_keys,
             &[shift_alt(Key::W)]
         );
         // The tools' own keys: X / Y lock, G grabs, B picks a base point, Q's pie, Tab,
@@ -2386,7 +2459,6 @@ mod tests {
             Key::Y,
             Key::G,
             Key::B,
-            Key::Q,
             Key::Tab,
             Key::Enter,
             Key::Space,
@@ -2429,7 +2501,7 @@ mod tests {
         assert_eq!(best("g"), Some("modify.move"));
         // Every single-key shortcut finds its own command.
         for s in registry() {
-            for c in s.keys.iter().filter_map(|k| k.single()) {
+            for c in s.default_keys.iter().filter_map(|k| k.single()) {
                 assert_eq!(best(&c.to_string()), Some(s.id), "{c}");
             }
         }

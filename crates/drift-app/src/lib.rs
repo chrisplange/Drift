@@ -21,6 +21,7 @@ mod edit_session_tests;
 mod export_crop_tests;
 pub mod fonts;
 mod icons;
+mod keymap;
 mod layers_ui;
 pub(crate) mod links;
 #[cfg(test)]
@@ -1020,6 +1021,7 @@ impl DriftApp {
             && app.soak.is_none()
         {
             app.restore_session(storage);
+            keymap::load(storage);
         }
         app
     }
@@ -1420,6 +1422,7 @@ impl eframe::App for DriftApp {
         storage.set_string(KEY_VIEW, self.view_prefs());
         storage.set_string(KEY_DARK_LOOK, theme::dark_look().key().into());
         self.new_drawing.save(storage);
+        keymap::save(storage);
         self.save_motion_pref(storage);
         let recent: Vec<String> = self
             .recent

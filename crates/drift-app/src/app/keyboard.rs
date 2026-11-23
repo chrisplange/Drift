@@ -70,12 +70,12 @@ impl DriftApp {
                 return;
             }
             // S, N and D: the tools that work on paper, by the keys they have in the model.
-            for (key, tool) in [
-                (Key::S, ToolKind::Select),
-                (Key::N, ToolKind::Note),
-                (Key::D, ToolKind::Dimension),
+            for (id, tool) in [
+                ("edit.select", ToolKind::Select),
+                ("annotate.note", ToolKind::Note),
+                ("annotate.dimension", ToolKind::Dimension),
             ] {
-                if ctx.input(|i| i.modifiers.is_none() && i.key_pressed(key)) {
+                if ctx.input(|i| crate::keymap::pressed_released(i, id).0) {
                     self.set_tool(tool);
                     return;
                 }
@@ -275,7 +275,7 @@ impl DriftApp {
     /// Run the registry's commands whose keys were pressed, in `phase`. True if the rest of
     /// the keys should wait (the palette opened, a rename started, or a late command ran).
     fn key_commands(&mut self, ctx: &egui::Context, phase: Phase) -> bool {
-        for &(key, spec) in commands::dispatched() {
+        for &(key, spec) in commands::dispatched().iter() {
             let ours = match phase {
                 Phase::Global => spec.global,
                 Phase::Early => !spec.global && spec.in_grab,

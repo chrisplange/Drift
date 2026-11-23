@@ -121,6 +121,7 @@ Seeded 2026-11-09 from the command registry, importers/exporters, agent schema a
 
 ## UI
 - Command palette with CAD aliases (LINE, TRIM, HATCH…). `crates/drift-app/src/app/palette.rs`
+- Assignable keyboard shortcuts with presets (Drift default, AutoCAD-style, your own): Preferences → Keyboard. `crates/drift-app/src/keymap.rs`
 - Dockable panels: Inspector, Layers, Blocks, Sheets, Parameters; reset layout. `crates/drift-app/src/app/dock_ui.rs`
 - Themes: light, dark, Midnight, Obsidian, follow system. `crates/drift-app/src/commands.rs`
 - Preferences and drawing settings. `crates/drift-app/src/app/start_ui.rs`

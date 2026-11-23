@@ -40,6 +40,10 @@ impl Document {
     }
 
     /// The layer an entity is on (the first layer if its layer is missing).
+    #[expect(
+        clippy::expect_used,
+        reason = "the first layer always exists: Document::new adds it and remove_layer refuses it"
+    )]
     pub fn layer_of(&self, entity: EntityId) -> &Layer {
         let id = self
             .entities

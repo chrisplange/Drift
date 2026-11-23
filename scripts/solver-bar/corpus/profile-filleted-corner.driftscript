@@ -1,0 +1,7 @@
+# Two lines meeting at a corner, rounded by the Fillet tool (which keeps the corner's point,
+# the arc's ends at equal distances from it).
+line run from 0,0 to 80,0
+line rise from run.end to 80,60
+horizontal run
+dim run = 80
+#> fillet_chamfer {"corner":"$run.end","radius":15}

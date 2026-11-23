@@ -1,0 +1,32 @@
+{
+  "format": "drift",
+  "version": 45,
+  "reader": 45,
+  "meta": {"units":"mm"},
+  "layers": [
+    {"id":"l0","name":"Layer 1","weight":0.25,"linetype":"continuous"}
+  ],
+  "entities": [
+    {"type":"point","id":"e1","at":[0.0,0.0]},
+    {"type":"point","id":"e2","at":[80.0,0.0],"style":"construction"},
+    {"type":"line","id":"e3","a":"e1","b":"e6"},
+    {"type":"point","id":"e4","at":[80.0,60.0]},
+    {"type":"line","id":"e5","a":"e7","b":"e4"},
+    {"type":"point","id":"e6","at":[65.0,0.0]},
+    {"type":"point","id":"e7","at":[80.0,15.0]},
+    {"type":"point","id":"e8","at":[65.0,15.0]},
+    {"type":"arc","id":"e9","center":"e8","start":"e6","end":"e7"}
+  ],
+  "constraints": [
+    {"type":"horizontal","id":"c1","line":"e3"},
+    {"type":"vertical","id":"c2","line":"e5"},
+    {"type":"distance","id":"c4","a":"e1","b":"e2","value":80.0,"label":[0.0,-10.0],"paper_label":[0.0,-10.0]},
+    {"type":"corner","id":"c5","a":"e3","b":"e5","point":"e2"},
+    {"type":"tangent","id":"c6","a":"e3","b":"e9"},
+    {"type":"tangent","id":"c7","a":"e5","b":"e9"},
+    {"type":"radius","id":"c8","curve":"e9","value":15.0}
+  ],
+  "figures": [
+    {"id":"d1","curves":["e3","e5","e9"]}
+  ]
+}

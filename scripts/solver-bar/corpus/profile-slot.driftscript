@@ -1,0 +1,13 @@
+# A slot: two half-round ends joined by two tangent sides. Its end radius and the distance
+# between its centres are set; it is free to move.
+arc enda centre 0,0 from 0,10 to 0,-10
+arc endb centre 60,0 from 60,-10 to 60,10
+line lower from enda.end to endb.start
+line upper from endb.end to enda.start
+tangent lower enda
+tangent lower endb
+tangent upper enda
+tangent upper endb
+equal enda endb
+dim r enda = 10
+dim enda.center to endb.center = 60

@@ -1,0 +1,34 @@
+{
+  "format": "drift",
+  "version": 45,
+  "reader": 45,
+  "meta": {"units":"mm"},
+  "layers": [
+    {"id":"l0","name":"Layer 1","weight":0.25,"linetype":"continuous"}
+  ],
+  "entities": [
+    {"type":"point","id":"e1","at":[0.0,0.0]},
+    {"type":"point","id":"e2","at":[39.999426693846615,59.9991496953381]},
+    {"type":"line","id":"e3","a":"e1","b":"e2"},
+    {"type":"point","id":"e4","at":[77.99993611764546,18.000346264536994]},
+    {"type":"line","id":"e5","a":"e1","b":"e4"},
+    {"type":"point","id":"e6","at":[117.99936281149205,77.99949595987513]},
+    {"type":"line","id":"e7","a":"e2","b":"e6"},
+    {"type":"line","id":"e8","a":"e4","b":"e6"},
+    {"type":"point","id":"e9","at":[57.99744926959754,-12.003388835488682]},
+    {"type":"line","id":"e10","a":"e4","b":"e9"}
+  ],
+  "constraints": [
+    {"type":"fix","id":"c1","point":"e1","at":[0.0,0.0]},
+    {"type":"distance","id":"c2","a":"e1","b":"e2","value":72.11,"label":[-8.320502943378436,5.547001962252292],"paper_label":[-8.320502943378436,5.547001962252292]},
+    {"type":"distance","id":"c3","a":"e1","b":"e4","value":80.05,"label":[2.2485950669875843,-9.7439119569462],"paper_label":[2.2485950669875843,-9.7439119569462]},
+    {"type":"parallel","id":"c4","a":"e3","b":"e8"},
+    {"type":"parallel","id":"c5","a":"e7","b":"e5"},
+    {"type":"distance","id":"c6","a":"e4","b":"e9","value":36.06,"label":[8.320540670152052,-5.546945371674899],"paper_label":[8.320540670152052,-5.546945371674899]},
+    {"type":"collinear","id":"c7","a":"e10","b":"e8"}
+  ],
+  "figures": [
+    {"id":"d1","curves":["e3","e5","e7","e8"]},
+    {"id":"d2","curves":["e10"]}
+  ]
+}

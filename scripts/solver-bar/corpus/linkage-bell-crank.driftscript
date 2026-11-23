@@ -1,0 +1,14 @@
+# A bell crank: two arms at a fixed angle turning about a fixed pivot, each driving a rod
+# whose far end runs on a fixed guide.
+point pivot at 0,0 fixed
+line arma from pivot to 43,25 length 50
+line armb from pivot to -20,35 length 40
+dim angle arma armb = 90°
+construction line guidea from 50,-80 to 50,-20 fixed
+construction line guideb from -90,40 to -20,40 fixed
+fix guidea.end
+fix guideb.end
+line roda from arma.end to 50,-35 length 60
+line rodb from armb.end to -88,40 length 68
+on roda.end guidea
+on rodb.end guideb

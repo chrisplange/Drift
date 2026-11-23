@@ -1,0 +1,52 @@
+{
+  "format": "drift",
+  "version": 45,
+  "reader": 45,
+  "meta": {"units":"mm"},
+  "layers": [
+    {"id":"l0","name":"Layer 1","weight":0.25,"linetype":"continuous"}
+  ],
+  "entities": [
+    {"type":"point","id":"e1","at":[10.0,0.0]},
+    {"type":"point","id":"e2","at":[70.0,0.0]},
+    {"type":"line","id":"e3","a":"e1","b":"e2"},
+    {"type":"point","id":"e4","at":[80.0,10.0]},
+    {"type":"point","id":"e5","at":[80.0,40.0]},
+    {"type":"line","id":"e6","a":"e4","b":"e5"},
+    {"type":"point","id":"e7","at":[70.0,50.0]},
+    {"type":"point","id":"e8","at":[10.0,50.0]},
+    {"type":"line","id":"e9","a":"e7","b":"e8"},
+    {"type":"point","id":"e10","at":[0.0,40.0]},
+    {"type":"point","id":"e11","at":[0.0,10.0]},
+    {"type":"line","id":"e12","a":"e10","b":"e11"},
+    {"type":"point","id":"e13","at":[70.0,10.0]},
+    {"type":"arc","id":"e14","center":"e13","start":"e2","end":"e4"},
+    {"type":"point","id":"e15","at":[70.0,40.0]},
+    {"type":"arc","id":"e16","center":"e15","start":"e5","end":"e7"},
+    {"type":"point","id":"e17","at":[10.0,40.0]},
+    {"type":"arc","id":"e18","center":"e17","start":"e8","end":"e10"},
+    {"type":"point","id":"e19","at":[10.0,10.0]},
+    {"type":"arc","id":"e20","center":"e19","start":"e11","end":"e1"}
+  ],
+  "constraints": [
+    {"type":"horizontal","id":"c1","line":"e3"},
+    {"type":"vertical","id":"c2","line":"e6"},
+    {"type":"horizontal","id":"c3","line":"e9"},
+    {"type":"vertical","id":"c4","line":"e12"},
+    {"type":"tangent","id":"c9","a":"e3","b":"e14"},
+    {"type":"tangent","id":"c10","a":"e6","b":"e14"},
+    {"type":"tangent","id":"c11","a":"e6","b":"e16"},
+    {"type":"tangent","id":"c12","a":"e9","b":"e16"},
+    {"type":"tangent","id":"c13","a":"e9","b":"e18"},
+    {"type":"tangent","id":"c14","a":"e12","b":"e18"},
+    {"type":"tangent","id":"c15","a":"e12","b":"e20"},
+    {"type":"tangent","id":"c16","a":"e3","b":"e20"},
+    {"type":"equal","id":"c17","a":"e14","b":"e16"},
+    {"type":"equal","id":"c18","a":"e16","b":"e18"},
+    {"type":"equal","id":"c19","a":"e18","b":"e20"},
+    {"type":"distance","id":"c20","a":"e19","b":"e13","value":60.0,"label":[0.0,-10.0],"paper_label":[0.0,-10.0]}
+  ],
+  "figures": [
+    {"id":"d1","curves":["e3","e6","e9","e12","e14","e16","e18","e20"]}
+  ]
+}

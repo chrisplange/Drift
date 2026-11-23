@@ -1,0 +1,12 @@
+# An L-shaped room drawn as an outline: every wall level or plumb, two sizes set, the notch
+# free.
+polyline room (0,0) (6000,0) (6000,3000) (3500,3000) (3500,5000) (0,5000) closed
+horizontal room[1]
+vertical room[2]
+horizontal room[3]
+vertical room[4]
+horizontal room[5]
+vertical room[6]
+dim room[1] = 6000
+dim room[6] = 5000
+fix room.start

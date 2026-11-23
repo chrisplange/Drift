@@ -1,0 +1,17 @@
+# A dovetail: a block with a flared tongue, its flanks at a set angle, mirrored about its
+# centre line.
+construction line axis from 0,-5 to 0,45
+vertical axis
+line base from -30,0 to 30,0
+line sider from base.end to 30,20
+line shoulderr from sider.end to 8,20
+line flankr from shoulderr.end to 14,40
+line crown from flankr.end to -14,40
+line flankl from crown.end to -8,20
+line shoulderl from flankl.end to -30,20
+line sidel from shoulderl.end to base.start
+symmetric base.start base.end about axis
+symmetric shoulderr.end shoulderl.start about axis
+symmetric crown.start crown.end about axis
+dim angle shoulderr flankr = 73.3°
+dim base = 60

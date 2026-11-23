@@ -1,0 +1,13 @@
+# An ellipse in a frame: its centre at the middle of the frame's diagonal, with a circle
+# beside it whose centre is held in y only and whose radius is locked.
+rect frame about 120 x 80 at 0,0
+construction line diagonal from frame.sw to frame.ne
+point mid at 60,40
+midpoint mid of diagonal
+#> el = add_geometry {"items":[{"type":"ellipse","center":[60,40],"major":[100,40],"minor_radius":25}],"auto_relations":false,"join":false}
+#> add_relations {"relations":[{"type":"coincident","a":"$el.center","b":"$mid"}]}
+#> knob = add_geometry {"items":[{"type":"circle","center":[150,40],"radius":10}],"join":false}
+#> constraint fix_radius $knob
+#> constraint fix_y $knob.center
+fix frame.sw
+dim frame.south = 120

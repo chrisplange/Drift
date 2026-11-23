@@ -1,0 +1,11 @@
+# A corridor: two parallel walls with a door in each, and a tie line square across the gap.
+wall nwall from 0,1500 to 9000,1500 thick 150
+wall swall from 0,0 to 9000,0 thick 150
+parallel nwall.axis swall.axis
+horizontal swall.axis
+construction line gap from 100,0 to 100,1500
+on gap.start swall.axis
+on gap.end nwall.axis
+perpendicular gap swall.axis
+door d1 900 in swall.left
+door d2 900 in nwall.right

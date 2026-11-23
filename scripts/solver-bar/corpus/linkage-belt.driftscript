@@ -1,0 +1,14 @@
+# Two pulleys and an open belt: each belt run is tangent to both pulleys, ending on them.
+circle drive r 25 at 0,0
+circle driven r 12 at 110,0
+fix drive.center
+line upper from 2.95,24.83 to 111.42,11.92
+line lower from 2.95,-24.83 to 111.42,-11.92
+on upper.start drive
+on upper.end driven
+on lower.start drive
+on lower.end driven
+tangent upper drive
+tangent upper driven
+tangent lower drive
+tangent lower driven

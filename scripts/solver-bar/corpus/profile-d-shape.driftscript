@@ -1,0 +1,7 @@
+# A D: a chord closed by an arc, with a hole kept concentric with the arc.
+line chord from 0,-30 to 0,30
+arc bow centre 0,0 from chord.start to chord.end
+circle bore r 8 at 0,0
+concentric bore bow
+vertical chord
+dim chord = 60

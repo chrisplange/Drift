@@ -1,0 +1,6 @@
+# A bedroom and a bathroom sharing a wall, with a door between them and one to outside.
+room bed 3600 x 4000 at 0,0 walls 200
+room bath 2400 x 4000 right of bed walls 200
+door d1 800 in bed.east
+door d2 900 in bed.south centred
+window w1 600 in bath.north

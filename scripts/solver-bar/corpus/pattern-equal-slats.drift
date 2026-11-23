@@ -1,0 +1,50 @@
+{
+  "format": "drift",
+  "version": 45,
+  "reader": 45,
+  "meta": {"units":"mm"},
+  "layers": [
+    {"id":"l0","name":"Layer 1","weight":0.25,"linetype":"continuous"}
+  ],
+  "entities": [
+    {"type":"point","id":"e1","at":[0.0,0.0]},
+    {"type":"point","id":"e2","at":[100.0,0.0]},
+    {"type":"line","id":"e3","a":"e1","b":"e2"},
+    {"type":"point","id":"e4","at":[0.0,60.0]},
+    {"type":"line","id":"e5","a":"e1","b":"e4"},
+    {"type":"point","id":"e6","at":[25.0,0.0]},
+    {"type":"point","id":"e7","at":[25.0,60.0]},
+    {"type":"line","id":"e8","a":"e6","b":"e7"},
+    {"type":"point","id":"e9","at":[50.0,0.0]},
+    {"type":"point","id":"e10","at":[50.0,60.0]},
+    {"type":"line","id":"e11","a":"e9","b":"e10"},
+    {"type":"point","id":"e12","at":[75.0,0.0]},
+    {"type":"point","id":"e13","at":[75.0,60.0]},
+    {"type":"line","id":"e14","a":"e12","b":"e13"},
+    {"type":"point","id":"e15","at":[100.0,60.0]},
+    {"type":"line","id":"e16","a":"e2","b":"e15"}
+  ],
+  "constraints": [
+    {"type":"horizontal","id":"c1","line":"e3"},
+    {"type":"vertical","id":"c3","line":"e5"},
+    {"type":"vertical","id":"c4","line":"e8"},
+    {"type":"vertical","id":"c5","line":"e11"},
+    {"type":"vertical","id":"c6","line":"e14"},
+    {"type":"vertical","id":"c7","line":"e16"},
+    {"type":"point_on_curve","id":"c8","point":"e6","curve":"e3"},
+    {"type":"point_on_curve","id":"c9","point":"e9","curve":"e3"},
+    {"type":"point_on_curve","id":"c10","point":"e12","curve":"e3"},
+    {"type":"equal","id":"c15","a":"e5","b":"e8"},
+    {"type":"equal","id":"c16","a":"e8","b":"e11"},
+    {"type":"equal","id":"c17","a":"e11","b":"e14"},
+    {"type":"equal","id":"c18","a":"e14","b":"e16"},
+    {"type":"equal_distance","id":"c19","a":"e1","b":"e6","c":"e6","d":"e9"},
+    {"type":"midpoint_of","id":"c20","a":"e9","b":"e2","point":"e12"}
+  ],
+  "figures": [
+    {"id":"d1","curves":["e3","e5","e16"]},
+    {"id":"d2","curves":["e8"]},
+    {"id":"d3","curves":["e11"]},
+    {"id":"d4","curves":["e14"]}
+  ]
+}

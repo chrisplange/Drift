@@ -1,0 +1,35 @@
+{
+  "format": "drift",
+  "version": 45,
+  "reader": 45,
+  "meta": {"units":"mm"},
+  "layers": [
+    {"id":"l0","name":"Layer 1","weight":0.25,"linetype":"continuous"}
+  ],
+  "entities": [
+    {"type":"point","id":"e1","at":[0.0,0.0]},
+    {"type":"point","id":"e2","at":[8.000000008905856,6.000000006679392]},
+    {"type":"circle","id":"e3","center":"e2","radius":30.000000000006604},
+    {"type":"line","id":"e4","a":"e1","b":"e2"},
+    {"type":"point","id":"e5","at":[0.0,20.0]},
+    {"type":"point","id":"e6","at":[0.0,90.0]},
+    {"type":"line","id":"e7","a":"e5","b":"e6","style":"construction"},
+    {"type":"point","id":"e8","at":[1.388423290166363e-12,43.14835124794445]},
+    {"type":"circle","id":"e9","center":"e8","radius":8.000000000006604}
+  ],
+  "constraints": [
+    {"type":"fix","id":"c1","point":"e1","at":[0.0,0.0]},
+    {"type":"radius","id":"c2","curve":"e3","value":30.0},
+    {"type":"distance","id":"c3","a":"e1","b":"e2","value":10.0,"label":[-6.000000000000002,8.000000000000002],"paper_label":[-6.000000000000002,8.000000000000002]},
+    {"type":"vertical","id":"c4","line":"e7"},
+    {"type":"fix","id":"c5","point":"e5","at":[0.0,20.0]},
+    {"type":"fix_y","id":"c9","point":"e6","value":90.0},
+    {"type":"radius","id":"c10","curve":"e9","value":8.0},
+    {"type":"point_on_curve","id":"c11","point":"e8","curve":"e7"},
+    {"type":"tangent","id":"c12","a":"e3","b":"e9"}
+  ],
+  "figures": [
+    {"id":"d1","curves":["e4"]},
+    {"id":"d2","curves":["e7"]}
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "format": "drift",
+  "version": 45,
+  "reader": 45,
+  "meta": {"units":"mm"},
+  "layers": [
+    {"id":"l0","name":"Layer 1","weight":0.25,"linetype":"continuous"}
+  ],
+  "entities": [
+    {"type":"point","id":"e1","at":[0.0,0.0]},
+    {"type":"point","id":"e2","at":[100.0,0.0]},
+    {"type":"point","id":"e3","at":[100.0,30.0]},
+    {"type":"point","id":"e4","at":[30.0,30.0]},
+    {"type":"point","id":"e5","at":[30.0,90.0]},
+    {"type":"point","id":"e6","at":[0.0,90.0]},
+    {"type":"line","id":"e7","a":"e1","b":"e2"},
+    {"type":"line","id":"e8","a":"e2","b":"e3"},
+    {"type":"line","id":"e9","a":"e3","b":"e4"},
+    {"type":"line","id":"e10","a":"e4","b":"e5"},
+    {"type":"line","id":"e11","a":"e5","b":"e6"},
+    {"type":"line","id":"e12","a":"e6","b":"e1"},
+    {"type":"point","id":"e13","at":[15.0,15.0]},
+    {"type":"circle","id":"e14","center":"e13","radius":5.0},
+    {"type":"point","id":"e15","at":[80.0,15.0]},
+    {"type":"circle","id":"e16","center":"e15","radius":5.0},
+    {"type":"point","id":"e17","at":[15.0,75.0]},
+    {"type":"circle","id":"e18","center":"e17","radius":5.0}
+  ],
+  "constraints": [
+    {"type":"horizontal","id":"c1","line":"e7"},
+    {"type":"vertical","id":"c2","line":"e8"},
+    {"type":"horizontal","id":"c3","line":"e9"},
+    {"type":"vertical","id":"c4","line":"e10"},
+    {"type":"horizontal","id":"c5","line":"e11"},
+    {"type":"vertical","id":"c6","line":"e12"},
+    {"type":"distance","id":"c13","a":"e1","b":"e2","value":100.0,"label":[0.0,-10.0],"paper_label":[0.0,-10.0]},
+    {"type":"distance","id":"c14","a":"e6","b":"e1","value":90.0,"label":[-10.0,-0.0],"paper_label":[-10.0,-0.0]},
+    {"type":"radius","id":"c15","curve":"e14","value":5.0},
+    {"type":"radius","id":"c16","curve":"e16","value":5.0},
+    {"type":"radius","id":"c17","curve":"e18","value":5.0},
+    {"type":"point_line_distance","id":"c18","line":"e12","point":"e13","value":15.0},
+    {"type":"point_line_distance","id":"c19","line":"e7","point":"e13","value":15.0},
+    {"type":"horizontal_points","id":"c20","a":"e13","b":"e15"},
+    {"type":"vertical_points","id":"c21","a":"e13","b":"e17"},
+    {"type":"point_line_distance","id":"c22","line":"e8","point":"e15","value":20.0}
+  ],
+  "figures": [
+    {"id":"d1","curves":["e7","e8","e9","e10","e11","e12"]}
+  ]
+}

@@ -1,0 +1,18 @@
+# An L bracket with three bolt holes, each placed from the outline's edges.
+polyline plate (0,0) (100,0) (100,30) (30,30) (30,90) (0,90) closed
+horizontal plate[1]
+vertical plate[2]
+horizontal plate[3]
+vertical plate[4]
+horizontal plate[5]
+vertical plate[6]
+dim plate[1] = 100
+dim plate[6] = 90
+circle holea r 5 at 15,15
+circle holeb r 5 at 80,15
+circle holec r 5 at 15,75
+dim holea.center to plate[6] = 15
+dim holea.center to plate[1] = 15
+horizontal holea.center holeb.center
+vertical holea.center holec.center
+dim holeb.center to plate[2] = 20

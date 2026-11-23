@@ -1,0 +1,15 @@
+# A round flange: a bore, a rim, and six bolt holes on a pitch circle.
+circle rim r 60 at 0,0
+circle bore r 20 at 0,0
+construction circle pitch r 42 at 0,0
+concentric bore rim
+concentric pitch rim
+circle bolt r 4 at 42,0
+on bolt.center pitch
+array bolts of bolt 6 around 0,0
+on bolts[2].center pitch
+on bolts[3].center pitch
+on bolts[4].center pitch
+on bolts[5].center pitch
+on bolts[6].center pitch
+equal bolts[1] bolts[2] bolts[3] bolts[4] bolts[5] bolts[6]

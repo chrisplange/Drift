@@ -1,0 +1,34 @@
+{
+  "format": "drift",
+  "version": 45,
+  "reader": 45,
+  "meta": {"units":"mm"},
+  "layers": [
+    {"id":"l0","name":"Layer 1","weight":0.25,"linetype":"continuous"}
+  ],
+  "entities": [
+    {"type":"point","id":"e1","at":[0.0,0.0]},
+    {"type":"point","id":"e2","at":[0.0,10.0]},
+    {"type":"point","id":"e3","at":[0.0,-10.0]},
+    {"type":"arc","id":"e4","center":"e1","start":"e2","end":"e3"},
+    {"type":"point","id":"e5","at":[60.0,0.0]},
+    {"type":"point","id":"e6","at":[60.0,-10.0]},
+    {"type":"point","id":"e7","at":[60.0,10.0]},
+    {"type":"arc","id":"e8","center":"e5","start":"e6","end":"e7"},
+    {"type":"line","id":"e9","a":"e3","b":"e6"},
+    {"type":"line","id":"e10","a":"e7","b":"e2"}
+  ],
+  "constraints": [
+    {"type":"horizontal","id":"c1","line":"e9"},
+    {"type":"horizontal","id":"c2","line":"e10"},
+    {"type":"tangent","id":"c3","a":"e9","b":"e4"},
+    {"type":"tangent","id":"c4","a":"e9","b":"e8"},
+    {"type":"tangent","id":"c5","a":"e10","b":"e4"},
+    {"type":"tangent","id":"c6","a":"e10","b":"e8"},
+    {"type":"radius","id":"c8","curve":"e4","value":10.0},
+    {"type":"distance","id":"c9","a":"e1","b":"e5","value":60.0,"label":[-0.0,10.0],"paper_label":[-0.0,10.0]}
+  ],
+  "figures": [
+    {"id":"d1","curves":["e4","e8","e9","e10"]}
+  ]
+}

@@ -1,0 +1,12 @@
+# A channel, drawn with parallels and perpendiculars only, so it can turn as well as move.
+polyline cee (0,0) (40,0) (40,6) (6,6) (6,74) (40,74) (40,80) (0,80) closed
+parallel cee[1] cee[3]
+parallel cee[1] cee[5]
+parallel cee[1] cee[7]
+perpendicular cee[1] cee[8]
+parallel cee[8] cee[4]
+parallel cee[8] cee[2]
+parallel cee[8] cee[6]
+equal cee[2] cee[6]
+equal cee[1] cee[7]
+dim cee[8] = 80

@@ -1,0 +1,11 @@
+# An I beam: two equal flanges and a web between their middles.
+rect lowerflange about 80 x 8 at 0,0
+rect upperflange about 80 x 8 at 0,92
+construction line web from 40,8 to 40,92
+midpoint web.start of lowerflange.north
+midpoint web.end of upperflange.south
+vertical web
+equal lowerflange.south upperflange.south
+equal lowerflange.west upperflange.west
+dim web = 84
+dim lowerflange.south = 80

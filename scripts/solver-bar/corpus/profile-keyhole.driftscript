@@ -1,0 +1,11 @@
+# A keyhole: a round head and a slot below it with a rounded foot.
+arc head centre 0,40 from 5,31.34 to -5,31.34
+line flankb from head.start to 5,0
+line flanka from -5,0 to head.end
+arc foot centre 0,0 from flanka.start to flankb.end
+vertical flanka
+vertical flankb
+tangent flanka foot
+tangent flankb foot
+dim r head = 10
+dim r foot = 5

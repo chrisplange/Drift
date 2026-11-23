@@ -1,0 +1,10 @@
+# An L-shaped angle section. The legs are square to each other and of equal thickness;
+# only the long leg's length is set, so the short leg and the thickness can be dragged.
+polyline sec (0,0) (60,0) (60,8) (8,8) (8,80) (0,80) closed
+perpendicular sec[1] sec[2]
+perpendicular sec[2] sec[3]
+perpendicular sec[3] sec[4]
+perpendicular sec[4] sec[5]
+equal sec[2] sec[5]
+dim sec[6] = 80
+fix sec.start

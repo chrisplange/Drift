@@ -87,7 +87,8 @@ w("")
 w("- **Guarding tests**: the normal tests of drift-solver and drift-edit were run, and the "
   "ones that fail are listed. A heuristic no test fails without has no guard.")
 w("- **Corpus**: the sketch corpus (the solver bar's item 8: "
-  f"{base.get('drags', '9,510')} drags of 51 sketches, every frame judged) was swept and "
+  f"{base.get('drags', '9,510')} drags of its first 51 sketches, every frame judged; the 52nd, "
+  "the bushing with a radial gap, was added after this run) was swept and "
   "compared, drag by drag, with the same build with nothing thrown. \"Newly fail\" counts "
   "drags that fail a check they passed, by check: `R` rows met, `S` arc sweep flip, `W` "
   "way-round flip, `L` line turned end for end, `G` held radius grew, `J` jump over 50 "

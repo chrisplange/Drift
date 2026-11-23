@@ -60,30 +60,30 @@ pub(super) enum Record {
     Units(Units),
     Layer(Layer),
     CurrentLayer(LayerId),
-    Fill(Fill),
-    Annotation(Annotation),
-    DimNote(DimNote),
+    Fill(Box<Fill>),
+    Annotation(Box<Annotation>),
+    DimNote(Box<DimNote>),
     Shown(crate::Shown),
     OnlyIn(BTreeSet<ViewId>),
-    Style(crate::StyleOverride),
+    Style(Box<crate::StyleOverride>),
     Draft(DraftStyle),
     Patterns(Shared<String>),
     Logo(Shared<String>),
     Rules(crate::DrawingRules),
-    Project(crate::Project),
+    Project(Box<crate::Project>),
     Fonts(Shared<crate::fonts::FontSet>),
-    Sheet(Sheet),
-    View(View),
+    Sheet(Box<Sheet>),
+    View(Box<View>),
     Group(Group),
     Path(Path),
-    Block(Block),
+    Block(Box<Block>),
     Instance(Instance),
-    Underlay(Underlay),
-    Text(SketchText),
-    Wall(Wall),
+    Underlay(Box<Underlay>),
+    Text(Box<SketchText>),
+    Wall(Box<Wall>),
     PropertyDim(PropertyDim),
-    Opening(Opening),
-    Offset(Offset),
+    Opening(Box<Opening>),
+    Offset(Box<Offset>),
 }
 
 impl Record {
@@ -105,7 +105,7 @@ impl Record {
                     crate::FillKind::Solid => 0,
                 }
         }
-        match self {
+        let lists = match self {
             Record::Path(p) => std::mem::size_of_val(p.curves.as_slice()),
             Record::Fill(f) => fill(f),
             Record::Group(g) => g.name.len() + set(&g.members),
@@ -123,9 +123,35 @@ impl Record {
             Record::View(v) => v.name.len() + set(&v.hidden_layers),
             Record::Variable(v) => v.name.len() + v.expr.len(),
             Record::Expression(e) => e.len(),
-            Record::Annotation(Annotation::Note { text, leaders, .. }) => {
-                text.len() + std::mem::size_of_val(leaders.as_slice())
-            }
+            Record::Annotation(a) => match &**a {
+                Annotation::Note { text, leaders, .. } => {
+                    text.len() + std::mem::size_of_val(leaders.as_slice())
+                }
+                _ => 0,
+            },
+            _ => 0,
+        };
+        lists + self.boxed_bytes()
+    }
+
+    /// The size of a record kept in a box (the larger kinds, so that a change of a point
+    /// isn't as big as a change of a sheet, #372).
+    fn boxed_bytes(&self) -> usize {
+        use std::mem::size_of_val;
+        match self {
+            Record::Fill(b) => size_of_val(&**b),
+            Record::Annotation(b) => size_of_val(&**b),
+            Record::DimNote(b) => size_of_val(&**b),
+            Record::Style(b) => size_of_val(&**b),
+            Record::Project(b) => size_of_val(&**b),
+            Record::Sheet(b) => size_of_val(&**b),
+            Record::View(b) => size_of_val(&**b),
+            Record::Block(b) => size_of_val(&**b),
+            Record::Underlay(b) => size_of_val(&**b),
+            Record::Text(b) => size_of_val(&**b),
+            Record::Wall(b) => size_of_val(&**b),
+            Record::Opening(b) => size_of_val(&**b),
+            Record::Offset(b) => size_of_val(&**b),
             _ => 0,
         }
     }
@@ -229,14 +255,28 @@ impl Journal {
             lower,
             retouched,
         } = self;
-        let mut new: Vec<_> = open
-            .into_iter()
-            .filter_map(|(key, before)| {
-                let after = record(key);
-                (before != after).then_some((key, before, after))
-            })
+        // (Sorted by key alone, then each read in that order: a change is hundreds of bytes,
+        // and moving each one at every step of a sort, and again into a merged list, cost
+        // most of a big move's commit, #372.)
+        let mut open: Vec<(Key, Option<Record>)> = open.into_iter().collect();
+        let mut order: Vec<(Key, usize)> = open
+            .iter()
+            .enumerate()
+            .map(|(i, (key, _))| (*key, i))
             .collect();
-        new.sort_by_key(|(key, ..)| *key);
+        order.sort_unstable();
+        let mut new = Vec::with_capacity(order.len());
+        for (key, i) in order {
+            let before = std::mem::take(&mut open[i].1);
+            let after = record(key);
+            if before != after {
+                new.push((key, before, after));
+            }
+        }
+        drop(open);
+        if lower.is_empty() {
+            return new;
+        }
         let lower = lower.into_iter().filter_map(|(key, before, after)| {
             let after = if retouched.contains(&key) {
                 record(key)
@@ -396,7 +436,7 @@ impl Document {
     /// Opening `id` as it was when the open transaction began.
     pub fn opening_before_transaction(&self, id: OpeningId) -> Option<Opening> {
         match self.journal.as_ref().and_then(|j| j.get(&Key::Opening(id))) {
-            Some(Some(Record::Opening(o))) => Some(o.clone()),
+            Some(Some(Record::Opening(o))) => Some((**o).clone()),
             Some(_) => None,
             None => self.openings.get(&id).cloned(),
         }
@@ -406,7 +446,7 @@ impl Document {
     /// [`entity_before_transaction`](Self::entity_before_transaction)).
     pub fn wall_before_transaction(&self, id: WallId) -> Option<Wall> {
         match self.journal.as_ref().and_then(|j| j.get(&Key::Wall(id))) {
-            Some(Some(Record::Wall(w))) => Some(w.clone()),
+            Some(Some(Record::Wall(w))) => Some((**w).clone()),
             Some(_) => None,
             None => self.walls.get(&id).cloned(),
         }
@@ -481,7 +521,7 @@ impl Document {
     /// [`entity_before_transaction`](Self::entity_before_transaction)).
     pub fn fill_before_transaction(&self, id: FillId) -> Option<Fill> {
         match self.journal.as_ref().and_then(|j| j.get(&Key::Fill(id))) {
-            Some(Some(Record::Fill(f))) => Some(f.clone()),
+            Some(Some(Record::Fill(f))) => Some((**f).clone()),
             Some(_) => None,
             None => self.fills.get(&id).cloned(),
         }
@@ -596,34 +636,74 @@ impl Document {
             Key::Units => Some(Record::Units(self.units)),
             Key::Layer(id) => self.layers.get(&id).cloned().map(Record::Layer),
             Key::CurrentLayer => Some(Record::CurrentLayer(self.current_layer)),
-            Key::Fill(id) => self.fills.get(&id).cloned().map(Record::Fill),
-            Key::Annotation(id) => self.annotations.get(&id).cloned().map(Record::Annotation),
-            Key::DimNote(id) => self.dim_notes.get(&id).cloned().map(Record::DimNote),
+            Key::Fill(id) => self.fills.get(&id).cloned().map(Box::new).map(Record::Fill),
+            Key::Annotation(id) => self
+                .annotations
+                .get(&id)
+                .cloned()
+                .map(Box::new)
+                .map(Record::Annotation),
+            Key::DimNote(id) => self
+                .dim_notes
+                .get(&id)
+                .cloned()
+                .map(Box::new)
+                .map(Record::DimNote),
             Key::Shown(r) => self.shown.get(&r).copied().map(Record::Shown),
             Key::OnlyIn(r) => self.only_in.get(&r).cloned().map(Record::OnlyIn),
-            Key::Style(r) => self.styles.get(&r).copied().map(Record::Style),
+            Key::Style(r) => self
+                .styles
+                .get(&r)
+                .copied()
+                .map(Box::new)
+                .map(Record::Style),
             Key::Draft => Some(Record::Draft(self.draft)),
             Key::Patterns => Some(Record::Patterns(self.patterns.clone())),
             Key::Logo => Some(Record::Logo(self.logo.clone())),
             Key::Rules => Some(Record::Rules(self.rules)),
-            Key::Project => Some(Record::Project(self.project.clone())),
+            Key::Project => Some(Record::Project(Box::new(self.project.clone()))),
             Key::Fonts => Some(Record::Fonts(self.fonts.clone())),
-            Key::Sheet(id) => self.sheets.get(&id).cloned().map(Record::Sheet),
-            Key::View(id) => self.views.get(&id).cloned().map(Record::View),
+            Key::Sheet(id) => self
+                .sheets
+                .get(&id)
+                .cloned()
+                .map(Box::new)
+                .map(Record::Sheet),
+            Key::View(id) => self.views.get(&id).cloned().map(Box::new).map(Record::View),
             Key::Group(id) => self.groups.get(&id).cloned().map(Record::Group),
             Key::Path(id) => self.paths.get(&id).cloned().map(Record::Path),
-            Key::Block(id) => self.blocks.get(&id).cloned().map(Record::Block),
+            Key::Block(id) => self
+                .blocks
+                .get(&id)
+                .cloned()
+                .map(Box::new)
+                .map(Record::Block),
             Key::Instance(id) => self.instances.get(&id).copied().map(Record::Instance),
-            Key::Underlay(id) => self.underlays.get(&id).cloned().map(Record::Underlay),
-            Key::Text(id) => self.texts.get(&id).cloned().map(Record::Text),
-            Key::Wall(id) => self.walls.get(&id).cloned().map(Record::Wall),
+            Key::Underlay(id) => self
+                .underlays
+                .get(&id)
+                .cloned()
+                .map(Box::new)
+                .map(Record::Underlay),
+            Key::Text(id) => self.texts.get(&id).cloned().map(Box::new).map(Record::Text),
+            Key::Wall(id) => self.walls.get(&id).cloned().map(Box::new).map(Record::Wall),
             Key::PropertyDim(id) => self
                 .property_dims
                 .get(&id)
                 .copied()
                 .map(Record::PropertyDim),
-            Key::Opening(id) => self.openings.get(&id).cloned().map(Record::Opening),
-            Key::Offset(id) => self.offsets.get(&id).cloned().map(Record::Offset),
+            Key::Opening(id) => self
+                .openings
+                .get(&id)
+                .cloned()
+                .map(Box::new)
+                .map(Record::Opening),
+            Key::Offset(id) => self
+                .offsets
+                .get(&id)
+                .cloned()
+                .map(Box::new)
+                .map(Record::Offset),
         }
     }
 
@@ -745,19 +825,19 @@ impl Document {
             (Key::CurrentLayer, Some(Record::CurrentLayer(l))) => self.current_layer = l,
             (Key::CurrentLayer, _) => {}
             (Key::Fill(id), Some(Record::Fill(f))) => {
-                self.fills.insert(id, f);
+                self.fills.insert(id, *f);
             }
             (Key::Fill(id), _) => {
                 self.fills.remove(&id);
             }
             (Key::Annotation(id), Some(Record::Annotation(a))) => {
-                self.annotations.insert(id, a);
+                self.annotations.insert(id, *a);
             }
             (Key::Annotation(id), _) => {
                 self.annotations.remove(&id);
             }
             (Key::DimNote(id), Some(Record::DimNote(n))) => {
-                self.dim_notes.insert(id, n);
+                self.dim_notes.insert(id, *n);
             }
             (Key::DimNote(id), _) => {
                 self.dim_notes.remove(&id);
@@ -775,7 +855,7 @@ impl Document {
                 self.only_in.remove(&r);
             }
             (Key::Style(r), Some(Record::Style(s))) => {
-                self.styles.insert(r, s);
+                self.styles.insert(r, *s);
             }
             (Key::Style(r), _) => {
                 self.styles.remove(&r);
@@ -788,30 +868,30 @@ impl Document {
             (Key::Logo, _) => {}
             (Key::Rules, Some(Record::Rules(r))) => self.rules = r,
             (Key::Rules, _) => {}
-            (Key::Project, Some(Record::Project(p))) => self.project = p,
+            (Key::Project, Some(Record::Project(p))) => self.project = *p,
             (Key::Project, _) => {}
             (Key::Fonts, Some(Record::Fonts(f))) => self.fonts = f,
             (Key::Fonts, _) => {}
             (Key::Text(id), Some(Record::Text(t))) => {
-                self.texts.insert(id, t);
+                self.texts.insert(id, *t);
             }
             (Key::Text(id), _) => {
                 self.texts.remove(&id);
             }
             (Key::Underlay(id), Some(Record::Underlay(u))) => {
-                self.underlays.insert(id, u);
+                self.underlays.insert(id, *u);
             }
             (Key::Underlay(id), _) => {
                 self.underlays.remove(&id);
             }
             (Key::Sheet(id), Some(Record::Sheet(s))) => {
-                self.sheets.insert(id, s);
+                self.sheets.insert(id, *s);
             }
             (Key::Sheet(id), _) => {
                 self.sheets.remove(&id);
             }
             (Key::View(id), Some(Record::View(v))) => {
-                self.views.insert(id, v);
+                self.views.insert(id, *v);
             }
             (Key::View(id), _) => {
                 self.views.remove(&id);
@@ -829,7 +909,7 @@ impl Document {
                 self.paths.remove(&id);
             }
             (Key::Block(id), Some(Record::Block(b))) => {
-                self.blocks.insert(id, b);
+                self.blocks.insert(id, *b);
             }
             (Key::Block(id), _) => {
                 self.blocks.remove(&id);
@@ -841,7 +921,7 @@ impl Document {
                 self.instances.remove(&id);
             }
             (Key::Wall(id), Some(Record::Wall(w))) => {
-                self.walls.insert(id, w);
+                self.walls.insert(id, *w);
             }
             (Key::Wall(id), _) => {
                 self.walls.remove(&id);
@@ -853,13 +933,13 @@ impl Document {
                 self.property_dims.remove(&id);
             }
             (Key::Opening(id), Some(Record::Opening(o))) => {
-                self.openings.insert(id, o);
+                self.openings.insert(id, *o);
             }
             (Key::Opening(id), _) => {
                 self.openings.remove(&id);
             }
             (Key::Offset(id), Some(Record::Offset(o))) => {
-                self.offsets.insert(id, o);
+                self.offsets.insert(id, *o);
             }
             (Key::Offset(id), _) => {
                 self.offsets.remove(&id);
@@ -1156,6 +1236,55 @@ impl History {
                 self.recorded = self.recorded.saturating_sub(1);
             }
         }
+    }
+}
+
+/// What [`Document::commit`] made of a journal before #372 (each change sorted where it was,
+/// and merged into a list of its own): the full walk the faster one must match.
+#[cfg(test)]
+impl Document {
+    pub(super) fn changes_by_full_walk(&self) -> Vec<(Key, Option<Record>, Option<Record>)> {
+        let Some(Journal {
+            open,
+            lower,
+            retouched,
+        }) = self.journal.clone()
+        else {
+            return Vec::new();
+        };
+        let mut new: Vec<_> = open
+            .into_iter()
+            .filter_map(|(key, before)| {
+                let after = self.record(key);
+                (before != after).then_some((key, before, after))
+            })
+            .collect();
+        new.sort_by_key(|(key, ..)| *key);
+        let lower = lower.into_iter().filter_map(|(key, before, after)| {
+            let after = if retouched.contains(&key) {
+                self.record(key)
+            } else {
+                after
+            };
+            (before != after).then_some((key, before, after))
+        });
+        let mut out = Vec::new();
+        let mut new = new.into_iter().peekable();
+        for change in lower {
+            while new.peek().is_some_and(|(k, ..)| *k < change.0) {
+                out.extend(new.next());
+            }
+            out.push(change);
+        }
+        out.extend(new);
+        out
+    }
+}
+
+#[cfg(test)]
+impl Transaction {
+    pub(super) fn changes(&self) -> &[(Key, Option<Record>, Option<Record>)] {
+        &self.changes
     }
 }
 

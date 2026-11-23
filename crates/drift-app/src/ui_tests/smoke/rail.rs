@@ -193,7 +193,7 @@ fn smoke_rail_names_toggle_is_kept() {
 #[test]
 fn smoke_rail_on_a_sheet_in_both_forms() {
     let Some(mut h) = harness() else { return };
-    h.state_mut().new_sheet();
+    h.state_mut().new_sheet_shown();
     h.run();
     h.run();
     assert!(h.state().drawing.view.sheet_preview, "the sheet is shown");

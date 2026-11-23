@@ -357,8 +357,9 @@ impl Editor {
     }
 
     /// [`rounds_carried_by`](Self::rounds_carried_by) `line` at `p`, but not a round whose
-    /// far end is `fixed` (held where it is, or an end of a line the size names: a fillet
-    /// at the angle's own corner ends on the other line, which carrying it would tilt).
+    /// far end or centre is `fixed` (held where it is, or an end of a line the size names: a
+    /// fillet at the angle's own corner ends on the other line, which carrying it would
+    /// tilt).
     /// What both the turn ([`Editor::turn_to`]) and the lines it releases
     /// ([`released_by_turning`](Self::released_by_turning)) go by.
     pub(crate) fn carried_rounds(
@@ -369,7 +370,15 @@ impl Editor {
     ) -> Vec<(EntityId, EntityId)> {
         self.rounds_carried_by(line, p)
             .into_iter()
-            .filter(|(_, far)| !fixed.contains(far))
+            .filter(|(arc, far)| {
+                let centre_held = match self.doc.get(*arc).map(|e| e.kind) {
+                    Some(EntityKind::Arc { center, .. }) => {
+                        self.joined([center]).iter().any(|c| fixed.contains(c))
+                    }
+                    _ => true,
+                };
+                !fixed.contains(far) && !centre_held
+            })
             .collect()
     }
 

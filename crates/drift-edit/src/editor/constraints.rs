@@ -1129,60 +1129,40 @@ impl Editor {
         // `carried_rounds`.)
         let mut fixed = held.clone();
         fixed.extend(self.joined([a0, a1, b0, b1]));
+        let rigid = |q: DVec2| pivot + rot.rotate(q - pivot);
         let mut moves: Vec<(EntityId, DVec2)> = Vec::new();
+        // First, where the rigid turn puts everything it moves: the line's moving ends, and
+        // the centres and far ends of the rounds carried with it (a fillet met tangentially
+        // there turns with the line; the line beyond it then turns to meet it, see
+        // `released_by_turning`).
+        let mut turned: HashMap<EntityId, DVec2> = HashMap::new();
+        let mut rounds: Vec<(EntityId, HashSet<EntityId>, HashSet<EntityId>, DVec2, DVec2)> =
+            Vec::new();
         for p in [p0, p1] {
             if shared_group.contains(&p) || held.contains(&p) {
                 continue;
             }
             let Some(q) = at(p) else { continue };
-            let to = pivot + rot.rotate(q - pivot);
+            let to = rigid(q);
             for m in self.joined([p]) {
                 moves.push((m, to));
-                // A round met tangentially there (a fillet) turns with the line, rigidly:
-                // the line beyond it then turns to meet it (see `released_by_turning`).
+                turned.insert(m, to);
                 for (arc, far) in self.carried_rounds(line, m, &fixed) {
-                    let centre = match self.doc.get(arc).map(|e| e.kind) {
-                        Some(EntityKind::Arc { center, .. }) => center,
-                        _ => continue,
-                    };
-                    // (A centre held where it is stays: the round isn't carried.)
-                    let centres = self.joined([centre]);
-                    if centres.iter().any(|c| held.contains(c)) {
+                    let Some(EntityKind::Arc { center, .. }) = self.doc.get(arc).map(|e| e.kind)
+                    else {
                         continue;
+                    };
+                    let (Some(c0), Some(f0)) = (at(center), at(far)) else {
+                        continue;
+                    };
+                    let (centres, fars) = (self.joined([center]), self.joined([far]));
+                    for c in &centres {
+                        turned.insert(*c, rigid(c0));
                     }
-                    let (Some(c0), Some(f0)) = (at(centre), at(far)) else {
-                        continue;
-                    };
-                    let c1 = pivot + rot.rotate(c0 - pivot);
-                    let mut f1 = pivot + rot.rotate(f0 - pivot);
-                    let fars = self.joined([far]);
                     for f in &fars {
-                        for user in self.doc.users_of(*f).filter(|u| *u != arc) {
-                            let Some(EntityKind::Line { a: u0, b: u1 }) =
-                                self.doc.get(user).map(|e| e.kind)
-                            else {
-                                continue;
-                            };
-                            let other = if u0 == *f { u1 } else { u0 };
-                            let Some(o) = at(other) else { continue };
-                            if self.hangs(other) {
-                                // A line hanging from the far end turns with the round, as
-                                // it is.
-                                moves.push((other, pivot + rot.rotate(o - pivot)));
-                            } else if let Some(t) = tangent_from(o, c1, f1, (o - f0, f0 - c0)) {
-                                // The line beyond meets the round tangent again where it did,
-                                // from its other end: at the round's tangent point from there,
-                                // not at a corner the rigid turn left.
-                                f1 = t;
-                            }
-                        }
+                        turned.insert(*f, rigid(f0));
                     }
-                    for c in centres {
-                        moves.push((c, c1));
-                    }
-                    for f in fars {
-                        moves.push((f, f1));
-                    }
+                    rounds.push((arc, centres, fars, c0, f0));
                 }
                 // A line hanging from it is carried along as it is: the shapes the solve
                 // keeps are read from where this leaves things.
@@ -1199,6 +1179,38 @@ impl Editor {
                     }
                 }
             }
+        }
+        // Then each carried round: the line beyond meets it tangent again where it did, from
+        // its other end where this turn leaves that (turned with it, as a slot's other side
+        // is, the rigid turn is already tangent and nothing slides); a line hanging from the
+        // far end goes with the far end, as it is.
+        for (arc, centres, fars, c0, f0) in rounds {
+            let c1 = rigid(c0);
+            let mut f1 = rigid(f0);
+            let mut hanging: Vec<(EntityId, DVec2)> = Vec::new();
+            for f in &fars {
+                for user in self.doc.users_of(*f).filter(|u| *u != arc) {
+                    let Some(EntityKind::Line { a: u0, b: u1 }) =
+                        self.doc.get(user).map(|e| e.kind)
+                    else {
+                        continue;
+                    };
+                    let other = if u0 == *f { u1 } else { u0 };
+                    let Some(o) = at(other) else { continue };
+                    if self.hangs(other) {
+                        hanging.push((other, rigid(o)));
+                    } else {
+                        let from = turned.get(&other).copied().unwrap_or(o);
+                        if let Some(t) = tangent_from(from, c1, f1, (o - f0, f0 - c0)) {
+                            f1 = t;
+                        }
+                    }
+                }
+            }
+            let slid = f1 - rigid(f0);
+            moves.extend(hanging.into_iter().map(|(p, q)| (p, q + slid)));
+            moves.extend(centres.into_iter().map(|c| (c, c1)));
+            moves.extend(fars.into_iter().map(|f| (f, f1)));
         }
         for (p, q) in moves {
             let _ = self.doc.set_point(p, q);

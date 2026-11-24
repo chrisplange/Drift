@@ -1,3 +1,5 @@
+> **Archived 2026-11-24.** History, not current guidance. See [the archive index](README.md).
+
 # Reading Adobe Illustrator `.ai` files: research spike
 
 Status: research only, 2026-10-25. No production code. The probes were throwaway scripts kept outside the repo.

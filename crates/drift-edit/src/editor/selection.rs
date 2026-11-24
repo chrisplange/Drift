@@ -859,7 +859,6 @@ impl Editor {
     /// While a group or block is open for editing, only what's in it: its curves, points,
     /// walls and fills (no copies or texts).
     pub fn select_all(&mut self) {
-        self.tool_picks = None;
         let scoped = self.edit_scope().is_some();
         let filter = self.prefs.pick_filter;
         let shown = |doc: &drift_core::Document, layer: drift_core::LayerId| {

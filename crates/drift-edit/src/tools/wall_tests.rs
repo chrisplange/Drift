@@ -1060,20 +1060,201 @@ fn overlaps_follow_walls_taking_and_letting_go_of_curves() {
     assert!(check(&mut ed, "explode undone").is_empty());
 }
 
-/// A wall joined at the end of one whose length a driving dimension holds: the corner the
-/// join makes doesn't leave the dimension unmet (the next solving edit would jump the wall
-/// and its openings back to it).
+/// Every wall's run points, in wall order.
+fn all_run_points(ed: &Editor) -> Vec<Vec<DVec2>> {
+    ed.doc.walls().map(|(w, _)| run_points(ed, w)).collect()
+}
+
+fn assert_points(got: &[DVec2], want: &[DVec2]) {
+    assert_eq!(got.len(), want.len(), "{got:?} vs {want:?}");
+    for (g, w) in got.iter().zip(want) {
+        assert!(g.distance(*w) < 1e-6, "{got:?} vs {want:?}");
+    }
+}
+
+/// A solving edit that changes nothing (relation `c` set to itself) moves no wall: nothing
+/// was left unmet, pins included (which `drift_solver::unmet` can't see).
+fn assert_next_solve_moves_nothing(ed: &mut Editor, c: drift_core::ConstraintId) {
+    let before = all_run_points(ed);
+    let same = *ed.doc.constraint(c).unwrap();
+    ed.doc.begin();
+    let _ = ed.doc.set_constraint(c, same);
+    ed.commit("Same");
+    let after = all_run_points(ed);
+    for (a, b) in after.iter().zip(&before) {
+        assert_points(a, b);
+    }
+}
+
+/// The centreline point ids of wall `w`, start to end.
+fn run_ids(ed: &Editor, w: WallId) -> Vec<EntityId> {
+    drift_geom::walls::regen::centreline(&ed.doc, ed.doc.wall(w).unwrap())
+        .unwrap()
+        .1
+}
+
+fn add(ed: &mut Editor, c: drift_core::Constraint) -> drift_core::ConstraintId {
+    ed.doc.begin();
+    let id = ed.doc.add_constraint(c).unwrap();
+    assert!(ed.commit("Relation"));
+    id
+}
+
+/// A wall joined at the end of one whose length a driving dimension holds: the corner is the
+/// held end, where the solve put it, and the new wall's end comes to it. (It was moved to
+/// where the centrelines cross, after the solve, so the edit committed the dimension unmet
+/// and the next solving edit jumped the wall and its openings back.)
 #[test]
-fn a_join_keeps_a_dimensioned_walls_length() {
+fn a_join_keeps_a_dimensioned_walls_end() {
     let mut ed = editor();
     ed.prefs.wall_thickness = 200.0;
     run(&mut ed, &[v(0.0, 0.0), v(4000.0, 0.0)]);
     let first = ed.doc.walls().next().unwrap().0;
-    let pts = run_points(&ed, first);
-    let ids = drift_geom::walls::regen::centreline(&ed.doc, ed.doc.wall(first).unwrap())
-        .unwrap()
-        .1;
-    assert_eq!(pts, vec![v(0.0, 0.0), v(4000.0, 0.0)]);
+    let ids = run_ids(&ed, first);
+    let dim = add(
+        &mut ed,
+        drift_core::Constraint::Distance {
+            a: ids[0],
+            b: ids[1],
+            value: 4000.0,
+        },
+    );
+    run(&mut ed, &[v(3960.0, 2000.0), v(3960.0, 30.0)]);
+    assert_eq!(ed.doc.walls().count(), 2);
+    assert!(drift_solver::unmet(&ed.doc, 1e-9).is_empty());
+    assert_points(&run_points(&ed, first), &[v(0.0, 0.0), v(4000.0, 0.0)]);
+    let second = wall_starting_at(&ed, v(3960.0, 2000.0));
+    assert_points(
+        &run_points(&ed, second),
+        &[v(3960.0, 2000.0), v(4000.0, 0.0)],
+    );
+    assert_eq!(run_ids(&ed, second)[1], ids[1], "the corner is one point");
+    assert_next_solve_moves_nothing(&mut ed, dim);
+}
+
+/// The same with the joined end pinned (a Fix: not a row `unmet` sees).
+#[test]
+fn a_join_keeps_a_fixed_walls_end() {
+    let mut ed = editor();
+    ed.prefs.wall_thickness = 200.0;
+    run(&mut ed, &[v(0.0, 0.0), v(4000.0, 0.0)]);
+    let first = ed.doc.walls().next().unwrap().0;
+    let ids = run_ids(&ed, first);
+    let fix = add(
+        &mut ed,
+        drift_core::Constraint::Fix {
+            point: ids[0],
+            at: v(0.0, 0.0),
+        },
+    );
+    run(&mut ed, &[v(30.0, 2000.0), v(30.0, 30.0)]);
+    assert_points(&run_points(&ed, first), &[v(0.0, 0.0), v(4000.0, 0.0)]);
+    let second = wall_starting_at(&ed, v(30.0, 2000.0));
+    assert_points(&run_points(&ed, second), &[v(30.0, 2000.0), v(0.0, 0.0)]);
+    assert_next_solve_moves_nothing(&mut ed, fix);
+}
+
+/// A join at a dimensioned leg's end moves nothing of the run's other leg.
+#[test]
+fn a_join_moves_no_untouched_leg() {
+    let mut ed = editor();
+    ed.prefs.wall_thickness = 200.0;
+    run(&mut ed, &[v(0.0, -3000.0), v(0.0, 0.0), v(4000.0, 0.0)]);
+    let first = ed.doc.walls().next().unwrap().0;
+    let ids = run_ids(&ed, first);
+    let dim = add(
+        &mut ed,
+        drift_core::Constraint::Distance {
+            a: ids[1],
+            b: ids[2],
+            value: 4000.0,
+        },
+    );
+    run(&mut ed, &[v(3960.0, 2000.0), v(3960.0, 30.0)]);
+    assert_points(
+        &run_points(&ed, first),
+        &[v(0.0, -3000.0), v(0.0, 0.0), v(4000.0, 0.0)],
+    );
+    assert_next_solve_moves_nothing(&mut ed, dim);
+}
+
+/// Two joined ends both held by relations stay where the solve put them, joined by where
+/// they are, not one point.
+#[test]
+fn ends_both_held_stay_apart() {
+    let mut ed = editor();
+    ed.prefs.wall_thickness = 200.0;
+    run(&mut ed, &[v(0.0, 0.0), v(4000.0, 0.0)]);
+    run(&mut ed, &[v(3960.0, 2000.0), v(3960.0, 600.0)]);
+    let first = wall_starting_at(&ed, v(0.0, 0.0));
+    let second = wall_starting_at(&ed, v(3960.0, 2000.0));
+    let a = run_ids(&ed, first)[1];
+    let b = run_ids(&ed, second)[1];
+    add(
+        &mut ed,
+        drift_core::Constraint::Fix {
+            point: a,
+            at: v(4000.0, 0.0),
+        },
+    );
+    let fix = add(
+        &mut ed,
+        drift_core::Constraint::Fix {
+            point: b,
+            at: v(3960.0, 600.0),
+        },
+    );
+    // The second wall's end is moved into the first's corner by its pin.
+    ed.doc.begin();
+    let _ = ed.doc.set_constraint(
+        fix,
+        drift_core::Constraint::Fix {
+            point: b,
+            at: v(3960.0, 30.0),
+        },
+    );
+    assert!(ed.commit("Pin"));
+    assert_points(&run_points(&ed, first), &[v(0.0, 0.0), v(4000.0, 0.0)]);
+    // (The solve carries the free wall along with its pinned end.)
+    assert_points(&run_points(&ed, second)[1..], &[v(3960.0, 30.0)]);
+    assert_ne!(run_ids(&ed, first)[1], run_ids(&ed, second)[1]);
+    assert_next_solve_moves_nothing(&mut ed, fix);
+}
+
+/// A wall end held by a Coincident with other geometry (a line's end) stays where it is.
+#[test]
+fn a_join_keeps_an_end_coincident_with_a_line() {
+    let mut ed = editor();
+    ed.prefs.wall_thickness = 200.0;
+    run(&mut ed, &[v(0.0, 0.0), v(4000.0, 0.0)]);
+    let first = ed.doc.walls().next().unwrap().0;
+    let end = run_ids(&ed, first)[1];
+    ed.doc.begin();
+    let (p, q) = (
+        ed.doc.add_point(v(4000.0, 0.0)),
+        ed.doc.add_point(v(4000.0, -1000.0)),
+    );
+    ed.doc.add_line(p, q).unwrap();
+    let held = ed
+        .doc
+        .add_constraint(drift_core::Constraint::Coincident { a: p, b: end })
+        .unwrap();
+    assert!(ed.commit("Line"));
+    run(&mut ed, &[v(3960.0, 2000.0), v(3960.0, 30.0)]);
+    assert_points(&run_points(&ed, first), &[v(0.0, 0.0), v(4000.0, 0.0)]);
+    assert_eq!(ed.doc.point(p).unwrap(), v(4000.0, 0.0));
+    assert_next_solve_moves_nothing(&mut ed, held);
+}
+
+/// A driven dimension on a joined wall reads what the join left (the corner is shared after
+/// the edit's solve; a driven dimension holds nothing, so the end goes to the crossing).
+#[test]
+fn a_join_updates_a_driven_dimension() {
+    let mut ed = editor();
+    ed.prefs.wall_thickness = 200.0;
+    run(&mut ed, &[v(0.0, 0.0), v(4000.0, 0.0)]);
+    let first = ed.doc.walls().next().unwrap().0;
+    let ids = run_ids(&ed, first);
     ed.doc.begin();
     let dim = ed
         .doc
@@ -1083,31 +1264,47 @@ fn a_join_keeps_a_dimensioned_walls_length() {
             value: 4000.0,
         })
         .unwrap();
+    ed.doc.set_driven(dim, true).unwrap();
     assert!(ed.commit("Dimension"));
     run(&mut ed, &[v(3960.0, 2000.0), v(3960.0, 30.0)]);
-    assert_eq!(ed.doc.walls().count(), 2);
+    assert_points(&run_points(&ed, first), &[v(0.0, 0.0), v(3960.0, 0.0)]);
+    let value = ed.doc.constraint(dim).unwrap().value().unwrap();
     assert!(
-        drift_solver::unmet(&ed.doc, 1e-9).is_empty(),
-        "the join left {:?} unmet",
-        ed.doc.constraint(dim)
+        (value - 3960.0).abs() < 1e-6,
+        "the driven dimension reads {value}"
     );
-    let pts = run_points(&ed, first);
-    assert!(
-        (pts[0].distance(pts[1]) - 4000.0).abs() < 1e-6,
-        "the first wall is {} long",
-        pts[0].distance(pts[1])
-    );
-    // The next solving edit moves nothing of the first wall.
-    let before = run_points(&ed, first);
-    ed.doc.begin();
-    let _ = ed.doc.set_constraint(
-        dim,
+}
+
+/// Across layers (a Coincident holds the corner instead of one point), a held end stays put
+/// and the new wall's end comes to it.
+#[test]
+fn a_join_across_layers_keeps_a_dimensioned_walls_end() {
+    let mut ed = editor();
+    ed.prefs.auto_relations = true;
+    ed.prefs.wall_thickness = 200.0;
+    run(&mut ed, &[v(0.0, 0.0), v(4000.0, 0.0)]);
+    let first = ed.doc.walls().next().unwrap().0;
+    let ids = run_ids(&ed, first);
+    let dim = add(
+        &mut ed,
         drift_core::Constraint::Distance {
             a: ids[0],
             b: ids[1],
             value: 4000.0,
         },
     );
-    let _ = ed.commit("Same");
-    assert_eq!(run_points(&ed, first), before);
+    let other = ed.add_layer("Other");
+    ed.set_current_layer(other);
+    run(&mut ed, &[v(3960.0, 2000.0), v(3960.0, 30.0)]);
+    assert_points(&run_points(&ed, first), &[v(0.0, 0.0), v(4000.0, 0.0)]);
+    let second = wall_starting_at(&ed, v(3960.0, 2000.0));
+    let b = run_ids(&ed, second)[1];
+    assert_ne!(b, ids[1], "not one point across layers");
+    assert_eq!(ed.doc.point(b).unwrap(), v(4000.0, 0.0));
+    let held = ed.doc.constraints().any(|(_, c)| {
+        matches!(*c, drift_core::Constraint::Coincident { a, b: q }
+            if (a, q) == (b, ids[1]) || (a, q) == (ids[1], b))
+    });
+    assert!(held, "held by a Coincident");
+    assert_next_solve_moves_nothing(&mut ed, dim);
 }

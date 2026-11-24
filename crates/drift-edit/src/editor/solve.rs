@@ -619,8 +619,10 @@ impl Editor {
         self.explode_copies_in_block_edit();
         self.adopt_into_open_group();
         self.make_new_curves_construction();
-        if self.follow_walls() && !self.settle_wall_joins(label) {
-            return false;
+        // Joined ends shared a point after the solve: what driven dimensions measure moved.
+        // (Never an end relations hold: see `share_joined_points`.)
+        if self.follow_walls() {
+            self.refresh_driven();
         }
         // (After the walls: an offset's source may be a wall's face.)
         self.follow_offsets();
@@ -652,38 +654,6 @@ impl Editor {
         self.history.push(tx);
         self.sync();
         self.check_caches();
-        true
-    }
-
-    /// After [`follow_walls`](Self::follow_walls) moved joined wall ends to where their
-    /// centrelines cross (after the edit's solve): a relation that move left unmet (a
-    /// dimension on a wall's length) is solved again, and the walls follow what that moved,
-    /// so the edit never commits it unmet (the next solving edit would jump the wall and its
-    /// openings back). One the drawing already failed is the drawing's. Where solving again
-    /// conflicts, the edit is undone with a notice, as any edit's conflict is. Whether the
-    /// edit stands.
-    fn settle_wall_joins(&mut self, label: &str) -> bool {
-        let lowering = self.lowering();
-        let before = &self.analysis().conflicts;
-        let broke = drift_solver::unmet_with(&self.doc, drift_solver::BAR, lowering.as_deref())
-            .into_iter()
-            .any(|c| !self.doc.is_driven(c) && !before.contains(&c));
-        if !broke {
-            return true;
-        }
-        let report = self.solve_commit();
-        if self.new_conflicts(&report) {
-            self.doc.rollback();
-            self.out.notice = Some(format!(
-                "{label} undone: its wall join {}",
-                EditError::Conflict
-            ));
-            self.sync();
-            return false;
-        }
-        self.refresh_driven();
-        // (The ends now share their point: nothing is left to join, only walls to follow.)
-        self.follow_walls();
         true
     }
 

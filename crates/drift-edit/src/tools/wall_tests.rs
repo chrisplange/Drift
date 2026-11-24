@@ -1101,7 +1101,7 @@ fn add(ed: &mut Editor, c: drift_core::Constraint) -> drift_core::ConstraintId {
 }
 
 /// A wall joined at the end of one whose length a driving dimension holds: the corner is the
-/// held end, where the solve put it, and the new wall's end comes to it. (It was moved to
+/// held end, where the solve put it, and the new wall comes to it across, staying square. (It was moved to
 /// where the centrelines cross, after the solve, so the edit committed the dimension unmet
 /// and the next solving edit jumped the wall and its openings back.)
 #[test]
@@ -1123,10 +1123,10 @@ fn a_join_keeps_a_dimensioned_walls_end() {
     assert_eq!(ed.doc.walls().count(), 2);
     assert!(drift_solver::unmet(&ed.doc, 1e-9).is_empty());
     assert_points(&run_points(&ed, first), &[v(0.0, 0.0), v(4000.0, 0.0)]);
-    let second = wall_starting_at(&ed, v(3960.0, 2000.0));
+    let second = wall_starting_at(&ed, v(4000.0, 2000.0));
     assert_points(
         &run_points(&ed, second),
-        &[v(3960.0, 2000.0), v(4000.0, 0.0)],
+        &[v(4000.0, 2000.0), v(4000.0, 0.0)],
     );
     assert_eq!(run_ids(&ed, second)[1], ids[1], "the corner is one point");
     assert_next_solve_moves_nothing(&mut ed, dim);
@@ -1149,8 +1149,8 @@ fn a_join_keeps_a_fixed_walls_end() {
     );
     run(&mut ed, &[v(30.0, 2000.0), v(30.0, 30.0)]);
     assert_points(&run_points(&ed, first), &[v(0.0, 0.0), v(4000.0, 0.0)]);
-    let second = wall_starting_at(&ed, v(30.0, 2000.0));
-    assert_points(&run_points(&ed, second), &[v(30.0, 2000.0), v(0.0, 0.0)]);
+    let second = wall_starting_at(&ed, v(0.0, 2000.0));
+    assert_points(&run_points(&ed, second), &[v(0.0, 2000.0), v(0.0, 0.0)]);
     assert_next_solve_moves_nothing(&mut ed, fix);
 }
 
@@ -1297,7 +1297,7 @@ fn a_join_across_layers_keeps_a_dimensioned_walls_end() {
     ed.set_current_layer(other);
     run(&mut ed, &[v(3960.0, 2000.0), v(3960.0, 30.0)]);
     assert_points(&run_points(&ed, first), &[v(0.0, 0.0), v(4000.0, 0.0)]);
-    let second = wall_starting_at(&ed, v(3960.0, 2000.0));
+    let second = wall_starting_at(&ed, v(4000.0, 2000.0));
     let b = run_ids(&ed, second)[1];
     assert_ne!(b, ids[1], "not one point across layers");
     assert_eq!(ed.doc.point(b).unwrap(), v(4000.0, 0.0));
@@ -1307,4 +1307,227 @@ fn a_join_across_layers_keeps_a_dimensioned_walls_end() {
     });
     assert!(held, "held by a Coincident");
     assert_next_solve_moves_nothing(&mut ed, dim);
+}
+
+/// A wall drawn with its end in reach of another wall's end, at its end: run `pts` with the
+/// Wall tool and return the new wall.
+fn draw(ed: &mut Editor, pts: &[DVec2]) -> WallId {
+    let before: Vec<WallId> = ed.doc.walls().map(|(w, _)| w).collect();
+    run(ed, pts);
+    ed.doc
+        .walls()
+        .map(|(w, _)| w)
+        .find(|w| !before.contains(w))
+        .unwrap()
+}
+
+/// Move centreline point `p` to `to` and commit, as a drag released there does.
+fn move_point(ed: &mut Editor, p: EntityId, to: DVec2) {
+    ed.doc.begin();
+    let _ = ed.doc.set_point(p, to);
+    assert!(ed.commit("Move"));
+}
+
+/// Relations that only set a line's direction don't hold its end: an L of a horizontal and
+/// a vertical wall shares one point where the centrelines cross, and moves together after.
+#[test]
+fn walls_held_only_square_still_share_their_corner() {
+    let mut ed = editor();
+    ed.prefs.wall_thickness = 200.0;
+    let first = draw(&mut ed, &[v(0.0, 0.0), v(4000.0, 0.0)]);
+    let second = draw(&mut ed, &[v(3960.0, 2000.0), v(3960.0, 600.0)]);
+    let line =
+        |ed: &Editor, w: WallId| ed.doc.path(ed.doc.wall(w).unwrap().centre).unwrap().curves[0];
+    let (l1, l2) = (line(&ed, first), line(&ed, second));
+    add(&mut ed, drift_core::Constraint::Horizontal { line: l1 });
+    let vertical = add(&mut ed, drift_core::Constraint::Vertical { line: l2 });
+    let end = run_ids(&ed, second)[1];
+    move_point(&mut ed, end, v(3960.0, 30.0));
+    assert_points(&run_points(&ed, first), &[v(0.0, 0.0), v(3960.0, 0.0)]);
+    assert_points(
+        &run_points(&ed, second),
+        &[v(3960.0, 2000.0), v(3960.0, 0.0)],
+    );
+    assert_eq!(run_ids(&ed, first)[1], run_ids(&ed, second)[1], "one point");
+    assert_next_solve_moves_nothing(&mut ed, vertical);
+}
+
+/// A wall held only horizontal joins at the crossing too (nothing it holds moves).
+#[test]
+fn a_horizontal_wall_joins_at_the_crossing() {
+    let mut ed = editor();
+    ed.prefs.wall_thickness = 200.0;
+    let first = draw(&mut ed, &[v(0.0, 0.0), v(4000.0, 0.0)]);
+    let l1 = ed
+        .doc
+        .path(ed.doc.wall(first).unwrap().centre)
+        .unwrap()
+        .curves[0];
+    let h = add(&mut ed, drift_core::Constraint::Horizontal { line: l1 });
+    let second = draw(&mut ed, &[v(3960.0, 2000.0), v(3960.0, 30.0)]);
+    assert_points(&run_points(&ed, first), &[v(0.0, 0.0), v(3960.0, 0.0)]);
+    assert_points(
+        &run_points(&ed, second),
+        &[v(3960.0, 2000.0), v(3960.0, 0.0)],
+    );
+    assert_next_solve_moves_nothing(&mut ed, h);
+}
+
+/// A run of more than one segment can't move across to a held end without turning its last
+/// leg or moving its corner: the ends stay joined by where they are (the Wall tool put the
+/// run's end on the held wall's centreline), and nothing turns.
+#[test]
+fn a_run_ending_near_a_held_end_isnt_turned() {
+    let mut ed = editor();
+    ed.prefs.wall_thickness = 200.0;
+    let first = draw(&mut ed, &[v(0.0, 0.0), v(4000.0, 0.0)]);
+    let ids = run_ids(&ed, first);
+    let dim = add(
+        &mut ed,
+        drift_core::Constraint::Distance {
+            a: ids[0],
+            b: ids[1],
+            value: 4000.0,
+        },
+    );
+    let second = draw(
+        &mut ed,
+        &[v(0.0, 2000.0), v(3960.0, 2000.0), v(3960.0, 30.0)],
+    );
+    assert_points(&run_points(&ed, first), &[v(0.0, 0.0), v(4000.0, 0.0)]);
+    assert_points(
+        &run_points(&ed, second),
+        &[v(0.0, 2000.0), v(3960.0, 2000.0), v(3960.0, 0.0)],
+    );
+    assert_ne!(run_ids(&ed, second)[2], ids[1]);
+    assert_next_solve_moves_nothing(&mut ed, dim);
+}
+
+/// A wall that moves across to a held end carries the walls teed onto it: their ends follow
+/// it onto its centreline.
+#[test]
+fn a_wall_moved_across_by_a_join_carries_its_tees() {
+    let mut ed = editor();
+    ed.prefs.wall_thickness = 200.0;
+    let first = draw(&mut ed, &[v(0.0, 0.0), v(4000.0, 0.0)]);
+    let ids = run_ids(&ed, first);
+    let dim = add(
+        &mut ed,
+        drift_core::Constraint::Distance {
+            a: ids[0],
+            b: ids[1],
+            value: 4000.0,
+        },
+    );
+    let second = draw(&mut ed, &[v(3960.0, 2000.0), v(3960.0, 600.0)]);
+    // From the second wall's left face, out to the left.
+    let third = draw(&mut ed, &[v(3860.0, 1300.0), v(2000.0, 1300.0)]);
+    assert_eq!(
+        ed.doc.wall(third).unwrap().ends[0].tee.map(|t| t.0),
+        Some(second)
+    );
+    let end = run_ids(&ed, second)[1];
+    move_point(&mut ed, end, v(3960.0, 30.0));
+    assert_points(&run_points(&ed, first), &[v(0.0, 0.0), v(4000.0, 0.0)]);
+    assert_points(
+        &run_points(&ed, second),
+        &[v(4000.0, 2000.0), v(4000.0, 0.0)],
+    );
+    assert_points(&run_points(&ed, third)[..1], &[v(4000.0, 1300.0)]);
+    assert_next_solve_moves_nothing(&mut ed, dim);
+}
+
+/// An end on a locked layer is held where it is (the solver pins it): a wall drawn to it
+/// on another layer comes to it across, held there by a Coincident.
+#[test]
+fn a_join_keeps_a_locked_walls_end() {
+    let mut ed = editor();
+    ed.prefs.auto_relations = true;
+    ed.prefs.wall_thickness = 200.0;
+    let first = draw(&mut ed, &[v(0.0, 0.0), v(4000.0, 0.0)]);
+    let layer = ed.doc.current_layer();
+    let other = ed.add_layer("Other");
+    ed.set_current_layer(other);
+    let mut l = ed.doc.layer(layer).unwrap().clone();
+    l.locked = true;
+    ed.doc.begin();
+    ed.doc.set_layer(layer, l);
+    assert!(ed.commit("Lock"));
+    let second = draw(&mut ed, &[v(3960.0, 2000.0), v(3960.0, 30.0)]);
+    assert_points(&run_points(&ed, first), &[v(0.0, 0.0), v(4000.0, 0.0)]);
+    assert_points(
+        &run_points(&ed, second),
+        &[v(4000.0, 2000.0), v(4000.0, 0.0)],
+    );
+}
+
+/// Walls whose only holds are tees held on them (a solver-held tee is a point on the host's
+/// line, which a corner sliding along that line keeps) still share their corner, and move
+/// together after.
+#[test]
+fn hosts_of_held_tees_share_their_corner() {
+    let mut ed = editor();
+    ed.prefs.wall_thickness = 200.0;
+    let h1 = draw(&mut ed, &[v(0.0, 0.0), v(4000.0, 0.0)]);
+    let h2 = draw(&mut ed, &[v(3960.0, 4000.0), v(3960.0, 1500.0)]);
+    // A tee onto each, its length held by a dimension.
+    for pts in [
+        [v(2000.0, 100.0), v(2000.0, 1000.0)],
+        [v(3860.0, 2500.0), v(2500.0, 2500.0)],
+    ] {
+        let t = draw(&mut ed, &pts);
+        assert!(ed.doc.wall(t).unwrap().ends[0].tee.is_some());
+        let ids = run_ids(&ed, t);
+        let at = run_points(&ed, t);
+        add(
+            &mut ed,
+            drift_core::Constraint::Distance {
+                a: ids[0],
+                b: ids[1],
+                value: at[0].distance(at[1]),
+            },
+        );
+    }
+    let end = run_ids(&ed, h2)[1];
+    move_point(&mut ed, end, v(3960.0, 30.0));
+    assert_eq!(run_ids(&ed, h1)[1], run_ids(&ed, h2)[1], "one point");
+    assert_points(&run_points(&ed, h2), &[v(3960.0, 4000.0), v(3960.0, 0.0)]);
+    let corner = run_ids(&ed, h1)[1];
+    move_point(&mut ed, corner, v(4600.0, 0.0));
+    // (The tees' holds have their say in where it lands; the corner stays one point.)
+    assert_eq!(run_ids(&ed, h2)[1], corner);
+    assert!(ed.doc.point(corner).unwrap().x > 4400.0);
+}
+
+/// A wall held square (Vertical) that joins a held end moves across to it, staying square.
+#[test]
+fn a_square_wall_moves_across_to_a_held_end() {
+    let mut ed = editor();
+    ed.prefs.wall_thickness = 200.0;
+    let first = draw(&mut ed, &[v(0.0, 0.0), v(4000.0, 0.0)]);
+    let ids = run_ids(&ed, first);
+    add(
+        &mut ed,
+        drift_core::Constraint::Distance {
+            a: ids[0],
+            b: ids[1],
+            value: 4000.0,
+        },
+    );
+    let second = draw(&mut ed, &[v(3960.0, 2000.0), v(3960.0, 600.0)]);
+    let l2 = ed
+        .doc
+        .path(ed.doc.wall(second).unwrap().centre)
+        .unwrap()
+        .curves[0];
+    let vertical = add(&mut ed, drift_core::Constraint::Vertical { line: l2 });
+    let end = run_ids(&ed, second)[1];
+    move_point(&mut ed, end, v(3960.0, 30.0));
+    assert_points(&run_points(&ed, first), &[v(0.0, 0.0), v(4000.0, 0.0)]);
+    assert_points(
+        &run_points(&ed, second),
+        &[v(4000.0, 2000.0), v(4000.0, 0.0)],
+    );
+    assert_eq!(run_ids(&ed, second)[1], ids[1], "one point");
+    assert_next_solve_moves_nothing(&mut ed, vertical);
 }

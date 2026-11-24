@@ -717,14 +717,17 @@ impl DriftApp {
                 let (from, grip) = if down {
                     *self.dock_view.pressed_at.entry(top).or_insert_with(|| {
                         let origin = ctx.input(|i| i.pointer.press_origin());
-                        let side = ctx
-                            .style_of(ctx.theme())
-                            .interaction
-                            .resize_grab_radius_side;
-                        (
-                            *r,
-                            origin.map_or_else(Grip::default, |o| Grip::at(*r, o, side)),
-                        )
+                        let reach = ctx.style_of(ctx.theme()).interaction.clone();
+                        let (side, corner) = (
+                            reach.resize_grab_radius_side,
+                            reach.resize_grab_radius_corner,
+                        );
+                        // (Folded, it can't be resized: a press anywhere on it moves it.)
+                        let grip = match origin {
+                            Some(o) if !shut => Grip::at(*r, o, side, corner),
+                            _ => Grip::default(),
+                        };
+                        (*r, grip)
                     })
                 } else {
                     (*r, Grip::default())
@@ -1647,21 +1650,38 @@ pub(crate) struct Grip {
 }
 
 impl Grip {
-    /// Which edges of `r` a press at `o` was on. The right and bottom edges reach a little
-    /// further than egui's resize grip (`side`), as #505 measured; the left and top only as
-    /// far as it, since the top edge is also the header, which moves the window.
-    fn at(r: egui::Rect, o: egui::Pos2, side: f32) -> Self {
+    /// Which edges of `r` a press at `o` was on, as egui's resize grips reach: `side` from
+    /// an edge, and `corner` both ways from a corner (where both edges move). The right and
+    /// bottom edges reach a little further, as #505 measured; the left and top only as far
+    /// as egui's, since the top edge is also the header, which moves the window.
+    fn at(r: egui::Rect, o: egui::Pos2, side: f32, corner: f32) -> Self {
         const FAR: f32 = 8.0;
-        if !r.expand(FAR).contains(o) {
+        if !r.expand(FAR.max(corner)).contains(o) {
             return Self::default();
         }
         let near = |a: f32, b: f32, reach: f32| (a - b).abs() <= reach;
-        Self {
+        let mut grip = Self {
             left: near(o.x, r.left(), side),
             right: near(o.x, r.right(), FAR),
             top: near(o.y, r.top(), side),
             bottom: near(o.y, r.bottom(), FAR),
+        };
+        for (x, y, left, top) in [
+            (r.left(), r.top(), true, true),
+            (r.right(), r.top(), false, true),
+            (r.left(), r.bottom(), true, false),
+            (r.right(), r.bottom(), false, false),
+        ] {
+            if near(o.x, x, corner) && near(o.y, y, corner) {
+                grip = Self {
+                    left,
+                    right: !left,
+                    top,
+                    bottom: !top,
+                };
+            }
         }
+        grip
     }
 }
 

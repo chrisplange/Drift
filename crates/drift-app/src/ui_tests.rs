@@ -1804,6 +1804,28 @@ fn a_floating_panel_at_the_edge_widens_by_its_left_edge_while_dragged() {
     );
 }
 
+/// A folded floating panel can't be resized, so a press at the very top of its header
+/// moves it like anywhere else on it (it isn't taken for a resize that holds it in place).
+#[test]
+fn a_folded_floating_panel_moves_by_the_top_of_its_header() {
+    let Some(mut h) = harness() else { return };
+    h.state_mut()
+        .layout
+        .move_to(Panel::Layers, Place::Float, None);
+    h.state_mut().layout.folded.insert(Panel::Layers);
+    h.run_steps(6);
+    let (_, before) = h.state().floating_rects(Panel::Layers).unwrap();
+    let from = egui::pos2(before.left() + 80.0, before.top() + 1.0);
+    drag_steps(&mut h, from, from + egui::vec2(-60.0, 150.0), 20, None);
+    h.run_steps(4);
+    assert_eq!(h.state().layout.floating, [vec![Panel::Layers]]);
+    let (_, after) = h.state().floating_rects(Panel::Layers).unwrap();
+    assert!(
+        (after.min - (before.min + egui::vec2(-60.0, 150.0))).length() < 2.0,
+        "{before:?} → {after:?}"
+    );
+}
+
 /// A floating panel can't be made narrower than what it holds: an open layer's settings
 /// (labels, pickers, "Printed and exported") are never cut off at its right edge.
 #[test]
@@ -1825,9 +1847,10 @@ fn a_floating_panel_is_never_narrower_than_its_contents() {
     let fits = |h: &Harness<'_, DriftApp>, what: &str| {
         let (panel, _) = h.state().floating_rects(Panel::Layers).unwrap();
         let needs = h.state().floating_content_width(Panel::Layers).unwrap();
+        let over = h.state().panel_overflow(Panel::Layers);
         assert!(
-            needs <= panel.width() + 0.5,
-            "{what}: contents {needs} wide in a panel {panel:?}"
+            needs <= panel.width() + 0.5 && over < 0.5,
+            "{what}: contents {needs} wide (cut off by {over}) in a panel {panel:?}"
         );
         panel
     };

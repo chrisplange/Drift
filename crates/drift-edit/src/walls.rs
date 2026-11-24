@@ -400,28 +400,31 @@ impl Editor {
     /// cut in two become two walls, tee ends follow their hosts, and faces, corners, outlines
     /// and pochés are updated by key. Where only centreline points moved and the joins stay
     /// what they were, only the nodes round the moved segments are worked out again.
-    pub(crate) fn follow_walls(&mut self) {
-        self.follow_walls_with(None);
+    /// Whether joined ends were made to share a point (after the edit's solve, so driven
+    /// dimensions on them want measuring again).
+    pub(crate) fn follow_walls(&mut self) -> bool {
+        self.follow_walls_with(None)
     }
 
     /// [`follow_walls`](Self::follow_walls), keeping `joins` (a drag's) for the ends that
     /// aren't live. Without them (a commit), an end left joined to another by where it is
     /// takes that end's point: made by the Wall tool or a drag, an L moves together after.
-    pub(crate) fn follow_walls_with(&mut self, joins: Option<&drift_geom::walls::Joins>) {
+    /// Whether any did (never with `joins`).
+    pub(crate) fn follow_walls_with(&mut self, joins: Option<&drift_geom::walls::Joins>) -> bool {
         // (Openings that went with their walls say so, even when no wall is left.)
         self.note_gone_openings();
         if !self.doc.has_walls() || !self.doc.in_transaction() {
-            return;
+            return false;
         }
         let report = match self.wall_edit() {
-            WallEdit::None => return,
+            WallEdit::None => return false,
             WallEdit::Moved(moved, shifted) => {
                 // Tees and ends against curves follow what moved first. (Only walls whose
                 // centrelines moved: an opening added, slid or resized moves no wall, and its
                 // edit moves nothing else.)
                 let before = self.doc.revision();
                 if !shifted.is_empty() {
-                    self.follow_tees(Some(&shifted));
+                    self.follow_tees(Some(&shifted), None);
                 }
                 let edit = if self.doc.revision() == before {
                     WallEdit::Moved(moved, shifted)
@@ -448,7 +451,8 @@ impl Editor {
             }
             WallEdit::Full => self.regenerate_walls(joins),
         };
-        let report = if joins.is_none() && self.share_joined_points(&report.aliased) {
+        let shared = joins.is_none() && self.share_joined_points(&report.aliased);
+        let report = if shared {
             let r = drift_geom::walls::regenerate(&mut self.doc);
             self.follow_openings(None);
             r
@@ -460,6 +464,7 @@ impl Editor {
         {
             self.out.notice = Some(n.clone());
         }
+        shared
     }
 
     /// Every wall made again after a structural edit: centrelines normalized, openings
@@ -482,6 +487,13 @@ impl Editor {
     /// moves but the centrelines' ends, and the walls move together from then on. (Not where
     /// more than two meet, or a centreline there is curved or runs straight on.) Whether
     /// any did.
+    ///
+    /// This runs after the edit's solve, so it never moves an end that relations hold (see
+    /// [`held_by_relations`](Self::held_by_relations)): the corner is the held end, and the
+    /// other wall comes to it across, keeping its direction, where nothing holds its far end
+    /// either (else, and where both ends are held, they stay joined by where they are). (A
+    /// held end moved here would commit its relation unmet, and the next solving edit would
+    /// jump the wall and its openings back to it.) Tees on the walls that moved follow them.
     fn share_joined_points(&mut self, aliased: &BTreeMap<EntityId, EntityId>) -> bool {
         let mut groups: BTreeMap<EntityId, Vec<EntityId>> = BTreeMap::new();
         for (&p, &root) in aliased {
@@ -489,8 +501,14 @@ impl Editor {
                 groups.entry(root).or_insert_with(|| vec![root]).push(p);
             }
         }
-        // Each run end's point: its wall, and its segment's line (from the end, inwards).
-        let mut ends: HashMap<EntityId, (WallId, Option<(DVec2, DVec2)>)> = HashMap::new();
+        if groups.is_empty() {
+            return false;
+        }
+        let holds = Holds::of(self);
+        // Each run end's point: its wall, its segment's line (from the end, inwards), and, for
+        // a run of one segment, its other end's point and which end of the run that is.
+        type End = (WallId, Option<(DVec2, DVec2)>, Option<(EntityId, usize)>);
+        let mut ends: HashMap<EntityId, End> = HashMap::new();
         for (id, wall) in self.doc.walls() {
             let Ok((segs, points, closed)) = drift_geom::walls::regen::centreline(&self.doc, wall)
             else {
@@ -503,12 +521,23 @@ impl Editor {
                 drift_geom::walls::Seg::Line { a, b } => Some(if start { (a, b) } else { (b, a) }),
                 drift_geom::walls::Seg::Arc { .. } => None,
             };
-            ends.insert(points[0], (id, line(&segs[0], true)));
+            let n = points.len();
+            let one = segs.len() == 1;
             ends.insert(
-                points[points.len() - 1],
-                (id, line(&segs[segs.len() - 1], false)),
+                points[0],
+                (id, line(&segs[0], true), one.then(|| (points[n - 1], 1))),
+            );
+            ends.insert(
+                points[n - 1],
+                (
+                    id,
+                    line(&segs[segs.len() - 1], false),
+                    one.then(|| (points[0], 0)),
+                ),
             );
         }
+        let joined: HashSet<EntityId> = aliased.iter().flat_map(|(&p, &q)| [p, q]).collect();
+        let mut moved_walls: BTreeSet<WallId> = BTreeSet::new();
         let mut any = false;
         for (_, members) in groups {
             let &[a, b] = members.as_slice() else {
@@ -530,7 +559,7 @@ impl Editor {
             if across && !(self.prefs.auto_relations && (made(a) || made(b))) {
                 continue;
             }
-            let (Some(&(wa, Some((pa, qa)))), Some(&(wb, Some((pb, qb))))) =
+            let (Some(&(wa, Some((pa, qa)), far_a)), Some(&(wb, Some((pb, qb)), far_b))) =
                 (ends.get(&a), ends.get(&b))
             else {
                 continue;
@@ -545,6 +574,37 @@ impl Editor {
             if x.distance(pa) > reach || x.distance(pb) > reach {
                 continue;
             }
+            // An end relations hold stays where the solve put it: the corner is there, and the
+            // other wall comes to it across (along its own line, if it already passes there).
+            let x = match (
+                self.held_by_relations(a, b, wa, &holds),
+                self.held_by_relations(b, a, wb, &holds),
+            ) {
+                (false, false) => x,
+                (true, true) => continue,
+                (held_a, _) => {
+                    let (to, (pc, qc), far, wc) = if held_a {
+                        (pa, (pb, qb), far_b, wb)
+                    } else {
+                        (pb, (pa, qa), far_a, wa)
+                    };
+                    let u = (qc - pc).normalize_or_zero();
+                    let off = (to - pc) - u * (to - pc).dot(u);
+                    let scale = to.abs().max_element().max(pc.abs().max_element());
+                    if off.length() > drift_core::tolerance::same(scale) {
+                        let Some((far, which)) = far else {
+                            continue;
+                        };
+                        if !self.shifts_freely(wc, far, which, &holds, &joined) {
+                            continue;
+                        }
+                        let at = self.doc.point(far).unwrap_or(qc);
+                        let _ = self.doc.set_point(far, at + off);
+                    }
+                    to
+                }
+            };
+            moved_walls.extend([wa, wb]);
             if across {
                 let moved = [a, b]
                     .iter()
@@ -583,7 +643,95 @@ impl Editor {
                 let _ = self.doc.set_path(centre, path);
             }
         }
+        if !moved_walls.is_empty() {
+            self.follow_tees(Some(&moved_walls), Some(&holds));
+        }
         any
+    }
+
+    /// Whether a solve put centreline end `p` of wall `wall` where it is, so the join mustn't
+    /// move it: it is on a locked layer, or a driving relation (stored, or lowered from the
+    /// walls' own: see [`Holds`]) names it, or another curve than the wall's own centreline
+    /// uses it (moving `p` along the wall's line would turn that curve or take its end off
+    /// it), or a relation names the wall's own segment through it other than for its
+    /// direction (moving the end along its own line to where the centrelines cross keeps the
+    /// line horizontal, parallel or on another's line). A Coincident with `other`, the end it
+    /// is joined to, doesn't count: it holds the join itself.
+    fn held_by_relations(&self, p: EntityId, other: EntityId, wall: WallId, holds: &Holds) -> bool {
+        if holds.locked.contains(&p) || holds.lowered.contains(&p) {
+            return true;
+        }
+        let centre = self.doc.wall(wall).map(|w| w.centre);
+        let join = |c: &drift_core::Constraint| {
+            matches!(*c, drift_core::Constraint::Coincident { a: q, b: r }
+                if (q, r) == (p, other) || (q, r) == (other, p))
+        };
+        self.doc
+            .constraints_on(p)
+            .any(|c| !self.doc.is_driven(c) && self.doc.constraint(c).is_some_and(|c| !join(c)))
+            || self.doc.users_of(p).any(|curve| {
+                centre.is_none()
+                    || self.doc.path_of(curve) != centre
+                    || holds.locked.contains(&curve)
+                    || holds.lowered.contains(&curve)
+                    || self.doc.constraints_on(curve).any(|c| {
+                        !self.doc.is_driven(c)
+                            && self
+                                .doc
+                                .constraint(c)
+                                .is_some_and(|c| !slide_keeps(c, curve))
+                    })
+            })
+    }
+
+    /// Whether wall `w`, a run of one segment, can move across (keeping its direction) by
+    /// moving its other end `far` (the run's end `which`) as well: nothing holds that end (no
+    /// relation, no other curve, no join, no lock), its segment's relations are all kept by a
+    /// move across (they set only its direction), and no wall teed onto it has its end held
+    /// there.
+    fn shifts_freely(
+        &self,
+        w: WallId,
+        far: EntityId,
+        which: usize,
+        holds: &Holds,
+        joined: &HashSet<EntityId>,
+    ) -> bool {
+        let Some(wall) = self.doc.wall(w) else {
+            return false;
+        };
+        let end = &wall.ends[which];
+        if end.tee.is_some() || end.against.is_some() || joined.contains(&far) {
+            return false;
+        }
+        if holds.locked.contains(&far)
+            || holds.mentioned.contains(&far)
+            || self.doc.constraints_on(far).any(|c| !self.doc.is_driven(c))
+        {
+            return false;
+        }
+        let mut users = self.doc.users_of(far);
+        let (Some(seg), None) = (users.next(), users.next()) else {
+            return false;
+        };
+        // (Walls teed onto it follow it across, unless their ends are held.)
+        let teed = self.doc.walls().any(|(id, other)| {
+            (0..2).any(|k| {
+                other.ends[k].tee.is_some_and(|(h, _)| h == w)
+                    && self
+                        .run_end_point(other, k)
+                        .is_none_or(|q| self.held_by_relations(q, q, id, holds))
+            })
+        });
+        if teed {
+            return false;
+        }
+        !holds.locked.contains(&seg)
+            && !holds.mentioned.contains(&seg)
+            && self
+                .doc
+                .constraints_on(seg)
+                .all(|c| self.doc.is_driven(c) || self.doc.constraint(c).is_some_and(shift_keeps))
     }
 
     /// Every wall regenerated, inside the open transaction (opening a file: what an older
@@ -756,7 +904,7 @@ impl Editor {
         // (Not for an opening placed or deleted alone: it moves no wall, so no end follows
         // anything, and an end left off its host's centreline stays where it is.)
         if !self.doc.only_openings_touched_in_transaction() {
-            self.follow_tees(None);
+            self.follow_tees(None, None);
         }
     }
 
@@ -872,8 +1020,11 @@ impl Editor {
 
     /// Tee ends sit on their host's centreline, and ends against a curve on that curve: an
     /// end the host moved away from goes back onto it; one pulled clear of it lets go.
-    /// (Only ends of `walls`, and ends on them, when given.)
-    fn follow_tees(&mut self, only: Option<&BTreeSet<WallId>>) {
+    /// (Only ends of `walls`, and ends on them, when given.) After a join shared a corner
+    /// (`after`, what held ends then: see [`share_joined_points`](Self::share_joined_points)),
+    /// no solve follows, so an end is held only as the join judged it, not by what the corner
+    /// now joins it to.
+    fn follow_tees(&mut self, only: Option<&BTreeSet<WallId>>, after: Option<&Holds>) {
         let snap = drift_geom::walls::regen::snap(&self.doc);
         let walls: Vec<(WallId, Wall)> = self
             .doc
@@ -919,8 +1070,12 @@ impl Editor {
                     continue;
                 };
                 // A point held by relations goes where they say.
-                let held =
-                    self.doc.constraints_on(point).next().is_some() || solved.contains(&point);
+                let held = match after {
+                    Some(holds) => self.held_by_relations(point, point, id, holds),
+                    None => {
+                        self.doc.constraints_on(point).next().is_some() || solved.contains(&point)
+                    }
+                };
                 // An end that wasn't moved itself follows what it meets however far that
                 // went; one pulled away lets go beyond its reach.
                 let pulled = self.doc.touched_in_transaction(point);
@@ -2162,4 +2317,87 @@ pub(crate) struct WallFillFound {
     holes: Vec<drift_core::PathId>,
     uses: std::collections::HashSet<EntityId>,
     region: Option<drift_geom::regions::Region>,
+}
+
+/// What holds geometry where a solve put it, beyond the stored relations, for a join made
+/// after the solve ([`Editor::share_joined_points`]).
+struct Holds {
+    /// What the walls' lowered relations hold in place: points they name, and curves they
+    /// name other than for their direction (see [`slide_keeps`]).
+    lowered: HashSet<EntityId>,
+    /// Everything the lowered relations name.
+    mentioned: HashSet<EntityId>,
+    /// Geometry on locked layers (the solver pins it).
+    locked: BTreeSet<EntityId>,
+}
+
+impl Holds {
+    fn of(ed: &Editor) -> Self {
+        let mut lowered = HashSet::new();
+        let mut mentioned = HashSet::new();
+        if let Some(l) = ed.lowering() {
+            for x in l.of.values().flatten().chain(&l.extra) {
+                match x {
+                    drift_solver::Lowered::Relation(c) => {
+                        for e in c.entities() {
+                            mentioned.insert(e);
+                            let curve = ed.doc.get(e).is_some_and(|x| !x.kind.is_point());
+                            if !curve || !slide_keeps(c, e) {
+                                lowered.insert(e);
+                            }
+                        }
+                    }
+                    // (An offset from a line holds the line, not where it ends.)
+                    drift_solver::Lowered::OffsetFrom { point, curve, .. } => {
+                        mentioned.extend([*point, *curve]);
+                        lowered.insert(*point);
+                    }
+                }
+            }
+        }
+        let locked = if ed.doc.layers().any(|(_, l)| l.locked) {
+            ed.doc.locked_entities()
+        } else {
+            BTreeSet::new()
+        };
+        Self {
+            lowered,
+            mentioned,
+            locked,
+        }
+    }
+}
+
+/// Whether relation `c` on line `line` still holds when one of the line's ends slides along
+/// the line itself (it reads only the line's direction, or where the infinite line lies).
+fn slide_keeps(c: &drift_core::Constraint, line: EntityId) -> bool {
+    use drift_core::Constraint as C;
+    match *c {
+        C::Horizontal { .. }
+        | C::Vertical { .. }
+        | C::Parallel { .. }
+        | C::Perpendicular { .. }
+        | C::Angle { .. }
+        | C::Collinear { .. }
+        | C::Tangent { .. } => true,
+        // (A line named as a point means its midpoint, which moves.)
+        C::PointOnCurve { point, curve } => curve == line && point != line,
+        C::PointLineDistance { point, line: l, .. } => l == line && point != line,
+        C::Symmetric { a, b, axis } => axis == line && a != line && b != line,
+        _ => false,
+    }
+}
+
+/// Whether relation `c` on a line still holds when the line moves across, keeping its
+/// direction (its length may change: the joined end also slides along it to the corner).
+fn shift_keeps(c: &drift_core::Constraint) -> bool {
+    use drift_core::Constraint as C;
+    matches!(
+        *c,
+        C::Horizontal { .. }
+            | C::Vertical { .. }
+            | C::Parallel { .. }
+            | C::Perpendicular { .. }
+            | C::Angle { .. }
+    )
 }

@@ -1063,6 +1063,49 @@ fn perf_walls() {
         let _ = ed.wall_fill_region(fill);
     });
     report("the cluster's poché region", poche);
+    // A wall joined by where it is at the end of a dimensioned wall: the commit shares the
+    // corner, keeping the held end (`share_joined_points`).
+    let wall_at = |ed: &mut Editor, a: DVec2, b: DVec2| {
+        let (p, q) = (ed.doc.add_point(a), ed.doc.add_point(b));
+        let l = ed.doc.add_line(p, q).unwrap();
+        ed.doc.set_style(l, drift_core::LineKind::Construction);
+        let path = ed
+            .doc
+            .add_path(drift_core::Path {
+                curves: vec![l],
+                closed: false,
+            })
+            .unwrap();
+        ed.doc
+            .add_wall(drift_core::Wall::new(
+                path,
+                200.0,
+                drift_core::LayerId::DEFAULT,
+            ))
+            .unwrap();
+        (p, q)
+    };
+    let o = v(-20000.0, -20000.0);
+    ed.doc.begin();
+    let (p, q) = wall_at(&mut ed, o, o + v(4000.0, 0.0));
+    ed.doc
+        .add_constraint(Constraint::Distance {
+            a: p,
+            b: q,
+            value: 4000.0,
+        })
+        .unwrap();
+    assert!(ed.commit("A dimensioned wall"));
+    let join = time(10, |_| {
+        ed.doc.begin();
+        let (_, b) = wall_at(&mut ed, o + v(3960.0, 2000.0), o + v(3960.0, 30.0));
+        assert!(ed.commit("Join"));
+        let corner: Vec<EntityId> = [q, b].into_iter().filter(|x| ed.doc.contains(*x)).collect();
+        assert_eq!(corner.len(), 1, "the corner is shared");
+        assert_eq!(ed.doc.point(corner[0]).unwrap(), o + v(4000.0, 0.0));
+        ed.undo();
+    });
+    report("commit of an L join at a dimensioned wall's end", join);
     // A clear width between two walls' faces near the node (W2): the solve sees it lowered
     // onto their centrelines.
     let owners = ed.doc.wall_owners();

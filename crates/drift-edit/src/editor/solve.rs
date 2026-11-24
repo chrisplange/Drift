@@ -623,7 +623,11 @@ impl Editor {
         self.explode_copies_in_block_edit();
         self.adopt_into_open_group();
         self.make_new_curves_construction();
-        self.follow_walls();
+        // Joined ends shared a point after the solve: what driven dimensions measure moved.
+        // (Never an end relations hold: see `share_joined_points`.)
+        if self.follow_walls() {
+            self.refresh_driven();
+        }
         // (After the walls: an offset's source may be a wall's face.)
         self.follow_offsets();
         self.follow_paths();

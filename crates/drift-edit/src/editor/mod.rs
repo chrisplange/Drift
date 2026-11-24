@@ -207,9 +207,6 @@ pub struct Editor {
     pub(crate) wall_fills_found: std::cell::Cell<usize>,
     pub history: History,
     pub selection: BTreeSet<EntityId>,
-    /// The selection a Trim or Extend left by picking its own cutting curves, so that the
-    /// next Trim or Extend doesn't take it for curves picked on purpose (#461). Not saved.
-    pub(crate) tool_picks: Option<BTreeSet<EntityId>>,
     /// The active element: the one picked last, by a click, which a relation added between
     /// picked elements keeps (#333). Editor state, not saved; see [`active`](Self::active).
     active: Option<EntityId>,
@@ -499,11 +496,6 @@ impl Editor {
                 && !doc.layer_of(*id).locked
         };
         self.selection.retain(keep);
-        // What a Trim or Extend left picked loses the same curves, and stays its own (#461:
-        // an undo or a hidden layer mustn't make the rest picked on purpose).
-        if let Some(own) = &mut self.tool_picks {
-            own.retain(keep);
-        }
         if self.active.is_some_and(|id| !self.selection.contains(&id)) {
             self.active = None;
         }

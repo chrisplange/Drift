@@ -1499,35 +1499,22 @@ fn near(a: DVec2, b: DVec2) -> bool {
     a.distance(b) < 1e-6
 }
 
+/// Trim cuts against every curve, whatever is picked (as a power trim): picking the two
+/// circles doesn't stop the line across them from cutting, the selection is left alone, and
+/// Esc just leaves the tool.
 #[test]
-fn trimming_against_picked_curves_ignores_a_grid_line() {
-    let (mut ed, [ca, cb, line]) = circles_and_line();
+fn trim_cuts_against_every_curve_whatever_is_picked() {
+    let (mut ed, [ca, cb, _]) = circles_and_line();
     ed.selection = [ca, cb].into();
     let mut tool = TrimTool::default();
-    let y = 19f64.sqrt();
-    click(&mut ed, &mut tool, v(9.0, y));
-    assert!(
-        tool.hint().contains("against 2 picked curves"),
-        "{}",
-        tool.hint()
-    );
-    click(&mut ed, &mut tool, v(3.0, y));
-    // Each circle lost its whole arc inside the other, the line across them didn't cut.
-    for id in [ca, cb] {
-        let ends = arc_ends(&ed, id);
-        assert!(
-            ends.iter()
-                .all(|p| near(*p, v(6.0, 8.0)) || near(*p, v(6.0, -8.0))),
-            "{ends:?}"
-        );
-    }
-    assert_eq!(line_ends(&ed, line), (v(-20.0, 0.0), v(32.0, 0.0)));
-    assert_eq!(count(&ed.doc, |k| !k.is_point()), 3, "no extra pieces");
-    // Esc lets go of the picked curves: every curve cuts again.
-    assert!(tool.cancel(&mut ed));
-    assert!(ed.selection.is_empty());
-    assert!(!tool.hint().contains("picked"));
-    assert!(!tool.cancel(&mut ed), "a second Esc leaves the tool");
+    tool.handle(Input::Hover(ptr(&ed, &tool, v(0.0, 30.0))), &mut ed);
+    assert!(!tool.hint().contains("picked"), "{}", tool.hint());
+    click(&mut ed, &mut tool, v(9.0, 19f64.sqrt()));
+    // Only up to the line: the piece between the other circle and the line went.
+    let ends = arc_ends(&ed, ca);
+    assert!(ends.iter().any(|p| near(*p, v(10.0, 0.0))), "{ends:?}");
+    assert_eq!(ed.selection, [ca, cb].into(), "the selection is left alone");
+    assert!(!tool.cancel(&mut ed), "Esc leaves the tool");
 }
 
 #[test]
@@ -1551,207 +1538,11 @@ fn a_selection_with_no_curves_is_nothing_picked() {
     assert!(!tool.hint().contains("picked"));
 }
 
+/// Extend reaches the next curve in its way, whatever is picked (as Trim): picking a farther
+/// line doesn't make it the boundary, the selection is left alone, and Esc just leaves the
+/// tool.
 #[test]
-fn a_trimmed_cutting_line_still_cuts_with_its_far_piece() {
-    let (mut ed, ids) = bar_and_uprights();
-    ed.selection = ids[..3].iter().copied().collect();
-    let mut tool = TrimTool::default();
-    // The bar's middle goes: its far part (20 to 40) is a new curve.
-    click(&mut ed, &mut tool, v(15.0, 0.2));
-    assert_eq!(line_ends(&ed, ids[0]), (v(0.0, 0.0), v(10.0, 0.0)));
-    assert_eq!(
-        ed.selection.len(),
-        4,
-        "the far piece is picked with the rest"
-    );
-    // The second upright is cut by that far piece, not removed whole.
-    click(&mut ed, &mut tool, v(20.2, -3.0));
-    assert_eq!(line_ends(&ed, ids[2]), (v(20.0, 0.0), v(20.0, 5.0)));
-    // The third upright wasn't picked: it doesn't cut the far piece, which goes whole.
-    click(&mut ed, &mut tool, v(35.0, 0.2));
-    assert_eq!(lines(&ed.doc), 4);
-    assert!(
-        ed.doc
-            .iter()
-            .filter_map(|(id, _)| ed.doc.shape(id))
-            .all(|s| !matches!(s, Shape::Line { b, .. } if b == v(40.0, 0.0))),
-        "the far piece is gone"
-    );
-    assert_eq!(line_ends(&ed, ids[3]), (v(30.0, -5.0), v(30.0, 5.0)));
-}
-
-/// #461: the curves a Trim left picked (its cutting curves, a trimmed one's far piece among
-/// them) aren't the next Trim's or Extend's cutting set when the tool was left without Esc.
-#[test]
-fn a_trims_own_picks_dont_carry_into_the_next_tool() {
-    let (mut ed, ids) = bar_and_uprights();
-    ed.selection = ids[..3].iter().copied().collect();
-    let mut tool = TrimTool::default();
-    click(&mut ed, &mut tool, v(15.0, 0.2));
-    assert_eq!(
-        ed.selection.len(),
-        4,
-        "the far piece is picked with the rest"
-    );
-    // Left for another tool, no Esc. An Extend doesn't reach only what Trim left picked.
-    let mut tool = ExtendTool::default();
-    tool.handle(Input::Hover(ptr(&ed, &tool, v(0.5, 0.1))), &mut ed);
-    assert!(!tool.hint().contains("picked"), "{}", tool.hint());
-    // A new Trim cuts against every curve: the far piece (20 to 40) loses only 30 to 40,
-    // past the third upright the first Trim didn't pick.
-    let mut tool = TrimTool::default();
-    click(&mut ed, &mut tool, v(35.0, 0.2));
-    assert!(!tool.hint().contains("picked"), "{}", tool.hint());
-    assert!(
-        ed.doc.iter().filter_map(|(id, _)| ed.doc.shape(id)).any(
-            |s| matches!(s, Shape::Line { a, b } if near(a, v(20.0, 0.0)) && near(b, v(30.0, 0.0)))
-        ),
-        "the far piece stops at the third upright"
-    );
-}
-
-/// #461: an undo that takes the far piece out of what a Trim left picked doesn't make the
-/// rest of it picked on purpose.
-#[test]
-fn a_trims_own_picks_stay_its_own_after_an_undo() {
-    let (mut ed, ids) = bar_and_uprights();
-    ed.selection = ids[..3].iter().copied().collect();
-    let mut tool = TrimTool::default();
-    click(&mut ed, &mut tool, v(15.0, 0.2));
-    assert!(ed.undo());
-    // The bar is whole again; a new Trim cuts it against every curve, up to the third
-    // upright, not against the two the first Trim was given.
-    let mut tool = TrimTool::default();
-    click(&mut ed, &mut tool, v(35.0, 0.2));
-    assert!(!tool.hint().contains("picked"), "{}", tool.hint());
-    assert_eq!(line_ends(&ed, ids[0]), (v(0.0, 0.0), v(30.0, 0.0)));
-}
-
-/// #461: nor does hiding one of them (hidden curves can't stay picked).
-#[test]
-fn a_trims_own_picks_stay_its_own_when_one_is_hidden() {
-    let (mut ed, ids) = bar_and_uprights();
-    let layer = ed.add_layer("Hidden later");
-    ed.doc.begin();
-    ed.doc.set_entity_layer(ids[1], layer).unwrap();
-    ed.commit("Layer");
-    ed.selection = ids[..3].iter().copied().collect();
-    let mut tool = TrimTool::default();
-    click(&mut ed, &mut tool, v(15.0, 0.2));
-    ed.set_layers_visible(&[(layer, false)], "Hide");
-    // The far piece (20 to 40) loses only 30 to 40: the third upright cuts it.
-    let mut tool = TrimTool::default();
-    click(&mut ed, &mut tool, v(35.0, 0.2));
-    assert!(!tool.hint().contains("picked"), "{}", tool.hint());
-    assert!(
-        ed.doc.iter().filter_map(|(id, _)| ed.doc.shape(id)).any(
-            |s| matches!(s, Shape::Line { a, b } if near(a, v(20.0, 0.0)) && near(b, v(30.0, 0.0)))
-        ),
-        "the far piece stops at the third upright"
-    );
-}
-
-/// #461: an Extend after a Trim reaches the next curve, not the next one the Trim was given.
-#[test]
-fn an_extend_after_a_trim_reaches_every_curve() {
-    let (mut ed, ids) = modify_fixture(&[
-        (v(0.0, 0.0), v(5.0, 0.0)),
-        (v(10.0, -5.0), v(10.0, 5.0)),
-        (v(20.0, -5.0), v(20.0, 5.0)),
-        (v(30.0, 3.0), v(40.0, 3.0)),
-        (v(35.0, -5.0), v(35.0, 5.0)),
-    ]);
-    ed.selection = [ids[0], ids[2], ids[3], ids[4]].into();
-    // Trim the short line's piece past the upright it crosses: Trim now owns the picks.
-    let mut tool = TrimTool::default();
-    click(&mut ed, &mut tool, v(38.0, 3.1));
-    assert_eq!(line_ends(&ed, ids[3]), (v(30.0, 3.0), v(35.0, 3.0)));
-    let mut tool = ExtendTool::default();
-    click(&mut ed, &mut tool, v(4.0, 0.1));
-    assert_eq!(
-        line_ends(&ed, ids[0]).1,
-        v(10.0, 0.0),
-        "to the unpicked line"
-    );
-}
-
-/// #461 (owner's decision): copies just made and still picked are picked curves, and Trim
-/// cuts against them alone.
-#[test]
-fn copies_just_made_and_still_picked_cut() {
-    let (mut ed, ids) = bar_and_uprights();
-    ed.selection = [ids[3]].into();
-    assert_eq!(ed.duplicate_selection(), 1);
-    assert_eq!(ed.nudge(v(-5.0, 0.0)), Some(true));
-    let mut tool = TrimTool::default();
-    click(&mut ed, &mut tool, v(27.0, 0.2));
-    assert!(
-        tool.hint().contains("against 1 picked curve"),
-        "{}",
-        tool.hint()
-    );
-    // Cut at the copy (x = 25) only: the third upright didn't cut, so all of 25 to 40 went.
-    assert_eq!(line_ends(&ed, ids[0]), (v(0.0, 0.0), v(25.0, 0.0)));
-}
-
-/// #461: what a Trim left picked, picked again on purpose, cuts.
-#[test]
-fn picking_a_trims_leftovers_again_makes_them_cut() {
-    let (mut ed, ids) = bar_and_uprights();
-    ed.selection = ids[..3].iter().copied().collect();
-    let mut tool = TrimTool::default();
-    click(&mut ed, &mut tool, v(15.0, 0.2));
-    let left = ed.selection.clone();
-    // A click with Select (on nothing), then the same curves picked again.
-    let mut select = SelectTool::default();
-    click(&mut ed, &mut select, v(50.0, 50.0));
-    ed.selection = left;
-    let mut tool = ExtendTool::default();
-    tool.handle(Input::Hover(ptr(&ed, &tool, v(0.5, 0.1))), &mut ed);
-    assert!(tool.hint().contains("against 4 picked"), "{}", tool.hint());
-    // Select all is on purpose too.
-    let mut tool = TrimTool::default();
-    click(&mut ed, &mut tool, v(35.0, 0.2));
-    ed.select_all();
-    let mut tool = TrimTool::default();
-    tool.handle(Input::Hover(ptr(&ed, &tool, v(0.5, 0.1))), &mut ed);
-    assert!(tool.hint().contains("picked"), "{}", tool.hint());
-}
-
-/// #461: the cutting set is what's picked at the first click, not at the first hover.
-#[test]
-fn the_cutting_set_is_read_at_the_first_click() {
-    // Picked when the pointer came over the canvas, let go of before the click.
-    let (mut ed, [ca, cb, _]) = circles_and_line();
-    ed.selection = [ca, cb].into();
-    let mut tool = TrimTool::default();
-    let y = 19f64.sqrt();
-    tool.handle(Input::Hover(ptr(&ed, &tool, v(0.0, 30.0))), &mut ed);
-    assert!(tool.hint().contains("against 2 picked"), "{}", tool.hint());
-    ed.selection.clear();
-    click(&mut ed, &mut tool, v(9.0, y));
-    // Every curve cut: only up to the line.
-    assert!(arc_ends(&ed, ca).iter().any(|p| near(*p, v(10.0, 0.0))));
-    assert!(!tool.hint().contains("picked"), "{}", tool.hint());
-
-    // Nothing picked at the hover, the circles picked before the click: they're the set.
-    let (mut ed, [ca, cb, line]) = circles_and_line();
-    let mut tool = TrimTool::default();
-    tool.handle(Input::Hover(ptr(&ed, &tool, v(0.0, 30.0))), &mut ed);
-    ed.selection = [ca, cb].into();
-    click(&mut ed, &mut tool, v(9.0, y));
-    let ends = arc_ends(&ed, ca);
-    assert!(
-        ends.iter()
-            .all(|p| near(*p, v(6.0, 8.0)) || near(*p, v(6.0, -8.0))),
-        "{ends:?}"
-    );
-    assert!(tool.hint().contains("against 2 picked"), "{}", tool.hint());
-    assert_eq!(line_ends(&ed, line), (v(-20.0, 0.0), v(32.0, 0.0)));
-}
-
-#[test]
-fn extend_reaches_only_a_picked_boundary() {
+fn extend_reaches_the_next_curve_whatever_is_picked() {
     let (mut ed, ids) = modify_fixture(&[
         (v(0.0, 0.0), v(5.0, 0.0)),
         (v(10.0, -5.0), v(10.0, 5.0)),
@@ -1759,17 +1550,16 @@ fn extend_reaches_only_a_picked_boundary() {
     ]);
     ed.selection = [ids[0], ids[2]].into();
     let mut tool = ExtendTool::default();
+    tool.handle(Input::Hover(ptr(&ed, &tool, v(4.0, 0.1))), &mut ed);
+    assert!(!tool.hint().contains("picked"), "{}", tool.hint());
     click(&mut ed, &mut tool, v(4.0, 0.1));
+    assert_eq!(line_ends(&ed, ids[0]).1, v(10.0, 0.0), "to the nearer line");
     assert_eq!(
-        line_ends(&ed, ids[0]).1,
-        v(20.0, 0.0),
-        "past the unpicked line"
+        ed.selection,
+        [ids[0], ids[2]].into(),
+        "the selection is left alone"
     );
-    assert!(
-        tool.hint().contains("Extending against 2 picked"),
-        "{}",
-        tool.hint()
-    );
+    assert!(!tool.cancel(&mut ed), "Esc leaves the tool");
 }
 
 /// Two lines meeting at the origin.
@@ -9061,4 +8851,70 @@ fn what_a_drag_pulls_along_is_no_snap_target() {
     sel.handle(Input::Hover(hover), &mut ed);
     assert!(!sel.snap_excludes(&ed, p1) && !sel.snap_excludes(&ed, a));
     assert!(!sel.guide_excludes(&ed, v(10.0, 0.0), 1e-6));
+}
+
+/// Two rectangles drawn overlapping, the second one picked (all four sides, or three of
+/// them): a trim dragged across the second one's top and the first one's right side.
+fn trim_across_picked_rectangle(pick_top: bool) -> Vec<Shape> {
+    let mut ed = Editor::default();
+    let mut rect = RectangleTool::default();
+    click(&mut ed, &mut rect, v(0.0, 0.0));
+    click(&mut ed, &mut rect, v(50.0, 30.0));
+    let first: Vec<EntityId> = ed.curve_ids().into_iter().collect();
+    let mut rect = RectangleTool::default();
+    click(&mut ed, &mut rect, v(40.0, 8.0));
+    click(&mut ed, &mut rect, v(80.0, 22.0));
+    let top = |ed: &Editor, id: EntityId| matches!(ed.doc.shape(id), Some(Shape::Line { a, b }) if a.y == 22.0 && b.y == 22.0);
+    ed.selection = ed
+        .curve_ids()
+        .into_iter()
+        .filter(|c| !first.contains(c) && (pick_top || !top(&ed, *c)))
+        .collect();
+    assert_eq!(ed.selection.len(), if pick_top { 4 } else { 3 });
+    let mut tool = TrimTool::default();
+    drag_trim(&mut ed, &mut tool, v(45.0, 26.0), v(55.0, 12.0));
+    ed.curve_ids()
+        .into_iter()
+        .filter_map(|c| ed.doc.shape(c))
+        .collect()
+}
+
+/// A trim drag across a picked rectangle trims its side back to the curve that crosses it,
+/// not taken whole: the selection isn't the cutting set (its own sides meet only at its
+/// corners).
+#[test]
+fn a_trim_drag_across_a_picked_rectangle_keeps_its_side() {
+    for pick_top in [true, false] {
+        let shapes = trim_across_picked_rectangle(pick_top);
+        let at_top = |x0: f64, x1: f64| {
+            shapes.iter().any(|s| match *s {
+                Shape::Line { a, b } => {
+                    a.y == 22.0
+                        && b.y == 22.0
+                        && near(DVec2::new(a.x.min(b.x), 0.0), DVec2::new(x0, 0.0))
+                        && near(DVec2::new(a.x.max(b.x), 0.0), DVec2::new(x1, 0.0))
+                }
+                _ => false,
+            })
+        };
+        assert!(
+            at_top(50.0, 80.0),
+            "pick_top {pick_top}: the top stays from the first rectangle's side: {shapes:?}"
+        );
+        assert!(!at_top(40.0, 80.0), "pick_top {pick_top}: {shapes:?}");
+        // The first rectangle's right side lost its piece inside the picked one.
+        let on_side = |y: f64| {
+            shapes.iter().any(|s| match *s {
+                Shape::Line { a, b } => {
+                    a.x == 50.0 && b.x == 50.0 && (a.y.min(b.y) < y && y < a.y.max(b.y))
+                }
+                _ => false,
+            })
+        };
+        assert!(!on_side(15.0), "pick_top {pick_top}: {shapes:?}");
+        assert!(
+            on_side(4.0) && on_side(26.0),
+            "pick_top {pick_top}: {shapes:?}"
+        );
+    }
 }

@@ -572,8 +572,8 @@ impl Editor {
             // An end relations hold stays where the solve put it: the corner is there, and the
             // other wall comes to it across (along its own line, if it already passes there).
             let x = match (
-                self.held_by_relations(a, b, &holds),
-                self.held_by_relations(b, a, &holds),
+                self.held_by_relations(a, b, wa, &holds),
+                self.held_by_relations(b, a, wb, &holds),
             ) {
                 (false, false) => x,
                 (true, true) => continue,
@@ -644,16 +644,19 @@ impl Editor {
         any
     }
 
-    /// Whether a solve put centreline end `p` where it is, so the join mustn't move it: it is
-    /// on a locked layer, or a driving relation (stored, or lowered from the walls' own: see
-    /// [`Holds`]) names it, or names a curve through it other than for that curve's direction
-    /// (moving the end along its own line to where the centrelines cross keeps a line
-    /// horizontal, parallel or on another's line). A Coincident with `other`, the end it is
-    /// joined to, doesn't count: it holds the join itself.
-    fn held_by_relations(&self, p: EntityId, other: EntityId, holds: &Holds) -> bool {
+    /// Whether a solve put centreline end `p` of wall `wall` where it is, so the join mustn't
+    /// move it: it is on a locked layer, or a driving relation (stored, or lowered from the
+    /// walls' own: see [`Holds`]) names it, or another curve than the wall's own centreline
+    /// uses it (moving `p` along the wall's line would turn that curve or take its end off
+    /// it), or a relation names the wall's own segment through it other than for its
+    /// direction (moving the end along its own line to where the centrelines cross keeps the
+    /// line horizontal, parallel or on another's line). A Coincident with `other`, the end it
+    /// is joined to, doesn't count: it holds the join itself.
+    fn held_by_relations(&self, p: EntityId, other: EntityId, wall: WallId, holds: &Holds) -> bool {
         if holds.locked.contains(&p) || holds.lowered.contains(&p) {
             return true;
         }
+        let centre = self.doc.wall(wall).map(|w| w.centre);
         let join = |c: &drift_core::Constraint| {
             matches!(*c, drift_core::Constraint::Coincident { a: q, b: r }
                 if (q, r) == (p, other) || (q, r) == (other, p))
@@ -662,7 +665,9 @@ impl Editor {
             .constraints_on(p)
             .any(|c| !self.doc.is_driven(c) && self.doc.constraint(c).is_some_and(|c| !join(c)))
             || self.doc.users_of(p).any(|curve| {
-                holds.locked.contains(&curve)
+                centre.is_none()
+                    || self.doc.path_of(curve) != centre
+                    || holds.locked.contains(&curve)
                     || holds.lowered.contains(&curve)
                     || self.doc.constraints_on(curve).any(|c| {
                         !self.doc.is_driven(c)
@@ -674,11 +679,11 @@ impl Editor {
             })
     }
 
-    /// Whether wall `w`, a run of one segment, can move across (keeping its direction and
-    /// length) by moving its other end `far` (the run's end `which`) as well: nothing holds
-    /// that end (no relation, no other curve, no join, no lock), its segment's relations are
-    /// all kept by a move across (a direction, an equal length), and no wall teed onto it has
-    /// its end held there.
+    /// Whether wall `w`, a run of one segment, can move across (keeping its direction) by
+    /// moving its other end `far` (the run's end `which`) as well: nothing holds that end (no
+    /// relation, no other curve, no join, no lock), its segment's relations are all kept by a
+    /// move across (they set only its direction), and no wall teed onto it has its end held
+    /// there.
     fn shifts_freely(
         &self,
         w: WallId,
@@ -705,12 +710,12 @@ impl Editor {
             return false;
         };
         // (Walls teed onto it follow it across, unless their ends are held.)
-        let teed = self.doc.walls().any(|(_, other)| {
+        let teed = self.doc.walls().any(|(id, other)| {
             (0..2).any(|k| {
                 other.ends[k].tee.is_some_and(|(h, _)| h == w)
                     && self
                         .run_end_point(other, k)
-                        .is_none_or(|q| self.held_by_relations(q, q, holds))
+                        .is_none_or(|q| self.held_by_relations(q, q, id, holds))
             })
         });
         if teed {
@@ -1057,7 +1062,7 @@ impl Editor {
                 };
                 // A point held by relations goes where they say.
                 let held = match after {
-                    Some(holds) => self.held_by_relations(point, point, holds),
+                    Some(holds) => self.held_by_relations(point, point, id, holds),
                     None => {
                         self.doc.constraints_on(point).next().is_some() || solved.contains(&point)
                     }
@@ -2374,7 +2379,7 @@ fn slide_keeps(c: &drift_core::Constraint, line: EntityId) -> bool {
 }
 
 /// Whether relation `c` on a line still holds when the line moves across, keeping its
-/// direction and length.
+/// direction (its length may change: the joined end also slides along it to the corner).
 fn shift_keeps(c: &drift_core::Constraint) -> bool {
     use drift_core::Constraint as C;
     matches!(
@@ -2384,6 +2389,5 @@ fn shift_keeps(c: &drift_core::Constraint) -> bool {
             | C::Parallel { .. }
             | C::Perpendicular { .. }
             | C::Angle { .. }
-            | C::Equal { .. }
     )
 }

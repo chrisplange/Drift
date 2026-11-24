@@ -1531,3 +1531,57 @@ fn a_square_wall_moves_across_to_a_held_end() {
     assert_eq!(run_ids(&ed, second)[1], ids[1], "one point");
     assert_next_solve_moves_nothing(&mut ed, vertical);
 }
+
+/// Another curve on a wall's end (a line held vertical) holds that end: moving it along the
+/// wall's line would turn the line.
+#[test]
+fn a_join_keeps_an_end_a_related_line_uses() {
+    let mut ed = editor();
+    ed.prefs.wall_thickness = 200.0;
+    let first = draw(&mut ed, &[v(0.0, 0.0), v(4000.0, 0.0)]);
+    let end = run_ids(&ed, first)[1];
+    ed.doc.begin();
+    let q = ed.doc.add_point(v(4000.0, -1000.0));
+    let line = ed.doc.add_line(end, q).unwrap();
+    let vertical = ed
+        .doc
+        .add_constraint(drift_core::Constraint::Vertical { line })
+        .unwrap();
+    assert!(ed.commit("Line"));
+    draw(&mut ed, &[v(3960.0, 2000.0), v(3960.0, 30.0)]);
+    assert_points(&run_points(&ed, first), &[v(0.0, 0.0), v(4000.0, 0.0)]);
+    let end = run_ids(&ed, first)[1];
+    assert_eq!(ed.doc.point(end).unwrap(), v(4000.0, 0.0));
+    assert_next_solve_moves_nothing(&mut ed, vertical);
+}
+
+/// An arc ending on a wall's end holds it too: moving it would take the arc's end off its
+/// circle.
+#[test]
+fn a_join_keeps_an_end_an_arc_uses() {
+    let mut ed = editor();
+    ed.prefs.wall_thickness = 200.0;
+    let first = draw(&mut ed, &[v(0.0, 0.0), v(4000.0, 0.0)]);
+    let end = run_ids(&ed, first)[1];
+    ed.doc.begin();
+    let c = ed.doc.add_point(v(4000.0, -1000.0));
+    let s = ed.doc.add_point(v(5000.0, -1000.0));
+    ed.doc.add_arc(c, s, end).unwrap();
+    let fix = ed
+        .doc
+        .add_constraint(drift_core::Constraint::Fix {
+            point: c,
+            at: v(4000.0, -1000.0),
+        })
+        .unwrap();
+    ed.doc
+        .add_constraint(drift_core::Constraint::Fix {
+            point: s,
+            at: v(5000.0, -1000.0),
+        })
+        .unwrap();
+    assert!(ed.commit("Arc"));
+    draw(&mut ed, &[v(3960.0, 2000.0), v(3960.0, 30.0)]);
+    assert_points(&run_points(&ed, first), &[v(0.0, 0.0), v(4000.0, 0.0)]);
+    assert_next_solve_moves_nothing(&mut ed, fix);
+}

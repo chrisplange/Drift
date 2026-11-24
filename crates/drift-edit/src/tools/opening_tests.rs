@@ -529,3 +529,361 @@ fn a_drag_that_changes_a_join_keeps_the_openings_where_they_are() {
     assert!((span(&ed, o).0 - at.0).abs() < 1e-6);
     assert_eq!(jambs(&ed, w), 2);
 }
+
+#[test]
+fn resizing_an_opening_moves_no_other() {
+    for auto in [false, true] {
+        resizing_moves_no_other(auto);
+    }
+}
+
+fn resizing_moves_no_other(auto: bool) {
+    let mut ed = editor();
+    ed.prefs.auto_relations = auto;
+    run(
+        &mut ed,
+        &[
+            v(0.0, 0.0),
+            v(8000.0, 0.0),
+            v(8000.0, 5000.0),
+            v(0.0, 5000.0),
+        ],
+    );
+    let a = place(&mut ed, v(2000.0, 0.0)).unwrap();
+    let b = place(&mut ed, v(5500.0, 0.0)).unwrap();
+    let c = place(&mut ed, v(8000.0, 2500.0)).unwrap();
+    let d = place(&mut ed, v(4000.0, 5000.0)).unwrap();
+    let where_ = |ed: &Editor, o: OpeningId| {
+        let mut pts: Vec<(EntityId, DVec2)> = ed
+            .doc
+            .opening(o)
+            .unwrap()
+            .made
+            .points
+            .values()
+            .map(|id| (*id, ed.doc.point(*id).unwrap()))
+            .collect();
+        pts.sort_by_key(|(id, _)| *id);
+        (ed.doc.opening(o).unwrap().at.clone(), span(ed, o), pts)
+    };
+    for edited in [a, b, c, d] {
+        for text in ["1500", "600", "1200"] {
+            let others: Vec<_> = [a, b, c, d]
+                .into_iter()
+                .filter(|o| *o != edited)
+                .map(|o| (o, where_(&ed, o)))
+                .collect();
+            ed.set_opening_width(edited, text).unwrap();
+            for (o, before) in others {
+                let after = where_(&ed, o);
+                assert_eq!(before.0, after.0, "{o} placement after {edited} -> {text}");
+                assert!(
+                    (before.1.0 - after.1.0).abs() < 1e-6 && (before.1.1 - after.1.1).abs() < 1e-6,
+                    "{o} span {:?} -> {:?} after {edited} -> {text}",
+                    before.1,
+                    after.1
+                );
+                for ((_, p), (_, q)) in before.2.iter().zip(&after.2) {
+                    assert!(
+                        p.distance(*q) < 1e-6,
+                        "{o} symbol moved after {edited} -> {text}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Every opening but `edited`: where it is set, its span, and its symbol's points; and every
+/// wall's centreline points.
+fn placed_but(ed: &Editor, edited: OpeningId) -> Vec<String> {
+    let mut out = Vec::new();
+    for (o, op) in ed.doc.openings() {
+        if o == edited {
+            continue;
+        }
+        let (a, b) = span(ed, o);
+        out.push(format!(
+            "{o} {:?} w{} seg{} {a:.6}..{b:.6}",
+            op.at, op.wall.0, op.seg
+        ));
+        for (k, p) in &op.made.points {
+            let q = ed.doc.point(*p).unwrap();
+            out.push(format!("{o} pt{k} {:.6},{:.6}", q.x, q.y));
+        }
+    }
+    for (w, wall) in ed.doc.walls() {
+        for c in &ed.doc.path(wall.centre).unwrap().curves {
+            for p in ed.doc.get(*c).unwrap().kind.points() {
+                let q = ed.doc.point(p).unwrap();
+                out.push(format!("{w:?} centre {p:?} {:.6},{:.6}", q.x, q.y));
+            }
+        }
+    }
+    out
+}
+
+fn assert_resizes_move_no_other(ed: &mut Editor, what: &str) {
+    let ids: Vec<OpeningId> = ed.doc.openings().map(|(id, _)| id).collect();
+    assert!(ids.len() >= 2, "{what}: {} openings", ids.len());
+    for &edited in &ids {
+        for text in ["1500", "600", "1250", "900"] {
+            let before = placed_but(ed, edited);
+            let r = ed.set_opening_width(edited, text);
+            let after = placed_but(ed, edited);
+            let moved: Vec<_> = before.iter().zip(&after).filter(|(a, b)| a != b).collect();
+            assert!(
+                moved.is_empty() && before.len() == after.len(),
+                "{what}: {edited} = {text} ({r:?}) moved others: {moved:#?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn resizing_an_opening_in_a_closed_room_moves_no_other() {
+    for auto in [false, true] {
+        let mut ed = editor();
+        ed.prefs.auto_relations = auto;
+        let mut tool = ToolKind::Wall.create();
+        for at in [
+            v(0.0, 0.0),
+            v(8000.0, 0.0),
+            v(8000.0, 5000.0),
+            v(0.0, 5000.0),
+            v(0.0, 0.0),
+        ] {
+            click(&mut ed, tool.as_mut(), at);
+        }
+        // Two close together on the south, one each on the other sides (the west is the
+        // closing segment).
+        let s1 = place(&mut ed, v(1500.0, 0.0)).unwrap();
+        let s2 = place(&mut ed, v(3000.0, 0.0)).unwrap();
+        let e = place(&mut ed, v(8000.0, 2500.0)).unwrap();
+        let n = place(&mut ed, v(6500.0, 5000.0)).unwrap();
+        let w = place(&mut ed, v(0.0, 3500.0)).unwrap();
+        // Some measured from their segment's far end, one centred.
+        ed.set_opening_offset(n, "400").unwrap();
+        ed.set_opening_offset(w, "700").unwrap();
+        ed.centre_openings(&[e]);
+        let _ = (s1, s2);
+        assert_resizes_move_no_other(&mut ed, &format!("closed room, auto {auto}"));
+    }
+}
+
+fn frame_at(ed: &Editor, o: OpeningId) -> (DVec2, f64) {
+    let f = ed.opening_frame(o).unwrap();
+    (f.point(DVec2::ZERO), f.width)
+}
+
+/// A wall teed into another by where its end is (on the host's face, not its centreline,
+/// as a typed length or a paste leaves it): resizing an opening snaps no end, so neither
+/// wall's openings move.
+#[test]
+fn resizing_an_opening_snaps_no_tee_end() {
+    let mut ed = editor();
+    let _host = run(&mut ed, &[v(0.0, 0.0), v(6000.0, 0.0)]);
+    let w2 = run(&mut ed, &[v(3000.0, 4000.0), v(3000.0, 1000.0)]);
+    let far = place(&mut ed, v(3000.0, 3300.0)).unwrap();
+    let near = place(&mut ed, v(3000.0, 1700.0)).unwrap();
+    let h = place(&mut ed, v(1500.0, 0.0)).unwrap();
+    ed.centre_openings(&[near]);
+    let wall = ed.doc.wall(w2).unwrap().clone();
+    let (_, pts, _) = drift_geom::walls::regen::centreline(&ed.doc, &wall).unwrap();
+    let end = *pts.last().unwrap();
+    ed.doc.begin();
+    ed.doc.set_point(end, v(3000.0, T / 2.0)).unwrap();
+    assert!(ed.commit("Move end"));
+    assert!(
+        ed.doc.wall(w2).unwrap().ends[1].tee.is_some(),
+        "teed by where it is"
+    );
+    let (f0, n0) = (frame_at(&ed, far), frame_at(&ed, near));
+    ed.set_opening_width(h, "1200").unwrap();
+    assert_eq!(
+        ed.doc.point(end).unwrap(),
+        v(3000.0, T / 2.0),
+        "end snapped"
+    );
+    assert_eq!(frame_at(&ed, near), n0);
+    assert_eq!(frame_at(&ed, far), f0);
+    // A window on the teed wall itself: its neighbour on that wall stays put.
+    ed.set_opening_width(far, "1200").unwrap();
+    assert_eq!(
+        ed.doc.point(end).unwrap(),
+        v(3000.0, T / 2.0),
+        "end snapped"
+    );
+    assert_eq!(frame_at(&ed, near), n0);
+}
+
+/// A wall with two doors whose length dimension an earlier edit left unmet: its end moved
+/// after that edit's solve (as a join's shared corner once did, or a file saved so): the
+/// doors, the one by that end first.
+fn wall_left_unmet() -> (Editor, OpeningId, OpeningId) {
+    let mut ed = editor();
+    let w1 = run(&mut ed, &[v(0.0, 0.0), v(4000.0, 0.0)]);
+    let near_end = place(&mut ed, v(3200.0, 0.0)).unwrap();
+    let edited = place(&mut ed, v(1000.0, 0.0)).unwrap();
+    let c = ed.doc.wall(w1).unwrap().centre;
+    let line = ed.doc.path(c).unwrap().curves[0];
+    let EntityKind::Line { a, b } = ed.doc.get(line).unwrap().kind else {
+        panic!()
+    };
+    ed.add_dimension(
+        Constraint::Distance {
+            a,
+            b,
+            value: 4000.0,
+        },
+        None,
+    )
+    .unwrap();
+    // The end moved and the walls followed, with no solve.
+    ed.doc.begin();
+    ed.doc.set_point(b, v(3960.0, 0.0)).unwrap();
+    ed.follow_walls();
+    let tx = ed.doc.commit("Move end unsolved");
+    ed.history.push(tx);
+    ed.sync();
+    let len = ed.doc.point(a).unwrap().distance(ed.doc.point(b).unwrap());
+    assert!((len - 3960.0).abs() < 1e-6, "the dimension is unmet: {len}");
+    (ed, near_end, edited)
+}
+
+/// A dimension an earlier edit left unmet is not solved by an edit of openings alone (a
+/// width, an offset, a delete): that would move the wall and the openings in it.
+#[test]
+fn an_opening_edit_solves_nothing_left_unmet() {
+    type Edit = fn(&mut Editor, OpeningId);
+    let edits: [(&str, Edit); 4] = [
+        ("width", |ed, o| ed.set_opening_width(o, "1200").unwrap()),
+        ("offset", |ed, o| ed.set_opening_offset(o, "500").unwrap()),
+        ("flip", |ed, o| {
+            assert!(ed.flip_openings(&[o], crate::openings::Flip::Hand));
+        }),
+        ("delete", |ed, o| assert!(ed.delete_openings(&[o]))),
+    ];
+    for (what, edit) in edits {
+        let (mut ed, near_end, edited) = wall_left_unmet();
+        let before = frame_at(&ed, near_end);
+        edit(&mut ed, edited);
+        assert_eq!(
+            frame_at(&ed, near_end),
+            before,
+            "{what} moved the other door"
+        );
+    }
+}
+
+/// An opening grown past the stretch it is in is refused, not moved past its neighbour.
+#[test]
+fn a_widened_opening_never_jumps_past_its_neighbour() {
+    let mut ed = editor();
+    run(&mut ed, &[v(0.0, 0.0), v(6000.0, 0.0)]);
+    let a = place(&mut ed, v(1200.0, 0.0)).unwrap();
+    let b = place(&mut ed, v(2600.0, 0.0)).unwrap();
+    let sb = span(&ed, b);
+    let r = ed.set_opening_width(a, "2400");
+    assert!(r.is_err(), "{:?}", span(&ed, a));
+    assert_eq!(span(&ed, b), sb);
+}
+
+/// An opening's offset is from the corner, not a neighbour's jamb: resizing the neighbour
+/// changes nothing it shows.
+#[test]
+fn an_offset_stays_when_a_neighbour_is_resized() {
+    let mut ed = editor();
+    run(&mut ed, &[v(0.0, 0.0), v(8000.0, 0.0)]);
+    let a = place(&mut ed, v(1500.0, 0.0)).unwrap();
+    let b = place(&mut ed, v(3500.0, 0.0)).unwrap();
+    let readout = |ed: &Editor| {
+        let (lo, hi, start) = ed.opening_offsets(b).unwrap();
+        let (u0, u1) = span(ed, b);
+        if start { u0 - lo } else { hi - u1 }
+    };
+    let before = readout(&ed);
+    ed.set_opening_width(a, "1500").unwrap();
+    assert!(
+        (readout(&ed) - before).abs() < 1e-6,
+        "{before} -> {}",
+        readout(&ed)
+    );
+}
+
+/// A typed offset that would put an opening onto or past its neighbour is refused; one
+/// within its stretch reads back as typed.
+#[test]
+fn a_typed_offset_never_passes_a_neighbour() {
+    let mut ed = editor();
+    run(&mut ed, &[v(0.0, 0.0), v(8000.0, 0.0)]);
+    let a = place(&mut ed, v(1500.0, 0.0)).unwrap();
+    let b = place(&mut ed, v(3500.0, 0.0)).unwrap();
+    let (sa, sb) = (span(&ed, a), span(&ed, b));
+    for text in ["600", "1200"] {
+        assert!(ed.set_opening_offset(b, text).is_err(), "{text}");
+        assert_eq!((span(&ed, a), span(&ed, b)), (sa, sb), "{text}");
+    }
+    ed.set_opening_offset(b, "2600").unwrap();
+    let (lo, _, start) = ed.opening_offsets(b).unwrap();
+    assert!(start && (span(&ed, b).0 - lo - 2600.0).abs() < 1e-6);
+    assert_eq!(span(&ed, a), sa);
+    // Short of a corner it stops at the corner's clearance, as before.
+    assert!(ed.set_opening_offset(a, "0").is_ok());
+}
+
+/// A centred opening widened past what its stretch leaves either side of the middle goes as
+/// near the middle as its stretch lets it, never onto its neighbour.
+#[test]
+fn a_widened_centred_opening_stays_off_its_neighbour() {
+    let mut ed = editor();
+    run(&mut ed, &[v(0.0, 0.0), v(8000.0, 0.0)]);
+    let a = place(&mut ed, v(4000.0, 0.0)).unwrap();
+    let b = place(&mut ed, v(5600.0, 0.0)).unwrap();
+    ed.centre_openings(&[a]);
+    let sb = span(&ed, b);
+    ed.set_opening_width(a, "3000").unwrap();
+    let (a0, a1) = span(&ed, a);
+    assert!(a1 <= sb.0, "{:?} onto {sb:?}", (a0, a1));
+    assert!((a1 - a0 - 3000.0).abs() < 1e-6);
+    assert_eq!(span(&ed, b), sb);
+    // Narrowed again so it fits about the middle: centred once more when typed so.
+    ed.set_opening_width(a, "900").unwrap();
+    assert_eq!(span(&ed, b), sb);
+}
+
+/// Placing or deleting an opening snaps no tee end left off its host's centreline either, so
+/// no other opening moves (#553).
+#[test]
+fn placing_or_deleting_an_opening_snaps_no_tee_end() {
+    for what in ["delete", "place"] {
+        let mut ed = editor();
+        let _host = run(&mut ed, &[v(0.0, 0.0), v(6000.0, 0.0)]);
+        let w2 = run(&mut ed, &[v(3000.0, 4000.0), v(3000.0, 1000.0)]);
+        let far = place(&mut ed, v(3000.0, 3300.0)).unwrap();
+        let near = place(&mut ed, v(3000.0, 1700.0)).unwrap();
+        let h = place(&mut ed, v(1500.0, 0.0)).unwrap();
+        ed.centre_openings(&[near]);
+        let wall = ed.doc.wall(w2).unwrap().clone();
+        let (_, pts, _) = drift_geom::walls::regen::centreline(&ed.doc, &wall).unwrap();
+        let end = *pts.last().unwrap();
+        ed.doc.begin();
+        ed.doc.set_point(end, v(3000.0, T / 2.0)).unwrap();
+        assert!(ed.commit("Move end"));
+        assert!(ed.doc.wall(w2).unwrap().ends[1].tee.is_some());
+        let (f0, n0) = (frame_at(&ed, far), frame_at(&ed, near));
+        match what {
+            "place" => {
+                place(&mut ed, v(4800.0, 0.0)).unwrap();
+            }
+            _ => assert!(ed.delete_openings(&[h])),
+        }
+        assert_eq!(
+            ed.doc.point(end).unwrap(),
+            v(3000.0, T / 2.0),
+            "{what}: end snapped"
+        );
+        assert_eq!(frame_at(&ed, near), n0, "{what}: near moved");
+        assert_eq!(frame_at(&ed, far), f0, "{what}: far moved");
+    }
+}

@@ -910,7 +910,7 @@ impl DriftApp {
             .weak(),
         );
         ui.label(
-            egui::RichText::new("The middle or right mouse button drags the view either way.")
+            egui::RichText::new("The middle mouse button drags the view either way.")
                 .small()
                 .weak(),
         );

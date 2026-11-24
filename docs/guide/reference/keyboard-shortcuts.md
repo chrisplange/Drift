@@ -187,7 +187,7 @@ With no key (use the Annotate menu or the command palette): **Section mark**, **
 | Key | Does |
 |---|---|
 | Double middle-click | Zoom to fit |
-| Middle or right drag | Pan |
+| Middle drag | Pan |
 | Scroll / pinch | Zoom at the pointer (two fingers on a trackpad pan) |
 | Drag a panel's tab | Onto the canvas to float it, or onto either side to dock it |
 

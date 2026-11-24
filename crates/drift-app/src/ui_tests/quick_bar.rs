@@ -411,25 +411,25 @@ fn the_bar_is_placed_inside_the_canvas_and_never_over_a_pick() {
     let top = |at: egui::Rect| (at.top() - canvas.top() - quick_bar::MARGIN).abs() < 1.0;
     // In the middle: under it, centred on it.
     let p = pick(400.0, 300.0, 120.0, 80.0);
-    let at = quick_bar::place(canvas, size, &[p], &[]);
+    let at = quick_bar::place(canvas, size, &[p], &[], &[]);
     assert!(under(at, p) && (at.center().x - p.center().x).abs() < 1.0);
     // The same again: the same place.
-    assert_eq!(at, quick_bar::place(canvas, size, &[p], &[]));
+    assert_eq!(at, quick_bar::place(canvas, size, &[p], &[], &[]));
     // Against the canvas's side: still under it, pushed inside.
     for p in [
         pick(50.0, 300.0, 40.0, 80.0),
         pick(940.0, 300.0, 200.0, 80.0),
     ] {
-        let at = quick_bar::place(canvas, size, &[p], &[]);
+        let at = quick_bar::place(canvas, size, &[p], &[], &[]);
         assert!(under(at, p) && canvas.shrink(quick_bar::MARGIN - 0.5).contains_rect(at));
     }
     // At the foot of the canvas, where there is no room under it: over it.
     let p = pick(400.0, 700.0, 120.0, 60.0);
-    let at = quick_bar::place(canvas, size, &[p], &[]);
+    let at = quick_bar::place(canvas, size, &[p], &[], &[]);
     assert!(over(at, p) && !at.intersects(p));
     // Filling the canvas from top to bottom, off to one side: the foot, in the middle.
     let p = pick(60.0, 80.0, 100.0, 690.0);
-    let at = quick_bar::place(canvas, size, &[p], &[]);
+    let at = quick_bar::place(canvas, size, &[p], &[], &[]);
     assert!(foot(at) && !at.intersects(p));
     assert!((at.center().x - canvas.center().x).abs() < 1.0);
     // Two picks far apart, with one where the foot's bar would be: the top.
@@ -437,27 +437,55 @@ fn the_bar_is_placed_inside_the_canvas_and_never_over_a_pick() {
         pick(300.0, 80.0, 20.0, 20.0),
         pick(450.0, 730.0, 80.0, 30.0),
     ];
-    let at = quick_bar::place(canvas, size, &picks, &[]);
+    let at = quick_bar::place(canvas, size, &picks, &[], &[]);
     assert!(top(at) && picks.iter().all(|p| !at.intersects(*p)));
     // Out of view: the foot.
-    let at = quick_bar::place(canvas, size, &[pick(4000.0, 300.0, 100.0, 50.0)], &[]);
+    let at = quick_bar::place(canvas, size, &[pick(4000.0, 300.0, 100.0, 50.0)], &[], &[]);
     assert!(foot(at));
     // A dimension's label where the bar would go under the pick: over the pick instead; and
     // with one there too, the foot. The bar is never on something that is clicked.
     let p = pick(400.0, 300.0, 120.0, 80.0);
     let under_it = pick(440.0, 410.0, 40.0, 16.0);
     let over_it = pick(440.0, 250.0, 40.0, 16.0);
-    let at = quick_bar::place(canvas, size, &[p], &[under_it]);
+    let at = quick_bar::place(canvas, size, &[p], &[under_it], &[]);
     assert!(over(at, p) && !at.intersects(under_it));
-    let at = quick_bar::place(canvas, size, &[p], &[under_it, over_it]);
+    let at = quick_bar::place(canvas, size, &[p], &[under_it, over_it], &[]);
     assert!(foot(at) && !at.intersects(under_it) && !at.intersects(over_it));
     // Whatever the picks, the bar is inside the canvas.
     for x in [-200.0, 48.0, 500.0, 900.0, 1200.0] {
         for y in [-100.0, 74.0, 400.0, 700.0, 900.0] {
-            let at = quick_bar::place(canvas, size, &[pick(x, y, 60.0, 40.0)], &[]);
+            let at = quick_bar::place(canvas, size, &[pick(x, y, 60.0, 40.0)], &[], &[]);
             assert!(canvas.contains_rect(at), "{at:?} for a pick at {x}, {y}");
         }
     }
+}
+
+#[test]
+fn the_bar_slides_clear_of_a_floating_panel() {
+    let r = |x: f32, y: f32, w: f32, h: f32| {
+        egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(w, h))
+    };
+    let canvas = r(0.0, 0.0, 1600.0, 900.0);
+    let size = egui::vec2(300.0, quick_bar::HEIGHT);
+    let picks = [r(1100.0, 200.0, 300.0, 200.0)];
+    // Without panels: centred under the picks.
+    let free = quick_bar::place(canvas, size, &picks, &[], &[]);
+    assert_eq!(free.center().x.round(), 1250.0);
+    // A panel over that place: just beside it, still under the picks.
+    let panel = r(1180.0, 50.0, 300.0, 600.0);
+    let bar = quick_bar::place(canvas, size, &picks, &[], &[panel]);
+    assert!(!bar.intersects(panel), "{bar:?}");
+    assert_eq!(bar.top(), free.top());
+    assert!(canvas.contains_rect(bar));
+    // A panel down the whole canvas over the middle: the bar is beside it at the foot, or
+    // anywhere clear of it.
+    let wall = r(600.0, 0.0, 400.0, 900.0);
+    let picks = [r(700.0, 300.0, 200.0, 100.0)];
+    let bar = quick_bar::place(canvas, size, &picks, &[], &[wall]);
+    assert!(
+        !bar.intersects(wall) && canvas.contains_rect(bar),
+        "{bar:?}"
+    );
 }
 
 #[test]

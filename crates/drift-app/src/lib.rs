@@ -423,6 +423,11 @@ struct CanvasView {
     last_pointer: Option<Pointer>,
     /// Where the canvas was laid out last frame.
     canvas_rect: egui::Rect,
+    /// The fit last applied, and the window's rect then: a fit already shown is given up
+    /// when the panels change the canvas (the drawing holds still), but kept when the window
+    /// itself changes size (see `set_canvas_rect`).
+    fitted: Option<Bounds>,
+    screen_rect: egui::Rect,
     /// The sheet shown in the Sheets tab and the preview.
     active_sheet: Option<drift_core::SheetId>,
     /// The canvas shows the current sheet as it prints, instead of the model.
@@ -565,6 +570,8 @@ impl CanvasView {
             pointer: None,
             last_pointer: None,
             canvas_rect: egui::Rect::NOTHING,
+            fitted: None,
+            screen_rect: egui::Rect::NOTHING,
             active_sheet: None,
             sheet_preview: false,
             preview: Default::default(),

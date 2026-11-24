@@ -459,3 +459,107 @@ fn smoke_selection_right_click_zooms_to_the_selection() {
         "zoomed in on the line: {before} → {after}"
     );
 }
+
+/// #498: in a drag, nothing that moves with it is a snap target or the start of a guide (a
+/// corner dragged across its own rectangle, pulling its neighbours along), and a point dragged
+/// along the grid past a vertex keeps its snap on small pointer moves instead of flickering
+/// between the vertex and the grid.
+#[test]
+fn smoke_selection_drag_snaps_skip_itself_and_hold() {
+    let Some(mut h) = harness() else { return };
+    view(&mut h, DVec2::new(-30.0, -40.0), DVec2::new(90.0, 50.0));
+    let tol = crate::PICK_RADIUS / h.state().drawing.view.camera.scale;
+    rectangle(&mut h, DVec2::ZERO, DVec2::new(40.0, 30.0), Fill::No);
+    let start = positions(&h);
+    let corner = |at: DVec2| {
+        start
+            .iter()
+            .find(|(_, p)| p.distance(at) < 0.5)
+            .map(|(id, _)| *id)
+            .unwrap()
+    };
+    let top_right = corner(DVec2::new(40.0, 30.0));
+    // A guide could start from where the corner beside it was (snapped to before).
+    let beside = at(&h, corner(DVec2::new(0.0, 30.0)));
+    h.state_mut().drawing.inference_points.push(beside);
+    // The top right corner dragged left, toward the left side: the corner beside it follows
+    // (its side stays level), and the pointer comes within reach of where it is and was.
+    let (from, to) = (at(&h, top_right), DVec2::new(beside.x + 0.4 * tol, 20.0));
+    let (a, b) = (screen(&h, from), screen(&h, to));
+    h.hover_at(a);
+    h.run();
+    button(&h, a, true);
+    h.run();
+    let steps = 24;
+    for k in 1..=steps {
+        h.hover_at(a + (b - a) * (k as f32 / steps as f32));
+        h.run();
+        let app = h.state();
+        let doc = &app.drawing.editor.doc;
+        let moved = |id: EntityId| {
+            let was = |p: EntityId| start.iter().find(|(q, _)| *q == p).map(|(_, at)| *at);
+            let gone = |p: EntityId| was(p).is_none_or(|w| doc.point(p).unwrap() != w);
+            match doc.get(id).map(|e| e.kind) {
+                Some(k) if k.is_point() => gone(id),
+                Some(k) => k.points().any(gone),
+                None => false,
+            }
+        };
+        let p = app.drawing.view.pointer.expect("on the canvas");
+        if let Some(e) = p.snap.and_then(|s| s.entity) {
+            assert!(
+                !moved(e),
+                "step {k}: snapped to {e:?}, which moves with the drag"
+            );
+        }
+        if let Some(g) = p.guide {
+            for q in g.from.into_iter().flatten() {
+                assert!(q.distance(beside) > 1e-6, "step {k}: a guide from {q:?}");
+            }
+        }
+    }
+    button(&h, b, false);
+    h.run();
+    assert!(at(&h, top_right).distance(to) < 0.5 * tol, "dragged there");
+    undo(&mut h);
+
+    // A loose line, and another whose end is dragged past the first's end with the grid on.
+    let fixed = line(&mut h, DVec2::new(10.0, -30.0), DVec2::new(30.0, -20.0));
+    let loose = line(&mut h, DVec2::new(50.0, -5.0), DVec2::new(60.0, 0.0));
+    let vertex = at(&h, ends(&h, fixed).1);
+    let dragged = at(&h, ends(&h, loose).1);
+    h.state_mut().grid_snap = true;
+    h.run();
+    // Pointer spots to the right of the vertex, `d` capture radii from it.
+    let spot = |h: &Harness<'_, DriftApp>, d: f64| screen(h, vertex + DVec2::new(d * tol, 0.0));
+    let from = screen(&h, dragged);
+    h.hover_at(from);
+    h.run();
+    button(&h, from, true);
+    h.run();
+    let first = spot(&h, 3.0);
+    for k in 1..=6 {
+        h.hover_at(from + (first - from) * (k as f32 / 6.0));
+        h.run();
+    }
+    let snap_at = |h: &mut Harness<'_, DriftApp>, d: f64| {
+        let pos = spot(h, d);
+        h.hover_at(pos);
+        h.run();
+        h.state().drawing.view.pointer.and_then(|p| p.snap)
+    };
+    let on_vertex = |s: Option<drift_geom::Snap>| {
+        s.is_some_and(|s| s.kind == drift_geom::SnapKind::Endpoint && s.at == vertex)
+    };
+    assert!(on_vertex(snap_at(&mut h, 0.5)), "within reach: the vertex");
+    // Small moves about the edge of reach keep it.
+    for d in [1.1, 0.95, 1.15, 1.05, 1.2] {
+        assert!(on_vertex(snap_at(&mut h, d)), "held at {d} radii");
+    }
+    // Clearly away, it lets go, and only comes back within reach (geometry first).
+    assert!(!on_vertex(snap_at(&mut h, 2.0)), "let go");
+    assert!(!on_vertex(snap_at(&mut h, 1.1)), "not back yet");
+    assert!(on_vertex(snap_at(&mut h, 0.9)), "back within reach");
+    button(&h, spot(&h, 0.9), false);
+    h.run();
+}

@@ -1,3 +1,5 @@
+> **Archived 2026-11-24.** History, not current guidance. See [the archive index](README.md).
+
 # Design note: one kind of filled shape (#202)
 
 Status: **decided by the user on 2026-10-27 and built** in the same PR as the #201 fix

@@ -1,3 +1,5 @@
+> **Archived 2026-11-24.** History, not current guidance. See [the archive index](README.md).
+
 # UI audit 1: the tool rail and how tools are grouped
 
 Status: **decided 2026-10-26: layout A** (with B's two columns in narrow windows), and the recommended answers to the other decisions in section 6, except the compact rail stays automatic (no View option). Built in the PR that adds `app/rail.rs`. The audit below is as written before the decision. Main at f91f9d2, with Walls W1 (PR #176,

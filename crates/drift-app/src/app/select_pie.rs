@@ -1,11 +1,13 @@
-//! The Selection filter pie (hold S): the seven kinds the Selection filter picks, plus All, in
-//! a ring around the pointer (#481). Each has a fixed place, so it becomes a flick: hold S,
-//! move towards Edges, let go, and only edges are picked; flick to All for everything back.
-//! A quick tap of S still just takes the Select tool. Held still until the ring shows, then
-//! let go in the middle, and the ring stays open: clicks there turn kinds on and off, several
-//! at once. Esc, a right click or S closes it. The kinds the filter picks now are lit.
+//! The Selection filter pie (Shift+Q unless changed): the seven kinds the Selection filter
+//! picks, plus All, in a ring around the pointer (#481). It shows as soon as the key goes down.
+//! Each kind has a fixed place, so it becomes a flick: hold the key, move towards Edges, let
+//! go, and only edges are picked; flick to All for everything back. Let go in the middle (or
+//! tap the key) and the ring stays open: clicks there turn kinds on and off, several at once.
+//! Clicks made with the key still held count the same, and letting go then just closes the
+//! ring: it never flicks over them. Esc, a right click or the key again closes it. The kinds
+//! the filter picks now are lit.
 //!
-//! The same tap/hold model as the relations pie (Q, [`super::pie`]), and its geometry.
+//! The same flick-or-click model as the relations pie (Q, [`super::pie`]), and its geometry.
 
 use super::pie::{DEAD_ZONE, RADIUS, place_at, place_pos};
 use crate::*;
@@ -23,17 +25,13 @@ pub(crate) const PLACES: [Option<PickKind>; 8] = [
     Some(PickKind::Annotations),
 ];
 
-/// How long S has to be held, still, before the ring shows (a shorter press is a tap).
-const HOLD: f64 = 0.3;
-
-/// The Selection filter pie, from S going down.
+/// The Selection filter pie, open.
 pub(crate) struct SelectPie {
     pub center: egui::Pos2,
-    /// S is still down: letting go chooses what the pointer is towards.
+    /// Its key is still down: letting go towards a kind picks only that kind.
     pub held: bool,
-    /// The ring is showing (S has been held long enough, or the pointer moved off).
-    pub shown: bool,
-    pressed_at: f64,
+    /// A kind has been clicked since it opened: letting go of the key no longer flicks.
+    pub clicked: bool,
 }
 
 /// Its name on the ring.
@@ -49,13 +47,24 @@ fn lit(filter: PickFilter, kind: Option<PickKind>) -> bool {
     }
 }
 
+/// The filter after a click on `kind`: with everything picked, that kind alone (so clicks
+/// gather kinds); otherwise that kind on or off. All: everything.
+fn toggled(filter: PickFilter, kind: Option<PickKind>) -> PickFilter {
+    match kind {
+        Some(kind) if filter.is_all() => PickFilter::only(kind),
+        Some(kind) => filter.with(kind, !filter.has(kind)),
+        None => PickFilter::ALL,
+    }
+}
+
 impl DriftApp {
-    /// S: a tap takes the Select tool, a hold opens the Selection filter pie. While it is down
-    /// or the ring is open the keys are its own. Returns true if the keyboard was used here.
+    /// The Selection filter pie's key: down opens the ring at once. While it is down or the
+    /// ring is open the keys are its own. Returns true if the keyboard was used here.
     pub(crate) fn select_pie_keys(&mut self, ctx: &egui::Context) -> bool {
-        // The Select tool's key, the user's (#499): S unless changed.
+        // The pie's key, the user's (#499): Shift+Q unless changed.
         let (pressed, released, escape, pointer, now) = ctx.input(|i| {
-            let (pressed, released) = crate::keymap::pressed_released(i, "edit.select");
+            let (pressed, released) =
+                crate::keymap::pressed_released(i, "edit.selection_filter_pie");
             (
                 pressed,
                 released,
@@ -68,55 +77,46 @@ impl DriftApp {
             if !pressed || self.tool.is_busy() || ctx.egui_wants_keyboard_input() {
                 return false;
             }
-            let at = pointer.unwrap_or(self.drawing.view.canvas_rect.center());
-            // (Kept clear of the window's edges, with room for the labels around it.)
-            let screen = ctx.content_rect().shrink2(egui::vec2(170.0, 130.0));
-            self.select_pie = Some(SelectPie {
-                center: if screen.is_positive() {
-                    screen.clamp(at)
-                } else {
-                    at
-                },
-                held: true,
-                shown: false,
-                pressed_at: now,
-            });
-            if released {
-                // Down and up in one frame: a tap.
-                self.select_pie = None;
-                self.tool_key(ctx, ToolKind::Select);
-            } else {
-                ctx.request_repaint_after(std::time::Duration::from_secs_f64(HOLD));
-            }
+            // Down and up in one frame, a tap, leaves the ring open to click.
+            self.open_select_pie(ctx, pointer, !released);
             return true;
         };
-        if pie.held && !pie.shown {
-            let moved = pointer.is_some_and(|p| (p - pie.center).length() >= DEAD_ZONE);
-            if moved || now - pie.pressed_at >= HOLD {
-                pie.shown = true;
-            } else if !released {
-                ctx.request_repaint_after(std::time::Duration::from_secs_f64(
-                    (HOLD - (now - pie.pressed_at)).max(0.01),
-                ));
-            }
-        }
         if escape || (pressed && !pie.held) {
             self.select_pie = None;
         } else if released && pie.held {
-            if !pie.shown {
-                // Let go before the ring showed: a tap.
-                self.select_pie = None;
-                self.tool_key(ctx, ToolKind::Select);
-                return true;
-            }
             pie.held = false;
-            // A flick: let go towards a kind to pick only it. Let go in the middle and the
-            // ring stays, to click.
-            if let Some(place) = pointer.and_then(|p| place_at(pie.center, p)) {
+            if pie.clicked {
+                // Kinds were clicked with the key down: they stand, and the ring is done.
+                self.select_pie = None;
+            } else if let Some(place) = pointer.and_then(|p| place_at(pie.center, p)) {
+                // A flick: let go towards a kind to pick only it. Let go in the middle and
+                // the ring stays, to click.
                 self.select_pie_flick(place, now);
             }
         }
         true
+    }
+
+    /// Open the ring around `at` (the pointer; the canvas's middle without one), kept clear
+    /// of the window's edges. `held`: its key is still down.
+    pub(crate) fn open_select_pie(
+        &mut self,
+        ctx: &egui::Context,
+        at: Option<egui::Pos2>,
+        held: bool,
+    ) {
+        let at = at.unwrap_or(self.drawing.view.canvas_rect.center());
+        // (Room for the labels around it.)
+        let screen = ctx.content_rect().shrink2(egui::vec2(170.0, 130.0));
+        self.select_pie = Some(SelectPie {
+            center: if screen.is_positive() {
+                screen.clamp(at)
+            } else {
+                at
+            },
+            held,
+            clicked: false,
+        });
     }
 
     /// Let go towards `place`: pick only that kind, or everything for All.
@@ -131,24 +131,21 @@ impl DriftApp {
         );
     }
 
-    /// A click on `place` with the ring open: turn that kind on or off (All: everything on).
-    /// The ring stays open, for more.
+    /// A click on `place` with the ring open: see [`toggled`]. The ring stays open, for more.
     pub(crate) fn select_pie_toggle(&mut self, place: usize) {
-        let filter = self.drawing.editor.prefs.pick_filter;
-        let filter = match PLACES[place] {
-            Some(kind) => filter.with(kind, !filter.has(kind)),
-            None => PickFilter::ALL,
-        };
+        if let Some(pie) = &mut self.select_pie {
+            pie.clicked = true;
+        }
+        let filter = toggled(self.drawing.editor.prefs.pick_filter, PLACES[place]);
         self.set_pick_filter(filter);
     }
 
     /// Draw the Selection filter pie, once it shows, and take its clicks.
     pub(crate) fn selection_filter_pie(&mut self, ctx: &egui::Context) {
-        let Some((center, held)) = self
+        let Some((center, flicks)) = self
             .select_pie
             .as_ref()
-            .filter(|p| p.shown)
-            .map(|p| (p.center, p.held))
+            .map(|p| (p.center, p.held && !p.clicked))
         else {
             return;
         };
@@ -168,7 +165,7 @@ impl DriftApp {
                 } else if response.secondary_clicked() {
                     clicked = Some(None);
                 }
-                paint(ui, center, filter, towards, held);
+                paint(ui, center, filter, towards, flicks);
             });
         match clicked {
             Some(Some(place)) => self.select_pie_toggle(place),
@@ -183,7 +180,7 @@ fn paint(
     center: egui::Pos2,
     filter: PickFilter,
     towards: Option<usize>,
-    held: bool,
+    flicks: bool,
 ) {
     let painter = ui.painter();
     let visuals = ui.visuals();
@@ -251,7 +248,9 @@ fn paint(
     // What choosing would do, under the ring; and the filter now, while nothing is pointed at.
     let text = match towards.map(|p| PLACES[p]) {
         Some(None) => "Pick everything".to_owned(),
-        Some(Some(kind)) if held => format!("Pick only {}", kind.label().to_lowercase()),
+        Some(Some(kind)) if flicks || filter.is_all() => {
+            format!("Pick only {}", kind.label().to_lowercase())
+        }
         Some(Some(kind)) if filter.has(kind) => {
             format!("Stop picking {}", kind.label().to_lowercase())
         }

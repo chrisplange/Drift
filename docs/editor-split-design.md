@@ -2,7 +2,7 @@
 
 *2026-10-28, against `main` at 29df65c (R1 merged; format 43). Written by the Fable review
 session for the Opus sessions that build it, one slice per PR. Companion to
-[open-drawings-decision.md](open-drawings-decision.md) (tabs step 2, which this does) and
+[open-drawings-decision.md](archive/open-drawings-decision.md) (tabs step 2, which this does) and
 issue #186. Updated 2026-10-30 as it landed with S1 (main at 347fee6, format 44): the rulings
 on the measure-first survey (§8) and what S1 decided (marked "S1:") are folded in, and what
 S2 decided (marked "S2:"). Offsets as

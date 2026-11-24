@@ -717,8 +717,9 @@ fn resizing_an_opening_snaps_no_tee_end() {
     assert_eq!(frame_at(&ed, near), n0);
 }
 
-/// A wall with two doors whose length dimension a join left unmet (it pulled the
-/// dimensioned end): the doors, the one by that end first.
+/// A wall with two doors whose length dimension an earlier edit left unmet: its end moved
+/// after that edit's solve (as a join's shared corner once did, or a file saved so): the
+/// doors, the one by that end first.
 fn wall_left_unmet() -> (Editor, OpeningId, OpeningId) {
     let mut ed = editor();
     let w1 = run(&mut ed, &[v(0.0, 0.0), v(4000.0, 0.0)]);
@@ -738,12 +739,15 @@ fn wall_left_unmet() -> (Editor, OpeningId, OpeningId) {
         None,
     )
     .unwrap();
-    let _w2 = run(&mut ed, &[v(3960.0, 2000.0), v(3960.0, 30.0)]);
+    // The end moved and the walls followed, with no solve.
+    ed.doc.begin();
+    ed.doc.set_point(b, v(3960.0, 0.0)).unwrap();
+    ed.follow_walls();
+    let tx = ed.doc.commit("Move end unsolved");
+    ed.history.push(tx);
+    ed.sync();
     let len = ed.doc.point(a).unwrap().distance(ed.doc.point(b).unwrap());
-    assert!(
-        (len - 3960.0).abs() < 1e-6,
-        "the join left the dimension unmet: {len}"
-    );
+    assert!((len - 3960.0).abs() < 1e-6, "the dimension is unmet: {len}");
     (ed, near_end, edited)
 }
 

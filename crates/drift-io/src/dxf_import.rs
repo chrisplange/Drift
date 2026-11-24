@@ -27,10 +27,20 @@ use drift_draft::{PatLine, Pattern};
 
 use crate::dxf::{aci_rgb, bulge_arc, parse_line_type, unit_scale};
 
-/// How deep blocks may nest (a block that contains itself stops here).
+/// How deep blocks may nest.
 const MAX_DEPTH: usize = 16;
 /// The most copies an arrayed insert (MINSERT) is expanded to.
 const MAX_ARRAY: usize = 10_000;
+/// The most objects one import expands out of blocks (kept blocks' contents, and blocks,
+/// arrays and dimensions drawn out in place), all together. Real drawings stay far below it;
+/// a small file whose blocks each place several others, nested deep, would otherwise grow
+/// to billions of copies (#409). Unit tests use a small one to reach it quickly.
+const MAX_EXPANDED: usize = if cfg!(test) { 20_000 } else { 2_000_000 };
+/// The note for an import that reached [`MAX_EXPANDED`].
+const TOO_MANY_COPIES: &str = "Blocks placed inside blocks made more copies than Drift brings \
+     in (2 million objects), so the rest were left out.";
+/// The note for a block that places itself (AutoCAD doesn't allow it).
+const PLACES_ITSELF: &str = "Blocks that place themselves were cut off there.";
 
 /// A curve read from a DXF file (world millimetres).
 #[derive(Clone, Debug, PartialEq)]
@@ -1217,6 +1227,11 @@ struct Reader<'a> {
     skipped: BTreeMap<String, usize>,
     notes: BTreeSet<&'static str>,
     dimensions: usize,
+    /// How many more objects may be expanded out of blocks (see [`MAX_EXPANDED`]).
+    expand_left: usize,
+    /// The blocks being expanded right now, outermost first (upper case): a block found
+    /// placing itself, directly or through others, stops there.
+    expanding: Vec<String>,
     /// Blocks placed by inserts that were kept as inserts, by the name the inserts use.
     used: BTreeMap<String, Kept>,
     /// Whether a block has anything "by block" in it (or in blocks it places "by block").
@@ -1276,6 +1291,14 @@ impl<'a> Reader<'a> {
         keep_inserts: bool,
         sink: &mut Sink,
     ) {
+        // Everything below the drawing itself was expanded out of a block.
+        if depth > 0 {
+            if self.expand_left == 0 {
+                self.notes.insert(TOO_MANY_COPIES);
+                return;
+            }
+            self.expand_left -= 1;
+        }
         let own_layer = raw.s(8).unwrap_or("0");
         let layer = match (&inherit.layer, own_layer) {
             (Some(outer), "0") => outer.clone(),
@@ -1784,6 +1807,11 @@ impl<'a> Reader<'a> {
                 if depth >= MAX_DEPTH {
                     return;
                 }
+                let key = name.to_ascii_uppercase();
+                if self.expanding.contains(&key) {
+                    self.notes.insert(PLACES_ITSELF);
+                    return;
+                }
                 let inner = xf.then(&Xf::translate(-block.base));
                 let entities = block.entities.clone();
                 let inherit = Inherit {
@@ -1793,9 +1821,11 @@ impl<'a> Reader<'a> {
                     weight,
                     own_layers: inherit.own_layers,
                 };
+                self.expanding.push(key);
                 for child in &entities {
                     self.emit(child, &inner, &inherit, depth + 1, false, sink);
                 }
+                self.expanding.pop();
                 self.dimensions += 1;
             }
             "INSERT" => {
@@ -1886,6 +1916,10 @@ impl<'a> Reader<'a> {
                         self.skip("INSERT (array too large)");
                         return;
                     }
+                    if self.expanding.contains(&key) {
+                        self.notes.insert(PLACES_ITSELF);
+                        return;
+                    }
                     let entities = block.entities.clone();
                     let inherit = Inherit {
                         layer: Some(layer.clone()),
@@ -1895,8 +1929,13 @@ impl<'a> Reader<'a> {
                         own_layers: inherit.own_layers,
                     };
                     let turn = Xf::insert(DVec2::ZERO, angle, 1.0, 1.0);
-                    for row in 0..rows {
+                    self.expanding.push(key);
+                    'copies: for row in 0..rows {
                         for col in 0..cols {
+                            if self.expand_left == 0 && !entities.is_empty() {
+                                self.notes.insert(TOO_MANY_COPIES);
+                                break 'copies;
+                            }
                             let offset = turn.vector(DVec2::new(col as f64 * dc, row as f64 * dr));
                             let place = own
                                 .then(&Xf::insert(at + offset, angle, sx, sy))
@@ -1906,6 +1945,7 @@ impl<'a> Reader<'a> {
                             }
                         }
                     }
+                    self.expanding.pop();
                 }
                 // Attribute values travel with the insert, in the same coordinates as it.
                 let inherit = Inherit {
@@ -2478,6 +2518,8 @@ pub fn read_at(text: &str, default_mm_per_unit: f64, drawn_at: f64) -> Result<Dx
         skipped: BTreeMap::new(),
         notes: BTreeSet::new(),
         dimensions: 0,
+        expand_left: MAX_EXPANDED,
+        expanding: Vec::new(),
         used: BTreeMap::new(),
         by_block: HashMap::new(),
         true_names,
@@ -2517,9 +2559,11 @@ pub fn read_at(text: &str, default_mm_per_unit: f64, drawn_at: f64) -> Result<Dx
             ..kept.inherit.clone()
         };
         let mut inner = Sink::default();
+        reader.expanding.push(kept.block.clone());
         for raw in &entities {
             reader.emit(raw, &place, &inherit, 1, false, &mut inner);
         }
+        reader.expanding.pop();
         out_blocks.push(DxfBlock {
             name: name.clone(),
             label,
@@ -5411,6 +5455,89 @@ mod tests {
         // A file cut off before its end still gives what it has.
         let cut = "  0\nSECTION\n  2\nENTITIES\n  0\nLINE\n 10\n0\n 20\n0\n 11\n5\n 21\n5\n  0\nCIRCLE\n 10\n1";
         assert_eq!(read(cut, 1.0).unwrap().entities.len(), 1);
+    }
+
+    /// A file with these blocks (name, then code pairs) and model space.
+    fn with_blocks(blocks: &[(&str, &[(i32, &str)])], model: &[(i32, &str)]) -> String {
+        let mut all = vec![(0, "SECTION"), (2, "BLOCKS")];
+        for (name, body) in blocks {
+            all.extend_from_slice(&[(0, "BLOCK"), (2, name)]);
+            all.extend_from_slice(body);
+            all.push((0, "ENDBLK"));
+        }
+        all.extend_from_slice(&[(0, "ENDSEC"), (0, "SECTION"), (2, "ENTITIES")]);
+        all.extend_from_slice(model);
+        all.extend_from_slice(&[(0, "ENDSEC"), (0, "EOF")]);
+        dxf(&all)
+    }
+
+    /// Curves in model space and in kept blocks.
+    fn curves(import: &DxfImport) -> usize {
+        import.entities.len()
+            + import
+                .blocks
+                .iter()
+                .map(|b| b.entities.len())
+                .sum::<usize>()
+    }
+
+    #[test]
+    fn a_block_that_places_itself_stops_at_once() {
+        // B places A and itself twice: drawn out 16 deep that was tens of millions of
+        // copies from a few hundred bytes (#409).
+        let a: &[(i32, &str)] = &[
+            (0, "INSERT"),
+            (2, "B"),
+            (0, "LINE"),
+            (10, "0"),
+            (20, "0"),
+            (11, "1"),
+            (21, "0"),
+        ];
+        let b: &[(i32, &str)] = &[
+            (0, "INSERT"),
+            (2, "A"),
+            (0, "INSERT"),
+            (2, "B"),
+            (0, "INSERT"),
+            (2, "B"),
+        ];
+        // Kept as a block, and mirrored (so drawn out in place).
+        for model in [
+            &[(0, "INSERT"), (2, "A")][..],
+            &[(0, "INSERT"), (2, "A"), (42, "-1")][..],
+        ] {
+            let import = read(&with_blocks(&[("A", a), ("B", b)], model), 1.0).unwrap();
+            assert_eq!(curves(&import), 1, "only A's own line");
+            assert!(import.notes.iter().any(|n| n == PLACES_ITSELF));
+            assert!(!import.notes.iter().any(|n| n == TOO_MANY_COPIES));
+        }
+    }
+
+    #[test]
+    fn blocks_placing_too_many_copies_stop_at_the_budget() {
+        // A is an array of 200 Bs, each an array of `n` Cs, each a line.
+        let file = |n: &str| {
+            with_blocks(
+                &[
+                    ("A", &[(0, "INSERT"), (2, "B"), (70, "200"), (44, "1")]),
+                    ("B", &[(0, "INSERT"), (2, "C"), (71, n), (45, "1")]),
+                    (
+                        "C",
+                        &[(0, "LINE"), (10, "0"), (20, "0"), (11, "1"), (21, "0")],
+                    ),
+                ],
+                &[(0, "INSERT"), (2, "A")],
+            )
+        };
+        // 200 x 20 lines: all of them.
+        let small = read(&file("20"), 1.0).unwrap();
+        assert_eq!(curves(&small), 4000);
+        assert!(small.notes.is_empty(), "{:?}", small.notes);
+        // 200 x 1000: cut off at the budget, and said so.
+        let big = read(&file("1000"), 1.0).unwrap();
+        assert!(curves(&big) > 4000 && curves(&big) <= MAX_EXPANDED);
+        assert!(big.notes.iter().any(|n| n == TOO_MANY_COPIES));
     }
 }
 

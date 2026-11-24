@@ -19,11 +19,11 @@ fn report(ed: &mut Editor, what: &str, result: Result<(), crate::editor::EditErr
     }
 }
 
-/// The curves picked when a Trim or Extend tool starts are the only ones it cuts against or
-/// reaches (AutoCAD's cutting edges); with no curves picked, every curve counts. Kept at the
-/// tool's first click; before it, the hint and preview show what is picked now. Let go of
-/// with Esc. What an earlier Trim or Extend left picked, its own cutting curves, isn't
-/// picked on purpose and doesn't count (#461).
+/// The curves picked when the Extend tool starts are the only ones it reaches; with no
+/// curves picked, every curve counts. Kept at the tool's first click; before it, the hint
+/// and preview show what is picked now. Let go of with Esc. What an earlier Extend left
+/// picked, its own boundary curves, isn't picked on purpose and doesn't count (#461).
+/// (Trim doesn't use it: every curve cuts, as in a power trim.)
 #[derive(Default)]
 struct Edges {
     read: bool,
@@ -142,7 +142,10 @@ impl DragTrim {
 }
 
 /// Click a piece of a curve to remove it up to the nearest curves that cut it; drag across
-/// pieces to trim each one the pointer passes over (power trim), as one undo step.
+/// pieces to trim each one the pointer passes over (power trim), as one undo step. Every
+/// curve cuts, whatever is picked: as SolidWorks' power trim and Fusion's trim, the
+/// selection plays no part (a freshly drawn, still picked shape mustn't change what a drag
+/// does).
 #[derive(Default)]
 pub struct TrimTool {
     hover: Option<(EntityId, DVec2)>,
@@ -151,18 +154,17 @@ pub struct TrimTool {
     dragging: bool,
     /// Where the drag has been, to show what it passed through.
     trail: Vec<DVec2>,
-    edges: Edges,
     drag: Option<DragTrim>,
 }
 
 impl TrimTool {
-    /// Trim the piece of `id` at `at`, against the picked curves if any. In a drag, what it
-    /// did or why it couldn't is kept for the drag's notice.
+    /// Trim the piece of `id` at `at`. In a drag, what it did or why it couldn't is kept for
+    /// the drag's notice.
     fn trim(&mut self, ed: &mut Editor, id: EntityId, at: DVec2) -> Result<(), EditError> {
         // (What was waiting before stays: this trim's messages are the drag's.)
         let said = ed.out.notice.take();
         let said_info = ed.out.info.take();
-        let r = ed.trim_at_against(id, at, self.edges.against.as_mut());
+        let r = ed.trim_at_against(id, at, None);
         if let Some(d) = &mut self.drag {
             match &r {
                 Ok(()) => {
@@ -190,7 +192,6 @@ impl TrimTool {
         if ed.out.info.is_none() {
             ed.out.info = said_info;
         }
-        self.edges.follow(ed);
         r
     }
 
@@ -266,17 +267,10 @@ impl Tool for TrimTool {
     }
 
     fn hint(&self) -> String {
-        self.edges.hint(
-            "Trimming",
-            "Click a piece to remove it · drag across pieces to trim several",
-        )
+        "Click a piece to remove it · drag across pieces to trim several".to_owned()
     }
 
     fn handle(&mut self, input: Input, ed: &mut Editor) {
-        match input {
-            Input::Click(..) | Input::DragStart(..) => self.edges.read(ed),
-            _ => self.edges.peek(ed),
-        }
         match input {
             Input::Hover(p) => {
                 // The removal preview is the highlight; the whole curve isn't hovered.
@@ -322,7 +316,7 @@ impl Tool for TrimTool {
             self.end_drag(ed);
             return true;
         }
-        self.edges.let_go(ed)
+        false
     }
 
     fn is_busy(&self) -> bool {
@@ -347,13 +341,12 @@ impl Tool for TrimTool {
         let Some((id, at)) = self.hover else {
             return Vec::new();
         };
-        let against = self.edges.against.as_ref();
-        if let Some(shape) = ed.trim_preview_against(id, at, against) {
+        if let Some(shape) = ed.trim_preview_against(id, at, None) {
             return vec![SketchItem::new(shape).with_emphasis(Emphasis::Remove)];
         }
         // A whole circle crossed only once can't be trimmed: ring the one crossing, so it
         // is plain why.
-        ed.too_few_crossings(id, against)
+        ed.too_few_crossings(id, None)
             .unwrap_or_default()
             .into_iter()
             .map(|center| {

@@ -1277,7 +1277,7 @@ impl Editor {
     }
 
     /// The curves in the document.
-    fn curve_ids(&self) -> BTreeSet<EntityId> {
+    pub(crate) fn curve_ids(&self) -> BTreeSet<EntityId> {
         self.doc
             .iter()
             .filter(|(_, e)| !e.kind.is_point())

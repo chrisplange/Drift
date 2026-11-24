@@ -1357,7 +1357,7 @@ fn table() -> Vec<Spec> {
             C::Edit,
             K::SelectionFilterPie,
             "Selection filter pie",
-            "Choose what Select picks: hold the key and flick towards a kind to pick only it,              or tap it and click kinds on and off",
+            "Choose what Select picks: hold the key and flick towards a kind to pick only it, or tap it and click kinds on and off",
         )
         .keys(const { &[shift(Key::Q)] })
         .own_keys()

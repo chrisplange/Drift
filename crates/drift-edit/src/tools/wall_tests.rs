@@ -1059,3 +1059,55 @@ fn overlaps_follow_walls_taking_and_letting_go_of_curves() {
     assert!(ed.undo());
     assert!(check(&mut ed, "explode undone").is_empty());
 }
+
+/// A wall joined at the end of one whose length a driving dimension holds: the corner the
+/// join makes doesn't leave the dimension unmet (the next solving edit would jump the wall
+/// and its openings back to it).
+#[test]
+fn a_join_keeps_a_dimensioned_walls_length() {
+    let mut ed = editor();
+    ed.prefs.wall_thickness = 200.0;
+    run(&mut ed, &[v(0.0, 0.0), v(4000.0, 0.0)]);
+    let first = ed.doc.walls().next().unwrap().0;
+    let pts = run_points(&ed, first);
+    let ids = drift_geom::walls::regen::centreline(&ed.doc, ed.doc.wall(first).unwrap())
+        .unwrap()
+        .1;
+    assert_eq!(pts, vec![v(0.0, 0.0), v(4000.0, 0.0)]);
+    ed.doc.begin();
+    let dim = ed
+        .doc
+        .add_constraint(drift_core::Constraint::Distance {
+            a: ids[0],
+            b: ids[1],
+            value: 4000.0,
+        })
+        .unwrap();
+    assert!(ed.commit("Dimension"));
+    run(&mut ed, &[v(3960.0, 2000.0), v(3960.0, 30.0)]);
+    assert_eq!(ed.doc.walls().count(), 2);
+    assert!(
+        drift_solver::unmet(&ed.doc, 1e-9).is_empty(),
+        "the join left {:?} unmet",
+        ed.doc.constraint(dim)
+    );
+    let pts = run_points(&ed, first);
+    assert!(
+        (pts[0].distance(pts[1]) - 4000.0).abs() < 1e-6,
+        "the first wall is {} long",
+        pts[0].distance(pts[1])
+    );
+    // The next solving edit moves nothing of the first wall.
+    let before = run_points(&ed, first);
+    ed.doc.begin();
+    let _ = ed.doc.set_constraint(
+        dim,
+        drift_core::Constraint::Distance {
+            a: ids[0],
+            b: ids[1],
+            value: 4000.0,
+        },
+    );
+    let _ = ed.commit("Same");
+    assert_eq!(run_points(&ed, first), before);
+}

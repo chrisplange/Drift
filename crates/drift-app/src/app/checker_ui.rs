@@ -72,6 +72,7 @@ impl DriftApp {
 
     pub(crate) fn sketch_check_window(&mut self, ctx: &egui::Context) {
         if self.drawing.sketch_check.is_none() {
+            self.dock_view.checker_open = false;
             return;
         }
         let issues = self.sketch_issues();
@@ -82,100 +83,110 @@ impl DriftApp {
         let mut show: Option<Issue> = None;
         let mut fix: Option<Issue> = None;
         let mut fix_all = false;
-        theme::dialog(ctx, "Check sketch")
+        // Each time it opens: over the canvas's right, clear of the docks and of the
+        // floating panels, where all of it fits (about its full height) if anywhere does.
+        let size = egui::vec2(432.0, 460.0);
+        let spot = app::dock_ui::free_spot(
+            self.drawing.view.canvas_rect,
+            size,
+            size.y,
+            &self.floating_windows(),
+            &[],
+            crate::dock::Side::Right,
+        );
+        let mut window = theme::dialog(ctx, "Check sketch")
             .id(egui::Id::new("sketch_check"))
             .open(&mut open)
             .pivot(egui::Align2::LEFT_TOP)
-            // Over the canvas's top right, clear of the side panels.
-            .default_pos(self.drawing.view.canvas_rect.right_top() + egui::vec2(-446.0, 14.0))
-            .show(ctx, |ui| {
-                ui.set_width(400.0);
-                if theme::dialog_title(ui, "Check sketch", true) {
+            .default_pos(spot);
+        if !std::mem::replace(&mut self.dock_view.checker_open, true) {
+            window = window.current_pos(spot);
+        }
+        window.show(ctx, |ui| {
+            ui.set_width(400.0);
+            if theme::dialog_title(ui, "Check sketch", true) {
+                close = true;
+            }
+            self.gap_tolerance_row(ui);
+            ui.add_space(4.0);
+            if issues.is_empty() {
+                ui.label("No gaps, ends short of a curve, or curves of no length.");
+            } else {
+                let gaps = issues
+                    .iter()
+                    .filter(|i| matches!(i, Issue::Gap { .. }))
+                    .count();
+                let plural = |n: usize, one: &str, many: &str| {
+                    format!("{n} {}", if n == 1 { one } else { many })
+                };
+                let other = issues.len() - gaps;
+                let mut found = Vec::new();
+                if gaps > 0 {
+                    found.push(plural(gaps, "gap between ends", "gaps between ends"));
+                }
+                if other > 0 {
+                    found.push(plural(other, "other issue", "other issues"));
+                }
+                ui.label(format!("Found {}.", found.join(" and ")));
+                ui.add_space(4.0);
+                egui::ScrollArea::vertical()
+                    .max_height(320.0)
+                    .show(ui, |ui| {
+                        for (k, issue) in issues.iter().take(LISTED).enumerate() {
+                            ui.push_id(k, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(issue.label());
+                                    if let Some(d) = issue.distance() {
+                                        ui.label(
+                                            egui::RichText::new(units.format_readout(d)).weak(),
+                                        );
+                                    }
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            if ui.small_button("Fix").clicked() {
+                                                fix = Some(*issue);
+                                            }
+                                            if ui
+                                                .small_button("Show")
+                                                .on_hover_text("Pick it and zoom to it")
+                                                .clicked()
+                                            {
+                                                show = Some(*issue);
+                                            }
+                                        },
+                                    );
+                                });
+                            });
+                        }
+                        if issues.len() > LISTED {
+                            ui.label(
+                                egui::RichText::new(format!("and {} more", issues.len() - LISTED))
+                                    .weak(),
+                            );
+                        }
+                    });
+            }
+            theme::dialog_buttons(ui, |ui| {
+                if ui.button("Close").clicked() {
                     close = true;
                 }
-                self.gap_tolerance_row(ui);
-                ui.add_space(4.0);
-                if issues.is_empty() {
-                    ui.label("No gaps, ends short of a curve, or curves of no length.");
-                } else {
-                    let gaps = issues
-                        .iter()
-                        .filter(|i| matches!(i, Issue::Gap { .. }))
-                        .count();
-                    let plural = |n: usize, one: &str, many: &str| {
-                        format!("{n} {}", if n == 1 { one } else { many })
-                    };
-                    let other = issues.len() - gaps;
-                    let mut found = Vec::new();
-                    if gaps > 0 {
-                        found.push(plural(gaps, "gap between ends", "gaps between ends"));
-                    }
-                    if other > 0 {
-                        found.push(plural(other, "other issue", "other issues"));
-                    }
-                    ui.label(format!("Found {}.", found.join(" and ")));
-                    ui.add_space(4.0);
-                    egui::ScrollArea::vertical()
-                        .max_height(320.0)
-                        .show(ui, |ui| {
-                            for (k, issue) in issues.iter().take(LISTED).enumerate() {
-                                ui.push_id(k, |ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.label(issue.label());
-                                        if let Some(d) = issue.distance() {
-                                            ui.label(
-                                                egui::RichText::new(units.format_readout(d)).weak(),
-                                            );
-                                        }
-                                        ui.with_layout(
-                                            egui::Layout::right_to_left(egui::Align::Center),
-                                            |ui| {
-                                                if ui.small_button("Fix").clicked() {
-                                                    fix = Some(*issue);
-                                                }
-                                                if ui
-                                                    .small_button("Show")
-                                                    .on_hover_text("Pick it and zoom to it")
-                                                    .clicked()
-                                                {
-                                                    show = Some(*issue);
-                                                }
-                                            },
-                                        );
-                                    });
-                                });
-                            }
-                            if issues.len() > LISTED {
-                                ui.label(
-                                    egui::RichText::new(format!(
-                                        "and {} more",
-                                        issues.len() - LISTED
-                                    ))
-                                    .weak(),
-                                );
-                            }
-                        });
-                }
-                theme::dialog_buttons(ui, |ui| {
-                    if ui.button("Close").clicked() {
-                        close = true;
-                    }
-                    if ui
-                        .add_enabled(
-                            !issues.is_empty(),
-                            egui::Button::new(format!("Fix all ({})", issues.len())),
-                        )
-                        .on_hover_text(
-                            "Join each gap, pull each short end onto its curve and remove \
+                if ui
+                    .add_enabled(
+                        !issues.is_empty(),
+                        egui::Button::new(format!("Fix all ({})", issues.len())),
+                    )
+                    .on_hover_text(
+                        "Join each gap, pull each short end onto its curve and remove \
                              curves of no length, as one undo step. Any that would break a \
                              relation or dimension are left",
-                        )
-                        .clicked()
-                    {
-                        fix_all = true;
-                    }
-                });
+                    )
+                    .clicked()
+                {
+                    fix_all = true;
+                }
             });
+        });
         if let Some(issue) = show {
             self.show_issue(&issue);
         }

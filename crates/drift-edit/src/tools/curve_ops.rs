@@ -4,7 +4,6 @@
 use super::picking::{Rule, entity_at};
 use super::*;
 use crate::editor::EditError;
-use crate::modify::CuttingSet;
 
 /// The line, arc or circle under the pointer.
 pub(super) fn curve_under(ed: &Editor, p: &Pointer) -> Option<EntityId> {
@@ -16,88 +15,6 @@ pub(super) fn curve_under(ed: &Editor, p: &Pointer) -> Option<EntityId> {
 fn report(ed: &mut Editor, what: &str, result: Result<(), crate::editor::EditError>) {
     if let Err(e) = result {
         ed.out.notice = Some(format!("{what}: {e}"));
-    }
-}
-
-/// The curves picked when the Extend tool starts are the only ones it reaches; with no
-/// curves picked, every curve counts. Kept at the tool's first click; before it, the hint
-/// and preview show what is picked now. Let go of with Esc. What an earlier Extend left
-/// picked, its own boundary curves, isn't picked on purpose and doesn't count (#461).
-/// (Trim doesn't use it: every curve cuts, as in a power trim.)
-#[derive(Default)]
-struct Edges {
-    read: bool,
-    against: Option<CuttingSet>,
-    /// How many curves cut, for the hint.
-    count: usize,
-}
-
-impl Edges {
-    /// The curves picked on purpose, as a cutting set.
-    fn picked(ed: &Editor) -> Option<CuttingSet> {
-        if ed.tool_picks.as_ref() == Some(&ed.selection) {
-            return None;
-        }
-        CuttingSet::of(&ed.doc, ed.selection.iter().copied())
-    }
-
-    /// Before the first click: what is picked now, for the hint and preview, not kept.
-    fn peek(&mut self, ed: &Editor) {
-        if !self.read {
-            self.against = Self::picked(ed);
-            self.count(ed);
-        }
-    }
-
-    /// At the first click: what is picked now is the set for the rest of the tool.
-    fn read(&mut self, ed: &mut Editor) {
-        if !self.read {
-            self.read = true;
-            self.against = Self::picked(ed);
-            // An earlier tool's picks are let go of, as they don't cut.
-            if ed.tool_picks.take().as_ref() == Some(&ed.selection) {
-                ed.selection.clear();
-            }
-            self.count(ed);
-        }
-    }
-
-    /// After an edit: the picked curves are the cutting curves as they are now (a trimmed
-    /// one's far piece among them), marked as the tool's own picks.
-    fn follow(&mut self, ed: &mut Editor) {
-        if let Some(set) = &self.against {
-            ed.selection = set.members(&ed.doc).into_iter().collect();
-            ed.tool_picks = Some(ed.selection.clone());
-        }
-        self.count(ed);
-    }
-
-    fn count(&mut self, ed: &Editor) {
-        self.count = self
-            .against
-            .as_ref()
-            .map_or(0, |s| s.members(&ed.doc).len());
-    }
-
-    /// Esc: every curve counts again. False if that was already so.
-    fn let_go(&mut self, ed: &mut Editor) -> bool {
-        if self.against.take().is_none() {
-            return false;
-        }
-        self.count = 0;
-        ed.selection.clear();
-        ed.tool_picks = None;
-        true
-    }
-
-    fn hint(&self, what: &str, rest: &str) -> String {
-        match self.count {
-            0 if self.against.is_none() => rest.to_owned(),
-            n => format!(
-                "{what} against {n} picked curve{} · {rest} · Esc for all curves",
-                if n == 1 { "" } else { "s" }
-            ),
-        }
     }
 }
 
@@ -360,18 +277,17 @@ impl Tool for TrimTool {
     }
 }
 
-/// Click near the end of a line or arc to extend it to the next curve in its way (the next
-/// picked one, when curves were picked).
+/// Click near the end of a line or arc to extend it to the next curve in its way, whatever
+/// is picked (as Trim: the selection plays no part).
 #[derive(Default)]
 pub struct ExtendTool {
     preview: Option<Shape>,
-    edges: Edges,
 }
 
 impl ExtendTool {
-    fn target(ed: &Editor, p: &Pointer, against: Option<&CuttingSet>) -> Option<Shape> {
+    fn target(ed: &Editor, p: &Pointer) -> Option<Shape> {
         let id = curve_under(ed, p)?;
-        let (end, at, ..) = ed.extend_target_against(id, p.raw, against).ok()?;
+        let (end, at, ..) = ed.extend_target_against(id, p.raw, None).ok()?;
         let from = ed.doc.point(end).ok()?;
         Some(match ed.doc.shape(id)? {
             Shape::Arc { center, .. } => {
@@ -397,27 +313,19 @@ impl Tool for ExtendTool {
     }
 
     fn hint(&self) -> String {
-        self.edges.hint(
-            "Extending",
-            "Click near the end of a line or arc to extend it to the next curve",
-        )
+        "Click near the end of a line or arc to extend it to the next curve".to_owned()
     }
 
     fn handle(&mut self, input: Input, ed: &mut Editor) {
         match input {
-            Input::Click(..) => self.edges.read(ed),
-            _ => self.edges.peek(ed),
-        }
-        match input {
             Input::Hover(p) => {
-                self.preview = Self::target(ed, &p, self.edges.against.as_ref());
+                self.preview = Self::target(ed, &p);
                 ed.hovered = curve_under(ed, &p);
             }
             Input::Click(p, _) => {
                 if let Some(id) = curve_under(ed, &p) {
-                    let r = ed.extend_at_against(id, p.raw, self.edges.against.as_ref());
+                    let r = ed.extend_at_against(id, p.raw, None);
                     report(ed, "Extend", r);
-                    self.edges.follow(ed);
                 }
                 self.preview = None;
             }
@@ -425,8 +333,8 @@ impl Tool for ExtendTool {
         }
     }
 
-    fn cancel(&mut self, ed: &mut Editor) -> bool {
-        self.edges.let_go(ed)
+    fn cancel(&mut self, _ed: &mut Editor) -> bool {
+        false
     }
 
     fn is_busy(&self) -> bool {

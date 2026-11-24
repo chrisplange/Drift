@@ -1538,56 +1538,11 @@ fn a_selection_with_no_curves_is_nothing_picked() {
     assert!(!tool.hint().contains("picked"));
 }
 
-/// A Trim leaves what was picked as it was, so an Extend after it still reaches only the
-/// curves picked on purpose.
+/// Extend reaches the next curve in its way, whatever is picked (as Trim): picking a farther
+/// line doesn't make it the boundary, the selection is left alone, and Esc just leaves the
+/// tool.
 #[test]
-fn an_extend_after_a_trim_keeps_the_picked_boundary() {
-    let (mut ed, ids) = modify_fixture(&[
-        (v(0.0, 0.0), v(5.0, 0.0)),
-        (v(10.0, -5.0), v(10.0, 5.0)),
-        (v(20.0, -5.0), v(20.0, 5.0)),
-        (v(30.0, 3.0), v(40.0, 3.0)),
-        (v(35.0, -5.0), v(35.0, 5.0)),
-    ]);
-    ed.selection = [ids[0], ids[2]].into();
-    let mut tool = TrimTool::default();
-    click(&mut ed, &mut tool, v(38.0, 3.1));
-    assert_eq!(line_ends(&ed, ids[3]), (v(30.0, 3.0), v(35.0, 3.0)));
-    let mut tool = ExtendTool::default();
-    click(&mut ed, &mut tool, v(4.0, 0.1));
-    assert_eq!(line_ends(&ed, ids[0]).1, v(20.0, 0.0), "to the picked line");
-}
-
-/// #461: Extend's boundary is what's picked at the first click, not at the first hover.
-#[test]
-fn the_extend_boundary_is_read_at_the_first_click() {
-    let fixture = || {
-        modify_fixture(&[
-            (v(0.0, 0.0), v(5.0, 0.0)),
-            (v(10.0, -5.0), v(10.0, 5.0)),
-            (v(20.0, -5.0), v(20.0, 5.0)),
-        ])
-    };
-    // Picked when the pointer came over the canvas, let go of before the click.
-    let (mut ed, ids) = fixture();
-    ed.selection = [ids[0], ids[2]].into();
-    let mut tool = ExtendTool::default();
-    tool.handle(Input::Hover(ptr(&ed, &tool, v(0.0, 30.0))), &mut ed);
-    assert!(tool.hint().contains("against 2 picked"), "{}", tool.hint());
-    ed.selection.clear();
-    click(&mut ed, &mut tool, v(4.0, 0.1));
-    assert_eq!(line_ends(&ed, ids[0]).1, v(10.0, 0.0), "every curve");
-    // Nothing picked at the hover, picked before the click: that's the boundary.
-    let (mut ed, ids) = fixture();
-    let mut tool = ExtendTool::default();
-    tool.handle(Input::Hover(ptr(&ed, &tool, v(0.0, 30.0))), &mut ed);
-    ed.selection = [ids[0], ids[2]].into();
-    click(&mut ed, &mut tool, v(4.0, 0.1));
-    assert_eq!(line_ends(&ed, ids[0]).1, v(20.0, 0.0), "the picked one");
-}
-
-#[test]
-fn extend_reaches_only_a_picked_boundary() {
+fn extend_reaches_the_next_curve_whatever_is_picked() {
     let (mut ed, ids) = modify_fixture(&[
         (v(0.0, 0.0), v(5.0, 0.0)),
         (v(10.0, -5.0), v(10.0, 5.0)),
@@ -1595,17 +1550,16 @@ fn extend_reaches_only_a_picked_boundary() {
     ]);
     ed.selection = [ids[0], ids[2]].into();
     let mut tool = ExtendTool::default();
+    tool.handle(Input::Hover(ptr(&ed, &tool, v(4.0, 0.1))), &mut ed);
+    assert!(!tool.hint().contains("picked"), "{}", tool.hint());
     click(&mut ed, &mut tool, v(4.0, 0.1));
+    assert_eq!(line_ends(&ed, ids[0]).1, v(10.0, 0.0), "to the nearer line");
     assert_eq!(
-        line_ends(&ed, ids[0]).1,
-        v(20.0, 0.0),
-        "past the unpicked line"
+        ed.selection,
+        [ids[0], ids[2]].into(),
+        "the selection is left alone"
     );
-    assert!(
-        tool.hint().contains("Extending against 2 picked"),
-        "{}",
-        tool.hint()
-    );
+    assert!(!tool.cancel(&mut ed), "Esc leaves the tool");
 }
 
 /// Two lines meeting at the origin.

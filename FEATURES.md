@@ -40,7 +40,7 @@ Seeded 2026-11-09 from the command registry, importers/exporters, agent schema a
 ## Modify
 - Move, rotate, scale, copy, mirror. `crates/drift-edit/src/modify.rs`
 - Rotate tool around a base point. `crates/drift-edit/src/tools/rotate.rs`
-- Trim (click a piece, or drag across pieces as a power trim; every curve cuts, whatever is picked), extend (only to the picked curves when any are picked), break at point. `crates/drift-edit/src/tools/curve_ops.rs`
+- Trim (click a piece, or drag across pieces as a power trim; every curve cuts, whatever is picked), extend (to the next curve, likewise whatever is picked), break at point. `crates/drift-edit/src/tools/curve_ops.rs`
 - Fillet and chamfer, editable by drag. `crates/drift-edit/src/tools/corners.rs`
 - A corner kept for a dimension, and a fillet's centre, drawn as a muted cross until the fillet or its lines are lit. `crates/drift-edit/src/editor/muted_points.rs`
 - Join corners. `crates/drift-app/src/commands.rs`

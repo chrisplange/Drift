@@ -143,7 +143,7 @@ impl DriftApp {
         if self.pie_keys(ctx) {
             return;
         }
-        // S: a tap is the Select tool, a hold the Selection filter pie.
+        // Shift+Q: the Selection filter pie, which keeps the keys while it is open.
         if self.select_pie_keys(ctx) {
             return;
         }

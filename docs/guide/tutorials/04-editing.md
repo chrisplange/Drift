@@ -58,12 +58,13 @@ turn any off, in any mix, as with the selection filters in AutoCAD, Rhino or Vec
 
 ![Select picking edges only: a box takes just the curves inside it, and the Select tool shows the funnel](../images/pick-filters.png)
 
-**Hold S** for the Selection filter pie: the seven kinds and **All** in a ring around the
-pointer, the kinds picked now lit. Move towards one and let go to pick only that kind
-(**Edges** is to the right, **All** at the top); flick to **All** to pick everything again.
-Hold S still until the ring shows and let go in the middle, and the ring stays open: click
-kinds to turn them on and off, several at once, then Esc or a right click to close it. A quick
-tap of S still just takes the **Select** tool.
+**Shift+Q** opens the Selection filter pie at once: the seven kinds and **All** in a ring
+around the pointer, the kinds picked now lit. Hold Shift+Q, move towards one and let go to pick
+only that kind (**Edges** is to the right, **All** at the top); flick to **All** to pick
+everything again. Tap Shift+Q, or let go in the middle, and the ring stays open: click kinds to
+turn them on and off, several at once (with everything picked, the first click picks that kind
+alone), then Shift+Q, Esc or a right click to close it. Clicks made with Shift+Q still held count
+too, and letting go then just closes the ring.
 
 ![The Selection filter pie, held open with Text and Annotations turned off](../images/selection-filter-pie.png)
 

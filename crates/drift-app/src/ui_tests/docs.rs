@@ -1032,7 +1032,7 @@ fn pick_filters() {
     shot("pick-filters.png", &mut h);
 }
 
-/// Hold S over the example with Text and Annotations off and lean towards Edges: the
+/// Hold Shift+Q over the example with Text and Annotations off and lean towards Edges: the
 /// Selection filter pie, about to pick edges alone (#481).
 fn hold_selection_filter_pie(h: &mut Harness<'_, DriftApp>) {
     use drift_edit::editor::{PickFilter, PickKind};
@@ -1046,8 +1046,7 @@ fn hold_selection_filter_pie(h: &mut Harness<'_, DriftApp>) {
     let at = h.state().drawing.view.canvas_rect.center();
     h.hover_at(at);
     h.run();
-    // (Held, S keeps a repaint coming for the ring's timer: step rather than run.)
-    h.key_down(Key::S);
+    h.key_down_modifiers(egui::Modifiers::SHIFT, Key::Q);
     h.run_steps(3);
     h.hover_at(at + egui::vec2(70.0, 4.0));
     h.run_steps(3);

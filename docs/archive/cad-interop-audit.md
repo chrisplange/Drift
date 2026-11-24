@@ -1,3 +1,5 @@
+> **Archived 2026-11-24.** History, not current guidance. See [the archive index](README.md).
+
 # DXF and DWG interop: audit
 
 *2026-10-25, against `main` at 05a2fc5 (file format 42), acadrust 0.6.5.* Phase 1 of the
@@ -6,7 +8,7 @@ files and against AutoCAD itself, and the gaps ranked by how badly and how often
 architects. Nothing here is fixed yet; §6 groups the fixes into PR-sized batches to choose
 from.
 
-Walls (W7 in [walls-design.md](walls-design.md) §8) need DXF export of walls later. The export
+Walls (W7 in [walls-design.md](../walls-design.md) §8) need DXF export of walls later. The export
 plan in §5 keeps a slot for them. Illustrator and PDF import are out of scope.
 
 ---

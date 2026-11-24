@@ -252,7 +252,7 @@ and in the solver, per solve: `land` (pin the dragged, then the carried, and sol
   the solve lands on is taken unless an orientation check, a speed threshold or a budget happens
   to catch it.
 - **What is already right and stays:** each frame solves from the drag's start (plan 2b of
-  `solver-drag-regions-plan.md`), so out and back returns; free geometry skips the solver; parts
+  `archive/solver-drag-regions-plan.md`), so out and back returns; free geometry skips the solver; parts
   are solved apart.
 
 ### Other causes the evidence pointed to

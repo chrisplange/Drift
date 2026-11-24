@@ -1,3 +1,5 @@
+> **Archived 2026-11-24.** History, not current guidance. See [the archive index](README.md).
+
 # Fills, strokes and overlapping geometry: an audit
 
 *2026-10-20, against `main` at b8fb54f (after PR #128).*

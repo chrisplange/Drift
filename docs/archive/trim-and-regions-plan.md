@@ -1,3 +1,5 @@
+> **Archived 2026-11-24.** History, not current guidance. See [the archive index](README.md).
+
 # Plan: trim first, regions 3b, Divide next, other Booleans later
 
 *2026-10-25, against `main` at 05a2fc5 (format 42, reader 42); revised the same day after an

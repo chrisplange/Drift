@@ -1,3 +1,5 @@
+> **Archived 2026-11-24.** History, not current guidance. See [the archive index](README.md).
+
 # Plan: constraints only where you add them, predictable drag, robust regions
 
 *2026-10-21, against `main` at b8fb54f; step 1 is built on #138 (`claude/path-records`).* Companion to

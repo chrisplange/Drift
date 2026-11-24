@@ -103,27 +103,25 @@ fn the_keymap_round_trips_through_the_settings() {
     assert_eq!(rect.shortcuts()[0].key, Key::J);
 }
 
-/// The tap-and-hold keys follow the user's key: Select's (a tap picks the tool, a hold the
-/// Selection filter pie), and S no longer does it.
+/// The Selection filter pie follows the user's key, and Shift+Q no longer opens it.
 #[test]
-fn tap_and_hold_keys_follow_the_users_key() {
+fn the_selection_filter_pie_follows_the_users_key() {
     let Some(mut h) = harness() else { return };
     keymap::install(keymap::Keymap::default());
-    let select = crate::commands::spec_by_id("edit.select").unwrap();
-    let s = select.shortcuts()[0];
+    let pie = crate::commands::spec_by_id("edit.selection_filter_pie").unwrap();
+    let old = pie.shortcuts()[0];
     keymap::update(|m| {
         m.assign(
-            select,
+            pie,
             crate::keymap::shortcut_of(Key::J, egui::Modifiers::NONE),
-            Some(s),
+            Some(old),
         )
     });
-    h.state_mut().set_tool(drift_edit::tools::ToolKind::Line);
+    h.key_press_modifiers(egui::Modifiers::SHIFT, Key::Q);
     h.run();
-    h.key_press(Key::S);
-    h.run();
-    assert_eq!(h.state().tool.kind(), drift_edit::tools::ToolKind::Line);
+    assert!(h.state().select_pie.is_none(), "Shift+Q is no longer it");
     h.key_press(Key::J);
     h.run();
-    assert_eq!(h.state().tool.kind(), drift_edit::tools::ToolKind::Select);
+    assert!(h.state().select_pie.is_some(), "J opens it");
+    keymap::install(keymap::Keymap::default());
 }

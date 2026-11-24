@@ -249,6 +249,10 @@ impl DriftApp {
                     self.open_pie(ctx);
                 }
             }
+            Command::SelectionFilterPie => {
+                let at = ctx.input(|i| i.pointer.latest_pos());
+                self.open_select_pie(ctx, at, false);
+            }
             Command::Panel(p) => self.toggle_panel(p),
             Command::HideAllPanels => self.dock_view.hide_all = !self.dock_view.hide_all,
             Command::ResetPanels => {

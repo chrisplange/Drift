@@ -27,7 +27,7 @@ leaves it.
 
 | Tool | Key | What it does |
 |---|---|---|
-| **Select** | S | Pick, drag and box-select. Its top bar shows the **Selection filter** control (one button that opens a list of **Points**, **Edges**, **Fills**, **Areas**, **Blocks**, **Text** and **Annotations**, which combine; Alt-click or double-click one for that kind alone; **Pick everything**. **Blocks** is short for blocks and groups; hold S for the same kinds in a pie, and flick to one) or, with something picked, the selection's layer, stroke, fill, **Construction**, **Actions** and **Delete**. G moves the selection, R rotates it. See [Editing](../tutorials/04-editing.md). |
+| **Select** | S | Pick, drag and box-select. Its top bar shows the **Selection filter** control (one button that opens a list of **Points**, **Edges**, **Fills**, **Areas**, **Blocks**, **Text** and **Annotations**, which combine; Alt-click or double-click one for that kind alone; **Pick everything**. **Blocks** is short for blocks and groups; Shift+Q for the same kinds in a pie, and flick to one) or, with something picked, the selection's layer, stroke, fill, **Construction**, **Actions** and **Delete**. G moves the selection, R rotates it. See [Editing](../tutorials/04-editing.md). |
 
 ## Draw
 

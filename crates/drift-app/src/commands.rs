@@ -40,6 +40,8 @@ pub(crate) enum Command {
     Relations,
     /// The relations pie, to click (its key is held to flick, or tapped).
     RelationsPie,
+    /// The Selection filter pie, to click (its key is held to flick, or tapped).
+    SelectionFilterPie,
     Panel(Panel),
     HideAllPanels,
     ResetPanels,
@@ -1350,6 +1352,17 @@ fn table() -> Vec<Spec> {
         .own_keys()
         .repeat(false)
         .words("constraint relate"),
+        Spec::new(
+            "edit.selection_filter_pie",
+            C::Edit,
+            K::SelectionFilterPie,
+            "Selection filter pie",
+            "Choose what Select picks: hold the key and flick towards a kind to pick only it,              or tap it and click kinds on and off",
+        )
+        .keys(const { &[shift(Key::Q)] })
+        .own_keys()
+        .repeat(false)
+        .words("pick filter kinds points edges fills"),
         tool("edit.select", C::Edit, ToolKind::Select)
             .keys(const { &[plain(Key::S)] })
             .repeat(false)
@@ -2064,10 +2077,6 @@ pub(crate) const OTHER_KEYS: &[(&str, &[(&str, &str)])] = &[
             ),
             ("Click near a line's middle", "Pick its midpoint"),
             ("Arrow keys", "Nudge one grid step; Shift+arrow, ten"),
-            (
-                "Hold S",
-                "Selection filter pie: flick towards a kind to pick only it, or to All for                  everything; let go in the middle to click kinds on and off (a tap of S is                  the Select tool)",
-            ),
             ("Double-click text", "Type into it in place"),
             (
                 "Enter or Space",
@@ -2159,22 +2168,10 @@ pub(crate) fn shortcut_sections(mac: bool) -> Vec<(&'static str, Vec<ShortcutRow
             out.push((category.label(), rows));
         }
     }
-    // The Select tool's key, held, is the Selection filter pie: written with the user's key.
-    let select = key_of("edit.select");
     for (section, rows) in OTHER_KEYS {
         let rows = rows
             .iter()
-            .map(|(k, does)| {
-                if *k == "Hold S" {
-                    (
-                        format!("Hold {select}"),
-                        String::new(),
-                        does.replace("tap of S", &format!("tap of {select}")),
-                    )
-                } else {
-                    (k.to_string(), String::new(), does.to_string())
-                }
-            })
+            .map(|(k, does)| (k.to_string(), String::new(), does.to_string()))
             .collect();
         out.push((*section, rows));
     }

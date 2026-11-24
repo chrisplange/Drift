@@ -476,108 +476,151 @@ fn pick_filter_review_renders() {
     crate::theme::set_dark_look(DarkLook::Obsidian);
 }
 
-/// Hold S, move towards `place` (counter-clockwise from the right), let go.
-fn s_flick(h: &mut Harness<'_, DriftApp>, place: usize) {
+const SHIFT: egui::Modifiers = egui::Modifiers::SHIFT;
+
+/// Where `place` is on a ring around `at` (counter-clockwise from the right).
+fn place_pos(at: egui::Pos2, place: usize) -> egui::Pos2 {
+    let a = place as f32 * std::f32::consts::FRAC_PI_4;
+    at + egui::vec2(a.cos(), -a.sin()) * 90.0
+}
+
+/// A click at `p`.
+fn click_at(h: &mut Harness<'_, DriftApp>, p: egui::Pos2) {
+    h.hover_at(p);
+    h.run();
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos: p,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.run();
+    }
+}
+
+/// Shift+Q down over the canvas's middle: the ring, at once. Returns its middle.
+fn pie_down(h: &mut Harness<'_, DriftApp>) -> egui::Pos2 {
     let at = h.state().drawing.view.canvas_rect.center();
     h.hover_at(at);
     h.run();
-    h.key_down(Key::S);
-    h.run();
-    assert!(h.state().select_pie.is_some(), "S down starts the pie");
-    let a = place as f32 * std::f32::consts::FRAC_PI_4;
-    h.hover_at(at + egui::vec2(a.cos(), -a.sin()) * 90.0);
+    h.key_down_modifiers(SHIFT, Key::Q);
     h.run();
     assert!(
-        h.state().select_pie.as_ref().is_some_and(|p| p.shown),
-        "moving off with S held shows the ring"
+        h.state().select_pie.as_ref().is_some_and(|p| p.held),
+        "Shift+Q down opens the ring, with no wait"
     );
-    h.key_up(Key::S);
+    h.state().select_pie.as_ref().unwrap().center
+}
+
+/// Hold Shift+Q, move towards `place`, let go.
+fn pie_flick(h: &mut Harness<'_, DriftApp>, place: usize) {
+    let at = pie_down(h);
+    h.hover_at(place_pos(at, place));
+    h.run();
+    h.key_up_modifiers(SHIFT, Key::Q);
     h.run();
 }
 
 #[test]
-fn a_tap_of_s_takes_the_select_tool() {
+fn s_is_just_the_select_tool() {
     let Some(mut h) = harness() else { return };
     h.key_press(Key::L);
     h.run();
     assert_eq!(h.state().tool.kind(), ToolKind::Line);
-    h.key_press(Key::S);
+    h.key_down(Key::S);
     h.run();
     assert_eq!(h.state().tool.kind(), ToolKind::Select);
-    assert!(h.state().select_pie.is_none(), "a tap opens no ring");
+    assert!(h.state().select_pie.is_none(), "S opens no ring");
+    h.key_up(Key::S);
+    h.run();
     assert!(filter(&h).is_all());
 }
 
 #[test]
-fn holding_s_flicks_to_one_kind_or_all() {
+fn holding_shift_q_flicks_to_one_kind_or_all() {
     use crate::app::select_pie::PLACES;
     let Some(mut h) = harness() else { return };
     // Towards each kind: only that kind.
     for (place, kind) in PLACES.into_iter().enumerate() {
         let Some(kind) = kind else { continue };
-        s_flick(&mut h, place);
+        pie_flick(&mut h, place);
         assert!(h.state().select_pie.is_none(), "a flick closes the ring");
         assert_eq!(filter(&h), PickFilter::only(kind), "{kind:?}");
     }
     // Towards All: everything back.
     let all = PLACES.iter().position(Option::is_none).unwrap();
-    s_flick(&mut h, all);
+    pie_flick(&mut h, all);
     assert!(filter(&h).is_all());
 }
 
+/// Kinds clicked with the key held all stand: letting go over the last one is no flick.
 #[test]
-fn s_held_then_let_go_in_the_middle_leaves_the_ring_to_click() {
+fn kinds_clicked_with_shift_q_held_all_stand() {
+    use crate::app::select_pie::PLACES;
+    let Some(mut h) = harness() else { return };
+    h.set_size(egui::vec2(1720.0, 720.0));
+    let place = |k| PLACES.iter().position(|p| *p == Some(k)).unwrap();
+    let at = pie_down(&mut h);
+    click_at(&mut h, place_pos(at, place(PickKind::Edges)));
+    click_at(&mut h, place_pos(at, place(PickKind::Points)));
+    click_at(&mut h, place_pos(at, place(PickKind::Text)));
+    // Let go still over Text.
+    h.key_up_modifiers(SHIFT, Key::Q);
+    h.run();
+    assert!(h.state().select_pie.is_none(), "letting go closes the ring");
+    assert_eq!(
+        filter(&h),
+        PickFilter::only(PickKind::Edges)
+            .with(PickKind::Points, true)
+            .with(PickKind::Text, true)
+    );
+}
+
+#[test]
+fn a_tap_of_shift_q_leaves_the_ring_to_click() {
     use crate::app::select_pie::PLACES;
     let Some(mut h) = harness() else { return };
     h.set_size(egui::vec2(1720.0, 720.0));
     let at = h.state().drawing.view.canvas_rect.center();
     h.hover_at(at);
     h.run();
-    h.key_down(Key::S);
+    h.key_press_modifiers(SHIFT, Key::Q);
     h.run();
-    // Wander off and back, as a hold that shows the ring, then let go in the middle.
-    h.hover_at(at + egui::vec2(60.0, 0.0));
-    h.run();
-    h.hover_at(at);
-    h.run();
-    h.key_up(Key::S);
-    h.run();
-    assert!(
-        h.state()
-            .select_pie
-            .as_ref()
-            .is_some_and(|p| p.shown && !p.held)
-    );
+    let at = h
+        .state()
+        .select_pie
+        .as_ref()
+        .filter(|p| !p.held)
+        .expect("a tap leaves the ring open")
+        .center;
     assert!(filter(&h).is_all(), "no flick, no change");
-    // Clicks turn kinds off and on; the ring stays.
     let place = |k| PLACES.iter().position(|p| *p == Some(k)).unwrap();
-    let click = |h: &mut Harness<'_, DriftApp>, place: usize| {
-        let a = place as f32 * std::f32::consts::FRAC_PI_4;
-        h.hover_at(at + egui::vec2(a.cos(), -a.sin()) * 90.0);
-        h.run();
-        let p = at + egui::vec2(a.cos(), -a.sin()) * 90.0;
-        for pressed in [true, false] {
-            h.event(egui::Event::PointerButton {
-                pos: p,
-                button: egui::PointerButton::Primary,
-                pressed,
-                modifiers: egui::Modifiers::NONE,
-            });
-            h.run();
-        }
-    };
-    click(&mut h, place(PickKind::Annotations));
-    click(&mut h, place(PickKind::Text));
+    // From everything, the first click is that kind alone; then clicks gather kinds and drop
+    // them again.
+    click_at(&mut h, place_pos(at, place(PickKind::Annotations)));
+    assert_eq!(filter(&h), PickFilter::only(PickKind::Annotations));
+    click_at(&mut h, place_pos(at, place(PickKind::Text)));
+    click_at(&mut h, place_pos(at, place(PickKind::Edges)));
+    click_at(&mut h, place_pos(at, place(PickKind::Text)));
     assert_eq!(
         filter(&h),
-        PickFilter::ALL
-            .with(PickKind::Annotations, false)
-            .with(PickKind::Text, false)
+        PickFilter::only(PickKind::Annotations).with(PickKind::Edges, true)
     );
     assert!(h.state().select_pie.is_some(), "the ring stays for more");
     h.hover_at(at + egui::vec2(60.0, 0.0));
     h.run();
     save_png("drift_ui_selection_filter_pie.png", &mut h);
+    h.key_press_modifiers(SHIFT, Key::Q);
+    h.run();
+    assert!(h.state().select_pie.is_none(), "the key again closes it");
+    assert_eq!(
+        filter(&h),
+        PickFilter::only(PickKind::Annotations).with(PickKind::Edges, true),
+        "closing keeps the kinds"
+    );
+    h.key_press_modifiers(SHIFT, Key::Q);
+    h.run();
     h.key_press(Key::Escape);
     h.run();
     assert!(h.state().select_pie.is_none(), "Esc closes it");

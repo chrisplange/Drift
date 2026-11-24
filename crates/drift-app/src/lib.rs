@@ -612,7 +612,7 @@ pub struct DriftApp {
     screen_font: fonts::ScreenFont,
     /// The relations pie (Q), while it is open.
     pie: Option<app::pie::Pie>,
-    /// The Selection filter pie (hold S), from S going down.
+    /// The Selection filter pie (Shift+Q), open.
     select_pie: Option<app::select_pie::SelectPie>,
     /// Text filtering the shortcuts list.
     shortcut_filter: String,

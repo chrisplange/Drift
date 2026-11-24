@@ -13,6 +13,10 @@ pub(crate) struct Overlaps {
     over: BTreeMap<EntityId, BTreeSet<EntityId>>,
     /// Each curve under, with the later curves over it.
     under: HashMap<EntityId, BTreeSet<EntityId>>,
+    /// The entities walls owned (left out of the search) as of `revision`: one that joins or
+    /// leaves them (Make walls, Explode, their undo) is looked at again though it is
+    /// otherwise unchanged.
+    walled: HashSet<EntityId>,
     found: std::rc::Rc<Vec<EntityId>>,
 }
 
@@ -161,6 +165,10 @@ impl Editor {
                 for &id in &changes.entities {
                     changed.extend(self.index.users_of(id));
                 }
+                // Walls taking curves in or letting them go change no entity.
+                let walled = self.walled();
+                changed.extend(c.walled.symmetric_difference(&walled).copied());
+                c.walled = walled;
                 for &id in &changed {
                     for lower in c.over.remove(&id).into_iter().flatten() {
                         if let Some(u) = c.under.get_mut(&lower) {
@@ -192,6 +200,7 @@ impl Editor {
                 let mut c = Overlaps {
                     revision,
                     lineage: self.doc.lineage(),
+                    walled: self.walled(),
                     ..Default::default()
                 };
                 for (id, e) in self.doc.iter() {
@@ -272,17 +281,46 @@ impl Editor {
             .unwrap_or_default()
     }
 
+    /// Every entity a wall owns ([`Self::wall_geometry`]).
+    fn walled(&self) -> HashSet<EntityId> {
+        if !self.doc.has_walls() {
+            return HashSet::new();
+        }
+        let owners = self.wall_owners();
+        owners
+            .of
+            .iter()
+            .filter(|(_, o)| o.wall().is_some())
+            .map(|(id, _)| *id)
+            .collect()
+    }
+
+    /// Whether an entity is a wall's own geometry (its centreline, faces, ends, corners and
+    /// jambs, or an opening's symbol): walls draw their pieces along each other and along
+    /// the lines they were made from, so these never count as overlapping.
+    fn wall_geometry(&self) -> impl Fn(EntityId) -> bool + Clone + 'static {
+        let owners = self.doc.has_walls().then(|| self.wall_owners());
+        move |id| owners.as_ref().is_some_and(|o| o.wall(id).is_some())
+    }
+
     /// The earlier curves `id` is drawn over, as the index has the shapes.
     fn under(&self, id: EntityId) -> impl Iterator<Item = EntityId> + '_ {
-        let shape = self.index.shape(id).filter(|s| {
-            matches!(
-                s,
-                Shape::Line { .. } | Shape::Arc { .. } | Shape::Circle { .. }
-            )
-        });
+        let walls = self.wall_geometry();
+        let shape = self
+            .index
+            .shape(id)
+            .filter(|s| {
+                matches!(
+                    s,
+                    Shape::Line { .. } | Shape::Arc { .. } | Shape::Circle { .. }
+                )
+            })
+            .filter(|_| !walls(id));
         shape.into_iter().flat_map(move |shape| {
+            let walls = walls.clone();
             self.index.query(shape.bounds()).filter(move |&other| {
                 other < id
+                    && !walls(other)
                     && self
                         .index
                         .shape(other)
@@ -300,11 +338,12 @@ impl Editor {
                 Shape::Line { .. } | Shape::Arc { .. } | Shape::Circle { .. }
             )
         };
-        let shape = self.index.shape(id);
+        let walls = self.wall_geometry();
+        let shape = self.index.shape(id).filter(|_| !walls(id));
         shape
             .into_iter()
             .flat_map(move |shape| self.index.query(shape.bounds()))
-            .filter(move |&other| other != id)
+            .filter(move |&other| other != id && !walls(other))
             .filter_map(move |other| {
                 let (upper, lower) = if other < id { (id, other) } else { (other, id) };
                 let (a, b) = (self.index.shape(upper)?, self.index.shape(lower)?);

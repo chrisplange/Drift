@@ -65,8 +65,10 @@ impl Default for Updates {
         Self {
             auto_check: true,
             skipped: None,
-            // Tests never reach the network.
-            launched: cfg!(test),
+            // Tests never reach the network, and the browser demo never updates itself
+            // (its tests are integration tests, built without cfg(test): a check started
+            // there woke the UI at a random frame and failed `Harness::run`).
+            launched: cfg!(test) || cfg!(feature = "demo"),
             manual: false,
             phase: Phase::Idle,
             release: None,

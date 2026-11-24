@@ -30,7 +30,7 @@ pub mod openings;
 pub mod regen;
 pub use frozen::{Joins, infer_joins};
 pub use lower::lower;
-pub use openings::{Frame, OpeningIn, free_spans, opening_inputs, write_symbol};
+pub use openings::{Frame, OpeningIn, corner_spans, free_spans, opening_inputs, write_symbol};
 pub use regen::{
     Report, regenerate, regenerate_moved, regenerate_moved_with, regenerate_with, wall_inputs,
 };

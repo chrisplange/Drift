@@ -637,17 +637,25 @@ impl Editor {
         let (lo, hi, from_start) = self
             .opening_offsets(o)
             .ok_or_else(|| EditError::Invalid("The opening isn't in its wall".into()))?;
-        let len = self
-            .opening_host(op.wall, op.seg)
-            .map_or(0.0, |h| h.seg.length());
-        let (u0, _) = op.span_on(len);
         // From the corner it is measured from now: the nearer one.
         let target = if from_start {
             lo + v.value
         } else {
             hi - v.value - op.width
         };
-        let _ = u0;
+        // Within the stretch it is in: never onto or past a neighbour. (Short of a corner it
+        // stops at the corner's clearance, as ever.)
+        if let Some((a, b)) = self.opening_own_room(o) {
+            let neighbour_before = a - CLEARANCE > lo + 1e-6;
+            let neighbour_after = b + CLEARANCE < hi - 1e-6;
+            if (neighbour_before && target < a - 1e-6)
+                || (neighbour_after && target + op.width > b + 1e-6)
+            {
+                return Err(EditError::Invalid(
+                    "There is no room for it there: another opening is in the way".into(),
+                ));
+            }
+        }
         self.doc.begin();
         if !self.slide_opening(o, target) {
             self.doc.rollback();
@@ -659,15 +667,28 @@ impl Editor {
     }
 
     /// The corners either side of an opening (along its centreline, from the faces), and
-    /// whether the start's is the nearer.
+    /// whether the start's is the nearer. Other openings in between don't count: its offset
+    /// stays what it is when they are resized or moved.
     pub fn opening_offsets(&self, o: OpeningId) -> Option<(f64, f64, bool)> {
         let op = self.doc.opening(o)?;
         let host = self.opening_host(op.wall, op.seg)?;
         let (u0, u1) = op.span_on(host.seg.length());
-        let (a, b) = drift_geom::walls::free_spans(&self.doc, op.wall, op.seg, Some(o))
+        let (a, b) = drift_geom::walls::corner_spans(&self.doc, op.wall, op.seg)
             .into_iter()
             .find(|(a, b)| *a <= u0 + 1e-6 && *b >= u1 - 1e-6)?;
         Some((a, b, u0 - a <= b - u1))
+    }
+
+    /// The room an opening has in the stretch it is in (between corners and its neighbours'
+    /// jambs, kept `CLEARANCE` clear of them): where it can grow or be put without passing
+    /// another. None if it isn't in one (not cut: past a corner or onto another).
+    fn opening_own_room(&self, o: OpeningId) -> Option<(f64, f64)> {
+        let op = self.doc.opening(o)?;
+        let (u0, u1) = self.opening_span(o)?;
+        drift_geom::walls::free_spans(&self.doc, op.wall, op.seg, Some(o))
+            .into_iter()
+            .find(|(a, b)| *a <= u0 + 1e-6 && *b >= u1 - 1e-6)
+            .map(|(a, b)| (a + CLEARANCE, b - CLEARANCE))
     }
 
     /// Set an opening's width from typed text (a length or an expression): the cut grows
@@ -690,19 +711,36 @@ impl Editor {
             .ok_or_else(|| EditError::Invalid("The opening isn't in its wall".into()))?;
         let (u0, u1) = op.span_on(host.seg.length());
         let mid = (u0 + u1) / 2.0;
-        let Some(start) = self.opening_start_near(op.wall, op.seg, mid, width, Some(o)) else {
-            return Err(EditError::Invalid(format!(
+        let len = host.seg.length();
+        let no_room = || {
+            EditError::Invalid(format!(
                 "No room for a {} opening there",
                 self.doc.units().format_readout(width)
-            )));
+            ))
         };
-        let len = host.seg.length();
+        // In the stretch it is in: never past a neighbour or a corner to another one. (One
+        // not cut, reaching past a corner or onto another, is in none: it goes where there
+        // is room near its middle.)
+        let own = self.opening_own_room(o);
+        let start = match own {
+            Some(room) if room.1 - room.0 >= width => first_jamb_in(mid - width / 2.0, room, width),
+            Some(_) => return Err(no_room()),
+            None => self
+                .opening_start_near(op.wall, op.seg, mid, width, Some(o))
+                .ok_or_else(no_room)?,
+        };
+        // A centred one stays centred while that fits its stretch; else it goes as near the
+        // middle as its stretch lets it.
+        let centred_fits = own.is_none_or(|(a, b)| {
+            let c = (len - width) / 2.0;
+            c >= a - 1e-6 && c + width <= b + 1e-6
+        });
         let mut sized = op.clone();
         sized.leaf = (op.leaf - (op.width - width)).clamp(0.0, width);
         sized.width = width;
         sized.width_expr = (!v.references.is_empty()).then(|| v.text.clone());
         sized.at = match op.at {
-            OpeningAt::Centred => OpeningAt::Centred,
+            OpeningAt::Centred if centred_fits => OpeningAt::Centred,
             OpeningAt::From {
                 end: SegEnd::End, ..
             } => OpeningAt::From {
@@ -710,7 +748,7 @@ impl Editor {
                 offset: len - start - width,
                 expr: None,
             },
-            OpeningAt::From { .. } => OpeningAt::from_start(start),
+            _ => OpeningAt::from_start(start),
         };
         self.doc.begin();
         if self.doc.set_opening(o, sized).is_err() {

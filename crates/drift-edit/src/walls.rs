@@ -371,6 +371,7 @@ impl Editor {
             return WallEdit::Full;
         }
         let mut moved: BTreeSet<(WallId, u16)> = BTreeSet::new();
+        let mut shifted: BTreeSet<WallId> = BTreeSet::new();
         for id in self.doc.entities_touched_in_transaction() {
             let Some(segs) = segments.get(&id) else {
                 continue;
@@ -384,12 +385,13 @@ impl Editor {
                 return WallEdit::Full;
             }
             moved.extend(segs.iter().copied());
+            shifted.extend(segs.iter().map(|(w, _)| *w));
         }
         moved.extend(cut);
         if moved.is_empty() {
             WallEdit::None
         } else {
-            WallEdit::Moved(moved)
+            WallEdit::Moved(moved, shifted)
         }
     }
 
@@ -413,18 +415,21 @@ impl Editor {
         }
         let report = match self.wall_edit() {
             WallEdit::None => return,
-            WallEdit::Moved(moved) => {
-                // Tees and ends against curves follow what moved first.
-                let walls: BTreeSet<WallId> = moved.iter().map(|(w, _)| *w).collect();
+            WallEdit::Moved(moved, shifted) => {
+                // Tees and ends against curves follow what moved first. (Only walls whose
+                // centrelines moved: an opening added, slid or resized moves no wall, and its
+                // edit moves nothing else.)
                 let before = self.doc.revision();
-                self.follow_tees(Some(&walls));
+                if !shifted.is_empty() {
+                    self.follow_tees(Some(&shifted));
+                }
                 let edit = if self.doc.revision() == before {
-                    WallEdit::Moved(moved)
+                    WallEdit::Moved(moved, shifted)
                 } else {
                     self.wall_edit()
                 };
                 let fast = match &edit {
-                    WallEdit::Moved(moved) => {
+                    WallEdit::Moved(moved, _) => {
                         drift_geom::walls::regenerate_moved_with(&mut self.doc, moved, joins)
                     }
                     WallEdit::None => Some(Default::default()),
@@ -433,7 +438,7 @@ impl Editor {
                 match fast {
                     Some(r) => {
                         // Openings ride along with the segments that moved.
-                        if let WallEdit::Moved(moved) = &edit {
+                        if let WallEdit::Moved(moved, _) = &edit {
                             self.follow_openings(Some(moved));
                         }
                         r
@@ -1992,8 +1997,9 @@ pub(crate) fn chains(
 /// What an edit did to what walls are made from (see `Editor::wall_edit`).
 enum WallEdit {
     None,
-    /// Only these segments moved.
-    Moved(BTreeSet<(WallId, u16)>),
+    /// Only these segments moved (or were cut again by an opening); the walls whose
+    /// centrelines moved.
+    Moved(BTreeSet<(WallId, u16)>, BTreeSet<WallId>),
     Full,
 }
 

@@ -193,6 +193,23 @@ impl Gen<'_> {
 /// made (`doc`'s generated entities). An opening's own cut counts as free for `but`, so it
 /// can slide within the stretch it is in.
 pub fn free_spans(doc: &Document, w: WallId, seg: u16, but: Option<OpeningId>) -> Vec<(f64, f64)> {
+    spans(doc, w, seg, |o| but == Some(o))
+}
+
+/// Where along segment `seg` of wall `w` its stretches run between corners, every opening's
+/// cut counting as wall: what an opening's offset is measured in.
+pub fn corner_spans(doc: &Document, w: WallId, seg: u16) -> Vec<(f64, f64)> {
+    spans(doc, w, seg, |_| true)
+}
+
+/// The stretches of segment `seg` where both faces run unbroken, the cuts of the openings
+/// `merged` says counting as unbroken.
+fn spans(
+    doc: &Document,
+    w: WallId,
+    seg: u16,
+    merged: impl Fn(OpeningId) -> bool,
+) -> Vec<(f64, f64)> {
     let Some(wall) = doc.wall(w) else {
         return Vec::new();
     };
@@ -217,11 +234,11 @@ pub fn free_spans(doc: &Document, w: WallId, seg: u16, but: Option<OpeningId>) -
             .filter_map(|(k, id)| Some((k.from, ends(*id)?)))
             .collect();
         v.sort_by(|a, b| a.1.0.total_cmp(&b.1.0));
-        // Pieces either side of `but`'s cut are one stretch.
+        // Pieces either side of a merged opening's cut are one stretch.
         let mut out: Vec<(f64, f64)> = Vec::new();
         for (from, (a, b)) in v {
-            match out.last_mut() {
-                Some(last) if but.is_some_and(|o| from == Station::Jamb(o, 1)) => last.1 = b,
+            match (out.last_mut(), from) {
+                (Some(last), Station::Jamb(o, 1)) if merged(o) => last.1 = b,
                 _ => out.push((a, b)),
             }
         }

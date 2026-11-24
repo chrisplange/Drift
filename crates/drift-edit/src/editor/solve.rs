@@ -599,8 +599,12 @@ impl Editor {
         if self.areas.pending.is_some() && self.doc.in_transaction() {
             self.settle_before_open_edit();
         }
-        // (Free lines alone have nothing to solve: no relations, nothing pinned or round.)
-        let report = if drift_solver::anything_to_solve(&self.doc) {
+        // (Free lines alone have nothing to solve: no relations, nothing pinned or round. Nor
+        // has an edit of openings alone: it moves no geometry, so it mustn't solve whatever
+        // an earlier edit left unmet and move walls and the openings in them.)
+        let report = if drift_solver::anything_to_solve(&self.doc)
+            && !self.doc.only_openings_touched_in_transaction()
+        {
             self.solve_commit()
         } else {
             SolveReport {

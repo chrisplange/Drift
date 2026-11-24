@@ -20,6 +20,8 @@ mod audit_sheets;
 mod commands;
 /// Screenshots for the user guide.
 mod docs;
+/// Floating panels: where they open, snapping, and the drawing holding still as docks change.
+mod floating;
 /// Screenshots for judging the look, at every window size it has to look right at.
 mod fresh;
 /// The last-resort guard: a panic in a tool, a command or a file's reader (#440).
@@ -10605,11 +10607,13 @@ fn saved_preferences_read_back_unchanged() {
     // (Which relations show is saved since #337, and Auto merge since: keys those builds
     // didn't write. Auto merge reads back off, its default.)
     // (And whether the rail shows names since the Studio rail: appended, off unless set.)
+    // (And where floating panels last stood: none here.)
     let written = h
         .state()
         .view_prefs()
         .replace("rels=all;", "")
-        .replace("merge=0;", "");
+        .replace("merge=0;", "")
+        .replace("dock_spots=;", "");
     // (And the grid's spacing since #506: appended, Auto unless set.)
     assert_eq!(
         written.strip_suffix(";gfixed=0;gspace=304.8;gdiv=12;gtext=1';railnames=0"),

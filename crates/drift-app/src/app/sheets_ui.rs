@@ -2153,7 +2153,7 @@ impl DriftApp {
         };
         let (rect, response) =
             ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
-        self.drawing.view.canvas_rect = rect;
+        self.set_canvas_rect(rect, ui.ctx().content_rect());
         self.drawing.view.pointer = None;
         let painter = ui.painter_at(rect);
         let dark = ui.visuals().dark_mode;

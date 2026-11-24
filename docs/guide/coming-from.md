@@ -82,7 +82,7 @@ moving and rotating (G, R, X / Y, B), and Revit-style temporary dimensions.
 | Align and distribute | Not yet. Use relations (horizontal, vertical, symmetric, equal) instead; they keep things aligned as you edit. |
 | Transform box | Corner and side handles scale and stretch; just outside a corner turns. Shift keeps the shape, Ctrl scales about the middle. |
 | Smart guides | Inference lines and snapping. |
-| Space to pan | Middle or right drag, or two fingers on a trackpad. |
+| Space to pan | Middle drag, or two fingers on a trackpad. |
 
 What's different: everything has a real size, in millimetres or inches, and is placed by
 typed values and constraints rather than by eye. Dimensions you add hold the geometry.

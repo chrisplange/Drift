@@ -2110,7 +2110,7 @@ pub(crate) const OTHER_KEYS: &[(&str, &[(&str, &str)])] = &[
         "Mouse",
         &[
             ("Double middle-click", "Zoom to fit"),
-            ("Middle or right drag", "Pan"),
+            ("Middle drag", "Pan"),
             (
                 "Scroll / pinch",
                 "Zoom at the pointer (two fingers on a trackpad pan)",

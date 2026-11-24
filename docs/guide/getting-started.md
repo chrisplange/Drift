@@ -191,7 +191,7 @@ Ctrl+L shows or hides the **Layers** panel on its own.
 | To | Do this |
 |---|---|
 | Zoom | Scroll the mouse wheel (it zooms at the pointer), or pinch on a trackpad. |
-| Pan | Drag with the middle or right mouse button, or scroll with two fingers on a trackpad. |
+| Pan | Drag with the middle mouse button, or scroll with two fingers on a trackpad. |
 | Fit everything | Shift+F, or double-click the middle button. |
 | Fit the selection | Shift+Z. |
 | Zoom to a set size | Click the zoom percentage in the status bar: fit, selection, 25% to 400%, and **100% (life size)**. |

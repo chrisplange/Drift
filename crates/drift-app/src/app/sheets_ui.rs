@@ -2144,7 +2144,7 @@ impl DriftApp {
 
     // ----- The sheet preview -----------------------------------------------------------------
 
-    /// The canvas in sheet mode: the page as it prints. Scroll zooms, middle / right drag
+    /// The canvas in sheet mode: the page as it prints. Scroll zooms, middle drag
     /// pans, and dragging with the primary button moves the drawing within the sheet.
     pub(crate) fn sheet_canvas(&mut self, ui: &mut egui::Ui) {
         let Some(id) = self.current_sheet() else {
@@ -2197,7 +2197,7 @@ impl DriftApp {
             self.drawing.view.preview.zoom = fit.max(0.05);
             self.drawing.view.preview.center = size * 0.5;
         }
-        // Zoom at the pointer, pan with middle / right drag.
+        // Zoom at the pointer, pan with middle drag.
         if let Some(pos) = response.hover_pos() {
             let (pan, factor) = self.wheel.read(ui);
             let factor = factor as f32;
@@ -2211,9 +2211,7 @@ impl DriftApp {
                 self.drawing.view.preview.center += before - after;
             }
         }
-        if response.dragged_by(PointerButton::Middle)
-            || response.dragged_by(PointerButton::Secondary)
-        {
+        if response.dragged_by(PointerButton::Middle) {
             let d = response.drag_delta();
             self.drawing.view.preview.center -= DVec2::new(f64::from(d.x), -f64::from(d.y))
                 / f64::from(self.drawing.view.preview.zoom);

@@ -34,7 +34,7 @@ from the **Views** list, or with **V**: see below.) The next sheet you make is *
 and so on.
 
 The tabs over the canvas are the model and each sheet: click one to show it. On a sheet,
-scroll to zoom, drag with the middle or right button to pan, and press Shift+F to fit the
+scroll to zoom, drag with the middle button to pan, and press Shift+F to fit the
 sheet. The rail holds what you can do on paper: **Select**, **Add view** and **Back to
 model**. The **Model** tab or **Back to model** returns to the model, and Ctrl+PgDn and
 Ctrl+PgUp step through the tabs (Esc never leaves a sheet); picking a drawing tool (from the

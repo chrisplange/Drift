@@ -41,7 +41,7 @@ of the system cursor (whose size and weight can't be set).
 
 **Scrolling**: **Automatic** (a mouse wheel zooms, two fingers on a trackpad pan, a pinch
 zooms), **Zoom** (scrolling always zooms) or **Pan** (scrolling always pans; Ctrl+scroll
-zooms). The middle or right mouse button drags the view either way.
+zooms). The middle mouse button drags the view either way.
 
 ## While drawing
 

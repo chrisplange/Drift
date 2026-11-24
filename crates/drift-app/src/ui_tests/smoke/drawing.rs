@@ -210,3 +210,43 @@ fn smoke_drawing_trimming_a_circle_crossed_once_says_why() {
         "no step"
     );
 }
+
+/// A right-click that wobbles on the way (pressed, moved past the click distance, released)
+/// still finishes a line chain, and leaves the view where it was: the right button doesn't
+/// pan.
+#[test]
+fn smoke_drawing_a_wobbly_right_click_finishes_without_panning() {
+    let Some(mut h) = harness() else { return };
+    let v = DVec2::new;
+    view(&mut h, v(-20.0, -20.0), v(60.0, 50.0));
+    h.key_press(Key::L);
+    h.run();
+    for p in [v(0.0, 0.0), v(30.0, 0.0)] {
+        click_world(&mut h, p);
+    }
+    assert!(h.state().tool.is_busy(), "mid-chain");
+    let origin = screen(&h, v(0.0, 0.0));
+    let from = screen(&h, v(30.0, 20.0));
+    let to = from + egui::vec2(25.0, 15.0);
+    h.hover_at(from);
+    h.run();
+    h.event(Event::PointerButton {
+        pos: from,
+        button: PointerButton::Secondary,
+        pressed: true,
+        modifiers: EguiModifiers::NONE,
+    });
+    h.run();
+    h.hover_at(to);
+    h.run();
+    h.event(Event::PointerButton {
+        pos: to,
+        button: PointerButton::Secondary,
+        pressed: false,
+        modifiers: EguiModifiers::NONE,
+    });
+    h.run();
+    assert!(!h.state().tool.is_busy(), "the chain finished");
+    let moved = screen(&h, v(0.0, 0.0)) - origin;
+    assert!(moved.length() < 0.5, "the view didn't pan: moved {moved:?}");
+}

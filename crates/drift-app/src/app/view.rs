@@ -1235,7 +1235,11 @@ impl DriftApp {
         if menu_tool || response.context_menu_opened() {
             response.context_menu(|ui| self.canvas_menu(ui));
         }
-        if response.clicked_by(PointerButton::Secondary) {
+        // A right-click finishes or cancels the tool. The right button doesn't pan, so a press
+        // that wobbled past the click distance, or was held a moment, still counts as one.
+        if response.clicked_by(PointerButton::Secondary)
+            || (!menu_tool && response.drag_stopped_by(PointerButton::Secondary))
+        {
             if self.tool.is_modal() {
                 // Right-click cancels a grab, as in Blender.
                 self.tool_cancel();
@@ -2111,13 +2115,11 @@ impl DriftApp {
             let v = pos - rect.center();
             DVec2::new(f64::from(v.x), f64::from(v.y))
         };
-        // Pan with the middle or right button. Track positions from the press origin rather
-        // than per-frame deltas, which include the pointer jump of a touch or pen press.
-        let panning = response.dragged_by(PointerButton::Middle)
-            || response.dragged_by(PointerButton::Secondary);
-        if response.drag_started_by(PointerButton::Middle)
-            || response.drag_started_by(PointerButton::Secondary)
-        {
+        // Pan with the middle button (the right button is for right-click, which finishes a
+        // tool). Track positions from the press origin rather than per-frame deltas, which
+        // include the pointer jump of a touch or pen press.
+        let panning = response.dragged_by(PointerButton::Middle);
+        if response.drag_started_by(PointerButton::Middle) {
             self.drawing.view.pan_anchor = ui.input(|i| i.pointer.press_origin());
         }
         if panning

@@ -417,6 +417,52 @@ impl Document {
         (walls, paths)
     }
 
+    /// True if the open transaction changed openings and nothing else but what walls and
+    /// openings make: an opening placed, resized, slid, flipped, moved to a layer or
+    /// deleted, with its symbol and its wall's faces and jambs following. Nothing a solve
+    /// sees changed (no free geometry, relation or variable; no wall's centreline or record
+    /// beyond what it made).
+    pub fn only_openings_touched_in_transaction(&self) -> bool {
+        let Some(journal) = &self.journal else {
+            return false;
+        };
+        let keys: Vec<&Key> = journal.keys().collect();
+        if !keys.iter().any(|k| matches!(k, Key::Opening(_))) {
+            return false;
+        }
+        // What walls and openings made, before the transaction and now.
+        let mut made = self.generated_entities();
+        for k in &keys {
+            match k {
+                Key::Wall(w) => made.extend(
+                    self.wall_before_transaction(*w)
+                        .into_iter()
+                        .flat_map(|w| w.made.entities().collect::<Vec<_>>()),
+                ),
+                Key::Opening(o) => made.extend(
+                    self.opening_before_transaction(*o)
+                        .into_iter()
+                        .flat_map(|o| o.made.entities().collect::<Vec<_>>()),
+                ),
+                _ => {}
+            }
+        }
+        let record = |w: Option<Wall>| {
+            w.map(|w| Wall {
+                made: Default::default(),
+                ..w
+            })
+        };
+        keys.iter().all(|k| match k {
+            Key::Opening(_) => true,
+            Key::Entity(id) => made.contains(id),
+            Key::Wall(w) => {
+                record(self.wall_before_transaction(*w)) == record(self.walls.get(w).cloned())
+            }
+            _ => false,
+        })
+    }
+
     /// The openings the open transaction added, changed or removed (sorted).
     pub fn openings_touched_in_transaction(&self) -> Vec<OpeningId> {
         let Some(journal) = &self.journal else {

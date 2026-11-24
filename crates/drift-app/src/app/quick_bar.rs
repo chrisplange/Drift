@@ -160,13 +160,15 @@ fn bar_width(painter: &egui::Painter, shown: &[Item], more: bool) -> f32 {
 /// them; and when they are out of view (or fill it), at the foot of the canvas, or at its
 /// top when a pick lies there. Under or over the picks it never lies on what is clicked on
 /// the canvas there (`keep_clear`: the dimensions' labels, the relations' symbols): it goes
-/// to the foot instead. Inside the canvas, never over a pick, and the same every frame for
-/// the same picks and view.
+/// to the foot instead. Nor under a floating panel (`covered`): it slides sideways clear of
+/// one, and failing that goes to the foot or the top. Inside the canvas, never over a pick,
+/// and the same every frame for the same picks and view.
 pub(crate) fn place(
     canvas: egui::Rect,
     size: egui::Vec2,
     picks: &[egui::Rect],
     keep_clear: &[egui::Rect],
+    covered: &[egui::Rect],
 ) -> egui::Rect {
     let (lo, hi) = (canvas.left() + MARGIN, canvas.right() - MARGIN - size.x);
     let left = |middle: f32| {
@@ -178,25 +180,42 @@ pub(crate) fn place(
     };
     let at = |x: f32, y: f32| egui::Rect::from_min_size(egui::pos2(x, y).round(), size);
     let fits = |top: f32| top >= canvas.top() + MARGIN && top + size.y <= canvas.bottom() - MARGIN;
+    let covers = |bar: egui::Rect| keep_clear.iter().chain(covered).any(|r| r.intersects(bar));
+    // At a height: where it would be, else just left or right of each floating panel it
+    // would lie under (staying in the canvas).
+    let along = |x: f32, top: f32| -> Vec<egui::Rect> {
+        let first = at(x, top);
+        let mut bars = vec![first];
+        for r in covered.iter().filter(|r| r.intersects(first)) {
+            for x in [r.left() - MARGIN - size.x, r.right() + MARGIN] {
+                if x >= lo - 0.5 && x <= hi + 0.5 {
+                    bars.push(at(x, top));
+                }
+            }
+        }
+        bars
+    };
     let all = picks.iter().copied().reduce(|a, b| a.union(b));
     if let Some(all) = all.filter(|all| canvas.intersects(*all)) {
         let x = left(all.center().x);
         for top in [all.bottom() + NEAR, all.top() - NEAR - size.y] {
-            let bar = at(x, top);
-            if fits(top) && !keep_clear.iter().any(|r| r.intersects(bar)) {
+            if !fits(top) {
+                continue;
+            }
+            if let Some(bar) = along(x, top).into_iter().find(|bar| !covers(*bar)) {
                 return bar;
             }
         }
     }
-    // At the foot, else at the top: whichever is clear of the picks and of what is clicked;
-    // failing both, the one clear of the picks.
+    // At the foot, else at the top: whichever is clear of the picks, of what is clicked and
+    // of the panels; failing both, the one clear of the picks.
     let x = left(canvas.center().x);
     let foot = at(x, canvas.bottom() - MARGIN - size.y);
     let top = at(x, canvas.top() + MARGIN);
     let on_pick = |bar: egui::Rect| picks.iter().any(|pick| pick.intersects(bar.expand(8.0)));
-    let covers = |bar: egui::Rect| keep_clear.iter().any(|r| r.intersects(bar));
-    [foot, top]
+    along(foot.left(), foot.top())
         .into_iter()
+        .chain(along(top.left(), top.top()))
         .find(|bar| !on_pick(*bar) && !covers(*bar))
         .unwrap_or(if on_pick(foot) { top } else { foot })
 }
@@ -311,7 +330,7 @@ impl DriftApp {
             .filter(|b| !b.is_empty())
             .map(|b| egui::Rect::from_two_pos(map.to_screen(b.min), map.to_screen(b.max)))
             .collect();
-        let rect = place(map.rect, size, &picks, keep_clear);
+        let rect = place(map.rect, size, &picks, keep_clear, &self.floating_windows());
         Some(QuickBar { rect, items })
     }
 

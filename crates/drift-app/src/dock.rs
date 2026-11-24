@@ -111,6 +111,9 @@ pub struct Layout {
     pub weights: HashMap<Panel, f32>,
     /// Stacked floating panels folded to just their header.
     pub folded: HashSet<Panel>,
+    /// Where each panel's floating window last stood (its top left, in points): floated
+    /// again, it goes back there if that is free.
+    pub spots: HashMap<Panel, (f32, f32)>,
 }
 
 impl Default for Layout {
@@ -125,6 +128,7 @@ impl Default for Layout {
             home: HashMap::new(),
             weights: HashMap::new(),
             folded: HashSet::new(),
+            spots: HashMap::new(),
         }
     }
 }
@@ -341,6 +345,13 @@ impl Layout {
         let mut folded: Vec<&str> = self.folded.iter().map(|p| p.key()).collect();
         folded.sort_unstable();
         out.push(format!("dock_folded={}", folded.join(",")));
+        let mut spots: Vec<String> = self
+            .spots
+            .iter()
+            .map(|(p, (x, y))| format!("{}:{}:{}", p.key(), x.round(), y.round()))
+            .collect();
+        spots.sort();
+        out.push(format!("dock_spots={}", spots.join(",")));
         out
     }
 
@@ -386,6 +397,7 @@ impl Layout {
             home: HashMap::new(),
             weights: HashMap::new(),
             folded: HashSet::new(),
+            spots: HashMap::new(),
         };
         let panels = |v: &str| -> Vec<Panel> { v.split(',').filter_map(Panel::parse).collect() };
         for (key, value) in pairs {
@@ -422,6 +434,20 @@ impl Layout {
                     }
                 }
                 "dock_folded" => layout.folded = panels(value).into_iter().collect(),
+                "dock_spots" => {
+                    for entry in value.split(',') {
+                        let mut parts = entry.split(':');
+                        if let (Some(p), Some(x), Some(y)) =
+                            (parts.next(), parts.next(), parts.next())
+                            && let (Some(p), Ok(x), Ok(y)) =
+                                (Panel::parse(p), x.parse::<f32>(), y.parse::<f32>())
+                            && x.is_finite()
+                            && y.is_finite()
+                        {
+                            layout.spots.insert(p, (x, y));
+                        }
+                    }
+                }
                 "dock_home_left" => {
                     for p in panels(value) {
                         layout.home.insert(p, Side::Left);
@@ -596,6 +622,8 @@ mod tests {
         l.active[1] = Some(Panel::Parameters);
         l.weights.insert(Panel::Inspector, 1.25);
         l.weights.insert(Panel::Blocks, 0.75);
+        l.spots.insert(Panel::Inspector, (812.0, 96.0));
+        l.spots.insert(Panel::Layers, (40.0, 300.0));
         l.toggle_fold(Panel::Blocks);
         assert!(l.folded.contains(&Panel::Blocks));
         // The other one folds too (the window shrinks to the headers), and opens again.

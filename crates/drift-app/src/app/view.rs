@@ -954,10 +954,42 @@ impl DriftApp {
         }
     }
 
+    /// The canvas as laid out this frame, in a window (`screen`) laid out so. When it moved
+    /// or changed size (a dock opened, closed or was resized, the rail changed width, the
+    /// window was resized), the drawing stays where it was on screen and only the canvas's
+    /// edges move, in the model and in the sheet preview alike.
+    ///
+    /// A fit that is asked for (a drawing opened, Zoom to Fit) and not yet shown is still
+    /// made, to the new canvas; and one already shown is made again while the window itself
+    /// changes size (a window maximised as it opens, a browser laying out the page). One
+    /// already shown is given up when only the panels change the canvas: fitting again
+    /// would move and scale the drawing.
+    pub(crate) fn set_canvas_rect(&mut self, rect: egui::Rect, screen: egui::Rect) {
+        let view = &mut self.drawing.view;
+        let was = view.canvas_rect;
+        let window_resized = view.screen_rect.is_positive() && view.screen_rect != screen;
+        view.screen_rect = screen;
+        if was.is_positive() && rect.is_positive() && was != rect {
+            let shown = view.fit_target.is_some() && view.fitted == view.fit_target;
+            let fit_again = view.fit_target.is_some() && (!shown || window_resized);
+            // (The view is measured from the canvas's centre.)
+            let d = rect.center() - was.center();
+            let d = DVec2::new(f64::from(d.x), f64::from(d.y));
+            if !fit_again {
+                view.fit_target = None;
+                view.camera.pan(-d);
+            }
+            if view.preview.zoom > 0.0 {
+                view.preview.center += DVec2::new(d.x, -d.y) / f64::from(view.preview.zoom);
+            }
+        }
+        view.canvas_rect = rect;
+    }
+
     pub(crate) fn canvas(&mut self, ui: &mut egui::Ui) {
         let (rect, response) =
             ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
-        self.drawing.view.canvas_rect = rect;
+        self.set_canvas_rect(rect, ui.ctx().content_rect());
         self.drawing.editor.drawing_curves = self.tool.kind().draws_curves();
         // The Wall and Dimension tools snap to walls' centrelines: they show (faintly).
         self.drawing.editor.show_centrelines = self.show_wall_centrelines
@@ -975,6 +1007,7 @@ impl DriftApp {
         if let Some(bounds) = self.drawing.view.fit_target {
             self.drawing.view.camera.fit(bounds, view_size, FIT_MARGIN);
         }
+        self.drawing.view.fitted = self.drawing.view.fit_target;
 
         let map = ScreenMap {
             rect,

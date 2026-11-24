@@ -42,6 +42,14 @@ const BODY_MARGIN: egui::Margin = egui::Margin {
 const DETACH: f32 = 40.0;
 /// Space between stacked panels (it resizes them).
 const DIVIDER: f32 = 7.0;
+/// Space kept between a floating window Drift places itself and the canvas edge.
+const EDGE_GAP: f32 = 14.0;
+/// Space kept between floating windows Drift places itself.
+const WINDOW_GAP: f32 = 10.0;
+/// How near a dragged floating window's edge comes to another edge before it snaps there.
+const SNAP: f32 = 8.0;
+/// A floating window's width until it is resized.
+const FLOAT_WIDTH: f32 = 300.0;
 
 /// Panel interaction that lasts between frames but isn't saved.
 #[derive(Default)]
@@ -71,6 +79,15 @@ pub(crate) struct DockView {
     /// Where a panel just floated by dropping should appear.
     float_at: HashMap<Panel, egui::Pos2>,
     was_wide: Option<bool>,
+    /// Whether the floating windows have been drawn once: the first frame puts back the
+    /// windows of the last session, not panels just floated.
+    drawn: bool,
+    /// The panels floating when the windows were last drawn.
+    was_floating: std::collections::HashSet<Panel>,
+    /// Each floating window's egui id as last drawn (by its top panel).
+    ids: HashMap<Panel, egui::Id>,
+    /// Whether the sketch check was open last frame: opened afresh, it is placed afresh.
+    pub(crate) checker_open: bool,
     /// Every panel hidden for a clear view (Ctrl+\).
     pub hide_all: bool,
     /// The panel whose contents are being drawn, while they are: what a click in a panel
@@ -460,7 +477,7 @@ impl DriftApp {
             egui::Button::new("Close")
         };
         if ui.add(close).clicked() {
-            self.layout.move_to(p, Place::Hidden, None);
+            self.close_panel(p);
             ui.close();
         }
     }
@@ -536,14 +553,15 @@ impl DriftApp {
     /// canvas).
     pub(crate) fn floating_panels(&mut self, ctx: &egui::Context) {
         self.dock_view.stacked.clear();
-        self.dock_view.last_windows = std::mem::take(&mut self.dock_view.windows);
-        if self.dock_view.hide_all {
-            return;
-        }
+        // A frame that draws none (every panel hidden, no canvas) keeps the windows of the
+        // last that did: shown again, they are where they were, not new ones to place.
         let canvas = self.drawing.view.canvas_rect;
-        if !canvas.is_positive() {
+        if self.dock_view.hide_all || !canvas.is_positive() {
             return;
         }
+        self.dock_view.last_windows = std::mem::take(&mut self.dock_view.windows);
+        let was_floating = std::mem::take(&mut self.dock_view.was_floating);
+        self.dock_view.was_floating = self.layout.floating.iter().flatten().copied().collect();
         // Opaque, like the dialogs: nothing underneath shows through.
         let frame =
             egui::Frame::window(&ctx.style_of(ctx.theme())).inner_margin(egui::Margin::ZERO);
@@ -554,29 +572,99 @@ impl DriftApp {
         if !down {
             self.dock_view.pressed_at.clear();
         }
-        for (k, stack) in self.layout.floating.clone().into_iter().enumerate() {
+        // What a window Drift places itself keeps off: the picks, unless they fill the view.
+        let avoid = self.selection_on_screen(canvas);
+        let narrow = self.dock_view.was_wide == Some(false);
+        for stack in self.layout.floating.clone() {
             let top = stack[0];
             let n = stack.len();
-            let step = 26.0 * k as f32;
             let tall = (300.0 * n as f32).max(440.0).min(most - 28.0);
             let least = MIN_PANEL * n as f32 + DIVIDER * (n - 1) as f32;
+            // The other windows, as drawn this frame or (not drawn yet) the frame before.
+            let others: Vec<egui::Rect> = self
+                .dock_view
+                .windows
+                .iter()
+                .chain(self.dock_view.last_windows.iter())
+                .filter(|(p, _)| !stack.contains(p))
+                .map(|(_, r)| *r)
+                .collect();
+            // A window new this frame that nobody put anywhere (a drop, a fold or a stack
+            // that changed sets `float_at`): where it goes is worked out here.
+            let new = !self.dock_view.last_windows.contains_key(&top)
+                && !self.dock_view.float_at.contains_key(&top);
+            if new
+                && let Some(r) = stack
+                    .iter()
+                    .find_map(|p| self.dock_view.last_windows.get(p))
+            {
+                // The stack was drawn last frame under another top panel: it stays put.
+                self.dock_view.float_at.insert(top, r.left_top());
+            } else if new
+                && narrow
+                && n == 1
+                && self.dock_view.drawn
+                && !was_floating.contains(&top)
+            {
+                // In a narrow window a panel just floated opens folded to its header, out of
+                // the way.
+                self.layout.folded.insert(top);
+            }
             // Every panel folded: a window just the headers, as wide as it was.
             let shut = stack.iter().all(|p| self.layout.folded.contains(p));
             let headers = (HEADER * n as f32 + DIVIDER * (n - 1) as f32).min(most);
+            let id = egui::Id::new(("floating_panel", top.key(), n, shut));
+            // The same stack in a new window (it gained or lost a panel, or folded) that
+            // nothing put anywhere: where the old one was, never egui's default place.
+            if !new
+                && !self.dock_view.float_at.contains_key(&top)
+                && self.dock_view.ids.get(&top).is_some_and(|was| *was != id)
+                && let Some(r) = self.dock_view.last_windows.get(&top)
+            {
+                self.dock_view.float_at.insert(top, r.left_top());
+            }
+            self.dock_view.ids.insert(top, id);
+            if new && !self.dock_view.float_at.contains_key(&top) {
+                // As big as egui brings it back (it keeps a resized window's size), else the
+                // default.
+                let size = ctx
+                    .memory(|m| m.area_rect(id))
+                    .map_or(egui::vec2(FLOAT_WIDTH, tall), |r| {
+                        egui::vec2(r.width().max(240.0), r.height().min(most))
+                    });
+                let size = egui::vec2(size.x, if shut { headers } else { size.y });
+                let at = self.float_spot(
+                    ctx,
+                    id,
+                    top,
+                    canvas,
+                    size,
+                    least.min(size.y),
+                    &others,
+                    &avoid,
+                );
+                self.dock_view.float_at.insert(top, at);
+            }
+            // A window put somewhere starts no taller than the room below it.
+            let room = self.dock_view.float_at.get(&top).map_or(tall, |at| {
+                (canvas.bottom() - EDGE_GAP - at.y)
+                    .floor()
+                    .max(least.min(most))
+            });
             // A window per stack, named by its top panel and how many it holds, so a stack
             // that changes starts at its new size (and at the place it was, see `float_at`).
             let mut window = egui::Window::new(top.title())
-                .id(egui::Id::new(("floating_panel", top.key(), n, shut)))
+                .id(id)
                 .title_bar(false)
                 .resizable(true)
                 .movable(true)
                 .frame(frame)
-                .default_size([300.0, tall])
+                .default_size([FLOAT_WIDTH, tall.min(room)])
                 .min_width(240.0)
                 .min_height(least.min(most))
                 .max_height(most)
-                // Placed by its top left (see `float_at`), at first in the canvas's top right.
-                .default_pos(canvas.right_top() + egui::vec2(-314.0 - step, 14.0 + step))
+                // Placed by its top left (see `float_at`).
+                .default_pos(canvas.right_top() + egui::vec2(-FLOAT_WIDTH - EDGE_GAP, EDGE_GAP))
                 .constrain_to(canvas);
             // As wide as it was last frame (a window new to this stack: the default width).
             let width = self
@@ -619,6 +707,24 @@ impl DriftApp {
                     .min(most)
                     .max(least.min(most));
                 window = window.max_width(wide).max_height(high);
+            } else if let Some(at) = self.dock_view.float_at.get(&top) {
+                // Put somewhere new: no bigger than the room right of and below that place,
+                // so it isn't pushed back over what it was placed clear of.
+                window = window
+                    .max_width((canvas.right() - EDGE_GAP - at.x).floor().max(240.0))
+                    .max_height(room);
+            }
+            // Moved by dragging: its edges snap to the canvas's and to the other windows'.
+            // (egui puts a dragged window where it was when the drag began plus how far the
+            // pointer has gone, so that starting point is what is moved.)
+            if ctx.is_being_dragged(id.with("move"))
+                && let Some(r) = self.dock_view.last_windows.get(&top)
+                && let Some((from, false)) = self.dock_view.pressed_at.get(&top).copied()
+                && let Some(moved) = ctx.input(|i| i.pointer.total_drag_delta())
+            {
+                let raw = egui::Rect::from_min_size(from + moved, r.size());
+                let at = raw.min + snap_offset(raw, canvas, &others);
+                ctx.data_mut(|d| d.insert_temp(id.with("pivot_at_drag_start"), at - moved));
             }
             if shut {
                 window = window
@@ -679,6 +785,12 @@ impl DriftApp {
                 continue;
             };
             self.dock_view.windows.insert(top, shown.response.rect);
+            // Where it stands, once let go: a drag that ends in a dock or a stack leaves
+            // where it stood before.
+            if !down && self.dock_view.drag.is_none() {
+                let at = shown.response.rect.min;
+                self.layout.spots.insert(top, (at.x, at.y));
+            }
             // A panel floating alone, dragged by its header, can be docked or stacked.
             // Dragging inside it (a slider, a list, empty space) is just using it.
             let by_header = ctx.input(|i| i.pointer.press_origin()).is_some_and(|at| {
@@ -691,6 +803,76 @@ impl DriftApp {
                 self.dock_view.drag = Some((top, true));
             }
         }
+        self.dock_view.drawn = true;
+    }
+
+    /// The floating windows as last drawn: what the quick-constrain bar and the sketch check
+    /// keep clear of.
+    pub(crate) fn floating_windows(&self) -> Vec<egui::Rect> {
+        if self.dock_view.hide_all {
+            return Vec::new();
+        }
+        self.dock_view.windows.values().copied().collect()
+    }
+
+    /// Where a window new to `top` goes: where its panel last floated (as remembered, or as
+    /// egui remembers the window), if that is in the canvas and clear of the other windows
+    /// and of the picks;
+    /// else the first free place down the edge on its home dock's side (see [`free_spot`]).
+    #[allow(clippy::too_many_arguments)]
+    fn float_spot(
+        &self,
+        ctx: &egui::Context,
+        id: egui::Id,
+        top: Panel,
+        canvas: egui::Rect,
+        size: egui::Vec2,
+        least: f32,
+        others: &[egui::Rect],
+        avoid: &[egui::Rect],
+    ) -> egui::Pos2 {
+        let saved = self
+            .layout
+            .spots
+            .get(&top)
+            .map(|(x, y)| egui::pos2(*x, *y))
+            .or_else(|| ctx.memory(|m| m.area_rect(id)).map(|r| r.min));
+        if let Some(at) = saved {
+            let h = size.y.min(canvas.bottom() - at.y);
+            let r = egui::Rect::from_min_size(at, egui::vec2(size.x, h));
+            let clear = |rects: &[egui::Rect]| !rects.iter().any(|o| overlap(*o, r) > 1.0);
+            if canvas.contains_rect(r) && h >= least && clear(others) && clear(avoid) {
+                return at;
+            }
+        }
+        free_spot(canvas, size, least, others, avoid, self.layout.home(top))
+    }
+
+    /// Where the picks show on the canvas (as one box), unless they fill much of it or the
+    /// canvas shows a sheet.
+    fn selection_on_screen(&self, canvas: egui::Rect) -> Vec<egui::Rect> {
+        if self.drawing.view.sheet_preview {
+            return Vec::new();
+        }
+        let map = ScreenMap {
+            rect: canvas,
+            camera: self.drawing.view.camera,
+        };
+        let ed = &self.drawing.editor;
+        ed.selection
+            .iter()
+            .chain(ed.selected_midpoints.iter())
+            // (Plenty to tell by; a pick of thousands isn't walked every frame.)
+            .take(2000)
+            .filter_map(|id| ed.doc.shape(*id))
+            .map(|shape| shape.bounds())
+            .filter(|b| !b.is_empty())
+            .map(|b| egui::Rect::from_two_pos(map.to_screen(b.min), map.to_screen(b.max)))
+            .reduce(|a, b| a.union(b))
+            .map(|r| r.expand(8.0).intersect(canvas))
+            .filter(|r| r.is_positive() && r.area() < canvas.area() * 0.5)
+            .into_iter()
+            .collect()
     }
 
     /// A floating panel's header as last drawn (for tests).
@@ -1004,6 +1186,27 @@ impl DriftApp {
         egui::Popup::menu(&menu).show(|ui| self.panel_menu(ui, p));
     }
 
+    /// Dock (or close) a stacked panel as its header button (or menu) does, from inside its
+    /// window while the frame draws it: when this frame's rect of the window isn't known yet
+    /// (for tests).
+    #[cfg(test)]
+    pub(crate) fn leave_stack_mid_frame(&mut self, p: Panel, close: bool) {
+        self.dock_view.last_windows = std::mem::take(&mut self.dock_view.windows);
+        if close {
+            self.close_panel(p);
+        } else {
+            self.redock_floating(p);
+        }
+        self.dock_view.windows = self.dock_view.last_windows.clone();
+    }
+
+    /// Hide a panel; the rest of its stack, if any, keeps its place.
+    fn close_panel(&mut self, p: Panel) {
+        let keep = self.stack_position(p);
+        self.layout.move_to(p, Place::Hidden, None);
+        self.restore_stack_position(keep);
+    }
+
     /// Put a floating panel back in its dock; the rest of its stack keeps its place.
     fn redock_floating(&mut self, p: Panel) {
         let keep = self.stack_position(p);
@@ -1018,7 +1221,13 @@ impl DriftApp {
         if stack.len() < 2 {
             return None;
         }
-        let at = self.dock_view.windows.get(&stack[0])?.min;
+        // (Asked from inside the stack's own window, it isn't drawn yet this frame.)
+        let at = self
+            .dock_view
+            .windows
+            .get(&stack[0])
+            .or_else(|| self.dock_view.last_windows.get(&stack[0]))?
+            .min;
         let top = if stack[0] == p { stack[1] } else { stack[0] };
         Some((top, at))
     }
@@ -1349,4 +1558,189 @@ enum Drop {
 /// Whether `at` is on (or just above or below) a tab bar: a dragged tab there slides along it.
 fn in_bar(bar: egui::Rect, at: egui::Pos2) -> bool {
     bar.expand2(egui::vec2(0.0, TAB_BAR * 0.6)).contains(at)
+}
+
+/// How much of `a` and `b` overlap (0 when they don't).
+fn overlap(a: egui::Rect, b: egui::Rect) -> f32 {
+    let r = a.intersect(b);
+    if r.is_positive() { r.area() } else { 0.0 }
+}
+
+/// Where a floating window of `size` goes when nobody put it anywhere: down the canvas edge
+/// on `side` (its home dock's), [`EDGE_GAP`] in, below the windows already there, then in
+/// the next column in; never on another window (`taken`) or on what `avoid` holds (the
+/// picks). It may be shorter than `size`, down to `least`, to end above the canvas's foot.
+/// With nowhere free: the place that covers the least.
+pub(crate) fn free_spot(
+    canvas: egui::Rect,
+    size: egui::Vec2,
+    least: f32,
+    taken: &[egui::Rect],
+    avoid: &[egui::Rect],
+    side: Side,
+) -> egui::Pos2 {
+    let inner = canvas.shrink(EDGE_GAP);
+    let w = size.x.min(inner.width()).max(1.0);
+    let covers = |r: egui::Rect| {
+        2.0 * taken.iter().map(|t| overlap(*t, r)).sum::<f32>()
+            + avoid.iter().map(|t| overlap(*t, r)).sum::<f32>()
+    };
+    let mut tried = Vec::new();
+    for col in 0..64 {
+        let x = match side {
+            Side::Right => inner.right() - w - col as f32 * (w + WINDOW_GAP),
+            Side::Left => inner.left() + col as f32 * (w + WINDOW_GAP),
+        };
+        if x < inner.left() - 0.5 || x + w > inner.right() + 0.5 {
+            break;
+        }
+        // At the top, or just below something in this column.
+        let mut tops: Vec<f32> = taken
+            .iter()
+            .chain(avoid)
+            .filter(|r| r.max.x > x && r.min.x < x + w)
+            .map(|r| r.bottom() + WINDOW_GAP)
+            .filter(|y| *y > inner.top())
+            .chain(std::iter::once(inner.top()))
+            .collect();
+        tops.sort_by(f32::total_cmp);
+        for y in tops {
+            let h = size.y.min(inner.bottom() - y);
+            if h < least {
+                continue;
+            }
+            let r = egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(w, h));
+            if covers(r) <= 1.0 {
+                return r.min.round();
+            }
+            tried.push(r);
+        }
+    }
+    tried
+        .into_iter()
+        .min_by(|a, b| covers(*a).total_cmp(&covers(*b)))
+        .map_or(inner.min, |r| r.min)
+        .round()
+}
+
+/// How far to move a dragged floating window (`rect`, where the pointer would put it) so
+/// that an edge within [`SNAP`] of the canvas's edge, or of the edge of another window
+/// beside it, lies on it.
+pub(crate) fn snap_offset(
+    rect: egui::Rect,
+    canvas: egui::Rect,
+    others: &[egui::Rect],
+) -> egui::Vec2 {
+    let nearest = |moves: Vec<f32>| {
+        moves
+            .into_iter()
+            .filter(|d| d.abs() <= SNAP)
+            .min_by(|a, b| a.abs().total_cmp(&b.abs()))
+            .unwrap_or(0.0)
+    };
+    let mut dx = vec![canvas.left() - rect.left(), canvas.right() - rect.right()];
+    let mut dy = vec![canvas.top() - rect.top(), canvas.bottom() - rect.bottom()];
+    for o in others {
+        // Side by side (their rows meet, give or take the snap): sides abut or line up.
+        if o.top() - SNAP < rect.bottom() && o.bottom() + SNAP > rect.top() {
+            dx.extend([
+                o.right() - rect.left(),
+                o.left() - rect.right(),
+                o.left() - rect.left(),
+                o.right() - rect.right(),
+            ]);
+        }
+        // One above the other: tops and bottoms abut or line up.
+        if o.left() - SNAP < rect.right() && o.right() + SNAP > rect.left() {
+            dy.extend([
+                o.bottom() - rect.top(),
+                o.top() - rect.bottom(),
+                o.top() - rect.top(),
+                o.bottom() - rect.bottom(),
+            ]);
+        }
+    }
+    egui::vec2(nearest(dx), nearest(dy))
+}
+
+#[cfg(test)]
+mod placing {
+    use super::*;
+
+    fn r(x: f32, y: f32, w: f32, h: f32) -> egui::Rect {
+        egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(w, h))
+    }
+
+    const CANVAS: egui::Rect = egui::Rect {
+        min: egui::pos2(100.0, 50.0),
+        max: egui::pos2(1900.0, 1050.0),
+    };
+
+    #[test]
+    fn new_windows_go_down_the_edge_then_inward_never_on_each_other() {
+        let size = egui::vec2(300.0, 440.0);
+        let first = free_spot(CANVAS, size, 98.0, &[], &[], Side::Right);
+        assert_eq!(
+            first,
+            egui::pos2(1900.0 - EDGE_GAP - 300.0, 50.0 + EDGE_GAP)
+        );
+        let a = egui::Rect::from_min_size(first, size);
+        // Below the first, in the same column.
+        let second = free_spot(CANVAS, size, 98.0, &[a], &[], Side::Right);
+        assert_eq!(second, egui::pos2(first.x, a.bottom() + WINDOW_GAP));
+        // The column full: the next one in, at the top.
+        let b = r(second.x, second.y, 300.0, 1050.0 - EDGE_GAP - second.y);
+        let third = free_spot(CANVAS, size, 98.0, &[a, b], &[], Side::Right);
+        assert_eq!(
+            third,
+            egui::pos2(first.x - 300.0 - WINDOW_GAP, 50.0 + EDGE_GAP)
+        );
+        // On the left dock's side they start at the left.
+        let left = free_spot(CANVAS, size, 98.0, &[], &[], Side::Left);
+        assert_eq!(left, egui::pos2(100.0 + EDGE_GAP, 50.0 + EDGE_GAP));
+    }
+
+    #[test]
+    fn a_new_window_keeps_off_the_picks() {
+        let size = egui::vec2(300.0, 440.0);
+        // The picks lie under the top of the right edge's column.
+        let picks = r(1500.0, 40.0, 400.0, 300.0);
+        let at = free_spot(CANVAS, size, 98.0, &[], &[picks], Side::Right);
+        let placed = egui::Rect::from_min_size(at, size);
+        assert!(!placed.intersects(picks), "{placed:?}");
+        assert!(CANVAS.contains_rect(placed), "{placed:?}");
+    }
+
+    #[test]
+    fn with_no_room_it_covers_the_least() {
+        let small = r(0.0, 0.0, 500.0, 300.0);
+        let taken = [r(0.0, 0.0, 500.0, 300.0)];
+        let at = free_spot(
+            small,
+            egui::vec2(300.0, 200.0),
+            98.0,
+            &taken,
+            &[],
+            Side::Right,
+        );
+        assert!(small.contains(at));
+    }
+
+    #[test]
+    fn dragged_windows_snap_to_edges_near_them() {
+        // Within the snap of the canvas's right edge: flush with it.
+        let w = r(1595.0, 300.0, 300.0, 400.0);
+        assert_eq!(snap_offset(w, CANVAS, &[]), egui::vec2(5.0, 0.0));
+        // Beside another window: abuts it, tops lined up.
+        let other = r(1200.0, 200.0, 300.0, 400.0);
+        let w = r(1506.0, 204.0, 300.0, 400.0);
+        assert_eq!(snap_offset(w, CANVAS, &[other]), egui::vec2(-6.0, -4.0));
+        // Far from everything: stays.
+        let w = r(700.0, 400.0, 300.0, 300.0);
+        assert_eq!(snap_offset(w, CANVAS, &[other]), egui::Vec2::ZERO);
+        // A window well below doesn't pull it sideways.
+        let below = r(1200.0, 900.0, 300.0, 100.0);
+        let w = r(1504.0, 100.0, 300.0, 300.0);
+        assert_eq!(snap_offset(w, CANVAS, &[below]).x, 0.0);
+    }
 }

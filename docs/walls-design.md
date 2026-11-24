@@ -4,8 +4,8 @@
 independent review (`D:\Development\Drift\handoff\walls-design-review.md`, outside the repo),
 and refreshed 2026-10-25 against `main` at 3914842 (format 42 with the tolerant reader, #166;
 the command registry, #167; Selection & move, #164).* Companion to
-[fills-and-strokes-audit.md](fills-and-strokes-audit.md) (the shape and fill model this builds
-on), [solver-drag-regions-plan.md](solver-drag-regions-plan.md) (§1, "constraints only where
+[fills-and-strokes-audit.md](archive/fills-and-strokes-audit.md) (the shape and fill model this builds
+on), [solver-drag-regions-plan.md](archive/solver-drag-regions-plan.md) (§1, "constraints only where
 you add them", which walls must respect) and [file-format.md](file-format.md) (the version
 policy §2.6 follows).
 
@@ -895,8 +895,8 @@ pub enum Anchor { SegStart(u16), SegEnd(u16), Point(EntityId), Face(EntityId) }
   point ("the hinge side of the opening, on the room-side face of the wall"), is placed at the
   jamb on `facing`, and is mirrored for `hand`. It is generated rather than an `Instance` of a
   `Block` because the symbol depends on the wall's thickness (jambs, sills, frames across the
-  wall), and blocks are fixed geometry. This is the "towards parametric blocks" step PLAN.md
-  describes, done for hosted families first. Placing a user's own block as an opening symbol
+  wall), and blocks are fixed geometry. This is the "towards parametric blocks" step the old
+  PLAN.md roadmap described, done for hosted families first. Placing a user's own block as an opening symbol
   is W3c.
 - **Opening width vs leaf width.** The type tables must keep the two apart. The **opening
   width** is the cut in the wall; the **leaf width** is what the swing draws; and the family's

@@ -1,3 +1,5 @@
+> **Archived 2026-11-24.** History, not current guidance. See [the archive index](README.md).
+
 # One model for several open drawings
 
 PLAN.md §11 step 2: decide between the per-window sessions built in #220 (#217) and the tabs

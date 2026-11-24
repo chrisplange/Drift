@@ -984,3 +984,78 @@ fn shortening_a_run_starting_backwards_keeps_its_direction() {
     );
     assert_rebuilt(&mut ed);
 }
+
+#[test]
+fn wall_geometry_is_never_overlapping() {
+    let mut ed = editor();
+    // Two walls side by side, their faces on one line, and one doubling back on itself.
+    run(&mut ed, &[v(0.0, 0.0), v(200.0, 0.0), v(200.0, 100.0)]);
+    run(&mut ed, &[v(0.0, 10.0), v(150.0, 10.0)]);
+    run(&mut ed, &[v(0.0, 300.0), v(200.0, 300.0), v(100.0, 300.0)]);
+    // A plain line along a wall's centreline.
+    ed.doc.begin();
+    let a = ed.doc.add_point(v(0.0, 0.0));
+    let b = ed.doc.add_point(v(200.0, 0.0));
+    let _ = ed.doc.add_line(a, b).unwrap();
+    assert!(ed.commit("Line"));
+    ed.sync();
+    assert!(ed.overlapping().is_empty(), "{:?}", ed.overlapping());
+    *ed.overlap_cache.borrow_mut() = None;
+    assert!(ed.overlapping().is_empty(), "fresh: {:?}", ed.overlapping());
+    // Plain lines on top of each other still are.
+    ed.doc.begin();
+    let c = ed.doc.add_point(v(0.0, 0.0));
+    let d = ed.doc.add_point(v(200.0, 0.0));
+    let twin = ed.doc.add_line(c, d).unwrap();
+    assert!(ed.commit("Line"));
+    ed.sync();
+    assert_eq!(*ed.overlapping(), vec![twin]);
+}
+
+/// Walls taking curves in or letting them go (Make walls, Explode, their undo) change who
+/// owns them but not the curves: the overlaps found after each edit are still what a fresh
+/// look finds.
+#[test]
+fn overlaps_follow_walls_taking_and_letting_go_of_curves() {
+    let mut ed = editor();
+    let line = |ed: &mut Editor, a: DVec2, b: DVec2| {
+        let (p, q) = (ed.doc.add_point(a), ed.doc.add_point(b));
+        ed.doc.add_line(p, q).unwrap()
+    };
+    // Enough plain lines, apart, that an edit's few changes are looked at alone.
+    ed.doc.begin();
+    for k in 0..200 {
+        let y = 1000.0 + 20.0 * f64::from(k);
+        line(&mut ed, v(0.0, y), v(50.0, y));
+    }
+    // Two construction lines on top of each other.
+    let a = line(&mut ed, v(0.0, -500.0), v(300.0, -500.0));
+    let b = line(&mut ed, v(0.0, -500.0), v(300.0, -500.0));
+    ed.doc.set_style(a, LineKind::Construction);
+    ed.doc.set_style(b, LineKind::Construction);
+    assert!(ed.commit("Lines"));
+    // A run doubling back on itself.
+    run(&mut ed, &[v(0.0, 300.0), v(200.0, 300.0), v(100.0, 300.0)]);
+    let check = |ed: &mut Editor, step: &str| -> Vec<EntityId> {
+        ed.sync();
+        let kept = ed.overlapping().to_vec();
+        *ed.overlap_cache.borrow_mut() = None;
+        let fresh = ed.overlapping().to_vec();
+        assert_eq!(kept, fresh, "{step}");
+        kept
+    };
+    assert_eq!(check(&mut ed, "lines and a wall"), vec![b]);
+    // Make walls on the upper construction line: it is the wall's now.
+    ed.walls_from_curves(&[b]).unwrap();
+    assert!(check(&mut ed, "made a wall").is_empty());
+    assert!(ed.undo());
+    assert_eq!(check(&mut ed, "undone"), vec![b]);
+    assert!(ed.redo());
+    assert!(check(&mut ed, "redone").is_empty());
+    // Exploding every wall leaves its faces as plain lines, the doubled ones on top.
+    let walls: Vec<WallId> = ed.doc.walls().map(|(id, _)| id).collect();
+    assert!(ed.explode_walls(&walls));
+    assert!(!check(&mut ed, "exploded").is_empty());
+    assert!(ed.undo());
+    assert!(check(&mut ed, "explode undone").is_empty());
+}

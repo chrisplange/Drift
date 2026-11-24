@@ -847,3 +847,39 @@ fn a_widened_centred_opening_stays_off_its_neighbour() {
     ed.set_opening_width(a, "900").unwrap();
     assert_eq!(span(&ed, b), sb);
 }
+
+/// Placing or deleting an opening snaps no tee end left off its host's centreline either, so
+/// no other opening moves (#553).
+#[test]
+fn placing_or_deleting_an_opening_snaps_no_tee_end() {
+    for what in ["delete", "place"] {
+        let mut ed = editor();
+        let _host = run(&mut ed, &[v(0.0, 0.0), v(6000.0, 0.0)]);
+        let w2 = run(&mut ed, &[v(3000.0, 4000.0), v(3000.0, 1000.0)]);
+        let far = place(&mut ed, v(3000.0, 3300.0)).unwrap();
+        let near = place(&mut ed, v(3000.0, 1700.0)).unwrap();
+        let h = place(&mut ed, v(1500.0, 0.0)).unwrap();
+        ed.centre_openings(&[near]);
+        let wall = ed.doc.wall(w2).unwrap().clone();
+        let (_, pts, _) = drift_geom::walls::regen::centreline(&ed.doc, &wall).unwrap();
+        let end = *pts.last().unwrap();
+        ed.doc.begin();
+        ed.doc.set_point(end, v(3000.0, T / 2.0)).unwrap();
+        assert!(ed.commit("Move end"));
+        assert!(ed.doc.wall(w2).unwrap().ends[1].tee.is_some());
+        let (f0, n0) = (frame_at(&ed, far), frame_at(&ed, near));
+        match what {
+            "place" => {
+                place(&mut ed, v(4800.0, 0.0)).unwrap();
+            }
+            _ => assert!(ed.delete_openings(&[h])),
+        }
+        assert_eq!(
+            ed.doc.point(end).unwrap(),
+            v(3000.0, T / 2.0),
+            "{what}: end snapped"
+        );
+        assert_eq!(frame_at(&ed, near), n0, "{what}: near moved");
+        assert_eq!(frame_at(&ed, far), f0, "{what}: far moved");
+    }
+}

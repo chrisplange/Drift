@@ -753,7 +753,11 @@ impl Editor {
             }
         }
         self.retarget_tees(&cut_runs);
-        self.follow_tees(None);
+        // (Not for an opening placed or deleted alone: it moves no wall, so no end follows
+        // anything, and an end left off its host's centreline stays where it is.)
+        if !self.doc.only_openings_touched_in_transaction() {
+            self.follow_tees(None);
+        }
     }
 
     /// A curve's end points as it is now.

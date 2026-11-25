@@ -800,16 +800,20 @@ impl DriftApp {
         }
     }
 
-    /// Add view, from a sheet: the canvas shows the model with the View tool, to drag the
-    /// view's crop; the view then goes on the sheet (see [`Self::view_drawn`]).
+    /// Add view, for sheet `id`: the canvas shows the model with the View tool, to drag the
+    /// view's crop; the view then goes on the sheet (see [`Self::view_drawn`]). The canvas
+    /// ends where it started: on that sheet if it was showing, else on the model.
     pub(crate) fn start_add_view(&mut self, id: SheetId) {
+        self.drawing.add_view_back_to_sheet =
+            self.drawing.view.sheet_preview && self.drawing.view.active_sheet == Some(id);
         self.drawing.view.sheet_preview = false;
         self.set_tool(ToolKind::View);
         self.drawing.add_view_on = Some(id);
     }
 
     /// A view was just drawn with the View tool. Asked for from a sheet, it goes on that
-    /// sheet where there is room, picked, and the sheet is shown again. Returns true if so.
+    /// sheet where there is room, picked. The canvas switches to the sheet only if Add view
+    /// was started there; from the model it stays on the model. Returns true if so.
     pub(crate) fn view_drawn(&mut self, view: ViewId) -> bool {
         let Some(sheet) = self.drawing.add_view_on.take() else {
             return false;
@@ -842,11 +846,14 @@ impl DriftApp {
             return false;
         }
         let index = self.drawing.view.sheet_view;
-        self.show_sheet(Some(sheet));
-        self.drawing.view.sheet_view = index;
         self.drawing.picked_view = Some(view);
-        self.drawing.view.sheet_pick = SheetPick::View;
-        self.show_panel(crate::dock::Panel::Inspector);
+        if std::mem::take(&mut self.drawing.add_view_back_to_sheet) {
+            self.show_sheet(Some(sheet));
+            self.drawing.view.sheet_view = index;
+            self.drawing.picked_view = Some(view);
+            self.drawing.view.sheet_pick = SheetPick::View;
+            self.show_panel(crate::dock::Panel::Inspector);
+        }
         true
     }
 

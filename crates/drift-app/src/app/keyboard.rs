@@ -50,13 +50,18 @@ impl DriftApp {
                 return;
             }
         }
-        // Add view from a sheet: Esc (before the crop is started) goes back to the sheet.
+        // Add view: Esc (before the crop is started) cancels, back to the sheet if it was
+        // started there; from the model the canvas stays on the model.
         if let Some(sheet) = self.drawing.add_view_on
             && !self.tool.is_busy()
             && ctx.input(|i| i.key_pressed(Key::Escape))
         {
             self.set_tool(ToolKind::Select);
-            self.show_sheet(Some(sheet));
+            if std::mem::take(&mut self.drawing.add_view_back_to_sheet) {
+                self.show_sheet(Some(sheet));
+            } else {
+                self.drawing.add_view_on = None;
+            }
             return;
         }
         // The sheet preview takes no drawing keys. Esc never leaves it for the model (Back
@@ -145,6 +150,10 @@ impl DriftApp {
         }
         // Shift+Q: the Selection filter pie, which keeps the keys while it is open.
         if self.select_pie_keys(ctx) {
+            return;
+        }
+        // Shift+S: the snap pie, the same way.
+        if self.snap_pie_keys(ctx) {
             return;
         }
         self.edit_keys(ctx);

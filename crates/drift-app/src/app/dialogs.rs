@@ -189,6 +189,7 @@ impl DriftApp {
         self.drawing_settings_window(ctx);
         self.relation_pie(ctx);
         self.selection_filter_pie(ctx);
+        self.snap_pie(ctx);
         self.rename_dialog(ctx);
         self.delete_confirm_dialog(ctx);
         self.import_report_window(ctx);

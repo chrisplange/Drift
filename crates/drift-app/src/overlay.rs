@@ -165,10 +165,14 @@ pub fn join_marker(painter: &egui::Painter, map: &ScreenMap, snap: &Snap, color:
 /// midpoints, diamond for quadrants, cross for on-curve, plus for grid, ⊥ for perpendicular and
 /// a circle on a line for tangent.
 pub fn snap_marker(painter: &egui::Painter, map: &ScreenMap, snap: &Snap, color: Color32) {
-    let c = map.to_screen(snap.at);
+    snap_glyph(painter, map.to_screen(snap.at), snap.kind, color);
+}
+
+/// A snap kind's glyph (see [`snap_marker`]) centred on `c`, as the snap pie shows it too.
+pub fn snap_glyph(painter: &egui::Painter, c: egui::Pos2, kind: SnapKind, color: Color32) {
     let s = 5.0;
     let stroke = Stroke::new(1.5, color);
-    match snap.kind {
+    match kind {
         SnapKind::Endpoint | SnapKind::Point => {
             painter.rect_stroke(
                 Rect::from_center_size(c, vec2(2.0 * s, 2.0 * s)),

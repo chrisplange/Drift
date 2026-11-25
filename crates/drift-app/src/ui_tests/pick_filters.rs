@@ -571,9 +571,10 @@ fn kinds_clicked_with_shift_q_held_all_stand() {
     assert!(h.state().select_pie.is_none(), "letting go closes the ring");
     assert_eq!(
         filter(&h),
-        PickFilter::only(PickKind::Edges)
-            .with(PickKind::Points, true)
-            .with(PickKind::Text, true)
+        PickFilter::ALL
+            .with(PickKind::Edges, false)
+            .with(PickKind::Points, false)
+            .with(PickKind::Text, false)
     );
 }
 
@@ -596,17 +597,19 @@ fn a_tap_of_shift_q_leaves_the_ring_to_click() {
         .center;
     assert!(filter(&h).is_all(), "no flick, no change");
     let place = |k| PLACES.iter().position(|p| *p == Some(k)).unwrap();
-    // From everything, the first click is that kind alone; then clicks gather kinds and drop
-    // them again.
+    // Each click turns that one kind on or off, from everything too: it never isolates.
     click_at(&mut h, place_pos(at, place(PickKind::Annotations)));
-    assert_eq!(filter(&h), PickFilter::only(PickKind::Annotations));
+    assert_eq!(
+        filter(&h),
+        PickFilter::ALL.with(PickKind::Annotations, false)
+    );
     click_at(&mut h, place_pos(at, place(PickKind::Text)));
     click_at(&mut h, place_pos(at, place(PickKind::Edges)));
     click_at(&mut h, place_pos(at, place(PickKind::Text)));
-    assert_eq!(
-        filter(&h),
-        PickFilter::only(PickKind::Annotations).with(PickKind::Edges, true)
-    );
+    let kept = PickFilter::ALL
+        .with(PickKind::Annotations, false)
+        .with(PickKind::Edges, false);
+    assert_eq!(filter(&h), kept);
     assert!(h.state().select_pie.is_some(), "the ring stays for more");
     h.hover_at(at + egui::vec2(60.0, 0.0));
     h.run();
@@ -614,11 +617,7 @@ fn a_tap_of_shift_q_leaves_the_ring_to_click() {
     h.key_press_modifiers(SHIFT, Key::Q);
     h.run();
     assert!(h.state().select_pie.is_none(), "the key again closes it");
-    assert_eq!(
-        filter(&h),
-        PickFilter::only(PickKind::Annotations).with(PickKind::Edges, true),
-        "closing keeps the kinds"
-    );
+    assert_eq!(filter(&h), kept, "closing keeps the kinds");
     h.key_press_modifiers(SHIFT, Key::Q);
     h.run();
     h.key_press(Key::Escape);

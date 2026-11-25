@@ -363,6 +363,9 @@ struct Drawing {
     confirm_delete_set: bool,
     /// Add view from a sheet in progress: the sheet the view drawn next goes on.
     add_view_on: Option<drift_core::SheetId>,
+    /// Add view was started with that sheet on the canvas: the sheet is shown again after.
+    /// Started from the model (the Sheets panel), the canvas stays on the model.
+    add_view_back_to_sheet: bool,
     /// Sheets left out of the PDF and print (chosen in the output dialog, for this session).
     pdf_left_out: std::collections::BTreeSet<drift_core::SheetId>,
     /// The output dialog choosing the sheets for a PDF or print, while open.
@@ -535,6 +538,7 @@ impl Drawing {
             finished_previews_made: 0,
             confirm_delete_set: false,
             add_view_on: None,
+            add_view_back_to_sheet: false,
             pdf_left_out: Default::default(),
             #[cfg(not(feature = "demo"))]
             output_dialog: None,
@@ -621,6 +625,7 @@ pub struct DriftApp {
     pie: Option<app::pie::Pie>,
     /// The Selection filter pie (Shift+Q), open.
     select_pie: Option<app::select_pie::SelectPie>,
+    snap_pie: Option<app::snap_pie::SnapPie>,
     /// Text filtering the shortcuts list.
     shortcut_filter: String,
     /// Where the side panels are (docked, floating or hidden).
@@ -887,6 +892,7 @@ impl DriftApp {
             screen_font: Default::default(),
             pie: None,
             select_pie: None,
+            snap_pie: None,
             shortcut_filter: String::new(),
             layout: Default::default(),
             dock_view: Default::default(),

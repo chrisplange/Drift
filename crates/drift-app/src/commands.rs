@@ -42,6 +42,7 @@ pub(crate) enum Command {
     RelationsPie,
     /// The Selection filter pie, to click (its key is held to flick, or tapped).
     SelectionFilterPie,
+    SnapPie,
     Panel(Panel),
     HideAllPanels,
     ResetPanels,
@@ -1363,6 +1364,17 @@ fn table() -> Vec<Spec> {
         .own_keys()
         .repeat(false)
         .words("pick filter kinds points edges fills"),
+        Spec::new(
+            "edit.snap_pie",
+            C::Edit,
+            K::SnapPie,
+            "Snap pie",
+            "Turn kinds of snap on and off: hold the key and flick towards one, or tap it and click",
+        )
+        .keys(const { &[shift(Key::S)] })
+        .own_keys()
+        .repeat(false)
+        .words("snapping snaps endpoint midpoint center grid perpendicular tangent"),
         tool("edit.select", C::Edit, ToolKind::Select)
             .keys(const { &[plain(Key::S)] })
             .repeat(false)

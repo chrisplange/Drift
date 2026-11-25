@@ -2,14 +2,14 @@
 //! picks, plus All, in a ring around the pointer (#481). It shows as soon as the key goes down.
 //! Each kind has a fixed place, so it becomes a flick: hold the key, move towards Edges, let
 //! go, and only edges are picked; flick to All for everything back. Let go in the middle (or
-//! tap the key) and the ring stays open: clicks there turn kinds on and off, several at once.
+//! tap the key) and the ring stays open: each click turns that one kind on or off.
 //! Clicks made with the key still held count the same, and letting go then just closes the
 //! ring: it never flicks over them. Esc, a right click or the key again closes it. The kinds
 //! the filter picks now are lit.
 //!
 //! The same flick-or-click model as the relations pie (Q, [`super::pie`]), and its geometry.
 
-use super::pie::{DEAD_ZONE, RADIUS, place_at, place_pos};
+use super::pie::{RADIUS, place_at, place_pos};
 use crate::*;
 use drift_edit::editor::{PickFilter, PickKind};
 
@@ -47,11 +47,10 @@ fn lit(filter: PickFilter, kind: Option<PickKind>) -> bool {
     }
 }
 
-/// The filter after a click on `kind`: with everything picked, that kind alone (so clicks
-/// gather kinds); otherwise that kind on or off. All: everything.
+/// The filter after a click on `kind`: that kind on or off, like the Selection filter's own
+/// toggles (a flick picks one kind alone). All: everything.
 fn toggled(filter: PickFilter, kind: Option<PickKind>) -> PickFilter {
     match kind {
-        Some(kind) if filter.is_all() => PickFilter::only(kind),
         Some(kind) => filter.with(kind, !filter.has(kind)),
         None => PickFilter::ALL,
     }
@@ -165,7 +164,7 @@ impl DriftApp {
                 } else if response.secondary_clicked() {
                     clicked = Some(None);
                 }
-                paint(ui, center, filter, towards, flicks);
+                paint(ui, center, filter, pointer, towards, flicks);
             });
         match clicked {
             Some(Some(place)) => self.select_pie_toggle(place),
@@ -179,6 +178,7 @@ fn paint(
     ui: &egui::Ui,
     center: egui::Pos2,
     filter: PickFilter,
+    pointer: Option<egui::Pos2>,
     towards: Option<usize>,
     flicks: bool,
 ) {
@@ -188,17 +188,7 @@ fn paint(
     let accent = theme::accent(dark);
     let n = theme::neutrals(dark);
     let radius = theme::radius::MENU;
-    // The middle: a ring, with a mark towards what would be chosen.
-    painter.circle_filled(center, DEAD_ZONE - 6.0, n.raised);
-    painter.circle_stroke(
-        center,
-        DEAD_ZONE - 6.0,
-        egui::Stroke::new(2.0, n.control_border),
-    );
-    if let Some(place) = towards {
-        let dir = (place_pos(center, place) - center).normalized();
-        painter.circle_filled(center + dir * (DEAD_ZONE - 6.0), 3.5, accent);
-    }
+    super::pie::paint_hub(painter, center, pointer, n, accent);
     for (place, kind) in PLACES.into_iter().enumerate() {
         let on = lit(filter, kind);
         let hot = towards == Some(place);
@@ -248,7 +238,7 @@ fn paint(
     // What choosing would do, under the ring; and the filter now, while nothing is pointed at.
     let text = match towards.map(|p| PLACES[p]) {
         Some(None) => "Pick everything".to_owned(),
-        Some(Some(kind)) if flicks || filter.is_all() => {
+        Some(Some(kind)) if flicks => {
             format!("Pick only {}", kind.label().to_lowercase())
         }
         Some(Some(kind)) if filter.has(kind) => {

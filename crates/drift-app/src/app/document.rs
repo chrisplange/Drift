@@ -233,6 +233,10 @@ impl DriftApp {
             self.drawing.editor.prefs.wall_lines.key()
         ));
         prefs.push(format!(
+            "snapk={}",
+            self.drawing.editor.prefs.snap_kinds.bits()
+        ));
+        prefs.push(format!(
             "fillalone={}",
             self.drawing.editor.prefs.fill_alone_picks
         ));
@@ -327,6 +331,12 @@ impl DriftApp {
                 }
                 "tdims" => self.show_temp_dims = on,
                 "quickbar" => self.show_quick_bar = on,
+                "snapk" => {
+                    if let Ok(bits) = value.parse() {
+                        self.drawing.editor.prefs.snap_kinds =
+                            drift_geom::SnapKinds::from_bits(bits);
+                    }
+                }
                 "fillalone" => {
                     if let Ok(n) = value.parse() {
                         self.drawing.editor.prefs.fill_alone_picks = n;

@@ -309,7 +309,11 @@ impl Editor {
         if scope.is_some() {
             return snap;
         }
-        let Some(block) = self.block_snap(p, options.tolerance, exclude_copy) else {
+        let kinds = self.prefs.snap_kinds;
+        let Some(block) = self
+            .block_snap(p, options.tolerance, exclude_copy)
+            .filter(|s| kinds.has(s.kind))
+        else {
             return snap;
         };
         match snap {
@@ -348,19 +352,23 @@ impl Editor {
         options: SnapOptions,
         exclude: impl Fn(EntityId) -> bool,
     ) -> Option<Snap> {
-        let sketch = self.index.snap(p, options, exclude);
+        let kinds = self.prefs.snap_kinds;
+        let sketch = self.index.snap_to(p, options, kinds, exclude);
         // The origin is always there to snap to. A point of the sketch at it comes first (it
         // can be joined to); anything else there gives way.
         let sketch = match sketch {
             Some(s) if s.kind.is_point() => Some(s),
-            _ if p.length() <= options.tolerance => Some(Snap {
+            _ if kinds.has(SnapKind::Origin) && p.length() <= options.tolerance => Some(Snap {
                 at: DVec2::ZERO,
                 kind: SnapKind::Origin,
                 entity: None,
             }),
             other => other,
         };
-        let Some(reference) = self.underlay_snap(p, options.tolerance) else {
+        let Some(reference) = self
+            .underlay_snap(p, options.tolerance)
+            .filter(|s| kinds.has(s.kind))
+        else {
             return sketch;
         };
         match sketch {

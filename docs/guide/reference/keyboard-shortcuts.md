@@ -50,6 +50,7 @@ does the last command or tool again, as in AutoCAD.
 | Ctrl+A | **Select all** | Pick everything the Selection filter lets through |
 | Q | **Relations pie** | Relate what is picked: hold the key and flick towards a relation, or tap it and click |
 | Shift+Q | **Selection filter pie** | Choose what Select picks: hold the key and flick towards a kind to pick only it, or tap it and click kinds on and off |
+| Shift+S | **Snap pie** | Turn kinds of snap on and off: hold the key and flick towards one, or tap it and click |
 | S | **Select** | Pick, drag and box-select geometry; G moves the selection |
 | Ctrl+, | **Preferences…** | Theme, pointer, drawing aids, keyboard shortcuts and updates |
 

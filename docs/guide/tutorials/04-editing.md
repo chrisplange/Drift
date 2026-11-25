@@ -62,8 +62,7 @@ turn any off, in any mix, as with the selection filters in AutoCAD, Rhino or Vec
 around the pointer, the kinds picked now lit. Hold Shift+Q, move towards one and let go to pick
 only that kind (**Edges** is to the right, **All** at the top); flick to **All** to pick
 everything again. Tap Shift+Q, or let go in the middle, and the ring stays open: click kinds to
-turn them on and off, several at once (with everything picked, the first click picks that kind
-alone), then Shift+Q, Esc or a right click to close it. Clicks made with Shift+Q still held count
+turn each one on or off, then Shift+Q, Esc or a right click to close it. Clicks made with Shift+Q still held count
 too, and letting go then just closes the ring.
 
 ![The Selection filter pie, held open with Text and Annotations turned off](../images/selection-filter-pie.png)

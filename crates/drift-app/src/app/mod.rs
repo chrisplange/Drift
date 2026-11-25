@@ -44,6 +44,7 @@ pub(crate) mod shape_ui;
 pub(crate) mod sheet_annot_ui;
 pub(crate) mod sheet_editor;
 pub(crate) mod sheets_ui;
+pub(crate) mod snap_pie;
 pub(crate) mod start_ui;
 pub(crate) mod temp_dims_ui;
 pub(crate) mod text_ui;

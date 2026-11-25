@@ -67,6 +67,49 @@ impl SnapKind {
     }
 }
 
+/// Which [`SnapKind`]s the pointer snaps to: all of them by default. Grid snapping and
+/// perpendicular/tangent snapping also need [`SnapOptions::grid`] and [`SnapOptions::from`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SnapKinds(u16);
+
+impl Default for SnapKinds {
+    fn default() -> Self {
+        Self::ALL
+    }
+}
+
+impl SnapKinds {
+    /// Every kind.
+    pub const ALL: SnapKinds = SnapKinds((1 << 10) - 1);
+
+    const fn bit(kind: SnapKind) -> u16 {
+        1 << kind as u16
+    }
+
+    pub fn has(self, kind: SnapKind) -> bool {
+        self.0 & Self::bit(kind) != 0
+    }
+
+    /// With `kind` turned on or off.
+    pub fn with(self, kind: SnapKind, on: bool) -> Self {
+        if on {
+            Self(self.0 | Self::bit(kind))
+        } else {
+            Self(self.0 & !Self::bit(kind))
+        }
+    }
+
+    /// As a number, for saving.
+    pub fn bits(self) -> u16 {
+        self.0
+    }
+
+    /// From [`bits`](Self::bits) (unknown bits dropped).
+    pub fn from_bits(bits: u16) -> Self {
+        Self(bits & Self::ALL.0)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Snap {
     pub at: DVec2,
@@ -197,11 +240,23 @@ impl SceneIndex {
         options: SnapOptions,
         exclude: impl Fn(EntityId) -> bool,
     ) -> Option<Snap> {
+        self.snap_to(p, options, SnapKinds::ALL, exclude)
+    }
+
+    /// [`snap`](Self::snap) to only the `kinds` given: a nearer target of a kind that is off
+    /// gives way to the best one of a kind that is on.
+    pub fn snap_to(
+        &self,
+        p: DVec2,
+        options: SnapOptions,
+        kinds: SnapKinds,
+        exclude: impl Fn(EntityId) -> bool,
+    ) -> Option<Snap> {
         let tol = options.tolerance;
         let mut best: Option<(Snap, f64)> = None;
         let mut offer = |snap: Snap| {
             let d = snap.at.distance(p);
-            if d > tol {
+            if d > tol || !kinds.has(snap.kind) {
                 return;
             }
             let better = match &best {
@@ -411,6 +466,29 @@ mod tests {
         let s = index.snap(v(25.2, 0.4), options(1.0), |_| false).unwrap();
         assert_eq!(s.kind, SnapKind::Quadrant);
         assert!((s.at - v(25.0, 0.0)).length() < 1e-12);
+    }
+
+    #[test]
+    fn kinds_turned_off_give_way_to_the_next_best() {
+        let (doc, _, line, _) = fixture();
+        let index = SceneIndex::build(&doc);
+        // By the end: with endpoints off, the line itself.
+        let kinds = SnapKinds::ALL.with(SnapKind::Endpoint, false);
+        let s = index
+            .snap_to(v(0.4, 0.3), options(1.0), kinds, |_| false)
+            .unwrap();
+        assert_eq!((s.kind, s.entity), (SnapKind::OnCurve, Some(line)));
+        // By the midpoint: with midpoints and on-curve off, nothing.
+        let kinds = SnapKinds::ALL
+            .with(SnapKind::Midpoint, false)
+            .with(SnapKind::OnCurve, false);
+        assert!(
+            index
+                .snap_to(v(5.2, 0.3), options(1.0), kinds, |_| false)
+                .is_none()
+        );
+        assert_eq!(SnapKinds::from_bits(SnapKinds::ALL.bits()), SnapKinds::ALL);
+        assert_eq!(SnapKinds::from_bits(u16::MAX), SnapKinds::ALL);
     }
 
     #[test]

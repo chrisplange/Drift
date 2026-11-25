@@ -99,6 +99,23 @@ pub(crate) fn place_at(center: egui::Pos2, pointer: egui::Pos2) -> Option<usize>
     Some((turns * 8.0).round().rem_euclid(8.0) as usize % 8)
 }
 
+/// A pie's middle: a ring, with a mark that rolls round it with the pointer (rather than
+/// stepping between the eight places), once the pointer is far enough out to point anywhere.
+pub(crate) fn paint_hub(
+    painter: &egui::Painter,
+    center: egui::Pos2,
+    pointer: Option<egui::Pos2>,
+    n: theme::Neutrals,
+    mark: egui::Color32,
+) {
+    let r = DEAD_ZONE - 6.0;
+    painter.circle_filled(center, r, n.raised);
+    painter.circle_stroke(center, r, egui::Stroke::new(2.0, n.control_border));
+    if let Some(v) = pointer.map(|p| p - center).filter(|v| v.length() > 4.0) {
+        painter.circle_filled(center + v.normalized() * r, 3.5, mark);
+    }
+}
+
 /// The middle of a place's label.
 pub(crate) fn place_pos(center: egui::Pos2, place: usize) -> egui::Pos2 {
     let a = place as f32 * std::f32::consts::FRAC_PI_4;
@@ -279,7 +296,7 @@ impl DriftApp {
                 } else if response.secondary_clicked() {
                     clicked = Some(None);
                 }
-                paint(ui, center, &slices, towards, conflict);
+                paint(ui, center, &slices, pointer, towards, conflict);
             });
         if let Some(choice) = clicked {
             let now = ctx.input(|i| i.time);
@@ -295,6 +312,7 @@ fn paint(
     ui: &egui::Ui,
     center: egui::Pos2,
     slices: &[Slice; 8],
+    pointer: Option<egui::Pos2>,
     towards: Option<usize>,
     conflict: bool,
 ) {
@@ -307,21 +325,12 @@ fn paint(
     // (The symbols on the pills' own fill, not on a tile of the canvas's.)
     let glyph_colors = AnnotationColors::new(dark);
     let radius = theme::radius::MENU;
-    // The middle: a ring, with a mark towards what would be chosen.
-    painter.circle_filled(center, DEAD_ZONE - 6.0, n.raised);
-    painter.circle_stroke(
-        center,
-        DEAD_ZONE - 6.0,
-        egui::Stroke::new(2.0, n.control_border),
-    );
-    if let Some(place) = towards {
-        let dir = (place_pos(center, place) - center).normalized();
-        painter.circle_filled(
-            center + dir * (DEAD_ZONE - 6.0),
-            3.5,
-            if conflict { amber } else { accent },
-        );
-    }
+    let mark = if conflict && towards.is_some() {
+        amber
+    } else {
+        accent
+    };
+    paint_hub(painter, center, pointer, n, mark);
     for (place, slice) in slices.iter().enumerate() {
         let available = slice.option.is_some();
         let hot = towards == Some(place);

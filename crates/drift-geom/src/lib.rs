@@ -28,7 +28,8 @@ pub use primitives::{
 };
 pub use reference::RefIndex;
 pub use snap::{
-    SNAP_HOLD, Snap, SnapKind, SnapOptions, perpendicular_feet, snap_holds, tangent_points,
+    SNAP_HOLD, Snap, SnapKind, SnapKinds, SnapOptions, perpendicular_feet, snap_holds,
+    tangent_points,
 };
 
 /// Whether two shapes are the same to the bit (`-0.0` and `0.0` differ; so do NaNs), as

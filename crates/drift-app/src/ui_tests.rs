@@ -3149,10 +3149,8 @@ fn many_layers(h: &mut Harness<'_, DriftApp>, n: usize) -> Vec<drift_core::Layer
 pub(super) fn layer_row_gap(h: &Harness<'_, DriftApp>, name: &str) -> egui::Pos2 {
     let r = h.get_by_label(name).rect();
     let cell = h
-        .query_all_by_label("Line weight and type")
-        .map(|n| n.rect())
-        .find(|c| (c.center().y - r.center().y).abs() < 4.0)
-        .expect("the row's line cell");
+        .get_by_label(&format!("{name} line weight and type"))
+        .rect();
     egui::pos2((r.right() + cell.left()) / 2.0, r.center().y)
 }
 
@@ -3259,13 +3257,22 @@ fn long_layer_names_lose_their_middle_and_show_whole_in_the_tooltip() {
     h.run();
     assert!(h.query_by_label(long).is_none());
     // (The row's name, shortened; "Import PDF or DXF…" is the other.)
+    // Its beginning and its end kept, at least four characters of each, around the "…".
+    let kept = |v: &str| {
+        v.split_once('…').is_some_and(|(head, tail)| {
+            head.chars().count() >= 4
+                && tail.chars().count() >= 4
+                && long.starts_with(head)
+                && long.ends_with(tail)
+        })
+    };
     let shown = h
         .query_all_by_label_contains("…")
-        .find(|n| n.value().is_some_and(|v| v.contains("HATCH")))
-        .expect("the shortened name");
+        .find(|n| n.value().is_some_and(|v| kept(&v)))
+        .expect("the shortened name, its beginning and end kept");
     let label = shown.value().unwrap_or_default();
     assert!(
-        label.starts_with("A-WAL") && label.ends_with("HATCH"),
+        label.starts_with("A-WAL") && label.ends_with("ATCH"),
         "{label}"
     );
     let at = shown.rect().center();
@@ -3273,7 +3280,8 @@ fn long_layer_names_lose_their_middle_and_show_whole_in_the_tooltip() {
     for _ in 0..30 {
         h.step();
     }
-    assert!(h.query_by_label_contains(long).is_some());
+    // (The name's tooltip: the whole name, then its curve count.)
+    assert!(h.query_by_label_contains(&format!("{long} · ")).is_some());
     save_png("drift_ui_long_layer_name.png", &mut h);
 }
 

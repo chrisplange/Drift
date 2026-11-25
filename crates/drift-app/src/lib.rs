@@ -319,9 +319,10 @@ struct Drawing {
     params: parameters::ParamUi,
     /// Layer names being edited in the Layers tab.
     layer_names: std::collections::HashMap<drift_core::LayerId, String>,
-    /// Layers showing their colours and line settings in the Layers panel.
     /// The Layers panel's layers and curve counts, kept until the drawing changes.
     layer_counts: crate::layers_ui::LayerCounts,
+    /// The drawing's colours offered in every colour picker, made while one is open.
+    document_colours: crate::layers_ui::DocumentColours,
     /// What the Inspector shows for the picks that depends only on them and the drawing's
     /// make-up, kept while neither changes.
     pick_memo: app::panels::PickMemo,
@@ -517,6 +518,7 @@ impl Drawing {
             params: Default::default(),
             layer_names: Default::default(),
             layer_counts: Default::default(),
+            document_colours: Default::default(),
             pick_memo: Default::default(),
             layer_drag: None,
             renaming_layer: None,
@@ -1344,6 +1346,8 @@ impl eframe::App for DriftApp {
             // Before the panels, so it takes the arrow keys, Return and Esc first.
             self.palette_ui(&ctx);
         }
+        // The drawing's colours, offered first in every colour picker drawn this frame.
+        self.publish_document_colours(&ctx);
 
         let style = ui.style().clone();
         let frame = |x: i8, y: i8| {

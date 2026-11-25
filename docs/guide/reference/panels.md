@@ -83,15 +83,17 @@ Ctrl+L shows or hides it.
   highlighted row mark the **current layer**, where new geometry goes. Click anywhere on a
   row to make that layer current; double-click the name to rename it. Hover the name for
   how many curves are on the layer.
-- Click a swatch to pick its colour: **Ink** (white on screen, black on paper and in
-  print), the drawing's colours, recent ones, a palette, a hex value, or **More…** for any
-  colour. A fill swatch with a small link follows the stroke (**Match stroke**) until you
-  give it a colour of its own; it colours the fills and hatches on the layer.
+- Click a swatch to pick its colour: **Ink** (white on the dark canvas, black on the light
+  one, and black on paper and in print), the drawing's colours, recent ones, a palette, a
+  hex value, or **More…** for any colour. A fill swatch with a small link follows the
+  stroke (**Match stroke**) until you give it a colour of its own; it colours the fills and
+  hatches on the layer.
 - Click the line cell (a sample of the line and its weight) to pick a **weight** or **line
   type**. The printer switch sets whether the layer is printed and exported.
 - **Ctrl-click** rows to pick several (Shift-click picks a run of them); a colour, weight,
-  line type or print setting changed on one of them goes to all of them, in one undo step.
-  A plain click lets them go.
+  line type or print setting picked on one of them goes to all of them, in one undo step,
+  even when that row already had it. A plain click lets them go, and so does filtering
+  them out of sight.
 - The **Filter layers** field narrows the list ("3 of 40"; × or Esc clears it). A small
   square on a row means some of the selection (curves, block
   copies, texts or fills) is on that layer. When you pick an object, the panel scrolls to

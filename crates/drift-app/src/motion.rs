@@ -475,6 +475,32 @@ impl Affine {
             )
     }
 
+    /// The box of what the map carries into `view`: where a fill is cut to the view as
+    /// solved so that, carried, it covers the view as shown. None if the map flattens the
+    /// plane (it has no inverse).
+    pub(crate) fn pull_back(&self, view: drift_core::Bounds) -> Option<drift_core::Bounds> {
+        let [[a, b], [c, d]] = self.m;
+        let det = a * d - b * c;
+        let size = a.abs().max(b.abs()).max(c.abs()).max(d.abs());
+        if !det.is_finite() || det.abs() <= 1e-9 * size * size {
+            return None;
+        }
+        let back = |q: DVec2| {
+            let e = q - self.to;
+            self.from + DVec2::new(d * e.x - b * e.y, a * e.y - c * e.x) / det
+        };
+        let corners = [
+            view.min,
+            DVec2::new(view.max.x, view.min.y),
+            view.max,
+            DVec2::new(view.min.x, view.max.y),
+        ]
+        .map(back);
+        let min = corners.iter().copied().fold(corners[0], DVec2::min);
+        let max = corners.iter().copied().fold(corners[0], DVec2::max);
+        Some(drift_core::Bounds { min, max })
+    }
+
     /// A fill's triangles and hatch lines, carried by the map.
     pub(crate) fn carry(&self, meshes: &mut [FillMesh], lines: &mut [SketchItem]) {
         for mesh in meshes {
@@ -691,6 +717,34 @@ mod tests {
         assert!(a.apply(DVec2::Y).distance(DVec2::Y + DVec2::ONE) < 1e-9);
     }
 
+    #[test]
+    fn a_fill_map_pulls_the_view_back_to_where_it_was_solved() {
+        let view = drift_core::Bounds {
+            min: DVec2::new(0.0, 0.0),
+            max: DVec2::new(10.0, 4.0),
+        };
+        // Moved 3 right and stretched twice as wide about the origin.
+        let pairs: Vec<(DVec2, DVec2)> = [(0.0, 0.0), (4.0, 0.0), (4.0, 2.0), (0.0, 2.0)]
+            .map(|(x, y)| (DVec2::new(x, y), DVec2::new(2.0 * x + 3.0, y)))
+            .to_vec();
+        let a = Affine::fit(&pairs).unwrap();
+        let back = a.pull_back(view).unwrap();
+        assert!(back.min.distance(DVec2::new(-1.5, 0.0)) < 1e-9, "{back:?}");
+        assert!(back.max.distance(DVec2::new(3.5, 4.0)) < 1e-9, "{back:?}");
+        // Turned a quarter: the box of the turned view.
+        let turn: Vec<(DVec2, DVec2)> = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0)]
+            .map(|(x, y)| (DVec2::new(x, y), DVec2::new(-y, x)))
+            .to_vec();
+        let back = Affine::fit(&turn).unwrap().pull_back(view).unwrap();
+        assert!(back.min.distance(DVec2::new(0.0, -10.0)) < 1e-9, "{back:?}");
+        assert!(back.max.distance(DVec2::new(4.0, 0.0)) < 1e-9, "{back:?}");
+        // Flattened onto a line: no way back.
+        let flat: Vec<(DVec2, DVec2)> = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0)]
+            .map(|(x, y)| (DVec2::new(x, y), DVec2::new(x, 0.0)))
+            .to_vec();
+        assert!(Affine::fit(&flat).unwrap().pull_back(view).is_none());
+    }
+
     /// A ring of walls round a 4000 × 3000 room, 200 thick, made by the editor (faces and
     /// poché).
     fn walled() -> drift_edit::editor::Editor {
@@ -747,6 +801,33 @@ mod tests {
         ed.set_opening_offset(o, "1500").unwrap();
         m.observe(&ed.doc, 4.0, ROOM);
         assert!(m.animating(), "slid along its wall");
+        assert_eq!(m.started, 1);
+    }
+
+    /// An opening placed while the walls still ease in from a nudge: the walls are made
+    /// again around it, and a door's jambs can't ease along with faces shown part-way, so
+    /// the whole drawing lands at once instead of carrying on.
+    #[test]
+    fn an_opening_placed_while_walls_ease_lands_everything_at_once() {
+        let mut ed = walled();
+        let mut m = SolveMotion::default();
+        m.observe(&ed.doc, 0.0, ROOM);
+        let (w, wall) = ed.doc.walls().next().unwrap();
+        let path = ed.doc.path(wall.centre).unwrap();
+        ed.selection = path.curves.iter().copied().collect();
+        assert_eq!(ed.nudge(DVec2::new(100.0, 0.0)), Some(true));
+        m.observe(&ed.doc, 1.0, ROOM);
+        assert!(m.animating(), "the nudged room eases");
+        // The faces the walls made ease along with it.
+        let (_, wall) = ed.doc.walls().next().unwrap();
+        let face = *wall.made.points.values().next().unwrap();
+        assert!(m.shown_point(face, 1.0).is_some(), "a face point eases");
+        ed.selection.clear();
+        ed.place_opening(w, 0, 1000.0).expect("placed");
+        let t = 1.0 + DURATION / 3.0;
+        m.observe(&ed.doc, t, ROOM);
+        assert!(!m.animating(), "landed at once with the opening");
+        assert!(m.frame(&ed.doc, t).is_none());
         assert_eq!(m.started, 1);
     }
 

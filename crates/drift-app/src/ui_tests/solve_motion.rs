@@ -345,3 +345,159 @@ fn a_picked_fill_is_lit_where_it_is_shown_while_it_eases() {
         "the fill, lit, where it lands"
     );
 }
+
+/// The world x of the canvas's right edge.
+fn canvas_right(h: &Harness<'_, DriftApp>) -> f64 {
+    let app = h.state();
+    let rect = app.drawing.view.canvas_rect;
+    ScreenMap {
+        rect,
+        camera: app.drawing.view.camera,
+    }
+    .to_world(rect.right_center())
+    .x
+}
+
+/// A rectangle with no relations from `x0` to `x1` and y -35 to -15, with a solid fill: its
+/// corners.
+fn loose_filled_rectangle(h: &mut Harness<'_, DriftApp>, x0: f64, x1: f64) -> [EntityId; 4] {
+    let ed = &mut h.state_mut().drawing.editor;
+    ed.doc.begin();
+    let p = [(x0, -35.0), (x1, -35.0), (x1, -15.0), (x0, -15.0)]
+        .map(|(x, y)| ed.doc.add_point(DVec2::new(x, y)));
+    let sides: Vec<EntityId> = (0..4)
+        .map(|i| ed.doc.add_line(p[i], p[(i + 1) % 4]).unwrap())
+        .collect();
+    assert!(ed.commit("Rectangle"));
+    ed.prefs.fill_new_shapes = true;
+    ed.doc.begin();
+    let fill = ed.fill_new_shape(&sides).expect("filled");
+    assert!(ed.commit("Shape"));
+    let mut solid = ed.doc.fill(fill).unwrap().clone();
+    solid.kind = drift_core::FillKind::Solid;
+    ed.update_fill(fill, solid);
+    h.run();
+    p
+}
+
+/// A picked plain fill eased out past the canvas's edge goes with its outline, lit, and one
+/// eased back in shows where its outline is shown: never a bare highlight.
+#[test]
+fn a_fill_easing_across_the_canvas_edge_goes_with_its_outline() {
+    let Some((mut h, _, _)) = dimensioned_line() else {
+        return;
+    };
+    let right = canvas_right(&h);
+    let p = loose_filled_rectangle(&mut h, right - 25.0, right - 5.0);
+    // Picked: lit, over the fill, wherever it is shown.
+    let fill = h.state().drawing.editor.doc.fills().next().unwrap().0;
+    h.state_mut().drawing.editor.selected_fills = [fill].into();
+    h.hover_at(screen(&h, DVec2::new(20.0, 30.0)));
+    h.run();
+    let at = screen(&h, DVec2::new(right - 15.0, -25.0));
+    let pixel = |h: &mut Harness<'_, DriftApp>| {
+        let img = h.render().expect("render");
+        img.get_pixel(at.x as u32, at.y as u32).0
+    };
+    let filled = pixel(&mut h);
+    // Moved out past the right edge (its left side 5 beyond it).
+    let started = h.state().solve_motion.started;
+    {
+        let ed = &mut h.state_mut().drawing.editor;
+        ed.selection = p.into_iter().collect();
+        assert_eq!(ed.nudge(DVec2::new(30.0, 0.0)), Some(true));
+        ed.selection.clear();
+    }
+    h.step();
+    assert_eq!(h.state().solve_motion.started, started + 1, "it eases");
+    assert_eq!(
+        pixel(&mut h),
+        filled,
+        "the fill goes with its outline as it leaves the canvas"
+    );
+    h.run();
+    assert!(!h.state().solve_motion.animating());
+    let bare = pixel(&mut h);
+    assert_ne!(bare, filled, "the rectangle is out of view");
+    // Undone: it slides back in, the fill where its outline is shown.
+    h.state_mut().drawing.editor.undo();
+    h.step();
+    assert_eq!(h.state().solve_motion.started, started + 2, "it eases back");
+    assert_eq!(
+        pixel(&mut h),
+        bare,
+        "no fill where it lands before its outline gets there"
+    );
+    let mut checked = false;
+    while h.state().solve_motion.animating() {
+        h.step();
+        let t = now(&h);
+        let app = h.state();
+        let Some(frame) = app.solve_motion.frame(&app.drawing.editor.doc, t) else {
+            break;
+        };
+        let left = frame.doc.point(p[0]).unwrap().x;
+        if left < right - 16.0 && left > right - 24.0 {
+            assert_eq!(
+                pixel(&mut h),
+                filled,
+                "part-way in, the fill is under its outline"
+            );
+            checked = true;
+        }
+    }
+    assert!(checked, "a frame part-way in");
+}
+
+/// A hatch eased in from past the canvas's edge reaches the edge, not cut where the view
+/// ended as it lands.
+#[test]
+fn a_hatch_easing_past_the_canvas_edge_reaches_the_edge() {
+    let Some((mut h, _, _)) = dimensioned_line() else {
+        return;
+    };
+    let right = canvas_right(&h);
+    h.hover_at(screen(&h, DVec2::new(20.0, 30.0)));
+    h.run();
+    // Near the canvas's right edge, inside the rectangle wherever it is shown.
+    let (a, b) = (
+        screen(&h, DVec2::new(right - 8.0, -22.0)),
+        screen(&h, DVec2::new(right - 3.0, -28.0)),
+    );
+    let bare = h.render().expect("render");
+    let ink = |h: &mut Harness<'_, DriftApp>| {
+        let img = h.render().expect("render");
+        let mut n = 0;
+        for y in a.y as u32..b.y as u32 {
+            for x in a.x as u32..b.x as u32 {
+                n += usize::from(img.get_pixel(x, y) != bare.get_pixel(x, y));
+            }
+        }
+        n
+    };
+    let p = loose_filled_rectangle(&mut h, right - 30.0, right + 10.0);
+    {
+        let ed = &mut h.state_mut().drawing.editor;
+        let fill = ed.doc.fills().next().unwrap().0;
+        let mut hatch = ed.doc.fill(fill).unwrap().clone();
+        hatch.kind = drift_core::FillKind::Hatch(drift_core::Hatch::new("ANSI31"));
+        ed.update_fill(fill, hatch);
+    }
+    h.run();
+    assert!(ink(&mut h) > 0, "hatched to the edge");
+    // Moved right: where it lands, the view ends 20 short of the rectangle's right side.
+    {
+        let ed = &mut h.state_mut().drawing.editor;
+        ed.selection = p.into_iter().collect();
+        assert_eq!(ed.nudge(DVec2::new(20.0, 0.0)), Some(true));
+        ed.selection.clear();
+    }
+    h.step();
+    assert!(h.state().solve_motion.animating());
+    assert!(
+        ink(&mut h) > 0,
+        "the hatch reaches the canvas's edge as it eases"
+    );
+    h.run();
+    assert!(ink(&mut h) > 0);
+}

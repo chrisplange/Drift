@@ -1339,43 +1339,49 @@ impl DriftApp {
             self.drawing.view.camera.scale,
             dark,
         );
+        let fill_shapes = self.drawing.editor.fill_shapes();
         let fill_motions = match &motion {
-            Some(frame) => {
-                let shapes = self.drawing.editor.fill_shapes();
-                frame.fill_motions(&self.drawing.editor.doc, &shapes)
-            }
+            Some(frame) => frame.fill_motions(&self.drawing.editor.doc, &fill_shapes),
             None => std::collections::HashMap::new(),
         };
         if !fill_motions.is_empty() {
-            let remade = |id: drift_core::FillId, region: &drift_geom::regions::Region| {
-                drift_edit::fills::fill_graphics_over(
-                    &self.drawing.editor,
-                    &self.hatch_patterns,
-                    id,
-                    region,
-                    view,
-                    self.drawing.view.camera.scale,
-                    dark,
-                )
+            // A fill on what eases in, made for where it is shown, not culled and cut to
+            // the view where it lands. None if it doesn't show as shown.
+            let eased = |id: drift_core::FillId, motion: &crate::motion::FillMotion| {
+                let over = |region: &drift_geom::regions::Region, view| {
+                    drift_edit::fills::fill_graphics_over(
+                        &self.drawing.editor,
+                        &self.hatch_patterns,
+                        id,
+                        region,
+                        view,
+                        self.drawing.view.camera.scale,
+                        dark,
+                    )
+                };
+                match motion {
+                    crate::motion::FillMotion::Remade(region) => over(region, view),
+                    // Made where it was solved, over what the map carries into the view.
+                    crate::motion::FillMotion::Carried(carry) => {
+                        let solved = &fill_shapes.get(&id)?.region;
+                        let mut g = over(solved, carry.pull_back(view).unwrap_or(view))?;
+                        carry.carry(&mut g.meshes, &mut g.lines);
+                        Some(g)
+                    }
+                }
             };
             for g in &mut fills.groups {
                 let drift_edit::stack::FillRef::Fill(id) = g.fill else {
                     continue;
                 };
-                match fill_motions.get(&id) {
-                    // Out of view as shown: not drawn (not left where it lands).
-                    Some(crate::motion::FillMotion::Remade(region)) => {
-                        (g.meshes, g.lines) = remade(id, region)
-                            .map(|eased| (eased.meshes, eased.lines))
-                            .unwrap_or_default();
-                    }
-                    Some(crate::motion::FillMotion::Carried(map)) => {
-                        map.carry(&mut g.meshes, &mut g.lines)
-                    }
-                    None => {}
+                // Out of view as shown: not drawn (not left where it lands).
+                if let Some(motion) = fill_motions.get(&id) {
+                    (g.meshes, g.lines) = eased(id, motion)
+                        .map(|eased| (eased.meshes, eased.lines))
+                        .unwrap_or_default();
                 }
             }
-            // A poché out of view where it lands but in view as shown: drawn in its place
+            // A fill out of view where it lands but in view as shown: drawn in its place
             // among the fills.
             let order = self.drawing.editor.fills_in_order();
             let rank: std::collections::HashMap<drift_core::FillId, usize> =
@@ -1389,13 +1395,13 @@ impl DriftApp {
                 })
                 .collect();
             for (k, id) in order.iter().enumerate() {
-                let Some(crate::motion::FillMotion::Remade(region)) = fill_motions.get(id) else {
+                let Some(motion) = fill_motions.get(id) else {
                     continue;
                 };
                 if drawn.contains(id) {
                     continue;
                 }
-                let Some(group) = remade(*id, region) else {
+                let Some(group) = eased(*id, motion) else {
                     continue;
                 };
                 let at = fills

@@ -2001,15 +2001,19 @@ impl Editor {
         self.doc.copy_look(l1, a);
         // and joins the two lines' shapes (#439).
         self.doc.join_figures(&[l1, l2, a]);
+        let mut checked = Vec::new();
         if taken.is_empty() {
             self.cut_corner(p, [(l1, ends[0]), (l2, ends[1])])?;
         } else {
-            self.take_whole(p, a, &kept, &taken)?;
+            checked = self.take_whole(p, a, &kept, &taken)?;
         }
         for (curve, _) in kept {
             self.relate(Constraint::Tangent { a: curve, b: a });
         }
         self.relate(Constraint::Radius { curve: a, value: r });
+        // With the radius and the other tangencies in place, so a solve can tell whether
+        // they already set it.
+        self.keep_independent(checked);
         Ok(a)
     }
 
@@ -2019,23 +2023,23 @@ impl Editor {
     /// measured or related to the corner (or anything else uses it), or to a taken curve
     /// beyond which way it runs, the taken curves stay as construction: with the kept curve
     /// they hold the corner where it was, so what was measured to it still means what it
-    /// did. Otherwise they go, and the arc is held tangent to a curve it runs smoothly on
-    /// into at a far end. (Not when they stay: the arc ends on a kept taken curve's far end,
-    /// which that curve and what is measured to it already place, so a tangency there with
-    /// the radius would set again what those dimensions set, and changing one would then
-    /// fail.)
+    /// did. Otherwise they go. Either way the arc is held tangent to a curve it runs
+    /// smoothly on into at a far end. When the taken curves stay, that tangency may set
+    /// again what they and the dimensions on them already place (the far end, and so where
+    /// the two curves meet), and changing one would then fail; so it is returned, for the
+    /// caller to keep only if a solve finds it independent once the arc is related.
     fn take_whole(
         &mut self,
         p: EntityId,
         arc: EntityId,
         kept: &[(EntityId, EntityId)],
         taken: &[(EntityId, EntityId)],
-    ) -> Result<(), EditError> {
+    ) -> Result<Vec<ConstraintId>, EditError> {
+        let skip: Vec<EntityId> = taken.iter().map(|&(curve, _)| curve).collect();
         for &(curve, end) in kept {
             self.keep_side(curve);
             self.replace_end(curve, p, end)?;
         }
-        let skip: Vec<EntityId> = taken.iter().map(|&(curve, _)| curve).collect();
         let needed = self.doc.is_named(p)
             || self.doc.users_of(p).any(|u| !skip.contains(&u))
             || taken
@@ -2056,6 +2060,10 @@ impl Editor {
                     })
                     .map_err(|e| invalid(e.to_string()))?;
             }
+            Ok(taken
+                .iter()
+                .filter_map(|&(_, far)| self.join_smoothly(arc, far, &skip))
+                .collect())
         } else {
             // One at a time, so what runs through two taken sides (parallel to one that is
             // square to the other) still carries on.
@@ -2073,8 +2081,8 @@ impl Editor {
             for &(_, far) in taken {
                 self.join_smoothly(arc, far, &skip);
             }
+            Ok(Vec::new())
         }
-        Ok(())
     }
 
     /// What line `side`'s orientation relations (horizontal, vertical, parallel and
@@ -2211,20 +2219,26 @@ impl Editor {
     }
 
     /// Hold `arc` tangent to the one other line or arc (not one of `skip`) that ends at its
-    /// end point `at`, where the two run smoothly on from one to the other.
-    fn join_smoothly(&mut self, arc: EntityId, at: EntityId, skip: &[EntityId]) {
+    /// end point `at`, where the two run smoothly on from one to the other. The tangency
+    /// added, if any.
+    fn join_smoothly(
+        &mut self,
+        arc: EntityId,
+        at: EntityId,
+        skip: &[EntityId],
+    ) -> Option<ConstraintId> {
         let others: Vec<EntityId> = self
             .curves_ending_at(at)
             .into_iter()
             .filter(|c| *c != arc && !skip.contains(c))
             .collect();
         let [next] = others[..] else {
-            return;
+            return None;
         };
         let (Ok(pos), Some(out), Some(on)) =
             (self.doc.point(at), self.arm(arc, at), self.arm(next, at))
         else {
-            return;
+            return None;
         };
         let (u, w) = (out.dir(pos), on.dir(pos));
         let related = self.doc.constraints_on(arc).any(|id| {
@@ -2232,7 +2246,9 @@ impl Editor {
                 if (*a == next && *b == arc) || (*a == arc && *b == next))
         });
         if u.perp_dot(w).abs() < tolerance::ANGLE && u.dot(w) < 0.0 && !related {
-            self.relate(Constraint::Tangent { a: next, b: arc });
+            self.relate(Constraint::Tangent { a: next, b: arc })
+        } else {
+            None
         }
     }
 
@@ -4480,6 +4496,65 @@ mod tests {
             Some(drift_core::LineKind::Construction)
         );
         assert!(close(ed.doc.point(corners[0]).unwrap(), v(0.0, 0.0)));
+    }
+
+    /// Two fillets meeting on a side kept as construction (a circle on the first corner
+    /// keeps that corner, and its corner relation refers to the side): nothing measured
+    /// places where they meet, so they are still held tangent there, and moving the plate
+    /// never puts a kink where they meet. The construction side holds where they meet on
+    /// it, so the plate's height is then the two radii's: it changes with them.
+    #[test]
+    fn fillets_meeting_on_an_unmeasured_construction_side_stay_tangent() {
+        let (mut ed, corners, sides) = bare_plate();
+        ed.doc.begin();
+        ed.doc.add_circle(corners[0], 5.0).unwrap();
+        ed.commit("Hole");
+        let low = ed.fillet(corners[0], 25.0).unwrap();
+        let free = dof(&mut ed);
+        let high = ed.fillet(corners[3], 25.0).unwrap();
+        assert_eq!(
+            ed.doc.get(sides[3]).map(|e| e.style),
+            Some(drift_core::LineKind::Construction)
+        );
+        let (a, b) = (arc_ends(&ed, low), arc_ends(&ed, high));
+        let shared: Vec<_> = a.iter().filter(|p| b.contains(p)).copied().collect();
+        assert_eq!(shared.len(), 1);
+        assert_eq!(tangents(&ed, low, high), 1);
+        // The height is the one freedom taken: nothing set twice, nothing in conflict.
+        assert_eq!(dof(&mut ed), free - 1);
+        assert_eq!(ed.analysis().dependent_equations, 0);
+        assert!(ed.analysis().conflicts.is_empty());
+        assert!(ed.out.notice.is_none(), "{:?}", ed.out.notice);
+        let smooth = |ed: &Editor| {
+            let at = ed.doc.point(shared[0]).unwrap();
+            let centre = |arc| match ed.doc.get(arc).map(|e| e.kind) {
+                Some(EntityKind::Arc { center, .. }) => ed.doc.point(center).unwrap(),
+                _ => panic!("an arc"),
+            };
+            let (u, w) = (centre(low) - at, centre(high) - at);
+            u.length() > 1.0 && u.perp_dot(w).abs() < 1e-6 * u.length() * w.length()
+        };
+        // Wider: the arcs still meet smoothly.
+        let to = ed.doc.point(corners[2]).unwrap() + v(30.0, 0.0);
+        assert!(ed.move_point_to(corners[2], to));
+        assert!(smooth(&ed), "no kink after widening");
+        // Pulled up: the top stays where the radii put it, with no kink.
+        let to = ed.doc.point(corners[2]).unwrap() + v(0.0, 30.0);
+        ed.move_point_to(corners[2], to);
+        assert!(smooth(&ed), "no kink after pulling the top up");
+        let height =
+            |ed: &Editor| ed.doc.point(corners[2]).unwrap().y - ed.doc.point(corners[0]).unwrap().y;
+        assert!((height(&ed) - 50.0).abs() < 1e-7);
+        // A bigger top fillet raises the top.
+        let radius = ed
+            .doc
+            .constraints()
+            .find(|(_, c)| matches!(**c, Constraint::Radius { curve, .. } if curve == high))
+            .map(|(id, _)| id)
+            .unwrap();
+        ed.set_dimension(radius, 30.0).unwrap();
+        assert!(smooth(&ed), "no kink after resizing");
+        assert!((height(&ed) - 55.0).abs() < 1e-7);
     }
 
     /// A rectangle whose sides are held square and parallel to each other, as the Line

@@ -82,8 +82,9 @@ fn a_layers_swatch_opens_the_picker_and_one_click_sets_its_colour() {
     let at = control(&h, "A-WALL fill color");
     click(&mut h, at, EguiModifiers::NONE);
     assert!(h.query_all_by_label("Match stroke").next().is_some());
-    // The colour just picked is offered again among the recent ones (and the drawing's).
-    assert!(h.query_all_by_label("#0090FF").count() >= 1);
+    // The colour just picked is in the drawing, among the recent picks and in the palette,
+    // and offered once: in the palette, where it always is.
+    assert_eq!(h.query_all_by_label("#0090FF").count(), 1);
     h.get_by_label("#FFC53D").click();
     h.run();
     h.run();

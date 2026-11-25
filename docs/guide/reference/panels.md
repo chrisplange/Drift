@@ -85,7 +85,8 @@ Ctrl+L shows or hides it.
   how many curves are on the layer.
 - Click a swatch to pick its colour: **Ink** (white on the dark canvas, black on the light
   one, and black on paper and in print), the drawing's colours, recent ones, a palette, a
-  hex value, or **More…** for any colour. A fill swatch with a small link follows the
+  hex value, or **More…** for any colour. Each colour is offered once (a palette colour
+  stays in the palette). A fill swatch with a small link follows the
   stroke (**Match stroke**) until you give it a colour of its own; it colours the fills and
   hatches on the layer.
 - Click the line cell (a sample of the line and its weight) to pick a **weight** or **line

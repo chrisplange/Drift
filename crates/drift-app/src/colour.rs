@@ -360,11 +360,11 @@ pub(crate) fn colour_popup(
                     ui.close();
                 }
             });
-            let document = document_colours(ui.ctx());
             let recent: Vec<[u8; 3]> = ui
                 .ctx()
                 .data(|d| d.get_temp(recent_id()))
                 .unwrap_or_default();
+            let (document, recent) = offered_once(&document_colours(ui.ctx()), &recent);
             for (title, colours) in [
                 ("In this drawing", document.as_slice()),
                 ("Recent", recent.as_slice()),
@@ -542,6 +542,26 @@ fn ring(ui: &egui::Ui, r: Rect, picked: bool, hovered: bool) {
     }
 }
 
+/// The drawing's colours and the recent picks to show above the palette, so that each
+/// colour is offered once: the palette keeps its fixed places, the drawing's colours leave
+/// out the palette's, and the recent picks leave out both.
+fn offered_once(document: &[[u8; 3]], recent: &[[u8; 3]]) -> (Vec<[u8; 3]>, Vec<[u8; 3]>) {
+    let mut seen: Vec<[u8; 3]> = PALETTE.to_vec();
+    let mut keep = |list: &[[u8; 3]]| {
+        let mut out = Vec::new();
+        for &c in list {
+            if !seen.contains(&c) {
+                seen.push(c);
+                out.push(c);
+            }
+        }
+        out
+    };
+    let document = keep(document);
+    let recent = keep(recent);
+    (document, recent)
+}
+
 /// Keep `c` first among the recent picks.
 fn remember(ctx: &egui::Context, c: Rgb) {
     ctx.data_mut(|d| {
@@ -555,6 +575,17 @@ fn remember(ctx: &egui::Context, c: Rgb) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_colour_is_offered_once() {
+        let blue = PALETTE[5];
+        let red = [0xd0, 0x40, 0x40];
+        let teal = [0x10, 0x80, 0x80];
+        // Blue is in the palette, red in the drawing and among the recent picks.
+        let (document, recent) = offered_once(&[blue, red], &[red, blue, teal, teal]);
+        assert_eq!(document, vec![red]);
+        assert_eq!(recent, vec![teal]);
+    }
 
     #[test]
     fn hex_takes_what_people_paste() {

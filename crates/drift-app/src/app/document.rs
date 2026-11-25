@@ -334,8 +334,11 @@ impl DriftApp {
                 "quickbar" => self.show_quick_bar = on,
                 "snapoff" => {
                     if let Ok(bits) = value.parse() {
+                        // Grid stays on here: grid snapping is its own switch (grid_snap),
+                        // and nothing in the app could turn this one back on.
                         self.drawing.editor.prefs.snap_kinds =
-                            drift_geom::SnapKinds::from_off_bits(bits);
+                            drift_geom::SnapKinds::from_off_bits(bits)
+                                .with(drift_geom::SnapKind::Grid, true);
                     }
                 }
                 "fillalone" => {

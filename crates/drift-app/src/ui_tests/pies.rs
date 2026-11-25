@@ -5,6 +5,7 @@
 
 use drift_edit::editor::{PickFilter, PickKind};
 use drift_geom::{SnapKind, SnapKinds};
+use egui_kittest::kittest::NodeT as _;
 
 use super::*;
 use crate::app::pie_style::{DEAD_ZONE, hot_place, pill_under, place_at};
@@ -403,6 +404,61 @@ fn snap_kinds_stay_for_every_drawing_and_the_next_start() {
     assert_eq!(kinds(&next), off, "the next start keeps them");
 }
 
+/// Whether the status bar's Snap kinds button is lit.
+fn snap_kinds_lit(h: &Harness<'_, DriftApp>) -> bool {
+    h.get_by_label("Snap kinds").accesskit_node().toggled() == Some(egui::accesskit::Toggled::True)
+}
+
+/// The Snap kinds button is lit while a kind is off that no other status-bar switch shows:
+/// not for Grid alone (grid snap's own switch), nor for Perpendicular and Tangent with the
+/// perpendicular & tangent switch off.
+#[test]
+fn the_snap_kinds_button_is_lit_for_what_no_other_switch_shows() {
+    let Some(mut h) = harness() else { return };
+    h.run();
+    let set = |h: &mut Harness<'_, DriftApp>, kinds: SnapKinds, grid: bool, pt: bool| {
+        let s = h.state_mut();
+        s.drawing.editor.prefs.snap_kinds = kinds;
+        s.grid_snap = grid;
+        s.perp_tangent_snap = pt;
+        h.run();
+    };
+    set(&mut h, SnapKinds::ALL, true, true);
+    assert!(!snap_kinds_lit(&h), "every kind on");
+    let points_off = SnapKinds::ALL
+        .with(SnapKind::Endpoint, false)
+        .with(SnapKind::Point, false)
+        .with(SnapKind::Origin, false);
+    set(&mut h, points_off, true, true);
+    assert!(snap_kinds_lit(&h), "Points off");
+    set(&mut h, SnapKinds::ALL, false, true);
+    assert!(
+        !snap_kinds_lit(&h),
+        "Grid off only: grid snap's switch shows it"
+    );
+    // A Grid kind bit off (no build writes one) lights nothing: there'd be no way back.
+    set(
+        &mut h,
+        SnapKinds::ALL.with(SnapKind::Grid, false),
+        true,
+        true,
+    );
+    assert!(!snap_kinds_lit(&h), "a stray Grid bit");
+    let perp_off = SnapKinds::ALL.with(SnapKind::Perpendicular, false);
+    set(&mut h, perp_off, true, true);
+    assert!(snap_kinds_lit(&h), "Perpendicular off, the switch on");
+    // Perpendicular then Tangent off in the menu: the shared switch goes off and shows it.
+    h.get_by_label("Snap kinds").click();
+    h.run();
+    h.get_by_label("Tangent").click();
+    h.run();
+    assert!(!h.state().perp_tangent_snap);
+    assert!(
+        !snap_kinds_lit(&h),
+        "the perpendicular & tangent switch shows it"
+    );
+}
+
 /// A kind turned off shows on the status bar: the Snap kinds button is lit and its menu
 /// checks each kind on and off, and turns every kind back on.
 #[test]
@@ -424,6 +480,7 @@ fn the_status_bar_shows_and_sets_the_snap_kinds() {
         .with(SnapKind::Point, false)
         .with(SnapKind::Origin, false);
     h.run();
+    assert!(snap_kinds_lit(&h), "Points off lights it");
     h.get_by_label("Snap kinds").click();
     h.run();
     save_png("drift_ui_snap_kinds_menu.png", &mut h);
@@ -438,4 +495,128 @@ fn the_status_bar_shows_and_sets_the_snap_kinds() {
     h.get_by_label("Snap to every kind").click();
     h.run();
     assert_eq!(switches(&h), (SnapKinds::ALL, true, true));
+}
+
+/// A repeat of the key held down, as the system sends while a key is held.
+fn key_repeat(h: &mut Harness<'_, DriftApp>, modifiers: egui::Modifiers, key: Key) {
+    h.event_modifiers(
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: true,
+            modifiers,
+        },
+        modifiers,
+    );
+    h.run();
+}
+
+/// A right click where the pointer is.
+fn right_click(h: &mut Harness<'_, DriftApp>, p: egui::Pos2) {
+    h.hover_at(p);
+    h.run();
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos: p,
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.run();
+    }
+}
+
+/// Hold a pie's key past the system's repeat delay and close the pie with a right click: the
+/// repeats that keep coming while the key is down don't open it again.
+#[test]
+fn a_pie_closed_with_its_key_held_stays_closed_through_the_repeats() {
+    let Some(mut h) = harness() else { return };
+    let at = h.state().drawing.view.canvas_rect.center();
+    h.hover_at(at);
+    h.run();
+    for key in [Key::S, Key::Q] {
+        h.key_down_modifiers(SHIFT, key);
+        h.run();
+        key_repeat(&mut h, SHIFT, key);
+        let open = |h: &Harness<'_, DriftApp>| {
+            h.state().snap_pie.is_some() || h.state().select_pie.is_some()
+        };
+        assert!(open(&h), "{key:?}: open while held, repeats and all");
+        right_click(&mut h, at);
+        assert!(!open(&h), "{key:?}: a right click closes it");
+        key_repeat(&mut h, SHIFT, key);
+        key_repeat(&mut h, SHIFT, key);
+        assert!(!open(&h), "{key:?}: the repeats don't open it again");
+        h.key_up_modifiers(SHIFT, key);
+        h.run();
+        assert!(!open(&h), "{key:?}: still closed when the key comes up");
+    }
+}
+
+/// Hold Shift+Q, let go of Shift a moment before Q: the plain-Q repeats that follow don't go
+/// to the relations pie in the Selection filter pie's place.
+#[test]
+fn a_repeat_of_another_pies_key_does_not_switch_pies() {
+    let Some(mut h) = harness() else { return };
+    let at = h.state().drawing.view.canvas_rect.center();
+    h.hover_at(at);
+    h.run();
+    h.key_down_modifiers(SHIFT, Key::Q);
+    h.run();
+    assert!(h.state().select_pie.is_some());
+    h.state_mut().status = None;
+    key_repeat(&mut h, egui::Modifiers::NONE, Key::Q);
+    assert!(
+        h.state().select_pie.is_some(),
+        "the Selection filter pie stays"
+    );
+    assert!(h.state().pie.is_none());
+    assert_eq!(status(&h), "", "nothing said about the relations pie");
+}
+
+/// Near the window's bottom the hub opens well above the pointer. With the key held, move
+/// onto a pill other than the one a flick would choose and click: the click chooses what is
+/// lit (and captioned), not the pill under the pointer. Letting go then just closes the ring.
+#[test]
+fn a_click_with_the_key_held_near_the_edge_chooses_what_is_lit() {
+    let Some(mut h) = harness() else { return };
+    let canvas = h.state().drawing.view.canvas_rect;
+    let at = egui::pos2(canvas.center().x, canvas.bottom() - 20.0);
+    // The snap pie.
+    h.hover_at(at);
+    h.run();
+    h.key_down_modifiers(SHIFT, Key::S);
+    h.run();
+    let pie = h.state().snap_pie.as_ref().expect("open");
+    let (center, from) = (pie.center, pie.from);
+    let quadrant = pill(&h, 4).center();
+    let lit = hot_place(&h.state().pie_pills, center, Some(quadrant), Some(from));
+    assert_eq!(lit, Some(3), "over Quadrant, the gesture lights Center");
+    let grid = h.state().grid_snap;
+    click_at(&mut h, quadrant);
+    assert_eq!(
+        kinds(&h),
+        SnapKinds::ALL.with(SnapKind::Center, false),
+        "Center, the lit pill, turned off; Quadrant untouched"
+    );
+    assert_eq!(h.state().grid_snap, grid);
+    h.key_up_modifiers(SHIFT, Key::S);
+    h.run();
+    assert!(h.state().snap_pie.is_none(), "letting go closes the ring");
+    assert_eq!(kinds(&h), SnapKinds::ALL.with(SnapKind::Center, false));
+    // The Selection filter pie the same way: Points lit over Areas.
+    h.hover_at(at);
+    h.run();
+    h.key_down_modifiers(SHIFT, Key::Q);
+    h.run();
+    let pie = h.state().select_pie.as_ref().expect("open");
+    let (center, from) = (pie.center, pie.from);
+    let areas = pill(&h, 4).center();
+    let lit = hot_place(&h.state().pie_pills, center, Some(areas), Some(from));
+    assert_eq!(lit, Some(3), "over Areas, the gesture lights Points");
+    click_at(&mut h, areas);
+    let filter = h.state().drawing.editor.prefs.pick_filter;
+    assert!(!filter.has(PickKind::Points), "Points, the lit pill, off");
+    assert!(filter.has(PickKind::Areas), "Areas untouched");
 }

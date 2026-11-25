@@ -10864,6 +10864,14 @@ fn snap_kinds_turned_off_read_back() {
     );
     fresh.state_mut().apply_view_prefs(&saved);
     assert_eq!(fresh.state().drawing.editor.prefs.snap_kinds, kinds);
+    // A saved Grid bit (no build writes one) is dropped: grid snapping is grid_snap's.
+    let Some(mut h) = harness() else { return };
+    h.state_mut().apply_view_prefs("snapoff=136");
+    assert_eq!(
+        h.state().drawing.editor.prefs.snap_kinds,
+        SnapKinds::ALL.with(SnapKind::Midpoint, false),
+        "Midpoint off, Grid kept on"
+    );
     for bad in ["snapoff=abc", "snapoff=70000", "snapoff=-1"] {
         let Some(mut h) = harness() else { return };
         h.state_mut().apply_view_prefs(bad);

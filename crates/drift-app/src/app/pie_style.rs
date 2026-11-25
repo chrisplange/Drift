@@ -21,8 +21,10 @@
 //!   pointer that is just the pill under the pointer; where the window's edge kept the hub
 //!   away, a gesture still goes the way the hand moves and never lands on a pill behind it.
 //!   What is lit while the key is held, and where the hub's mark points, is what a flick
-//!   chooses. A click counts only on the pill under the pointer, and a click anywhere else
-//!   closes the pie. While a pie is open, the key shown on a pill chooses it too.
+//!   chooses. A click chooses what is lit ([`hot_place`]): with the key held and nothing
+//!   clicked yet, what a flick would choose; otherwise the pill under the pointer. A click
+//!   with nothing lit closes the pie. So the light, the caption and a click never disagree,
+//!   near the window's edge too. While a pie is open, the key shown on a pill chooses it too.
 
 use crate::*;
 use std::sync::Arc;
@@ -178,8 +180,9 @@ pub(crate) fn flick_aim(
     Some(q - center)
 }
 
-/// The pill that would be chosen: while the key is held (`flick_from`, where the pointer was
-/// when the pie opened), what a flick chooses; otherwise the one under the pointer.
+/// The pill that would be chosen, by a flick or a click, and so the one lit: while the key is
+/// held (`flick_from`, where the pointer was when the pie opened), what a flick chooses;
+/// otherwise the one under the pointer.
 pub(crate) fn hot_place(
     rects: &[egui::Rect; 8],
     center: egui::Pos2,

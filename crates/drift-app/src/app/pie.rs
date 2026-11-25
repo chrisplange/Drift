@@ -276,11 +276,12 @@ impl DriftApp {
             .order(egui::Order::Foreground)
             .fixed_pos(screen.min)
             .show(ctx, |ui| {
-                // The whole window is the pie's while it is open: a click on a pill chooses
-                // it, a click anywhere else closes the pie.
+                // The whole window is the pie's while it is open: a click on the lit pill
+                // chooses it (the one the caption and the conflict warning are for), a click
+                // anywhere else closes the pie.
                 let response = ui.allocate_response(screen.size(), egui::Sense::click());
                 if response.clicked() {
-                    clicked = Some(pie_style::pill_under(&rects, pointer));
+                    clicked = Some(hot);
                 } else if response.secondary_clicked() {
                     clicked = Some(None);
                 }

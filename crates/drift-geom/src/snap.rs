@@ -418,7 +418,11 @@ impl SceneIndex {
         if let Some((snap, _)) = best {
             return Some(snap);
         }
-        options.grid.filter(|g| *g > 0.0).map(|g| Snap {
+        // The grid, last, and only while Grid is one of the kinds.
+        let grid = options
+            .grid
+            .filter(|g| *g > 0.0 && kinds.has(SnapKind::Grid));
+        grid.map(|g| Snap {
             at: (p / g).round() * g,
             kind: SnapKind::Grid,
             entity: None,
@@ -571,6 +575,9 @@ mod tests {
         };
         let s = index.snap(v(47.0, 52.0), grid, |_| false).unwrap();
         assert_eq!((s.kind, s.at), (SnapKind::Grid, v(50.0, 50.0)));
+        // Grid off: no grid either.
+        let no_grid = SnapKinds::ALL.with(SnapKind::Grid, false);
+        assert_eq!(index.snap_to(v(47.0, 52.0), grid, no_grid, |_| false), None);
     }
 
     #[test]

@@ -3,8 +3,8 @@
 //! Each kind has a fixed place, so it becomes a flick: hold the key, move towards Edges, let
 //! go, and only edges are picked; flick to All for everything back. Let go in the middle (or
 //! tap the key) and the ring stays open: each click turns that one kind on or off.
-//! Clicks made with the key still held count the same, and letting go then just closes the
-//! ring: it never flicks over them. While it is open, the letter on a kind turns it on or off
+//! Clicks made with the key still held count the same (each chooses the lit kind, the one a
+//! flick would), and letting go then just closes the ring: it never flicks over them. While it is open, the letter on a kind turns it on or off
 //! too. Esc, a right click or the key again closes it. The kinds the filter picks now are lit.
 //!
 //! The same flick-or-click model as the relations pie (Q, [`super::pie`]), and its geometry.
@@ -186,8 +186,8 @@ impl DriftApp {
             .order(egui::Order::Foreground)
             .fixed_pos(screen.min)
             .show(ctx, |ui| {
-                // The whole window is the pie's while it is open: a click on a pill turns it
-                // on or off, a click anywhere else closes the pie.
+                // The whole window is the pie's while it is open: a click on the lit pill
+                // turns it on or off, a click anywhere else closes the pie.
                 let response = ui.allocate_response(screen.size(), egui::Sense::click());
                 let painter = ui.painter();
                 let labels = PLACES.map(|k| pie_style::label_galley(painter, place_label(k)));
@@ -197,12 +197,13 @@ impl DriftApp {
                     std::array::from_fn(|p| (labels[p].size().x, Some(keys[p].size().x))),
                 );
                 shown = Some(rects);
+                // What is lit is what a click chooses (see pie_style::hot_place).
+                let hot = pie_style::hot_place(&rects, center, pointer, flick_from);
                 if response.clicked() {
-                    clicked = Some(pie_style::pill_under(&rects, pointer));
+                    clicked = Some(hot);
                 } else if response.secondary_clicked() {
                     clicked = Some(None);
                 }
-                let hot = pie_style::hot_place(&rects, center, pointer, flick_from);
                 let flicks = flick_from.is_some();
                 let aim = flick_from.and_then(|from| pie_style::flick_aim(center, from, pointer));
                 paint(

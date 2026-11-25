@@ -2,8 +2,8 @@
 //! pointer, each turned on and off like the switches of a snap panel. It shows as soon as the
 //! key goes down. Hold the key, move towards a kind and let go to turn that one kind on or off;
 //! let go in the middle (or tap the key) and the ring stays open: each click turns one kind on
-//! or off. Clicks made with the key still held count the same, and letting go then just closes
-//! the ring. While it is open, the letter on a kind turns it on or off too. Esc, a right click
+//! or off. Clicks made with the key still held count the same (each chooses the lit kind, the
+//! one a flick would), and letting go then just closes the ring. While it is open, the letter on a kind turns it on or off too. Esc, a right click
 //! or the key again closes it. The kinds that are on are lit.
 //!
 //! Grid is the same switch as grid snapping. Perpendicular and Tangent are the two halves of
@@ -114,6 +114,31 @@ impl Switches {
         self
     }
 
+    /// The places whose kinds are turned off, for the status bar's Snap kinds button. Not
+    /// Grid, nor Perpendicular and Tangent with their shared switch off: the status bar
+    /// shows those with switches of their own.
+    fn turned_off(self) -> Vec<&'static str> {
+        (0..8)
+            .filter(|p| PLACES[*p].1[0] != SnapKind::Grid)
+            .filter(|p| PLACES[*p].1.iter().any(|k| !self.kinds.has(*k)))
+            .map(|p| PLACES[p].0)
+            .collect()
+    }
+
+    /// The Snap kinds button's tooltip: the kinds it is lit for, by name. `key`: the snap
+    /// pie's key, as a suffix.
+    fn button_tip(self, key: &str) -> String {
+        let off = self.turned_off();
+        if off.is_empty() {
+            format!("Snap kinds: none turned off · click to turn kinds off{key}")
+        } else {
+            format!(
+                "Snap kinds: {} turned off · click to choose{key}",
+                off.join(", ")
+            )
+        }
+    }
+
     /// What snaps, in a few words: "everything", "all but Grid", "Points, Midpoint".
     fn summary(self) -> String {
         let (on, off): (Vec<usize>, Vec<usize>) = (0..8).partition(|p| self.lit(*p));
@@ -148,22 +173,16 @@ impl DriftApp {
         self.perp_tangent_snap = s.perp_tangent;
     }
 
-    /// The status bar's snap kinds: a button, lit while some kind is off, that opens the
-    /// snap pie's kinds as rows to check on and off, and one to turn every kind back on. So a
-    /// kind turned off (by a stray flick, say, and kept across restarts) shows where snapping
-    /// is shown.
+    /// The status bar's snap kinds: a button, lit while some kind is off that no other
+    /// status-bar switch shows, that opens the snap pie's kinds as rows to check on and off,
+    /// and one to turn every kind back on. So a kind turned off (by a stray flick, say, and
+    /// kept across restarts) shows where snapping is shown. Grid alone never lights it (grid
+    /// snap has its own switch), nor do Perpendicular and Tangent with the perpendicular &
+    /// tangent switch off (that switch shows it).
     pub(crate) fn snap_kinds_button(&mut self, ui: &mut egui::Ui) {
         let s = self.snap_switches();
-        let filtered = s.kinds != SnapKinds::ALL;
-        let key = crate::commands::key_suffix("edit.snap_pie");
-        let tip = if filtered {
-            format!(
-                "Snap kinds: snapping to {} · click to choose{key}",
-                s.summary()
-            )
-        } else {
-            format!("Snap kinds: every kind snaps · click to turn kinds off{key}")
-        };
+        let filtered = !s.turned_off().is_empty();
+        let tip = s.button_tip(&crate::commands::key_suffix("edit.snap_pie"));
         let button = icons::button(ui, 22.0, filtered, "Snap kinds", |p, r, c| {
             icons::glyph(p, r, icons::Glyph::Filter, c)
         })
@@ -309,7 +328,7 @@ impl DriftApp {
             .order(egui::Order::Foreground)
             .fixed_pos(screen.min)
             .show(ctx, |ui| {
-                // A click on a pill turns it on or off; anywhere else closes the pie.
+                // A click on the lit pill turns it on or off; anywhere else closes the pie.
                 let response = ui.allocate_response(screen.size(), egui::Sense::click());
                 let painter = ui.painter();
                 let labels = PLACES.map(|(l, _)| pie_style::label_galley(painter, l));
@@ -319,12 +338,13 @@ impl DriftApp {
                     std::array::from_fn(|p| (labels[p].size().x, Some(keys[p].size().x))),
                 );
                 shown = Some(rects);
+                // What is lit is what a click chooses (see pie_style::hot_place).
+                let hot = pie_style::hot_place(&rects, center, pointer, flick_from);
                 if response.clicked() {
-                    clicked = Some(pie_style::pill_under(&rects, pointer));
+                    clicked = Some(hot);
                 } else if response.secondary_clicked() {
                     clicked = Some(None);
                 }
-                let hot = pie_style::hot_place(&rects, center, pointer, flick_from);
                 let aim = flick_from.and_then(|from| pie_style::flick_aim(center, from, pointer));
                 paint(painter, center, switches, aim, &rects, labels, keys, hot);
             });
@@ -482,6 +502,45 @@ mod tests {
         }
         assert_eq!(none.summary(), "nothing");
         assert_eq!(none.toggled(1).toggled(2).summary(), "Midpoint, Grid");
+    }
+
+    /// The Snap kinds button's lit state: a kind off, but not Grid alone (grid snap's own
+    /// switch) nor Perpendicular and Tangent with their shared switch off.
+    #[test]
+    fn what_the_snap_kinds_button_names_as_turned_off() {
+        assert!(defaults().turned_off().is_empty());
+        assert_eq!(defaults().toggled(0).turned_off(), ["Points"]);
+        assert!(defaults().toggled(2).turned_off().is_empty(), "Grid alone");
+        assert_eq!(defaults().toggled(PERP).turned_off(), ["Perpendicular"]);
+        let both = defaults().toggled(PERP).toggled(TANGENT);
+        assert!(both.turned_off().is_empty(), "the shared switch shows it");
+        // A stray Grid bit (no build writes one) lights nothing either.
+        let stray = Switches {
+            kinds: SnapKinds::ALL.with(SnapKind::Grid, false),
+            ..defaults()
+        };
+        assert!(stray.turned_off().is_empty());
+        // The tooltip names the same, and never says every kind snaps with Grid off.
+        assert_eq!(
+            defaults().toggled(0).toggled(1).button_tip(""),
+            "Snap kinds: Points, Midpoint turned off · click to choose"
+        );
+        assert_eq!(
+            defaults().toggled(2).button_tip(""),
+            "Snap kinds: none turned off · click to turn kinds off"
+        );
+        // Lit iff a kind bit other than Grid is off.
+        for s in [
+            defaults().toggled(1),
+            both,
+            stray,
+            defaults().toggled(TANGENT),
+        ] {
+            assert_eq!(
+                !s.turned_off().is_empty(),
+                s.kinds.with(SnapKind::Grid, true) != SnapKinds::ALL
+            );
+        }
     }
 
     /// A kind both pies have (Points) takes the same letter in both, so a letter learnt in

@@ -4,8 +4,9 @@
 //! go, and only edges are picked; flick to All for everything back. Let go in the middle (or
 //! tap the key) and the ring stays open: each click turns that one kind on or off.
 //! Clicks made with the key still held count the same (each chooses the lit kind, the one a
-//! flick would), and letting go then just closes the ring: it never flicks over them. While it is open, the letter on a kind turns it on or off
-//! too. Esc, a right click or the key again closes it. The kinds the filter picks now are lit.
+//! flick would), and letting go then just closes the ring: it never flicks over them. While it
+//! is open, the letter on a kind turns it on or off too. Esc, a right click or the key again
+//! closes it. The kinds the filter picks now are lit.
 //!
 //! The same flick-or-click model as the relations pie (Q, [`super::pie`]), and its geometry.
 

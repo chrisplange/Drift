@@ -3,8 +3,9 @@
 //! key goes down. Hold the key, move towards a kind and let go to turn that one kind on or off;
 //! let go in the middle (or tap the key) and the ring stays open: each click turns one kind on
 //! or off. Clicks made with the key still held count the same (each chooses the lit kind, the
-//! one a flick would), and letting go then just closes the ring. While it is open, the letter on a kind turns it on or off too. Esc, a right click
-//! or the key again closes it. The kinds that are on are lit.
+//! one a flick would), and letting go then just closes the ring. While it is open, the letter
+//! on a kind turns it on or off too. Esc, a right click or the key again closes it. The kinds
+//! that are on are lit.
 //!
 //! Grid is the same switch as grid snapping. Perpendicular and Tangent are the two halves of
 //! the perpendicular & tangent switch (on the status bar): turning one on here while that is
@@ -125,12 +126,26 @@ impl Switches {
             .collect()
     }
 
-    /// The Snap kinds button's tooltip: the kinds it is lit for, by name. `key`: the snap
+    /// The Snap kinds button's tooltip: the kinds it is lit for, by name. Unlit, it still
+    /// names what is off by the status bar's other switches (Grid, Perpendicular and Tangent),
+    /// so it never says nothing is off while the menu shows a row unchecked. `key`: the snap
     /// pie's key, as a suffix.
     fn button_tip(self, key: &str) -> String {
         let off = self.turned_off();
         if off.is_empty() {
-            format!("Snap kinds: none turned off · click to turn kinds off{key}")
+            let unlit: Vec<&str> = (0..8)
+                .filter(|p| !self.lit(*p))
+                .map(|p| PLACES[p].0)
+                .collect();
+            let which = match unlit.len() {
+                0 => return format!("Snap kinds: every kind on · click to turn kinds off{key}"),
+                1 => "its own switch",
+                _ => "their own switches",
+            };
+            format!(
+                "Snap kinds: none off besides {} ({which}) · click to turn kinds off{key}",
+                unlit.join(", ")
+            )
         } else {
             format!(
                 "Snap kinds: {} turned off · click to choose{key}",
@@ -215,8 +230,8 @@ impl DriftApp {
             });
     }
 
-    /// The perpendicular & tangent switch (the status bar, the palette, the settings): turned on, it
-    /// snaps both, whichever of the two the snap pie had left off.
+    /// The perpendicular & tangent switch (the status bar, the palette, the settings): turned
+    /// on, it snaps both, whichever of the two the snap pie had left off.
     pub(crate) fn set_perp_tangent_snap(&mut self, on: bool) {
         self.perp_tangent_snap = on;
         if on {
@@ -525,9 +540,25 @@ mod tests {
             defaults().toggled(0).toggled(1).button_tip(""),
             "Snap kinds: Points, Midpoint turned off · click to choose"
         );
+        // Unlit, it names what the other switches have off: grid snap is off by default.
+        assert_eq!(
+            defaults().button_tip(""),
+            "Snap kinds: every kind on · click to turn kinds off"
+        );
         assert_eq!(
             defaults().toggled(2).button_tip(""),
-            "Snap kinds: none turned off · click to turn kinds off"
+            "Snap kinds: none off besides Grid (its own switch) · click to turn kinds off"
+        );
+        let shared_off = Switches {
+            grid: false,
+            perp_tangent: false,
+            ..defaults()
+        };
+        assert!(shared_off.turned_off().is_empty());
+        assert_eq!(
+            shared_off.button_tip(""),
+            "Snap kinds: none off besides Grid, Perpendicular, Tangent (their own switches) · \
+             click to turn kinds off"
         );
         // Lit iff a kind bit other than Grid is off.
         for s in [

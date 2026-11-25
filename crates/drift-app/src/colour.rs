@@ -283,7 +283,15 @@ pub(crate) fn colour_button(
     );
     paint_swatch(ui.painter(), swatch, value, unset, fallback, dark);
     let text = value.map_or_else(|| unset.name().to_owned(), hex);
-    let spoken = text.clone();
+    // Unset, it is read out with what it shows as: "By layer, #E5484D".
+    let follows = match (value, unset, fallback) {
+        (None, Unset::Named(_), Some(Follows::Colour(c))) => Some(hex(c)),
+        (None, Unset::Named(_), Some(Follows::Ink)) => Some("Ink".to_owned()),
+        _ => None,
+    };
+    let spoken = follows
+        .as_ref()
+        .map_or_else(|| text.clone(), |f| format!("{text}, {f}"));
     let color = if value.is_some() {
         ui.visuals().text_color()
     } else {
@@ -296,10 +304,11 @@ pub(crate) fn colour_button(
         egui::TextStyle::Body.resolve(ui.style()),
         color,
     );
-    let tip = value.map_or_else(
-        || unset.tip(dark),
-        |c| format!("{} · click to change", hex(c)),
-    );
+    let tip = match (value, follows) {
+        (Some(c), _) => format!("{} · click to change", hex(c)),
+        (None, Some(f)) => format!("{}: {f} for now · click to change", unset.name()),
+        (None, None) => unset.tip(dark),
+    };
     let response = response.on_hover_text(tip);
     response.widget_info(|| labeled_with_value(egui::WidgetType::ColorButton, name, &spoken));
     colour_popup(ui, &response, value, unset, fallback, dark)
@@ -774,7 +783,20 @@ mod tests {
             Some("Stroke color")
         );
         assert_eq!(well.accesskit_node().value().as_deref(), Some("#FF0000"));
+        // Unset, it says what it shows as, when that is one colour.
         let h = picker(None, Some(Follows::Ink));
+        let well = h.get_by_role(egui::accesskit::Role::ColorWell);
+        assert_eq!(
+            well.accesskit_node().value().as_deref(),
+            Some("By layer, Ink")
+        );
+        let h = picker(None, Some(Follows::Colour(Rgb([0xe5, 0x48, 0x4d]))));
+        let well = h.get_by_role(egui::accesskit::Role::ColorWell);
+        assert_eq!(
+            well.accesskit_node().value().as_deref(),
+            Some("By layer, #E5484D")
+        );
+        let h = picker(None, None);
         let well = h.get_by_role(egui::accesskit::Role::ColorWell);
         assert_eq!(well.accesskit_node().value().as_deref(), Some("By layer"));
     }

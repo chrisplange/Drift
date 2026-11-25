@@ -5,7 +5,7 @@ use drift_core::{EntityId, Layer, LayerId, LineType, LineWeight, Rgb};
 use eframe::egui;
 
 use crate::DriftApp;
-use crate::colour::{Unset, paint_swatch};
+use crate::colour::{Follows, Unset, paint_swatch};
 use crate::icons::{self, Glyph};
 use drift_edit::editor::LayerFlag;
 
@@ -362,17 +362,20 @@ pub(crate) fn to_color32(c: Option<Rgb>, dark: bool) -> egui::Color32 {
 
 /// A colour control (a swatch and its hex; one click opens the picker), `name` saying what
 /// it colours (to assistive tech, with its colour as the value) and `auto_label` naming what
-/// an unset colour falls back to ("Auto": the theme's ink). It takes the width it is given:
-/// a row's value column.
+/// an unset colour falls back to ("Auto": the theme's ink). `fallback` is the colour that
+/// fallback is now (a layer's, the default ink), shown with a small link while unset; None
+/// only when it isn't one colour (picks on layers of different colours). It takes the width
+/// it is given: a row's value column.
 pub(crate) fn color_choice(
     ui: &mut egui::Ui,
     name: &str,
     value: Option<Rgb>,
     auto_label: &str,
+    fallback: Option<Follows>,
     dark: bool,
 ) -> Option<Option<Rgb>> {
     let width = ui.available_width();
-    color_choice_of(ui, name, value, auto_label, dark, width)
+    color_choice_of(ui, name, value, auto_label, fallback, dark, width)
 }
 
 /// [`color_choice`] at a set width (on a bar, among other controls).
@@ -381,11 +384,12 @@ pub(crate) fn color_choice_of(
     name: &str,
     value: Option<Rgb>,
     auto_label: &str,
+    fallback: Option<Follows>,
     dark: bool,
     width: f32,
 ) -> Option<Option<Rgb>> {
     let unset = Unset::from_label(auto_label);
-    crate::colour::colour_button(ui, name, value, unset, None, dark, width)
+    crate::colour::colour_button(ui, name, value, unset, fallback, dark, width)
 }
 
 /// A line weight's menu, as wide as the room it is given (a row's value column).
@@ -1636,6 +1640,21 @@ fn by_layer_follows(
         .filter_map(|id| doc.get(*id))
         .filter_map(|e| doc.layer(e.layer))
         .map(|l| crate::colour::Follows::of(l.color));
+    let first = follows.next()?;
+    follows.all(|f| f == first).then_some(first)
+}
+
+/// What a fill's or hatch's "By layer" shows as on `layers`: their fill colour (which
+/// matches the stroke, or Ink, until given its own) when they all have the same one;
+/// unknown (`None`) when they differ.
+pub(crate) fn fill_by_layer_follows(
+    doc: &drift_core::Document,
+    layers: impl IntoIterator<Item = LayerId>,
+) -> Option<Follows> {
+    let mut follows = layers
+        .into_iter()
+        .filter_map(|id| doc.layer(id))
+        .map(|l| Follows::of(l.fill_colour()));
     let first = follows.next()?;
     follows.all(|f| f == first).then_some(first)
 }

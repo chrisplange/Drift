@@ -148,9 +148,10 @@ fn a_tap_near_the_edge_leaves_the_ring_open() {
     );
 }
 
-/// Near the window's bottom the hub opens well above the pointer, which is then below every
-/// pill. Hold the key and move left: the flick goes left (Quadrant), the way the pointer
-/// moved, not towards the bottom pill that lies that way from the hub.
+/// Near the window's bottom the hub opens well above the pointer. Hold the key and move left:
+/// the flick goes left (Quadrant), the way the pointer moved, not towards the place the
+/// pointer lies from the hub, nor to the bottom pill if the pointer ends over it (how far the
+/// pills reach follows the platform's UI font).
 #[test]
 fn a_flick_near_the_edge_follows_the_gesture() {
     let Some(mut h) = harness() else { return };
@@ -161,8 +162,9 @@ fn a_flick_near_the_edge_follows_the_gesture() {
     h.key_down_modifiers(SHIFT, Key::S);
     h.run();
     let center = h.state().snap_pie.as_ref().expect("open").center;
+    assert!(center.y < at.y - DEAD_ZONE, "the hub is kept away, above");
     let to = at + egui::vec2(-60.0, 0.0);
-    assert_eq!(pill_under(&h.state().pie_pills, Some(to)), None);
+    assert_ne!(pill_under(&h.state().pie_pills, Some(to)), Some(4));
     assert_ne!(
         place_at(center, to),
         Some(4),
@@ -178,8 +180,10 @@ fn a_flick_near_the_edge_follows_the_gesture() {
 }
 
 /// Near the window's bottom the hub opens well above the pointer. Hold the key and move
-/// straight up, over the bottom pill (Perpendicular) and on: the top place (Grid) is lit all
-/// the way, as the hand heads, and letting go turns Grid off, nothing else.
+/// straight up, over the bottom pill (Perpendicular) and on past the hub: the top place
+/// (Grid) is lit all the way, as the hand heads, and letting go turns Grid off, nothing else.
+/// How far the pills reach follows the platform's UI font, so the pointer may start on the
+/// bottom pill or below it; it crosses it either way.
 #[test]
 fn a_flick_near_the_edge_goes_the_way_the_hand_moves_over_a_pill_behind() {
     let Some(mut h) = harness() else { return };
@@ -193,14 +197,11 @@ fn a_flick_near_the_edge_goes_the_way_the_hand_moves_over_a_pill_behind() {
     let pie = h.state().snap_pie.as_ref().expect("open");
     let (center, from) = (pie.center, pie.from);
     assert!((center.x - at.x).abs() < 1.0, "straight above");
+    assert!(center.y < at.y - DEAD_ZONE, "the hub is kept away, above");
     let bottom = pill(&h, 6);
-    assert!(
-        bottom.top() + 6.0 < at.y - DEAD_ZONE,
-        "the bottom pill is above the pointer"
-    );
     let mut crossed = false;
     let mut p = at;
-    while p.y > bottom.top() - 20.0 {
+    while p.y > center.y - 20.0 {
         p.y -= 4.0;
         h.hover_at(p);
         h.run();
@@ -210,7 +211,10 @@ fn a_flick_near_the_edge_goes_the_way_the_hand_moves_over_a_pill_behind() {
             assert_eq!(lit, Some(2), "Grid lit at {p:?}");
         }
     }
-    assert!(crossed, "the gesture passed over the bottom pill");
+    assert!(
+        crossed || bottom.top() >= at.y,
+        "the gesture passed over the bottom pill"
+    );
     h.key_up_modifiers(SHIFT, Key::S);
     h.run();
     assert!(h.state().snap_pie.is_none(), "a flick closes the ring");
@@ -575,6 +579,29 @@ fn a_repeat_of_another_pies_key_does_not_switch_pies() {
     assert_eq!(status(&h), "", "nothing said about the relations pie");
 }
 
+/// With the hub kept away from where the pie opened (`from`), a pill whose middle lights
+/// another place, that place being one `ok` accepts: (the pill under, the place lit). Which
+/// pills qualify follows the platform's UI font (the pills' size), so the pill is searched for.
+fn pill_lighting_another(
+    h: &Harness<'_, DriftApp>,
+    center: egui::Pos2,
+    from: egui::Pos2,
+    ok: impl Fn(usize) -> bool,
+) -> (usize, usize) {
+    let pills = h.state().pie_pills;
+    for under in [4, 0, 5, 7, 3, 1, 6, 2] {
+        let p = pills[under].center();
+        if (p - from).length() < DEAD_ZONE {
+            continue;
+        }
+        let lit = hot_place(&pills, center, Some(p), Some(from)).expect("lit");
+        if lit != under && ok(lit) {
+            return (under, lit);
+        }
+    }
+    panic!("no pill lights another place: {pills:?}, hub {center:?}, from {from:?}");
+}
+
 /// Near the window's bottom the hub opens well above the pointer. With the key held, move
 /// onto a pill other than the one a flick would choose and click: the click chooses what is
 /// lit (and captioned), not the pill under the pointer. Letting go then just closes the ring.
@@ -590,40 +617,58 @@ fn a_click_with_the_key_held_near_the_edge_chooses_what_is_lit() {
     h.run();
     let pie = h.state().snap_pie.as_ref().expect("open");
     let (center, from) = (pie.center, pie.from);
-    let quadrant = pill(&h, 4).center();
-    let lit = hot_place(&h.state().pie_pills, center, Some(quadrant), Some(from));
-    assert_eq!(lit, Some(3), "over Quadrant, the gesture lights Center");
+    // A place of plain kinds lit (not Grid, Perpendicular or Tangent, which share switches).
+    use crate::app::snap_pie::PLACES as SNAP;
+    let plain = |p: usize| {
+        SNAP[p].1.iter().all(|k| {
+            !matches!(
+                k,
+                SnapKind::Grid | SnapKind::Perpendicular | SnapKind::Tangent
+            )
+        })
+    };
+    let (under, lit) = pill_lighting_another(&h, center, from, plain);
+    let want = SNAP[lit]
+        .1
+        .iter()
+        .fold(SnapKinds::ALL, |k, kind| k.with(*kind, false));
     let grid = h.state().grid_snap;
-    click_at(&mut h, quadrant);
+    let at_pill = pill(&h, under).center();
+    click_at(&mut h, at_pill);
     assert_eq!(
         kinds(&h),
-        SnapKinds::ALL.with(SnapKind::Center, false),
-        "Center, the lit pill, turned off; Quadrant untouched"
+        want,
+        "{}, the lit pill, turned off; {} untouched",
+        SNAP[lit].0,
+        SNAP[under].0
     );
     assert_eq!(h.state().grid_snap, grid);
     h.key_up_modifiers(SHIFT, Key::S);
     h.run();
     assert!(h.state().snap_pie.is_none(), "letting go closes the ring");
-    assert_eq!(kinds(&h), SnapKinds::ALL.with(SnapKind::Center, false));
-    // The Selection filter pie the same way: Points lit over Areas.
+    assert_eq!(kinds(&h), want);
+    // The Selection filter pie the same way.
     h.hover_at(at);
     h.run();
     h.key_down_modifiers(SHIFT, Key::Q);
     h.run();
     let pie = h.state().select_pie.as_ref().expect("open");
     let (center, from) = (pie.center, pie.from);
-    let areas = pill(&h, 4).center();
-    let lit = hot_place(&h.state().pie_pills, center, Some(areas), Some(from));
-    assert_eq!(lit, Some(3), "over Areas, the gesture lights Points");
-    click_at(&mut h, areas);
+    use crate::app::select_pie::PLACES as PICK;
+    let (under, lit) = pill_lighting_another(&h, center, from, |p| PICK[p].is_some());
+    let at_pill = pill(&h, under).center();
+    click_at(&mut h, at_pill);
     let filter = h.state().drawing.editor.prefs.pick_filter;
-    assert!(!filter.has(PickKind::Points), "Points, the lit pill, off");
-    assert!(filter.has(PickKind::Areas), "Areas untouched");
+    let lit_kind = PICK[lit].unwrap();
+    assert!(!filter.has(lit_kind), "{lit_kind:?}, the lit pill, off");
+    if let Some(kind) = PICK[under] {
+        assert!(filter.has(kind), "{kind:?}, under the pointer, untouched");
+    }
 }
 
 /// The relations pie the same way, where it matters most: the caption and the conflict warning
-/// are for the lit pill. Two lines picked, Q held near the window's bottom, a click over Equal
-/// while the gesture lights Perpendicular adds Perpendicular, not Equal.
+/// are for the lit pill. Two lines picked, Q held near the window's bottom, a click over one
+/// relation while the gesture lights another adds the lit one, not the one under the pointer.
 #[test]
 fn a_click_with_q_held_near_the_edge_adds_the_lit_relation() {
     let Some(mut h) = harness() else { return };
@@ -650,12 +695,17 @@ fn a_click_with_q_held_near_the_edge_adds_the_lit_relation() {
     let pie = h.state().pie.as_ref().expect("open");
     let (center, from) = (pie.center, pie.from);
     let slices = h.state().pie_slices();
-    assert_eq!(slices[3].label, "Perpendicular");
-    assert_eq!(slices[4].label, "Equal");
-    let equal = pill(&h, 4).center();
-    let lit = hot_place(&h.state().pie_pills, center, Some(equal), Some(from));
-    assert_eq!(lit, Some(3), "over Equal, the gesture lights Perpendicular");
-    click_at(&mut h, equal);
+    // A relation that fits two lines and adds one relation of its own name.
+    let fits = |p: usize| {
+        slices[p].option.is_some()
+            && matches!(
+                slices[p].label,
+                "Parallel" | "Perpendicular" | "Equal" | "Collinear"
+            )
+    };
+    let (under, lit) = pill_lighting_another(&h, center, from, fits);
+    let at_pill = pill(&h, under).center();
+    click_at(&mut h, at_pill);
     let added: Vec<&str> = h
         .state()
         .drawing
@@ -664,7 +714,12 @@ fn a_click_with_q_held_near_the_edge_adds_the_lit_relation() {
         .constraints()
         .map(|(_, c)| c.type_name())
         .collect();
-    assert_eq!(added, ["Perpendicular"], "the lit relation, not Equal");
+    assert_eq!(
+        added,
+        [slices[lit].label],
+        "the lit relation, not {}",
+        slices[under].label
+    );
     h.key_up(Key::Q);
     h.run();
 }

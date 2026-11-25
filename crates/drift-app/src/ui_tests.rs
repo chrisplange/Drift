@@ -11023,6 +11023,64 @@ fn a_resize_leaves_a_window_snapped_against_the_edge_alone() {
     );
 }
 
+/// A floating panel with a fixed-width row outside its scroll area (as a bar above its
+/// list), squeezed by its left edge far past that row: the row is never cut off for more
+/// than the first frame, and when the edge is let go the right edge doesn't jump out (it
+/// did once the window was again sized by egui, to its contents).
+#[test]
+fn a_left_edge_squeeze_stops_at_what_is_outside_the_scroll_area() {
+    let Some(mut h) = harness() else { return };
+    h.state_mut().set_test_fixed_row(Some(330.0));
+    h.state_mut()
+        .layout
+        .move_to(Panel::Layers, Place::Float, None);
+    h.run_steps(6);
+    let (_, w) = h.state().floating_rects(Panel::Layers).unwrap();
+    let from = egui::pos2(w.left() + 80.0, w.top() + 12.0);
+    drag_steps(&mut h, from, from - egui::vec2(300.0, 0.0), 20, None);
+    h.run_steps(4);
+    let (_, before) = h.state().floating_rects(Panel::Layers).unwrap();
+    let needs = h.state().floating_content_width(Panel::Layers).unwrap();
+    assert!(
+        needs > 330.0 && before.width() >= needs - 0.5,
+        "the case is real: it holds {needs}, wider than the least width, in {before:?}"
+    );
+    let grab = egui::pos2(before.left() + 1.0, before.top() + 160.0);
+    h.hover_at(grab);
+    h.run_steps(2);
+    button(&h, grab, true);
+    h.run_steps(2);
+    let mut seen = Vec::new();
+    for i in 1..=40 {
+        h.hover_at(grab + egui::vec2(i as f32 * 10.0, 0.0));
+        h.run_steps(1);
+        let (_, w) = h.state().floating_rects(Panel::Layers).unwrap();
+        seen.push((i, w.left(), w.right(), w.width()));
+    }
+    button(&h, grab + egui::vec2(400.0, 0.0), false);
+    h.run_steps(4);
+    let (_, after) = h.state().floating_rects(Panel::Layers).unwrap();
+    for (i, left, right, width) in &seen {
+        assert!(
+            (right - before.right()).abs() < 0.5,
+            "frame {i}: the right edge moved to {right} from {}",
+            before.right()
+        );
+        // (The first frames are shown at the pointer, before what is cut off is learnt.)
+        if *i > 4 {
+            assert!(
+                *width >= needs - 0.5,
+                "frame {i}: {width} wide (left {left}), cutting off what needs {needs}"
+            );
+        }
+    }
+    assert!(
+        (after.right() - before.right()).abs() < 0.5
+            && (after.width() - before.width()).abs() < 0.5,
+        "let go: {before:?} → {after:?}, holding {needs}"
+    );
+}
+
 /// A floating panel's left edge dragged in and out: its right edge holds still on every
 /// frame of the drag, not only where it ends up (it wobbled while the contents' width was
 /// fed back into the window's).

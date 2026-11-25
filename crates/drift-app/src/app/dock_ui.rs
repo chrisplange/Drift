@@ -83,6 +83,9 @@ pub(crate) struct DockView {
     float_needs: HashMap<Panel, (f32, f32)>,
     /// How much wider than shown each panel's contents were when last drawn.
     overflow: HashMap<Panel, f32>,
+    /// A row this wide drawn in every floating panel above its body (for tests).
+    #[cfg(test)]
+    test_fixed_row: Option<f32>,
     /// The least width each dock was found to need while its edge is held (see `dock`).
     dock_needs: [Option<f32>; 2],
     /// Each dock's width as last drawn (`docks` is cleared at the start of a frame).
@@ -849,21 +852,14 @@ impl DriftApp {
                     ctx.input(|i| (i.pointer.press_origin(), i.pointer.latest_pos()))
             {
                 let d = at - o;
-                // Never narrower than what it holds: what was cut off while held raises the
-                // least width, from the next frame.
-                let over = stack
-                    .iter()
-                    .filter(|p| !self.layout.folded.contains(p))
-                    .filter_map(|p| self.dock_view.overflow.get(p).copied())
-                    .fold(0.0_f32, f32::max);
+                // Never narrower than what it holds: whatever was cut off while held (in a
+                // panel's scroll area or outside it) raised the least width (below, after
+                // the window is drawn), from the next frame.
                 let (needs, given) = self
                     .dock_view
                     .float_needs
                     .entry(top)
                     .or_insert((MIN_WIDTH, from.width()));
-                if over > 0.5 {
-                    *needs = needs.max(*given + over);
-                }
                 let least_w = needs.clamp(MIN_WIDTH, MOST_NEEDED);
                 let least_h = least.min(most);
                 let mut r = from;
@@ -898,6 +894,9 @@ impl DriftApp {
                 held = Some(grip);
             }
             let alt = ctx.input(|i| i.modifiers.alt);
+            // How much wider than the window its widest panel's contents are, anywhere in
+            // it (a scroll area's rows or what is outside one, such as a bar above it).
+            let mut cut = 0.0_f32;
             let shown = window.show(ctx, |ui| {
                 // Each panel gets a fixed share of the window and scrolls within it, so what
                 // it holds never makes the window taller.
@@ -935,7 +934,18 @@ impl DriftApp {
                                 bottom: 8,
                                 ..BODY_MARGIN
                             })
-                            .show(&mut child, |ui| self.panel_body(ui, p));
+                            .show(&mut child, |ui| {
+                                // (Tests: a fixed-width row above the body's own scroll
+                                // area, as a toolbar or a bar there would be.)
+                                #[cfg(test)]
+                                if let Some(w) = self.dock_view.test_fixed_row {
+                                    ui.allocate_exact_size(
+                                        egui::vec2(w, 12.0),
+                                        egui::Sense::hover(),
+                                    );
+                                }
+                                self.panel_body(ui, p)
+                            });
                     }
                     // What it holds may need more width than the window gives it: the
                     // window is told, so it grows to fit and a resize stops there (egui
@@ -952,6 +962,7 @@ impl DriftApp {
                         .max(rect.width() + over)
                         .min(MOST_NEEDED.max(rect.width()));
                     self.dock_view.content_width.insert(p, needs);
+                    cut = cut.max(needs - rect.width());
                     // (Sized here while an edge is held: the window is that size, else it
                     // would be drawn as wide as what it holds for the frame before the least
                     // width is learnt, its right edge bulging out. What is cut off for that
@@ -966,9 +977,17 @@ impl DriftApp {
                 }
             });
             // Sized here, the window has no resize grips of its own while held, so the
-            // resize cursor is kept up here until it is let go.
+            // resize cursor is kept up here until it is let go. And what was cut off at the
+            // width it was given raises its least width, so from the next frame it holds
+            // what it holds: when it is let go, egui's own sizing (which grows a window to
+            // its contents) finds nothing to grow to, and the right edge stays put.
             if let Some(g) = held {
                 ctx.set_cursor_icon(g.cursor());
+                if cut > 0.5
+                    && let Some((needs, given)) = self.dock_view.float_needs.get_mut(&top)
+                {
+                    *needs = needs.max(*given + cut);
+                }
             }
             let Some(shown) = shown else {
                 continue;
@@ -1074,6 +1093,13 @@ impl DriftApp {
     #[cfg(test)]
     pub(crate) fn floating_content_width(&self, p: Panel) -> Option<f32> {
         self.dock_view.content_width.get(&p).copied()
+    }
+
+    /// Draw a row `w` wide in every floating panel, above its body and outside its scroll
+    /// area (for tests).
+    #[cfg(test)]
+    pub(crate) fn set_test_fixed_row(&mut self, w: Option<f32>) {
+        self.dock_view.test_fixed_row = w;
     }
 
     /// Put a floating panel's window with its top left at `at` next frame (for tests).

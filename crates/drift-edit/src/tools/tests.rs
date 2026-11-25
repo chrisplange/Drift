@@ -1,5 +1,5 @@
 use drift_core::{Document, EntityKind};
-use drift_geom::SnapOptions;
+use drift_geom::{SnapKind, SnapOptions};
 
 use super::*;
 
@@ -4378,6 +4378,35 @@ fn editing_a_block_snaps_only_to_the_block() {
         .snap(v(40.1, 0.1), opts, |_| false)
         .expect("the outside end");
     assert!(s.entity.is_some_and(|e| !ed.in_scope(e)));
+}
+
+/// On a copy of a block, a snap kind turned off gives way to the next best that is on, as on
+/// the sketch.
+#[test]
+fn block_snaps_keep_to_the_snap_kinds() {
+    let (mut ed, _, other, _, _) = block_edit_fixture();
+    let opts = SnapOptions {
+        tolerance: 2.0,
+        grid: None,
+        from: None,
+    };
+    // The other copy's short line (3 long, above its box's top).
+    let (a, b) = ed
+        .doc
+        .instance_items(other)
+        .into_iter()
+        .find_map(|item| match item.shape {
+            Shape::Line { a, b } if (a.distance(b) - 3.0).abs() < 1e-9 => Some((a, b)),
+            _ => None,
+        })
+        .expect("the copy's short line");
+    let at = a + (b - a).normalize() * 0.3;
+    let s = ed.snap(at, opts, |_| false).expect("the line's end");
+    assert_eq!((s.kind, s.at), (SnapKind::Endpoint, a));
+    ed.prefs.snap_kinds = drift_geom::SnapKinds::ALL.with(SnapKind::Endpoint, false);
+    let s = ed.snap(at, opts, |_| false).expect("the line's middle");
+    assert_eq!(s.kind, SnapKind::Midpoint);
+    assert!(s.at.distance((a + b) * 0.5) < 1e-9, "{}", s.at);
 }
 
 #[test]

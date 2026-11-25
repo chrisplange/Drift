@@ -232,9 +232,10 @@ impl DriftApp {
             "wlines={}",
             self.drawing.editor.prefs.wall_lines.key()
         ));
+        // The snap pie's kinds, as those turned off.
         prefs.push(format!(
-            "snapk={}",
-            self.drawing.editor.prefs.snap_kinds.bits()
+            "snapoff={}",
+            self.drawing.editor.prefs.snap_kinds.off_bits()
         ));
         prefs.push(format!(
             "fillalone={}",
@@ -331,10 +332,10 @@ impl DriftApp {
                 }
                 "tdims" => self.show_temp_dims = on,
                 "quickbar" => self.show_quick_bar = on,
-                "snapk" => {
+                "snapoff" => {
                     if let Ok(bits) = value.parse() {
                         self.drawing.editor.prefs.snap_kinds =
-                            drift_geom::SnapKinds::from_bits(bits);
+                            drift_geom::SnapKinds::from_off_bits(bits);
                     }
                 }
                 "fillalone" => {

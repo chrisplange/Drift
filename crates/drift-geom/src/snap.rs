@@ -31,6 +31,20 @@ pub enum SnapKind {
 }
 
 impl SnapKind {
+    /// Every kind. A new kind goes here, and gets its own bit in `SnapKinds::bit`.
+    pub const EVERY: [SnapKind; 10] = [
+        SnapKind::Endpoint,
+        SnapKind::Point,
+        SnapKind::Center,
+        SnapKind::Midpoint,
+        SnapKind::Quadrant,
+        SnapKind::OnCurve,
+        SnapKind::Origin,
+        SnapKind::Grid,
+        SnapKind::Perpendicular,
+        SnapKind::Tangent,
+    ];
+
     pub fn label(self) -> &'static str {
         match self {
             SnapKind::Endpoint => "Endpoint",
@@ -80,10 +94,30 @@ impl Default for SnapKinds {
 
 impl SnapKinds {
     /// Every kind.
-    pub const ALL: SnapKinds = SnapKinds((1 << 10) - 1);
+    pub const ALL: SnapKinds = {
+        let mut bits = 0;
+        let mut i = 0;
+        while i < SnapKind::EVERY.len() {
+            bits |= Self::bit(SnapKind::EVERY[i]);
+            i += 1;
+        }
+        SnapKinds(bits)
+    };
 
+    /// Each kind's own bit, fixed: saved preferences name kinds by these.
     const fn bit(kind: SnapKind) -> u16 {
-        1 << kind as u16
+        1 << match kind {
+            SnapKind::Endpoint => 0,
+            SnapKind::Point => 1,
+            SnapKind::Center => 2,
+            SnapKind::Midpoint => 3,
+            SnapKind::Quadrant => 4,
+            SnapKind::OnCurve => 5,
+            SnapKind::Origin => 6,
+            SnapKind::Grid => 7,
+            SnapKind::Perpendicular => 8,
+            SnapKind::Tangent => 9,
+        }
     }
 
     pub fn has(self, kind: SnapKind) -> bool {
@@ -99,14 +133,15 @@ impl SnapKinds {
         }
     }
 
-    /// As a number, for saving.
-    pub fn bits(self) -> u16 {
-        self.0
+    /// The kinds turned off, as a number, for saving: a kind added later is on for
+    /// preferences saved before it.
+    pub fn off_bits(self) -> u16 {
+        Self::ALL.0 & !self.0
     }
 
-    /// From [`bits`](Self::bits) (unknown bits dropped).
-    pub fn from_bits(bits: u16) -> Self {
-        Self(bits & Self::ALL.0)
+    /// From [`off_bits`](Self::off_bits) (unknown bits dropped).
+    pub fn from_off_bits(bits: u16) -> Self {
+        Self(Self::ALL.0 & !bits)
     }
 }
 
@@ -487,8 +522,34 @@ mod tests {
                 .snap_to(v(5.2, 0.3), options(1.0), kinds, |_| false)
                 .is_none()
         );
-        assert_eq!(SnapKinds::from_bits(SnapKinds::ALL.bits()), SnapKinds::ALL);
-        assert_eq!(SnapKinds::from_bits(u16::MAX), SnapKinds::ALL);
+    }
+
+    #[test]
+    fn snap_kinds_keep_their_saved_bits() {
+        // Every kind is in ALL, on its own bit.
+        let mut seen = 0u16;
+        for kind in SnapKind::EVERY {
+            assert!(SnapKinds::ALL.has(kind), "{kind:?}");
+            let off = SnapKinds::ALL.with(kind, false).off_bits();
+            assert_eq!(off.count_ones(), 1, "{kind:?}");
+            assert_eq!(seen & off, 0, "{kind:?}");
+            seen |= off;
+        }
+        assert_eq!(seen, SnapKinds::ALL.0);
+        // Saved bits name the same kinds in every build.
+        let kinds = SnapKinds::ALL
+            .with(SnapKind::Midpoint, false)
+            .with(SnapKind::Tangent, false);
+        assert_eq!(kinds.off_bits(), (1 << 3) | (1 << 9));
+        assert_eq!(SnapKinds::from_off_bits(kinds.off_bits()), kinds);
+        // Nothing off is every kind; bits no kind has are dropped.
+        assert_eq!(SnapKinds::ALL.off_bits(), 0);
+        assert_eq!(SnapKinds::from_off_bits(0), SnapKinds::ALL);
+        assert_eq!(SnapKinds::from_off_bits(1 << 15), SnapKinds::ALL);
+        assert_eq!(
+            SnapKinds::from_off_bits(u16::MAX).off_bits(),
+            SnapKinds::ALL.0
+        );
     }
 
     #[test]

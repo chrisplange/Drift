@@ -244,6 +244,58 @@ struct ConstraintState {
     tips: Vec<crate::tips::Tip>,
 }
 
+/// What fillets that took a side whole did beyond the rounding, for the notice.
+#[derive(Default)]
+struct Said {
+    /// Radii made driven, as the arc's tangency to the curve it runs on into sets its size.
+    driven: usize,
+    /// Leader tips moved from a taken side onto its arc.
+    moved: usize,
+    /// The annotations that kept a taken side (as construction).
+    kept_for: Vec<&'static str>,
+}
+
+impl Said {
+    /// Add what was done to the notice the edit left, if anything.
+    fn tell(self, out: &mut crate::editor::Outbox) {
+        let plural = |n: usize, one: &str, many: &str| {
+            if n == 1 {
+                one.to_string()
+            } else {
+                format!("{n} {many}")
+            }
+        };
+        let mut parts = Vec::new();
+        if self.moved > 0 {
+            parts.push(format!(
+                "moved {} from the side it took onto the arc",
+                plural(self.moved, "a leader", "leaders")
+            ));
+        }
+        if !self.kept_for.is_empty() {
+            let names: Vec<String> = self.kept_for.iter().map(|n| n.to_lowercase()).collect();
+            parts.push(format!(
+                "kept the side it took as construction, for the {} on it",
+                names.join(" and ")
+            ));
+        }
+        if self.driven > 0 {
+            parts.push(format!(
+                "made {} driven, so the arc follows the drawing and stays smooth where it runs on",
+                plural(self.driven, "the radius", "radii")
+            ));
+        }
+        if parts.is_empty() {
+            return;
+        }
+        let said = format!("Fillet {}", parts.join("; "));
+        out.info = Some(match out.info.take() {
+            Some(before) => format!("{before}. {said}"),
+            None => said,
+        });
+    }
+}
+
 /// Where a curve is cut by another one.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Cut {
@@ -1957,17 +2009,21 @@ impl Editor {
         let before = self.constraint_state();
         self.doc.begin();
         let mut made = Vec::new();
+        let mut said = Said::default();
         let result = corners.iter().try_for_each(|&p| {
-            let arc = self.fillet_in(p, r).map_err(|e| at_corner(corners, p, e))?;
+            let arc = self
+                .fillet_in(p, r, &mut said)
+                .map_err(|e| at_corner(corners, p, e))?;
             made.push(arc);
             Ok(())
         });
         self.finish_reshape(result, "Fillet", &before)?;
+        said.tell(&mut self.out);
         Ok(made)
     }
 
     /// [`Editor::fillet`] inside an open transaction.
-    fn fillet_in(&mut self, p: EntityId, r: f64) -> Result<EntityId, EditError> {
+    fn fillet_in(&mut self, p: EntityId, r: f64, said: &mut Said) -> Result<EntityId, EditError> {
         let [(l1, a1), (l2, a2)] = self.fillet_corner(p)?;
         let at = self.doc.point(p).unwrap_or_default();
         let (t1, t2, c, ccw) = fillet_geometry(at, [a1, a2], r, Reach::Whole)?;
@@ -2005,47 +2061,67 @@ impl Editor {
         if taken.is_empty() {
             self.cut_corner(p, [(l1, ends[0]), (l2, ends[1])])?;
         } else {
-            checked = self.take_whole(p, a, &kept, &taken)?;
+            checked = self.take_whole(p, a, &kept, &taken, said)?;
         }
         for (curve, _) in kept {
             self.relate(Constraint::Tangent { a: curve, b: a });
         }
-        self.relate(Constraint::Radius { curve: a, value: r });
-        // With the radius and the other tangencies in place, so a solve can tell whether
-        // they already set it.
+        // Where the arc runs on into the next curve, it stays tangent to it, so it never
+        // kinks there whatever the dimensions do later. That may set the arc's size already
+        // (a round end between two sides, its height measured): then the radius is driven,
+        // a reference that follows the drawing, rather than set twice (which would leave
+        // the arc to kink or bulge past the sides once a dimension changes).
         self.keep_independent(checked);
+        let radius = self.relate(Constraint::Radius { curve: a, value: r });
+        if let Some(radius) = radius.filter(|_| !taken.is_empty())
+            && self.settle_dependent(vec![radius], true) > 0
+        {
+            said.driven += 1;
+        }
         Ok(a)
     }
 
     /// After fillet `arc` at corner `p` takes the curves `taken` whole (each with its far
     /// end, where the arc now ends), inside an open transaction: the curve it keeps, if any,
-    /// moves off `p` onto its new end as in [`Editor::cut_corner`]. When anything is
-    /// measured or related to the corner (or anything else uses it), or to a taken curve
-    /// beyond which way it runs, the taken curves stay as construction: with the kept curve
-    /// they hold the corner where it was, so what was measured to it still means what it
-    /// did. Otherwise they go. Either way the arc is made tangent to a curve it runs
-    /// smoothly on into at a far end. That tangency may set again what is already placed
-    /// (by the construction curves and their dimensions, or, where two fillets meet, by a
-    /// dimension across both, such as the length of the side between them), and changing
-    /// one would then fail; so it is returned, for the caller to keep only if a solve finds
-    /// it independent once the arc is related.
+    /// moves off `p` onto its new end as in [`Editor::cut_corner`]. A leader pointing at a
+    /// taken curve moves onto the arc, which is that edge now. When anything is measured or
+    /// related to the corner (or anything else uses it), or to a taken curve beyond which
+    /// way it runs, or an annotation (a centre line, a sheet dimension, a leader to the
+    /// corner) refers to either, the taken curves stay as construction: with the kept
+    /// curve they hold the corner where it was, so what was measured to it still means
+    /// what it did, and nothing drawn on them is lost. Otherwise they go. Either way the
+    /// arc is made tangent to a curve it runs smoothly on into at a far end. That tangency
+    /// may set again what is already placed (by the construction curves, or, where two
+    /// fillets meet, by the other's), so it is returned, for the caller to keep only if a
+    /// solve finds it independent before the arc's radius is set.
     fn take_whole(
         &mut self,
         p: EntityId,
         arc: EntityId,
         kept: &[(EntityId, EntityId)],
         taken: &[(EntityId, EntityId)],
+        said: &mut Said,
     ) -> Result<Vec<ConstraintId>, EditError> {
         let skip: Vec<EntityId> = taken.iter().map(|&(curve, _)| curve).collect();
         for &(curve, end) in kept {
             self.keep_side(curve);
             self.replace_end(curve, p, end)?;
         }
+        said.moved += self.move_tips_onto(&skip, arc);
+        let noted = std::iter::once(p)
+            .chain(skip.iter().copied())
+            .find_map(|e| self.annotation_on(e));
         let needed = self.doc.is_named(p)
             || self.doc.users_of(p).any(|u| !skip.contains(&u))
             || taken
                 .iter()
-                .any(|&(curve, _)| self.holds_more_than_its_run(curve));
+                .any(|&(curve, _)| self.holds_more_than_its_run(curve))
+            || noted.is_some();
+        if let Some(name) = noted
+            && !said.kept_for.contains(&name)
+        {
+            said.kept_for.push(name);
+        }
         if needed {
             for &(curve, _) in taken {
                 self.doc
@@ -2076,10 +2152,34 @@ impl Editor {
             }
             self.keep_independent(carried);
         }
-        Ok(taken
+        let mut joins: Vec<ConstraintId> = taken
             .iter()
             .filter_map(|&(_, far)| self.join_smoothly(arc, far, &skip))
-            .collect())
+            .collect();
+        if needed {
+            // The arc leaves a far end along the taken curve kept there as construction:
+            // tangent to it, it keeps doing so, so a dimension that later moves that end
+            // doesn't swing the arc out past the curve.
+            joins.extend(
+                taken
+                    .iter()
+                    .filter_map(|&(curve, far)| self.hug(arc, curve, far)),
+            );
+        }
+        Ok(joins)
+    }
+
+    /// Hold `arc` tangent to `curve` (a taken curve kept as construction) at their shared
+    /// end point `at`, where the arc leaves along it. The tangency added, if any.
+    fn hug(&mut self, arc: EntityId, curve: EntityId, at: EntityId) -> Option<ConstraintId> {
+        let (Ok(pos), Some(out), Some(along)) =
+            (self.doc.point(at), self.arm(arc, at), self.arm(curve, at))
+        else {
+            return None;
+        };
+        (out.dir(pos).perp_dot(along.dir(pos)).abs() < tolerance::ANGLE)
+            .then(|| self.relate(Constraint::Tangent { a: curve, b: arc }))
+            .flatten()
     }
 
     /// What line `side`'s orientation relations (horizontal, vertical, parallel and
@@ -2144,12 +2244,18 @@ impl Editor {
     /// a solve judges it, and take off the others, so carrying a relation on never leaves
     /// the drawing over-defined.
     fn keep_independent(&mut self, added: Vec<ConstraintId>) {
+        self.settle_dependent(added, false);
+    }
+
+    /// [`Editor::keep_independent`], but with `drive` a dimension the rest already imply is
+    /// made driven (a reference) instead of taken off. How many were implied.
+    fn settle_dependent(&mut self, added: Vec<ConstraintId>, drive: bool) -> usize {
         let added: Vec<(ConstraintId, Constraint)> = added
             .into_iter()
             .filter_map(|id| Some((id, *self.doc.constraint(id)?)))
             .collect();
         if added.is_empty() {
-            return;
+            return 0;
         }
         for (id, _) in &added {
             self.doc.remove_constraint(*id);
@@ -2173,6 +2279,7 @@ impl Editor {
             )
         };
         let base = solved(&self.doc).dependent_equations;
+        let mut implied = 0;
         for (_, c) in added {
             let Ok(id) = self.doc.add_constraint(c) else {
                 continue;
@@ -2182,9 +2289,29 @@ impl Editor {
                 || report.redundant.contains(&id)
                 || report.conflicts.contains(&id)
             {
-                self.doc.remove_constraint(id);
+                implied += 1;
+                if !(drive && c.is_dimension() && self.doc.set_driven(id, true).is_ok()) {
+                    self.doc.remove_constraint(id);
+                }
             }
         }
+        implied
+    }
+
+    /// The name of an annotation (in the model, or on a sheet) that refers to `e`, if any.
+    fn annotation_on(&self, e: EntityId) -> Option<&'static str> {
+        self.doc
+            .annotations()
+            .find(|(_, a)| a.entities().contains(&e))
+            .map(|(_, a)| a.type_name())
+            .or_else(|| {
+                self.doc.sheets().find_map(|(_, s)| {
+                    s.annotations
+                        .values()
+                        .find(|a| a.entities().contains(&e))
+                        .map(|a| a.type_name())
+                })
+            })
     }
 
     /// Whether anything is measured or related to line or arc `curve` beyond which way it
@@ -4283,6 +4410,42 @@ mod tests {
         assert!(close(ed.doc.point(corners[1]).unwrap(), v(120.0, 0.0)));
         assert!((ed.doc.point(middle).unwrap().x - 60.0).abs() < 1e-7);
         assert!(close(ed.doc.point(corners[0]).unwrap(), v(0.0, 0.0)));
+        // The arc stays tangent to the side it took, so it follows the height (its radius
+        // is driven) rather than swinging out past the side.
+        assert!(radius_driven(&ed, arc));
+        ed.set_dimension(height(&ed, &corners), 60.0).unwrap();
+        assert_eq!(dof(&mut ed), 0);
+        assert!(ed.analysis().conflicts.is_empty());
+        assert!(arc_within(&ed, arc, v(120.0, 60.0)));
+        assert!(close(ed.doc.point(corners[3]).unwrap(), v(0.0, 60.0)));
+    }
+
+    /// A centre line drawn to a side the fillet takes whole keeps the side, as construction,
+    /// so the centre line isn't lost with it; the notice says why the side stayed.
+    #[test]
+    fn a_centre_line_on_a_side_taken_whole_keeps_it() {
+        let (mut ed, corners, sides) = bare_plate();
+        ed.doc.begin();
+        let centreline = ed
+            .doc
+            .add_annotation(drift_core::Annotation::Centreline {
+                a: sides[3],
+                b: sides[1],
+            })
+            .unwrap();
+        ed.commit("Centre line");
+        ed.fillet(corners[0], 50.0).unwrap();
+        assert_eq!(
+            ed.doc.get(sides[3]).map(|e| e.style),
+            Some(drift_core::LineKind::Construction)
+        );
+        assert!(ed.doc.annotation(centreline).is_some());
+        let said = said(&ed);
+        assert!(
+            said.contains("kept the side it took as construction, for the centre line on it"),
+            "{said:?}"
+        );
+        assert!(close(ed.doc.point(corners[0]).unwrap(), v(0.0, 0.0)));
     }
 
     /// A dimension to a side the fillet takes whole keeps the side (as construction), and
@@ -4342,7 +4505,10 @@ mod tests {
             })
         );
         assert!(ed.doc.contains(sides[3]) && ed.doc.contains(corners[0]));
-        assert_eq!(dof(&mut ed), free, "no new freedom: the corner is held");
+        // No new freedom: the corner is held. One fewer, as the arc stays tangent to the
+        // side it took, so its radius is now the plate's height.
+        assert_eq!(dof(&mut ed), free - 1);
+        assert_eq!(ed.analysis().dependent_equations, 0);
         assert!(ed.analysis().conflicts.is_empty());
     }
 
@@ -4366,9 +4532,10 @@ mod tests {
     }
 
     /// Fillets meeting where the sides they take go, on a plate whose width is measured on
-    /// the side they leave: a tangency where they meet would put both centres on one point,
-    /// making that width the most the arcs' far ends can be apart, set twice. So the arcs
-    /// meet untied, nothing is over-defined, and the width still drives the plate.
+    /// the side they leave: held tangent where they meet, both centres are on one point, so
+    /// that width sets the second arc's size. Its radius is driven rather than set twice:
+    /// nothing is over-defined, the width still drives the plate, and the arcs never kink
+    /// where they meet.
     #[test]
     fn fillets_meeting_under_a_measured_side_leave_its_length_free() {
         let (mut ed, corners, sides) = bare_plate();
@@ -4386,10 +4553,11 @@ mod tests {
         for side in [sides[0], sides[1], sides[3]] {
             assert!(!ed.doc.contains(side), "{side:?} taken whole");
         }
-        let (a, b) = (arc_ends(&ed, arcs[0]), arc_ends(&ed, arcs[1]));
-        assert_eq!(a.iter().filter(|p| b.contains(p)).count(), 1);
-        assert_eq!(tangents(&ed, arcs[0], arcs[1]), 0);
+        assert!(meet_smoothly(&ed, arcs[0], arcs[1]));
+        assert_eq!(tangents(&ed, arcs[0], arcs[1]), 1);
+        assert!(radius_driven(&ed, arcs[1]) && !radius_driven(&ed, arcs[0]));
         assert!(ed.out.notice.is_none(), "{:?}", ed.out.notice);
+        assert!(said(&ed).contains("radius driven"), "{:?}", ed.out.info);
         assert_eq!(ed.analysis().dependent_equations, 0);
         assert!(ed.analysis().conflicts.is_empty());
         ed.set_dimension(width, 120.0).unwrap();
@@ -4399,6 +4567,7 @@ mod tests {
         );
         assert!(((right - left).length() - 120.0).abs() < 1e-7);
         assert_eq!(ed.analysis().dependent_equations, 0);
+        assert!(meet_smoothly(&ed, arcs[0], arcs[1]));
     }
 
     /// Fillets meeting on a plate whose corners are measured: the sides they take stay as
@@ -4424,15 +4593,106 @@ mod tests {
         assert!(ed.out.notice.is_none(), "{:?}", ed.out.notice);
         assert_eq!(dof(&mut ed), 0);
         assert!(ed.analysis().conflicts.is_empty());
-        // The construction sides place where the arcs meet: a tangency between them there
-        // would set again what the width and height set.
-        assert_eq!(tangents(&ed, arcs[0], arcs[1]), 0);
+        // The arcs stay tangent where they meet; with the construction sides that sets the
+        // second one's size, so its radius is driven rather than set twice.
+        assert_eq!(tangents(&ed, arcs[0], arcs[1]), 1);
+        assert!(radius_driven(&ed, arcs[1]));
         assert_eq!(ed.analysis().dependent_equations, 0);
-        // So the dimensions still drive the plate.
+        // So the dimensions still drive the plate, and the arcs follow it: smooth where
+        // they meet, and inside it.
         ed.set_dimension(width, 120.0).unwrap();
         assert!(close(ed.doc.point(corners[1]).unwrap(), v(120.0, 0.0)));
         ed.set_dimension(height(&ed, &corners), 60.0).unwrap();
         assert!(close(ed.doc.point(corners[2]).unwrap(), v(120.0, 60.0)));
+        assert_eq!(dof(&mut ed), 0);
+        assert!(ed.analysis().conflicts.is_empty());
+        assert!(meet_smoothly(&ed, arcs[0], arcs[1]));
+        for arc in arcs {
+            assert!(arc_within(&ed, arc, v(120.0, 60.0)), "{arc:?}");
+        }
+    }
+
+    /// Fillets all round a measured plate, the upper two taking the sides up to the lower
+    /// two: a round-ended plate, fully defined. When its width and height change, the ends
+    /// stay round, smooth where the arcs meet and inside the plate, rather than kinking
+    /// and bulging past its sides (the upper arcs' radii are driven, so they follow).
+    #[test]
+    fn fillets_meeting_round_a_measured_plate_stay_smooth_when_it_changes() {
+        let Plate {
+            mut ed,
+            corners,
+            width,
+            ..
+        } = plate(false);
+        let arcs = ed.fillet_corners(&corners, 25.0).unwrap();
+        assert_eq!(dof(&mut ed), 0);
+        assert_eq!(ed.analysis().dependent_equations, 0);
+        assert!(ed.analysis().conflicts.is_empty());
+        let ends = [(arcs[1], arcs[2]), (arcs[3], arcs[0])];
+        for (a, b) in ends {
+            assert!(meet_smoothly(&ed, a, b));
+        }
+        assert!(radius_driven(&ed, arcs[2]) && radius_driven(&ed, arcs[3]));
+        assert!(!radius_driven(&ed, arcs[0]) && !radius_driven(&ed, arcs[1]));
+        assert!(said(&ed).contains("radii driven"), "{:?}", ed.out.info);
+        ed.set_dimension(width, 120.0).unwrap();
+        ed.set_dimension(height(&ed, &corners), 60.0).unwrap();
+        assert_eq!(dof(&mut ed), 0);
+        assert!(ed.analysis().conflicts.is_empty());
+        for (a, b) in ends {
+            assert!(meet_smoothly(&ed, a, b), "{a:?} and {b:?} kink");
+        }
+        for arc in arcs {
+            assert!(arc_within(&ed, arc, v(120.0, 60.0)), "{arc:?} bulges out");
+        }
+    }
+
+    /// Whether arcs `a` and `b` share an end where one runs smoothly on into the other.
+    fn meet_smoothly(ed: &Editor, a: EntityId, b: EntityId) -> bool {
+        let (ea, eb) = (arc_ends(ed, a), arc_ends(ed, b));
+        let Some(&p) = ea.iter().find(|p| eb.contains(p)) else {
+            return false;
+        };
+        let at = ed.doc.point(p).unwrap();
+        let centre = |arc| match ed.doc.shape(arc) {
+            Some(Shape::Arc { center, .. }) => center,
+            other => panic!("not an arc: {other:?}"),
+        };
+        let (u, w) = ((at - centre(a)).normalize(), (at - centre(b)).normalize());
+        u.perp_dot(w).abs() < 1e-7
+    }
+
+    /// Whether arc `arc` lies inside the box from the origin to `max`.
+    fn arc_within(ed: &Editor, arc: EntityId, max: DVec2) -> bool {
+        let Some(Shape::Arc {
+            center,
+            radius,
+            start,
+            sweep,
+        }) = ed.doc.shape(arc)
+        else {
+            panic!("not an arc");
+        };
+        (0..=64).all(|i| {
+            let a = start + sweep * f64::from(i) / 64.0;
+            let q = center + radius * DVec2::new(a.cos(), a.sin());
+            q.x > -1e-7 && q.y > -1e-7 && q.x < max.x + 1e-7 && q.y < max.y + 1e-7
+        })
+    }
+
+    /// Whether arc `arc`'s radius dimension is driven (a reference).
+    fn radius_driven(ed: &Editor, arc: EntityId) -> bool {
+        let (id, _) = ed
+            .doc
+            .constraints()
+            .find(|(_, c)| matches!(**c, Constraint::Radius { curve, .. } if curve == arc))
+            .expect("a radius");
+        ed.doc.is_driven(id)
+    }
+
+    /// What the last edit said it did.
+    fn said(ed: &Editor) -> String {
+        ed.out.info.clone().unwrap_or_default()
     }
 
     /// The plate's height dimension (corner to corner up its left side).
@@ -4446,8 +4706,9 @@ mod tests {
             .expect("a height")
     }
 
-    /// A fillet taking a measured side whole up to an earlier fillet stays clear of it: no
-    /// tangency between the two arcs over-defines the plate, and its height still drives it.
+    /// A fillet taking a measured side whole up to an earlier fillet runs smoothly on into
+    /// it: held tangent there, its radius is driven, so nothing over-defines the plate, its
+    /// height still drives it, and the arc follows without a kink.
     #[test]
     fn a_fillet_taking_a_measured_side_up_to_another_fillet_leaves_its_height_free() {
         let Plate {
@@ -4455,12 +4716,17 @@ mod tests {
         } = plate(false);
         let top = ed.fillet(corners[3], 10.0).unwrap();
         let bottom = ed.fillet(corners[0], 40.0).unwrap();
-        assert_eq!(tangents(&ed, top, bottom), 0);
+        assert_eq!(tangents(&ed, top, bottom), 1);
+        assert!(radius_driven(&ed, bottom) && !radius_driven(&ed, top));
         assert_eq!(dof(&mut ed), 0);
         assert_eq!(ed.analysis().dependent_equations, 0);
         assert!(ed.analysis().conflicts.is_empty());
         ed.set_dimension(height(&ed, &corners), 60.0).unwrap();
         assert!(close(ed.doc.point(corners[2]).unwrap(), v(100.0, 60.0)));
+        assert!(meet_smoothly(&ed, top, bottom));
+        for arc in [top, bottom] {
+            assert!(arc_within(&ed, arc, v(100.0, 60.0)), "{arc:?}");
+        }
     }
 
     /// A side kept as construction doesn't stop its far corner being rounded: the corner is

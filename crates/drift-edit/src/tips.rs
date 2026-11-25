@@ -192,6 +192,37 @@ impl Editor {
         }
     }
 
+    /// Move each leader tip on one of the curves `from` (about to go) onto the nearest spot
+    /// of curve `onto`, which takes their place (a fillet's arc for the side it took
+    /// whole). A model note's text stays where it was. How many tips moved.
+    pub(crate) fn move_tips_onto(&mut self, from: &[EntityId], onto: EntityId) -> usize {
+        let Some(shape) = self.doc.shape(onto) else {
+            return 0;
+        };
+        let tips: Vec<Tip> = self
+            .curve_tips()
+            .into_iter()
+            .filter(|t| from.contains(&t.curve))
+            .collect();
+        let mut moved = 0;
+        for tip in tips {
+            let Some((to, spot)) = anchor_on(onto, &shape, tip.at) else {
+                continue;
+            };
+            self.set_tip_anchor(tip.of, to);
+            // The text is placed from its first leader's tip.
+            if let TipOf::Note(id, 0) = tip.of
+                && let Some(mut a) = self.doc.annotation(id).cloned()
+                && let Annotation::Note { at, .. } = &mut a
+            {
+                *at += tip.at - spot;
+                let _ = self.doc.set_annotation(id, a);
+            }
+            moved += 1;
+        }
+        moved
+    }
+
     fn tip_anchor(&self, of: TipOf) -> Option<Anchor> {
         match of {
             TipOf::Note(id, k) => match self.doc.annotation(id)? {
@@ -471,5 +502,44 @@ mod tests {
                 tips_at(&ed, tips, V(100.0 * t, 0.0), Some(l));
             }
         }
+    }
+
+    /// A fillet that takes a side whole moves the leaders pointing at it onto the arc, the
+    /// edge there now, at the spot nearest where they pointed, rather than losing them with
+    /// the side. The model note's text stays where it was, and the notice says so.
+    #[test]
+    fn a_fillet_taking_a_side_whole_moves_its_leaders_onto_the_arc() {
+        let corner = |doc: &mut Document| {
+            let a = doc.add_point(V(0.0, 0.0));
+            let b = doc.add_point(V(100.0, 0.0));
+            let c = doc.add_point(V(100.0, 100.0));
+            doc.add_line(b, c).unwrap();
+            doc.add_line(a, b).unwrap()
+        };
+        let (mut ed, l, tips) = noted(corner, 0.4);
+        let drift_core::EntityKind::Line { b: p, .. } = ed.doc.get(l).unwrap().kind else {
+            unreachable!("a line");
+        };
+        let TipOf::Note(note, _) = tips[0] else {
+            unreachable!("a model note");
+        };
+        let text = |ed: &Editor| match ed.doc.annotation(note) {
+            Some(Annotation::Note { at, leaders, .. }) => {
+                ed.doc.note_text_pos(*at, leaders).unwrap()
+            }
+            _ => panic!("the note"),
+        };
+        let was = text(&ed);
+        let arc = ed.fillet(p, 100.0).unwrap();
+        assert!(!ed.doc.contains(l), "the side is taken whole");
+        // The arc is centred on (0, 100): the spot on it nearest (40, 0).
+        let spot = V(0.0, 100.0) + (V(40.0, 0.0) - V(0.0, 100.0)).normalize() * 100.0;
+        tips_at(&ed, tips, spot, Some(arc));
+        assert!(text(&ed).distance(was) < 1e-9);
+        let said = ed.out.info.clone().unwrap_or_default();
+        assert!(said.contains("moved 2 leaders"), "{said:?}");
+        assert!(ed.undo());
+        tips_at(&ed, tips, V(40.0, 0.0), Some(l));
+        assert!(text(&ed).distance(was) < 1e-9);
     }
 }

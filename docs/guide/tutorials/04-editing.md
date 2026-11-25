@@ -270,6 +270,15 @@ sketch stays fully defined after a fillet, since (with **Auto relations** on) th
 radius is dimensioned. A
 chamfer adds two freedoms, its two cut lengths, until you dimension them.
 
+A fillet as big as the shorter side takes that side whole and runs on to the next one (two
+fillets on one side meet). The side goes, and a leader pointing at it moves onto the arc. If
+something is measured to the side or its corner, or a centre line or other annotation refers
+to it, the side stays as a construction line instead, and the status bar says so. The arc
+stays tangent where it runs on into the next curve, so the outline never kinks there. When
+that already sets the arc's size (fillets meeting round the end of a plate whose height is
+measured), its radius becomes driven, shown in parentheses: change the height and the round
+end follows it.
+
 A fillet or chamfer that's already there can be resized: click it with the same tool, or
 drag a fillet's arc with the **Select** tool. Its lines keep their directions. To put the
 sharp corner back, right-click it and choose **Remove fillet** or **Remove chamfer**.

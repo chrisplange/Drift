@@ -4380,6 +4380,32 @@ fn editing_a_block_snaps_only_to_the_block() {
     assert!(s.entity.is_some_and(|e| !ed.in_scope(e)));
 }
 
+/// What a sheet snaps to through a view isn't narrowed to a block edited in place: the
+/// drawing around the block still snaps there (nothing made on a sheet goes into the block).
+#[test]
+fn sketch_snap_reaches_past_a_block_edit() {
+    let (mut ed, copy, _, loose, _) = block_edit_fixture();
+    let opts = SnapOptions {
+        tolerance: TOL,
+        grid: None,
+        from: None,
+    };
+    ed.edit_block(copy);
+    let at = v(10.1, 25.1);
+    let scope = ed.edit_scope().unwrap();
+    assert!(
+        ed.snap(at, opts, |_| false)
+            .is_none_or(|s| s.entity.is_none_or(|e| scope.contains(&e)))
+    );
+    let s = ed
+        .sketch_snap(at, opts, |_| false)
+        .expect("the loose line's end");
+    assert_eq!((s.kind, s.at), (SnapKind::Endpoint, v(10.0, 25.0)));
+    let end = s.entity.expect("the end point");
+    assert!(!scope.contains(&end));
+    assert!(ed.doc.users_of(end).any(|u| u == loose));
+}
+
 /// On a copy of a block, a snap kind turned off gives way to the next best that is on, as on
 /// the sketch.
 #[test]

@@ -5,8 +5,24 @@ use drift_core::{DVec2, EntityId, Shape};
 use crate::index::{PointRole, SceneIndex};
 use crate::primitives::{angle_in_sweep, nearest_point};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SnapKind {
+/// Declares [`SnapKind`] and [`SnapKind::EVERY`] from one list, so no kind can be left out
+/// of `EVERY` (and so out of [`SnapKinds::ALL`], never snapping).
+macro_rules! snap_kinds {
+    ($($(#[$doc:meta])* $kind:ident,)*) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub enum SnapKind {
+            $($(#[$doc])* $kind,)*
+        }
+
+        impl SnapKind {
+            /// Every kind, in declaration order. Each also has its own bit in
+            /// `SnapKinds::bit`.
+            pub const EVERY: [SnapKind; [$(SnapKind::$kind),*].len()] = [$(SnapKind::$kind),*];
+        }
+    };
+}
+
+snap_kinds! {
     /// End of a line or arc. `entity` is the point.
     Endpoint,
     /// A standalone sketch point. `entity` is the point.
@@ -31,20 +47,6 @@ pub enum SnapKind {
 }
 
 impl SnapKind {
-    /// Every kind. A new kind goes here, and gets its own bit in `SnapKinds::bit`.
-    pub const EVERY: [SnapKind; 10] = [
-        SnapKind::Endpoint,
-        SnapKind::Point,
-        SnapKind::Center,
-        SnapKind::Midpoint,
-        SnapKind::Quadrant,
-        SnapKind::OnCurve,
-        SnapKind::Origin,
-        SnapKind::Grid,
-        SnapKind::Perpendicular,
-        SnapKind::Tangent,
-    ];
-
     pub fn label(self) -> &'static str {
         match self {
             SnapKind::Endpoint => "Endpoint",
@@ -101,6 +103,8 @@ impl SnapKinds {
             bits |= Self::bit(SnapKind::EVERY[i]);
             i += 1;
         }
+        // No two kinds share a bit.
+        assert!(bits.count_ones() as usize == SnapKind::EVERY.len());
         SnapKinds(bits)
     };
 

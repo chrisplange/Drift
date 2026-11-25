@@ -445,9 +445,6 @@ const SCENES: &[Scene] = &[
     ("layer-open", |h| {
         open_example(h);
         h.state_mut().show_panel(Panel::Layers);
-        let app = h.state_mut();
-        let layer = app.drawing.editor.doc.current_layer();
-        app.drawing.expanded_layers.insert(layer);
         h.run();
     }),
     ("relations", |h| {

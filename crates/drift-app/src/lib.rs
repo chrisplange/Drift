@@ -11,6 +11,7 @@ mod anno_scale_tests;
 mod annotations;
 mod app;
 mod canvas;
+mod colour;
 mod commands;
 #[cfg(test)]
 mod corpus_build;
@@ -319,7 +320,6 @@ struct Drawing {
     /// Layer names being edited in the Layers tab.
     layer_names: std::collections::HashMap<drift_core::LayerId, String>,
     /// Layers showing their colours and line settings in the Layers panel.
-    expanded_layers: std::collections::HashSet<drift_core::LayerId>,
     /// The Layers panel's layers and curve counts, kept until the drawing changes.
     layer_counts: crate::layers_ui::LayerCounts,
     /// What the Inspector shows for the picks that depends only on them and the drawing's
@@ -516,7 +516,6 @@ impl Drawing {
             inference_points: Vec::new(),
             params: Default::default(),
             layer_names: Default::default(),
-            expanded_layers: Default::default(),
             layer_counts: Default::default(),
             pick_memo: Default::default(),
             layer_drag: None,

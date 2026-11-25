@@ -78,12 +78,22 @@ Ctrl+L shows or hides it.
 
 ![The Layers panel: Walls is current (filled dot); the Survey layer's magnet is off, so it isn't snapped to](../images/layers.png)
 
-- Each layer is a row: a dot, its colour, name, the number of curves on it, and snap, show
-  and lock switches. The filled dot and highlighted row mark the **current layer**, where
-  new geometry goes. Click anywhere on a row to make that layer current; double-click the
-  name to rename it.
-- With more than eight layers, a **Filter layers** field narrows the list ("3 of 40"; × or
-  Esc clears it). A small square on a row means some of the selection (curves, block
+- Each layer is a row: a dot, its **stroke** and **fill** swatches, its name, its line
+  (weight and type), and print, snap, show and lock switches. The filled dot and
+  highlighted row mark the **current layer**, where new geometry goes. Click anywhere on a
+  row to make that layer current; double-click the name to rename it. Hover the name for
+  how many curves are on the layer.
+- Click a swatch to pick its colour: **Ink** (white on screen, black on paper and in
+  print), the drawing's colours, recent ones, a palette, a hex value, or **More…** for any
+  colour. A fill swatch with a small link follows the stroke (**Match stroke**) until you
+  give it a colour of its own; it colours the fills and hatches on the layer.
+- Click the line cell (a sample of the line and its weight) to pick a **weight** or **line
+  type**. The printer switch sets whether the layer is printed and exported.
+- **Ctrl-click** rows to pick several (Shift-click picks a run of them); a colour, weight,
+  line type or print setting changed on one of them goes to all of them, in one undo step.
+  A plain click lets them go.
+- The **Filter layers** field narrows the list ("3 of 40"; × or Esc clears it). A small
+  square on a row means some of the selection (curves, block
   copies, texts or fills) is on that layer. When you pick an object, the panel scrolls to
   its layer and outlines that row; **Edit → Preferences… → Layers** can instead make the
   picked object's layer current, or do nothing (see
@@ -102,12 +112,9 @@ Ctrl+L shows or hides it.
   - the lock locks every other layer and leaves this one unlocked (and current), so you
     can draw on it without touching the rest;
   - the magnet makes this the only layer the pointer snaps to.
-- Click a row's arrow (**Colours and line settings**) to open it: **Stroke** colour
-  (**Auto** is black or white to suit the theme), **Fill** colour (**Same as stroke** by
-  default), **Line** weight and type, **Output** (**Printed and exported**), **Select all**,
-  **Move selection here** and **Delete** (its geometry moves to the drawing's first layer).
 - Right-click a row to make it current, rename it, isolate it, select its curves, move the
-  selection there, show all layers, or delete it.
+  selection there, show all layers, or delete it (its geometry moves to the drawing's first
+  layer).
 - **New layer** adds a layer, makes it current and lets you type its name.
 - A new drawing starts with one layer, **Layer 1**. The drawing's first layer can't be
   deleted. Layer **0** is something DWG and DXF files need: a drawing has one only when an

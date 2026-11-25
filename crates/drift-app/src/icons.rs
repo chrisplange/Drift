@@ -71,6 +71,8 @@ pub enum Glyph {
     Back,
     /// The Selection filter is narrowed: a funnel.
     Filter,
+    /// Printed and exported: a printer.
+    Print,
 }
 
 /// Maps a 20 × 20 design grid into `rect`.
@@ -575,6 +577,16 @@ pub fn glyph(painter: &egui::Painter, rect: Rect, glyph: Glyph, color: Color32) 
             p.arc(10.0, 17.0, 9.5, PI + 0.72, PI - 1.44);
             p.arc(10.0, 3.0, 9.5, 0.72, PI - 1.44);
             p.circle(10.0, 10.0, 2.6);
+        }
+        Glyph::Print => {
+            // The paper in, the body, the sheet out.
+            p.poly(&[(6.0, 7.5), (6.0, 3.0), (14.0, 3.0), (14.0, 7.5)], false);
+            p.poly(&[(3.5, 7.5), (16.5, 7.5), (16.5, 14.0), (3.5, 14.0)], true);
+            p.poly(
+                &[(6.5, 12.0), (13.5, 12.0), (13.5, 17.0), (6.5, 17.0)],
+                true,
+            );
+            p.dot(14.0, 10.0, 0.9);
         }
         Glyph::Lock | Glyph::Unlock => {
             p.poly(&[(4.5, 9.5), (15.5, 9.5), (15.5, 17.0), (4.5, 17.0)], true);

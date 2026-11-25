@@ -38,6 +38,8 @@ mod inspector_layer;
 mod keymap;
 /// Picking an object shows its layer, or makes it current (drift-releases#19).
 mod layer_on_pick;
+/// The Layers panel's swatches, line cell, picked rows and filter.
+mod layer_panel;
 /// Alt-click a layer's lock or snap to set the other layers.
 mod layer_toggles;
 /// The live link: assistants editing the open drawing.
@@ -1826,20 +1828,17 @@ fn a_folded_floating_panel_moves_by_the_top_of_its_header() {
     );
 }
 
-/// A floating panel can't be made narrower than what it holds: an open layer's settings
-/// (labels, pickers, "Printed and exported") are never cut off at its right edge.
+/// A floating panel can't be made narrower than what it holds, nor than the least width a
+/// floating window has: the Layers panel's rows are never cut off at its right edge.
 #[test]
 fn a_floating_panel_is_never_narrower_than_its_contents() {
     let Some(mut h) = harness() else { return };
-    // Text a size up, as in a platform font wider than the test's: the open layer's settings
-    // then need more than the least width a floating window has.
+    // Text a size up, as in a platform font wider than the test's.
     h.ctx.all_styles_mut(|s| {
         for font in s.text_styles.values_mut() {
             font.size *= 1.35;
         }
     });
-    let layer = h.state().drawing.editor.doc.current_layer();
-    h.state_mut().drawing.expanded_layers.insert(layer);
     h.state_mut()
         .layout
         .move_to(Panel::Layers, Place::Float, None);
@@ -1861,9 +1860,10 @@ fn a_floating_panel_is_never_narrower_than_its_contents() {
     save_png("drift_ui_floating_squeezed.png", &mut h);
     let after = fits(&h, "squeezed from the right");
     assert!(held.width() >= after.width() - 0.5, "{held:?} vs {after:?}");
+    let needs = h.state().floating_content_width(Panel::Layers).unwrap();
     assert!(
-        after.width() > 260.0,
-        "the contents should need more: {after:?}"
+        after.width() >= needs.max(238.0) - 0.5 && after.width() <= needs.max(240.0) + 1.0,
+        "stops where its contents (or the least width) stop it: {after:?}, needs {needs}"
     );
     // From the left it stops there too, its right edge staying put.
     let grab = egui::pos2(after.left() + 1.0, after.top() + 120.0);
@@ -1888,8 +1888,6 @@ fn a_dock_is_never_narrower_than_its_contents() {
             font.size *= 1.35;
         }
     });
-    let layer = h.state().drawing.editor.doc.current_layer();
-    h.state_mut().drawing.expanded_layers.insert(layer);
     h.state_mut()
         .layout
         .move_to(Panel::Layers, Place::Dock(crate::dock::Side::Right), None);
@@ -1928,8 +1926,6 @@ fn a_dock_is_never_narrower_than_its_contents() {
 #[test]
 fn panels_keep_their_width_frame_to_frame() {
     let Some(mut h) = harness() else { return };
-    let layer = h.state().drawing.editor.doc.current_layer();
-    h.state_mut().drawing.expanded_layers.insert(layer);
     for p in crate::dock::Panel::ALL {
         h.state_mut().layout.move_to(p, Place::Float, None);
         h.run_steps(6);
@@ -3146,6 +3142,18 @@ fn many_layers(h: &mut Harness<'_, DriftApp>, n: usize) -> Vec<drift_core::Layer
     ids
 }
 
+/// A spot on the row of the layer named `name` with nothing of its own: between the name
+/// and the line cell.
+pub(super) fn layer_row_gap(h: &Harness<'_, DriftApp>, name: &str) -> egui::Pos2 {
+    let r = h.get_by_label(name).rect();
+    let cell = h
+        .query_all_by_label("Line weight and type")
+        .map(|n| n.rect())
+        .find(|c| (c.center().y - r.center().y).abs() < 4.0)
+        .expect("the row's line cell");
+    egui::pos2((r.right() + cell.left()) / 2.0, r.center().y)
+}
+
 /// The layer rows drawn this frame.
 fn drawn_rows(h: &Harness<'_, DriftApp>) -> Vec<String> {
     let doc = &h.state().drawing.editor.doc;
@@ -3187,19 +3195,9 @@ fn hundreds_of_layers_draw_only_the_rows_in_view() {
     assert!(rows.contains(&"A-WALL-000".to_owned()), "{rows:?}");
     assert!(!rows.contains(&"A-ANNO-499".to_owned()));
     assert!(rows.len() < 40, "{} rows drawn", rows.len());
-    // Opening a row there (taller) keeps the rows below it in place, and clicking one
-    // still makes it current.
+    // Clicking a row there makes it current.
     let walls = ids[0];
-    h.state_mut().drawing.expanded_layers.insert(ids[3]);
-    h.run();
-    h.run();
-    // (The open row pushes the last ones down, past the pane's foot in a font with taller
-    // lines: scroll to the end again, so the row clicked is in view whatever the font.)
-    to_bottom(&mut h, 4);
-    h.hover_at(h.state().drawing.view.canvas_rect.center());
-    h.run();
-    let r = h.get_by_label("A-WALL-000").rect();
-    let at = egui::pos2(r.right() + 40.0, r.center().y);
+    let at = layer_row_gap(&h, "A-WALL-000");
     h.hover_at(at);
     h.run();
     button(&h, at, true);
@@ -3265,7 +3263,7 @@ fn long_layer_names_lose_their_middle_and_show_whole_in_the_tooltip() {
         .expect("the shortened name");
     let label = shown.value().unwrap_or_default();
     assert!(
-        label.starts_with("A-WALL-") && label.ends_with("HATCH"),
+        label.starts_with("A-WAL") && label.ends_with("HATCH"),
         "{label}"
     );
     let at = shown.rect().center();
@@ -3300,8 +3298,7 @@ fn a_layer_is_isolated_and_the_isolate_ended_in_one_undo_step_each() {
     let before = visible(&h);
     let target = ids[9]; // A-ANNO-009
     // Right-click its row: Isolate.
-    let r = h.get_by_label("A-ANNO-009").rect();
-    let at = egui::pos2(r.right() + 30.0, r.center().y);
+    let at = layer_row_gap(&h, "A-ANNO-009");
     h.hover_at(at);
     h.run();
     for pressed in [true, false] {

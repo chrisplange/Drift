@@ -5,11 +5,9 @@ use drift_core::{EntityId, Layer, LayerId, LineType, LineWeight, Rgb};
 use eframe::egui;
 
 use crate::DriftApp;
+use crate::colour::{Unset, paint_swatch};
 use crate::icons::{self, Glyph};
 use drift_edit::editor::LayerFlag;
-
-/// The filter field shows once a drawing has more layers than this.
-const FILTER_FROM: usize = 8;
 
 /// The Layers panel's own state: the name filter, the isolated layer, and the row heights
 /// the list is laid out with (only the rows in view are drawn).
@@ -22,10 +20,13 @@ pub(crate) struct LayerList {
     /// Layer settings Alt-clicked onto all the other layers (at most one per setting), and
     /// how every layer was before.
     pub solos: Vec<Solo>,
-    /// The height of a closed row, with the space after it, as last drawn.
+    /// The height of a row, with the space after it, as last drawn.
     row: f32,
-    /// The same for opened rows, which are taller.
-    opened: std::collections::HashMap<LayerId, f32>,
+    /// Layers picked in the list (Ctrl-click, Shift-click) to change together: a colour,
+    /// weight, line type or printing set on one of them goes to all of them.
+    pub picked: std::collections::BTreeSet<LayerId>,
+    /// Where a Shift-click range starts.
+    anchor: Option<LayerId>,
     /// A row to scroll into view.
     reveal: Option<LayerId>,
     /// The picked object's layer, outlined in the list (see [`LayerOnPick`]).
@@ -274,8 +275,9 @@ pub(crate) fn to_color32(c: Option<Rgb>, dark: bool) -> egui::Color32 {
     }
 }
 
-/// A colour button: "Auto" (theme foreground / by layer) or a picked colour. It takes the
-/// width it is given: a row's value column.
+/// A colour control (a swatch and its hex; one click opens the picker), `auto_label`
+/// naming what an unset colour falls back to ("Auto": the theme's ink). It takes the width
+/// it is given: a row's value column.
 pub(crate) fn color_choice(
     ui: &mut egui::Ui,
     value: Option<Rgb>,
@@ -294,34 +296,7 @@ pub(crate) fn color_choice_of(
     dark: bool,
     width: f32,
 ) -> Option<Option<Rgb>> {
-    let mut out = None;
-    ui.horizontal(|ui| {
-        let auto = value.is_none();
-        let id = ui.id().with(("colour", auto_label));
-        // The menu takes the width, less the swatch of a colour of its own.
-        let swatch = ui.spacing().interact_size.x + ui.spacing().item_spacing.x;
-        let width = width - if auto { 0.0 } else { swatch + 16.0 };
-        egui::ComboBox::from_id_salt(id)
-            .icon(crate::theme::combo_icon)
-            .selected_text(if auto { auto_label } else { "Custom" })
-            .width(width.max(60.0))
-            .show_ui(ui, |ui| {
-                if ui.selectable_label(auto, auto_label).clicked() && !auto {
-                    out = Some(None);
-                }
-                if ui.selectable_label(!auto, "Custom").clicked() && auto {
-                    out = Some(Some(Rgb([0xd0, 0x40, 0x40])));
-                }
-            });
-        if !auto {
-            let c = to_color32(value, dark);
-            let mut rgb = [c.r(), c.g(), c.b()];
-            if egui::color_picker::color_edit_button_srgb(ui, &mut rgb).changed() {
-                out = Some(Some(Rgb(rgb)));
-            }
-        }
-    });
-    out
+    crate::colour::colour_button(ui, value, Unset::from_label(auto_label), dark, width)
 }
 
 /// A line weight's menu, as wide as the room it is given (a row's value column).
@@ -381,14 +356,13 @@ fn line_type_combo(
     changed
 }
 
-/// A layer row's grid: the current layer's dot, the chevron and the gap between its parts.
-/// The swatch follows, then the name; an opened row's settings start under the swatch.
+/// A layer row's grid: the current layer's dot, the stroke and fill swatches, and the gap
+/// between its parts. The name follows; the line cell and the toggles are at the right.
 const DOT: f32 = 10.0;
-const CHEVRON: f32 = 14.0;
+const SWATCH: f32 = 13.0;
 const ROW_SPACING: f32 = 5.0;
-
-/// The label column of an opened row's settings.
-const DETAIL_LABEL: f32 = 58.0;
+/// The weight and line type cell: a sample of the line and its weight.
+const LINE_CELL: f32 = 44.0;
 
 /// Space between two rows of the list.
 const ROW_GAP: f32 = 1.0;
@@ -437,12 +411,15 @@ struct RowInfo<'a> {
     /// The layer each setting is Alt-clicked onto, if any.
     solo_lock: Option<LayerId>,
     solo_snap: Option<LayerId>,
+    /// The rows as listed (top down, filtered): what a Shift-click range runs over.
+    list: &'a [LayerId],
 }
 
 impl DriftApp {
-    /// The Layers panel: a filter once there are many layers, the isolate bar, then a
-    /// compact row per layer (colour, name, curve count, visibility, locking; the current
-    /// one highlighted) that opens to show its colours and line settings; then underlays.
+    /// The Layers panel: the filter, the isolate bar, then a compact row per layer (its
+    /// stroke and fill swatches, name, line weight and type, printing,
+    /// snapping, visibility and locking; the current one highlighted), each setting changed
+    /// in place; then underlays.
     /// Only the rows in view are drawn, so a drawing with a thousand layers costs no more
     /// than one with ten.
     /// After a new pick, what Preferences → Layers says (drift-releases#19): show the picked
@@ -584,13 +561,23 @@ impl DriftApp {
             any_hidden,
             solo_lock: self.solo_of(LayerFlag::Locked),
             solo_snap: self.solo_of(LayerFlag::Snappable),
+            list: &list,
         };
+        // The drawing's own colours, first in every colour picker.
+        let mut colours: Vec<[u8; 3]> = Vec::new();
+        for (_, l) in &layers {
+            for c in [l.color, l.fill_color].into_iter().flatten() {
+                if !colours.contains(&c.0) && colours.len() < 16 {
+                    colours.push(c.0);
+                }
+            }
+        }
+        ui.ctx()
+            .data_mut(|d| d.insert_temp(crate::colour::document_colours_id(), colours));
         let mut status = None;
         let mut action = None;
         crate::theme::section(ui, &format!("Layers · {total}"));
-        if total > FILTER_FROM || !self.drawing.layer_list.filter.is_empty() {
-            self.layer_filter(ui, list.len(), total);
-        }
+        self.layer_filter(ui, list.len(), total);
         if let Some(iso) = &self.drawing.layer_list.isolated {
             let name = self
                 .drawing
@@ -623,17 +610,7 @@ impl DriftApp {
             } else {
                 crate::theme::LIST_ROW + ROW_GAP
             };
-            let heights: Vec<f32> = list
-                .iter()
-                .map(|id| {
-                    if self.drawing.expanded_layers.contains(id) {
-                        let opened = self.drawing.layer_list.opened.get(id).copied();
-                        opened.unwrap_or(closed + 140.0)
-                    } else {
-                        closed
-                    }
-                })
-                .collect();
+            let heights: Vec<f32> = vec![closed; list.len()];
             let mut tops = Vec::with_capacity(list.len() + 1);
             let mut y = 0.0;
             for h in &heights {
@@ -670,13 +647,8 @@ impl DriftApp {
                 ui.add_space(ROW_GAP);
                 rows.push((id, rect));
                 let drawn = ui.cursor().top() - top;
-                let open = self.drawing.expanded_layers.contains(&id);
                 let guess = heights[i];
-                if open {
-                    self.drawing.layer_list.opened.insert(id, drawn);
-                } else {
-                    self.drawing.layer_list.row = drawn;
-                }
+                self.drawing.layer_list.row = drawn;
                 if (drawn - guess).abs() > 0.5 {
                     // Laid out with a wrong height: again, with the right one.
                     ui.ctx().request_repaint();
@@ -716,10 +688,12 @@ impl DriftApp {
         self.panel_scrolled(ui, crate::dock::Panel::Layers, &output);
         self.drawing.layer_counts.curves = counts;
         self.drawing.layer_counts.layers = layers;
+        // Picked rows of layers that are gone go.
+        let doc = &self.drawing.editor.doc;
         self.drawing
             .layer_list
-            .opened
-            .retain(|id, _| self.drawing.expanded_layers.contains(id));
+            .picked
+            .retain(|id| doc.layer(*id).is_some());
         match action {
             Some(LayerAction::Isolate(id)) => {
                 let before = self.drawing.editor.isolate_layer(id);
@@ -872,7 +846,7 @@ impl DriftApp {
         let accent = crate::theme::accent(ui.visuals().dark_mode);
         let mut edited = layer.clone();
         let is_current = id == info.current;
-        let open = self.drawing.expanded_layers.contains(&id);
+        let picked_row = self.drawing.layer_list.picked.contains(&id);
         // The whole row: a click makes the layer current, a drag moves it in the order (its
         // own buttons and fields take their clicks first).
         let sense = if draggable {
@@ -894,15 +868,13 @@ impl DriftApp {
                         if let Some(a) = self.layer_row(ui, id, &layer, &mut edited, info) {
                             *action = Some(a);
                         }
-                        if open {
-                            self.layer_details(ui, id, &mut edited, info.has_selection, status);
-                        }
                     });
             },
         );
         let row = row.response;
-        if row.clicked() && !is_current {
-            self.drawing.editor.set_current_layer(id);
+        if row.clicked() {
+            let mods = ui.input(|i| i.modifiers);
+            self.layer_row_clicked(id, mods, info.list);
         }
         if row.drag_started() {
             self.drawing.layer_drag = Some(id);
@@ -916,10 +888,18 @@ impl DriftApp {
             row.rect.min,
             egui::vec2(row.rect.width(), crate::theme::LIST_ROW),
         );
-        let quiet = crate::theme::row_fill(dark, false, hovered || open);
+        let quiet = crate::theme::row_fill(dark, false, hovered);
         let tint = crate::theme::row_fill(dark, is_current, false);
         let mut fills = Vec::new();
-        if let Some(fill) = quiet {
+        if picked_row {
+            // Picked among several: a quiet fill and the accent down its left edge (the
+            // current layer keeps the accent's tint, the picked object's an outline).
+            let fill =
+                crate::theme::row_fill(dark, false, true).unwrap_or(egui::Color32::TRANSPARENT);
+            fills.push(egui::Shape::rect_filled(row.rect, radius, fill));
+            let bar = egui::Rect::from_min_size(row.rect.min, egui::vec2(3.0, row.rect.height()));
+            fills.push(egui::Shape::rect_filled(bar, 1.5, accent));
+        } else if let Some(fill) = quiet {
             fills.push(egui::Shape::rect_filled(row.rect, radius, fill));
         }
         if let Some(fill) = tint {
@@ -936,7 +916,8 @@ impl DriftApp {
         }
         let rect = row.rect;
         let tip = if draggable {
-            "Click to make current · drag to reorder (top draws on top)"
+            "Click to make current · Ctrl- or Shift-click to pick several and change them \
+             together · drag to reorder (top draws on top)"
         } else {
             "Click to make current"
         };
@@ -1004,14 +985,84 @@ impl DriftApp {
                 }
             });
         if edited != layer && self.drawing.editor.doc.layer(id).is_some() {
-            self.drawing.editor.update_layer(id, edited);
+            self.change_layers(id, &layer, edited);
         }
         rect
     }
 
-    /// A layer's row (see [`DOT`], [`CHEVRON`] and [`ROW_SPACING`] for its grid): disclosure chevron, colour swatch, name (click: make current;
-    /// double-click: rename), the selection marker, curve count, visibility and lock.
-    /// Alt-click on the eye isolates the layer (or ends the isolate).
+    /// Row `id` changed from `was` to `now`: with it among several picked rows, its
+    /// appearance change (colours, weight, line type, printing) goes to all of them, one
+    /// undo step; otherwise to it alone.
+    fn change_layers(&mut self, id: LayerId, was: &Layer, now: Layer) {
+        let picked = &self.drawing.layer_list.picked;
+        if !(picked.len() > 1 && picked.contains(&id)) {
+            self.drawing.editor.update_layer(id, now);
+            return;
+        }
+        let doc = &self.drawing.editor.doc;
+        let changes: Vec<(LayerId, Layer)> = picked
+            .iter()
+            .filter_map(|&other| {
+                if other == id {
+                    return Some((id, now.clone()));
+                }
+                let mut l = doc.layer(other)?.clone();
+                if now.color != was.color {
+                    l.color = now.color;
+                }
+                if now.fill_color != was.fill_color {
+                    l.fill_color = now.fill_color;
+                }
+                if now.weight != was.weight {
+                    l.weight = now.weight;
+                }
+                if now.line_type != was.line_type {
+                    l.line_type = now.line_type;
+                }
+                if now.printable != was.printable {
+                    l.printable = now.printable;
+                }
+                Some((other, l))
+            })
+            .collect();
+        self.drawing.editor.update_layers(&changes, "Change layers");
+    }
+
+    /// A click on a layer's row or name: Ctrl (Cmd) picks it or lets it go among several,
+    /// Shift picks the rows from the last one clicked to it; a plain click lets the picked
+    /// rows go and makes it the current layer.
+    fn layer_row_clicked(&mut self, id: LayerId, mods: egui::Modifiers, list: &[LayerId]) {
+        let current = self.drawing.editor.doc.current_layer();
+        let rows = &mut self.drawing.layer_list;
+        if mods.command {
+            // The current layer counts as picked when the first other one is added.
+            if rows.picked.is_empty() && id != current {
+                rows.picked.insert(current);
+            }
+            if !rows.picked.remove(&id) {
+                rows.picked.insert(id);
+            }
+            rows.anchor = Some(id);
+        } else if mods.shift {
+            let from = rows.anchor.unwrap_or(current);
+            if let (Some(a), Some(b)) = (pos_of(list, from), pos_of(list, id)) {
+                rows.picked = list[a.min(b)..=a.max(b)].iter().copied().collect();
+            }
+        } else {
+            rows.picked.clear();
+            rows.anchor = Some(id);
+            if id != current {
+                self.drawing.editor.set_current_layer(id);
+            }
+        }
+    }
+
+    /// A layer's row (see [`DOT`], [`SWATCH`] and [`ROW_SPACING`] for its grid): the
+    /// current layer's dot, the stroke and fill swatches (a click opens the colour picker),
+    /// the name (click: make current; double-click: rename), the selection marker, curve
+    /// count, the line cell (weight and line type; a click opens their menu), and the
+    /// printing, snapping, visibility and lock toggles. Alt-click on the eye isolates the
+    /// layer (or ends the isolate).
     fn layer_row(
         &mut self,
         ui: &mut egui::Ui,
@@ -1023,7 +1074,6 @@ impl DriftApp {
         let dark = ui.visuals().dark_mode;
         let accent = crate::theme::accent(dark);
         let is_current = id == info.current;
-        let open = self.drawing.expanded_layers.contains(&id);
         let mut action = None;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = ROW_SPACING;
@@ -1040,36 +1090,62 @@ impl DriftApp {
                     egui::Stroke::new(1.0, ui.visuals().weak_text_color().gamma_multiply(0.6)),
                 );
             }
-            let (chev, r) =
-                ui.allocate_exact_size(egui::vec2(CHEVRON, ICON_TOGGLE), egui::Sense::click());
-            let color = if r.hovered() {
-                ui.visuals().strong_text_color()
-            } else {
-                ui.visuals().weak_text_color()
-            };
-            crate::theme::chevron(ui.painter(), chev.center(), open, color);
-            if r.on_hover_text("Colors and line settings").clicked() {
-                if open {
-                    self.drawing.expanded_layers.remove(&id);
-                } else {
-                    self.drawing.expanded_layers.insert(id);
+            // Stroke and fill, each a swatch that opens the picker.
+            ui.spacing_mut().item_spacing.x = 3.0;
+            let (r, resp) =
+                ui.allocate_exact_size(egui::vec2(SWATCH, SWATCH), egui::Sense::click());
+            paint_swatch(ui.painter(), r, edited.color, Unset::Ink, None, dark);
+            hover_ring(ui, r, resp.hovered());
+            let tip = match edited.color {
+                Some(c) => format!("Stroke {} · click to change", crate::colour::hex(c)),
+                None => {
+                    "Stroke: Ink (white on screen, black on paper) · click to change".to_owned()
                 }
+            };
+            let resp = resp.on_hover_text(tip);
+            resp.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Stroke color")
+            });
+            if let Some(c) = crate::colour::colour_popup(ui, &resp, edited.color, Unset::Ink, dark)
+            {
+                edited.color = c;
             }
-            // Stroke colour, with the fill colour in the lower right when it differs.
-            let (swatch, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
-            ui.painter()
-                .rect_filled(swatch, 3, to_color32(layer.color, dark));
-            if layer.fill_color.is_some_and(|c| Some(c) != layer.color) {
-                ui.painter().add(egui::Shape::convex_polygon(
-                    vec![
-                        swatch.right_top(),
-                        swatch.right_bottom(),
-                        swatch.left_bottom(),
-                    ],
-                    to_color32(layer.fill_colour(), dark),
-                    egui::Stroke::NONE,
-                ));
+            let (r, resp) =
+                ui.allocate_exact_size(egui::vec2(SWATCH, SWATCH), egui::Sense::click());
+            let stroke_shown = edited
+                .color
+                .map_or(crate::colour::ink(dark), crate::colour::to_color32);
+            let unset = Unset::Named("Match stroke");
+            paint_swatch(
+                ui.painter(),
+                r,
+                edited.fill_color,
+                unset,
+                Some(stroke_shown),
+                dark,
+            );
+            if edited.fill_color.is_none() {
+                link_mark(ui.painter(), r, dark);
             }
+            hover_ring(ui, r, resp.hovered());
+            let tip = match edited.fill_color {
+                Some(c) => format!(
+                    "Fill {} (fills and hatches on this layer) · click to change",
+                    crate::colour::hex(c)
+                ),
+                None => "Fill: matches the stroke (fills and hatches on this layer) · click to \
+                         change"
+                    .to_owned(),
+            };
+            let resp = resp.on_hover_text(tip);
+            resp.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Fill color")
+            });
+            if let Some(c) = crate::colour::colour_popup(ui, &resp, edited.fill_color, unset, dark)
+            {
+                edited.fill_color = c;
+            }
+            ui.spacing_mut().item_spacing.x = ROW_SPACING;
             // Controls from the right, so the name takes the space left.
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
@@ -1114,10 +1190,11 @@ impl DriftApp {
                     edited.snappable = snappable;
                     action = Some(LayerAction::Solo(LayerFlag::Snappable, id));
                 }
+                let tip = "Printed and exported (off: shown here, left out of prints and exports)";
+                icon_toggle(ui, &mut edited.printable, Glyph::Print, true, tip);
                 ui.add_space(4.0);
-                let n = info.counts.get(&id).copied().unwrap_or(0);
-                ui.label(egui::RichText::new(n.to_string()).small().weak())
-                    .on_hover_text("Curves on this layer");
+                line_cell(ui, id, edited);
+                ui.add_space(4.0);
                 if info.picked.contains(&id) {
                     ui.add_space(5.0);
                     let (mark, response) =
@@ -1132,9 +1209,9 @@ impl DriftApp {
                     );
                     response.on_hover_text("Some of the selection is on this layer");
                 }
-                ui.add_space(6.0);
+                ui.add_space(4.0);
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    self.layer_name(ui, id, layer, edited, is_current);
+                    self.layer_name(ui, id, layer, edited, info);
                 });
             });
         });
@@ -1243,8 +1320,10 @@ impl DriftApp {
         id: LayerId,
         layer: &Layer,
         edited: &mut Layer,
-        is_current: bool,
+        info: &RowInfo,
     ) {
+        let is_current = id == info.current;
+        let curves = info.counts.get(&id).copied().unwrap_or(0);
         if self.drawing.renaming_layer == Some(id) && can_rename(id, layer) {
             let name = self
                 .drawing
@@ -1287,113 +1366,22 @@ impl DriftApp {
                     .truncate(),
             )
             .on_hover_text(format!(
-                "{}\n{}",
+                "{} · {curves} {}\n{}",
                 layer.name,
+                if curves == 1 { "curve" } else { "curves" },
                 if is_current {
                     "The current layer: new geometry goes here. Double-click to rename"
                 } else {
                     "Click to make this the current layer; double-click to rename"
                 }
             ));
-        if r.clicked() && !is_current {
-            self.drawing.editor.set_current_layer(id);
+        if r.clicked() {
+            let mods = ui.input(|i| i.modifiers);
+            self.layer_row_clicked(id, mods, info.list);
         }
         if r.double_clicked() && can_rename(id, layer) {
             self.drawing.renaming_layer = Some(id);
         }
-    }
-
-    /// An opened layer row: stroke and fill colours, weight and line type, printing, and
-    /// actions.
-    fn layer_details(
-        &mut self,
-        ui: &mut egui::Ui,
-        id: LayerId,
-        edited: &mut Layer,
-        has_selection: bool,
-        status: &mut Option<String>,
-    ) {
-        let dark = ui.visuals().dark_mode;
-        // Under the swatch, so the settings read as the row's own; labels in a column, the
-        // menus filling what is left.
-        let indent = DOT + CHEVRON + 2.0 * ROW_SPACING;
-        let row = |ui: &mut egui::Ui, text: &str, add: &mut dyn FnMut(&mut egui::Ui)| {
-            ui.horizontal(|ui| {
-                ui.set_min_height(crate::theme::ROW_HEIGHT);
-                ui.add_space(indent - ui.spacing().item_spacing.x);
-                ui.allocate_ui_with_layout(
-                    egui::vec2(DETAIL_LABEL, crate::theme::ROW_HEIGHT),
-                    egui::Layout::left_to_right(egui::Align::Center),
-                    |ui| {
-                        ui.set_min_width(DETAIL_LABEL);
-                        ui.label(egui::RichText::new(text).color(ui.visuals().weak_text_color()));
-                    },
-                );
-                add(ui);
-            })
-        };
-        ui.add_space(2.0);
-        row(ui, "Stroke", &mut |ui| {
-            if let Some(c) = color_choice(ui, edited.color, "Auto", dark) {
-                edited.color = c;
-            }
-        });
-        row(ui, "Fill", &mut |ui| {
-            if let Some(c) = color_choice(ui, edited.fill_color, "Same as stroke", dark) {
-                edited.fill_color = c;
-            }
-        })
-        .response
-        .on_hover_text("Color of fills and hatches on this layer");
-        row(ui, "Weight", &mut |ui| {
-            let mut w = Some(edited.weight);
-            if weight_combo(ui, ("layer_weight", id.0), &mut w, false) {
-                edited.weight = w.unwrap_or_default();
-            }
-        });
-        row(ui, "Line type", &mut |ui| {
-            let mut t = Some(edited.line_type);
-            let width = ui.available_width();
-            if line_type_combo(ui, ("layer_type", id.0), &mut t, false, width) {
-                edited.line_type = t.unwrap_or_default();
-            }
-        });
-        row(ui, "Output", &mut |ui| {
-            crate::theme::checkbox(ui, &mut edited.printable, "Printed and exported");
-        });
-        ui.horizontal_wrapped(|ui| {
-            ui.add_space(indent - ui.spacing().item_spacing.x);
-            if ui.small_button("Select all").clicked() {
-                self.drawing.editor.select_layer(id);
-            }
-            if ui
-                .add_enabled(
-                    has_selection,
-                    egui::Button::new("Move selection here").small(),
-                )
-                .on_hover_text("Move the selected geometry onto this layer")
-                .clicked()
-            {
-                self.drawing.editor.move_selection_to_layer(id);
-            }
-            if id != LayerId::DEFAULT
-                && ui
-                    .add(
-                        egui::Button::new(
-                            egui::RichText::new("Delete").color(ui.visuals().error_fg_color),
-                        )
-                        .small(),
-                    )
-                    .on_hover_text("Delete the layer (its geometry moves to 0)")
-                    .clicked()
-            {
-                if let Err(e) = self.drawing.editor.remove_layer(id) {
-                    *status = Some(e);
-                }
-                self.drawing.expanded_layers.remove(&id);
-            }
-        });
-        ui.add_space(4.0);
     }
 
     /// Appearance controls for the selected curves (in the Properties tab; their layer is
@@ -1459,6 +1447,174 @@ impl DriftApp {
             }
         });
     }
+}
+
+/// A quiet ring round a swatch under the pointer.
+fn hover_ring(ui: &egui::Ui, r: egui::Rect, hovered: bool) {
+    if hovered {
+        ui.painter().rect_stroke(
+            r.expand(1.5),
+            4,
+            egui::Stroke::new(1.0, ui.visuals().strong_text_color().gamma_multiply(0.6)),
+            egui::StrokeKind::Inside,
+        );
+    }
+}
+
+/// A fill swatch that follows the stroke: a small chain link in its corner.
+fn link_mark(painter: &egui::Painter, r: egui::Rect, dark: bool) {
+    let c = r.right_bottom() - egui::vec2(3.0, 3.0);
+    let (bg, fg) = if dark {
+        (
+            egui::Color32::from_gray(0x1e),
+            egui::Color32::from_gray(0xd0),
+        )
+    } else {
+        (
+            egui::Color32::from_gray(0xf4),
+            egui::Color32::from_gray(0x40),
+        )
+    };
+    painter.circle_filled(c, 3.6, bg);
+    for dx in [-1.2, 1.2] {
+        painter.circle_stroke(c + egui::vec2(dx, 0.0), 1.5, egui::Stroke::new(0.9, fg));
+    }
+}
+
+/// Draw a short sample of a line from `a` to `b`: as thick as `weight` reads on screen, and
+/// dashed as `line_type` is.
+fn paint_line_sample(
+    painter: &egui::Painter,
+    a: egui::Pos2,
+    b: egui::Pos2,
+    weight: LineWeight,
+    line_type: LineType,
+    color: egui::Color32,
+) {
+    let width = (0.8 + weight.mm() as f32 * 3.0).clamp(0.8, 4.0);
+    let stroke = egui::Stroke::new(width, color);
+    let dashes = line_type.paper_dashes();
+    if dashes.is_empty() {
+        painter.line_segment([a, b], stroke);
+        return;
+    }
+    // The pattern at a size that reads in a row: a dash of 4 paper units as 8 points.
+    let scale = 2.0;
+    let length = (b - a).length();
+    let dir = (b - a) / length.max(1e-3);
+    let (mut t, mut i) = (0.0_f32, 0);
+    while t < length {
+        let d = dashes[i % dashes.len()] as f32 * scale;
+        let end = (t + d).min(length);
+        if i % 2 == 0 {
+            painter.line_segment([a + dir * t, a + dir * end], stroke);
+        }
+        t = end;
+        i += 1;
+    }
+}
+
+/// A layer's weight and line type cell: a sample of its line and its weight; a click opens
+/// a menu of weights and line types, each shown as it draws.
+fn line_cell(ui: &mut egui::Ui, id: LayerId, edited: &mut Layer) {
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(LINE_CELL, ICON_TOGGLE), egui::Sense::click());
+    let color = if response.hovered() {
+        ui.visuals().strong_text_color()
+    } else {
+        ui.visuals().text_color().gamma_multiply(0.8)
+    };
+    if response.hovered() {
+        ui.painter().rect_filled(
+            rect.shrink2(egui::vec2(0.0, 2.0)),
+            crate::theme::radius::CONTROL,
+            ui.visuals().widgets.hovered.weak_bg_fill,
+        );
+    }
+    let y = rect.center().y;
+    paint_line_sample(
+        ui.painter(),
+        egui::pos2(rect.left() + 3.0, y),
+        egui::pos2(rect.left() + 17.0, y),
+        edited.weight,
+        edited.line_type,
+        color,
+    );
+    let weight = if edited.weight.0 == 0 {
+        "Hair".to_owned()
+    } else {
+        format!("{:.2}", edited.weight.mm())
+    };
+    ui.painter().text(
+        egui::pos2(rect.right() - 3.0, y),
+        egui::Align2::RIGHT_CENTER,
+        weight,
+        egui::TextStyle::Small.resolve(ui.style()),
+        color,
+    );
+    let response = response.on_hover_text(format!(
+        "{} · {} · click to change",
+        edited.weight.label(),
+        crate::theme::us(edited.line_type.label())
+    ));
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Line weight and type")
+    });
+    let text = ui.visuals().text_color();
+    egui::Popup::from_toggle_button_response(&response)
+        .id(egui::Id::new(("layer_line_menu", id.0)))
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .width(170.0)
+        .show(|ui| {
+            let row = |ui: &mut egui::Ui, on: bool, w: LineWeight, t: LineType, label: String| {
+                let (r, resp) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), 20.0),
+                    egui::Sense::click(),
+                );
+                if let Some(fill) =
+                    crate::theme::row_fill(ui.visuals().dark_mode, on, resp.hovered())
+                {
+                    ui.painter()
+                        .rect_filled(r, crate::theme::radius::CONTROL, fill);
+                }
+                let y = r.center().y;
+                paint_line_sample(
+                    ui.painter(),
+                    egui::pos2(r.left() + 6.0, y),
+                    egui::pos2(r.left() + 46.0, y),
+                    w,
+                    t,
+                    text,
+                );
+                ui.painter().text(
+                    egui::pos2(r.left() + 56.0, y),
+                    egui::Align2::LEFT_CENTER,
+                    &label,
+                    egui::TextStyle::Body.resolve(ui.style()),
+                    text,
+                );
+                resp.widget_info(|| {
+                    egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, &label)
+                });
+                resp.clicked()
+            };
+            ui.label(egui::RichText::new("Weight").small().weak());
+            for w in LineWeight::ISO {
+                if row(ui, edited.weight == w, w, LineType::Continuous, w.label()) {
+                    edited.weight = w;
+                    ui.close();
+                }
+            }
+            ui.separator();
+            ui.label(egui::RichText::new("Line type").small().weak());
+            for t in LineType::ALL {
+                let label = crate::theme::us(t.label()).to_string();
+                if row(ui, edited.line_type == t, LineWeight(25), t, label) {
+                    edited.line_type = t;
+                    ui.close();
+                }
+            }
+        });
 }
 
 /// Whether a layer's name can be changed: any but a first layer named "0" (the layer DWG and

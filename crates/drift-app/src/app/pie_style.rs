@@ -16,11 +16,12 @@
 //! - **Caption.** What choosing would do, in a box under the ring; with nothing pointed at,
 //!   what the pie stands at now.
 //! - **Choosing.** A flick (let go of the key) chooses the pill under the pointer, else goes
-//!   by direction, as in every pie, and only once the pointer has moved from where it was when
-//!   the pie opened. A pill lying against the gesture (crossed where the window's edge kept
-//!   the hub away from the pointer) never wins. What is lit while the key is held is what a flick chooses. A click counts
-//!   only on a pill, and a click anywhere else closes the pie. While a pie is open, the key
-//!   shown on a pill chooses it too.
+//!   by the way the pointer has moved from where it was when the pie opened, and only once it
+//!   has moved from there. So where the window's edge kept the hub away from the pointer, a
+//!   gesture that crosses a pill on its way lights that pill while over it: what is under the
+//!   pointer is always what is lit. What is lit while the key is held is what a flick
+//!   chooses. A click counts only on a pill, and a click anywhere else closes the pie. While
+//!   a pie is open, the key shown on a pill chooses it too.
 
 use crate::*;
 use std::sync::Arc;
@@ -143,8 +144,8 @@ pub(crate) fn pill_under(rects: &[egui::Rect; 8], pointer: Option<egui::Pos2>) -
 /// What a flick chooses (letting go of the key), and what is lit while the key is held: the
 /// pill under the pointer, else the place the pointer has moved towards from `from`, where it
 /// was when the pie opened. Nothing until it has moved [`DEAD_ZONE`] from there, so a tap of
-/// the key never chooses. Measured from `from`, not the hub, so a flick follows the gesture
-/// even where the window's edge kept the hub away from the pointer.
+/// the key never chooses. Off the pills, measured from `from`, not the hub, so a flick follows
+/// the gesture even where the window's edge kept the hub away from the pointer.
 pub(crate) fn flick_place(
     rects: &[egui::Rect; 8],
     from: egui::Pos2,
@@ -152,24 +153,12 @@ pub(crate) fn flick_place(
 ) -> Option<usize> {
     let p = pointer?;
     let way = place_at(from, p)?;
-    Some(flick_pill(rects, way, p).unwrap_or(way))
-}
-
-/// The pill under `p` that a flick going `way` (a place) can choose: one at that place or
-/// the next one round. Where the window's edge kept the hub away from where the pie opened,
-/// the pointer can cross a pill that lies against the gesture (the bottom pill, moving up
-/// from near the window's bottom); that one never wins, so what is lit stays the same all
-/// along one gesture. With the hub where the pie opened, every point of a pill is within one
-/// place of it, so the pill under the pointer always wins there.
-fn flick_pill(rects: &[egui::Rect; 8], way: usize, p: egui::Pos2) -> Option<usize> {
-    let pill = pill_under(rects, Some(p))?;
-    let apart = (pill + 8 - way) % 8;
-    (apart <= 1 || apart == 7).then_some(pill)
+    Some(pill_under(rects, Some(p)).unwrap_or(way))
 }
 
 /// Which way the hub's mark points while a flick would choose something (see
-/// [`flick_place`]): at the pill it chooses when that is under the pointer, else along the
-/// gesture. `None` when a flick would choose nothing.
+/// [`flick_place`]): at the pill under the pointer, else along the gesture. `None` when a
+/// flick would choose nothing.
 pub(crate) fn flick_aim(
     rects: &[egui::Rect; 8],
     center: egui::Pos2,
@@ -177,8 +166,8 @@ pub(crate) fn flick_aim(
     pointer: Option<egui::Pos2>,
 ) -> Option<egui::Vec2> {
     let p = pointer?;
-    let way = place_at(from, p)?;
-    Some(if flick_pill(rects, way, p).is_some() {
+    place_at(from, p)?;
+    Some(if pill_under(rects, Some(p)).is_some() {
         p - center
     } else {
         p - from
@@ -442,8 +431,8 @@ mod tests {
     }
 
     /// The hub 150 above where the pie opened. Over a pill the gesture heads for (the left
-    /// one, up and left from there), the flick and the mark go to that pill; over the bottom
-    /// pill, which lies behind a move up, they go up.
+    /// one, up and left from there) and over the bottom pill, which lies behind a move up,
+    /// the flick and the mark go to the pill under the pointer.
     #[test]
     fn over_a_pill_the_flick_and_the_mark_go_to_that_pill() {
         let center = egui::pos2(500.0, 300.0);
@@ -455,10 +444,10 @@ mod tests {
         let aim = flick_aim(&r, center, from, Some(p)).unwrap();
         assert_eq!(place_at(center, center + aim), Some(4));
         let p = r[6].center();
-        assert!(p.y < from.y - DEAD_ZONE);
-        assert_eq!(flick_place(&r, from, Some(p)), Some(2));
+        assert_eq!(place_at(from, p), Some(2), "the gesture is up");
+        assert_eq!(flick_place(&r, from, Some(p)), Some(6));
         let aim = flick_aim(&r, center, from, Some(p)).unwrap();
-        assert_eq!(place_at(egui::Pos2::ZERO, egui::Pos2::ZERO + aim), Some(2));
+        assert_eq!(place_at(center, center + aim), Some(6));
     }
 
     /// Label widths like the snap pie's and the relations pie's, and all short ones.
@@ -496,33 +485,84 @@ mod tests {
         signs(place).normalized()
     }
 
-    /// The hub kept away from where the pie opened, at each window edge and corner: moving
-    /// steadily towards the hub and on past it crosses the pill on the far side from the
-    /// gesture, and what is lit stays the way the pointer moves the whole way.
+    /// Where the pie opened, for a hub kept 170 away by each window edge and corner, and
+    /// 150 straight below it (as at the window's bottom).
+    fn kept_away(center: egui::Pos2) -> Vec<egui::Pos2> {
+        let mut v: Vec<_> = (0..8).map(|way| center - unit(way) * 170.0).collect();
+        v.push(center + egui::vec2(0.0, 150.0));
+        v
+    }
+
+    /// The hub kept away from where the pie opened: every point of every pill (clear of where
+    /// it opened) lights that pill, so sliding sideways across the bottom pill from near the
+    /// window's bottom lights it all the way, and the mark points at it.
     #[test]
-    fn one_gesture_lights_one_place_even_across_a_pill_against_it() {
+    fn with_the_hub_kept_away_the_pill_under_the_pointer_always_wins() {
         let center = egui::pos2(600.0, 400.0);
         for r in layouts(center) {
-            for way in 0..8 {
-                let from = center - unit(way) * 170.0;
-                let behind = (way + 4) % 8;
-                let mut crossed = false;
-                for step in 0..=500 {
-                    let p = from + unit(way) * step as f32;
-                    crossed |= pill_under(&r, Some(p)) == Some(behind);
-                    let got = flick_place(&r, from, Some(p));
-                    let want = ((p - from).length() >= DEAD_ZONE).then_some(way);
-                    assert_eq!(got, want, "way {way}, step {step}");
-                    if got.is_some() {
-                        let aim = flick_aim(&r, center, from, Some(p)).unwrap();
-                        let toward = place_at(egui::Pos2::ZERO, egui::Pos2::ZERO + aim);
-                        assert!(
-                            toward.is_none() || toward == Some(way),
-                            "the mark, way {way}, step {step}"
-                        );
+            for from in kept_away(center) {
+                for (place, rect) in r.iter().enumerate() {
+                    let mut y = rect.min.y + 0.5;
+                    while y < rect.max.y {
+                        let mut x = rect.min.x + 0.5;
+                        while x < rect.max.x {
+                            let p = egui::pos2(x, y);
+                            if (p - from).length() >= DEAD_ZONE {
+                                let got = flick_place(&r, from, Some(p));
+                                assert_eq!(got, Some(place), "{from:?} {p:?}");
+                                assert_eq!(hot_place(&r, Some(p), Some(from)), Some(place));
+                                let aim = flick_aim(&r, center, from, Some(p)).unwrap();
+                                assert_eq!(aim, p - center);
+                            }
+                            x += 1.0;
+                        }
+                        y += 1.0;
                     }
                 }
-                assert!(crossed, "way {way}: the gesture crosses the pill behind it");
+            }
+        }
+    }
+
+    /// The hub kept away from where the pie opened: a steady gesture, at any angle, lights the
+    /// pill under the pointer while it crosses one and otherwise the way it moves, and the
+    /// mark points the same way as what is lit. Straight towards the hub and on past it, the
+    /// gesture crosses the pill on the far side from the way it moves, and lights it there.
+    #[test]
+    fn a_steady_gesture_lights_the_pill_it_crosses_and_otherwise_its_way() {
+        let center = egui::pos2(600.0, 400.0);
+        for r in layouts(center) {
+            for from in kept_away(center) {
+                for degrees in (0..360).step_by(3) {
+                    let a = (degrees as f32).to_radians();
+                    let dir = egui::vec2(a.cos(), -a.sin());
+                    let way = place_at(from, from + dir * 100.0).unwrap();
+                    let at_hub = place_at(from, center) == Some(way)
+                        && ((center - from).normalized() - dir).length() < 1e-3;
+                    let behind = (way + 4) % 8;
+                    let mut crossed = false;
+                    for step in 0..=500 {
+                        let p = from + dir * step as f32;
+                        let under = pill_under(&r, Some(p));
+                        crossed |= under == Some(behind);
+                        let got = flick_place(&r, from, Some(p));
+                        let want = ((p - from).length() >= DEAD_ZONE).then(|| under.unwrap_or(way));
+                        assert_eq!(got, want, "{from:?} {degrees} deg, step {step}");
+                        if let Some(lit) = got {
+                            let aim = flick_aim(&r, center, from, Some(p)).unwrap();
+                            let base = if under.is_some() { center } else { from };
+                            assert_eq!(aim, p - base);
+                            if under.is_none() {
+                                assert_eq!(
+                                    place_at(egui::Pos2::ZERO, egui::Pos2::ZERO + aim),
+                                    Some(lit)
+                                );
+                            }
+                        }
+                    }
+                    if at_hub {
+                        assert!(crossed, "{from:?} {degrees} deg crosses the pill behind it");
+                    }
+                }
             }
         }
     }

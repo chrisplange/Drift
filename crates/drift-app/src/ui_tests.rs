@@ -4739,9 +4739,19 @@ fn furniture_blocks_place_edit_and_export() {
         .find(|(_, i)| i.block == chair && i.angle == 0.0)
         .map(|(_, i)| i.at)
         .unwrap();
-    // On the left edge of the chair's seat, clear of the example.
+    // On the left edge of the chair's seat (its straight run, 2.5" to 19" down), clear of
+    // the example and of the relation symbols heaped on it at this zoom.
     let seat = 9.0 * drift_edit::library::INCH - 0.5 * drift_edit::library::INCH;
-    click_world(&mut h, first + DVec2::new(-seat, -300.0));
+    let map = screen_map(&h);
+    let symbols = h.state().relation_glyphs(&map);
+    let on_seat = (4..=18)
+        .map(|i| first + DVec2::new(-seat, -(i as f64) * drift_edit::library::INCH))
+        .find(|&p| {
+            let at = screen(&h, p);
+            symbols.iter().all(|g| !g.rect.expand(2.0).contains(at))
+        })
+        .expect("some of the seat's edge clear of the symbols");
+    click_world(&mut h, on_seat);
     assert_eq!(h.state().drawing.editor.selected_instances.len(), 1);
     h.state_mut().show_panel(Panel::Inspector);
     h.run();
@@ -11066,8 +11076,9 @@ fn a_left_edge_squeeze_stops_at_what_is_outside_the_scroll_area() {
             "frame {i}: the right edge moved to {right} from {}",
             before.right()
         );
-        // (The first frames are shown at the pointer, before what is cut off is learnt.)
-        if *i > 4 {
+        // (Only the first frame is shown at the pointer, before what is cut off is learnt:
+        // from the next one on the row is whole.)
+        if *i > 1 {
             assert!(
                 *width >= needs - 0.5,
                 "frame {i}: {width} wide (left {left}), cutting off what needs {needs}"

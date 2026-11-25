@@ -469,4 +469,18 @@ fn the_unit_switch_slides_to_a_new_pick() {
     }
     let end = picked_left(&mut h).expect("the picked segment");
     assert!(end >= imperial.left() - 4.0, "lands on Imperial: {end}");
+
+    // Changed some other way than a click on it (undo, say): it shows the new pick at
+    // once, no slide.
+    h.state_mut()
+        .drawing
+        .editor
+        .set_units(drift_core::Units::default());
+    h.step();
+    h.step();
+    let snapped = picked_left(&mut h).expect("the picked segment");
+    assert!(
+        (snapped - start).abs() <= 2.0,
+        "back on Metric at once: {start} → {snapped}"
+    );
 }

@@ -10979,6 +10979,50 @@ fn fixed_grid_snaps_to_its_divisions_and_auto_restores() {
     assert_eq!(h.state().grid(), auto);
 }
 
+/// Two floating windows snapped side by side: dragging the left one's right edge resizes it
+/// alone. The right one's left edge lies under the press too, but the press isn't its own.
+#[test]
+fn a_resize_leaves_a_window_snapped_against_the_edge_alone() {
+    let Some(mut h) = harness() else { return };
+    h.set_size(egui::vec2(1600.0, 900.0));
+    for p in [Panel::Layers, Panel::Inspector] {
+        h.state_mut().layout.move_to(p, Place::Float, None);
+    }
+    h.run_steps(6);
+    let canvas = h.state().drawing.view.canvas_rect;
+    h.state_mut()
+        .place_floating(Panel::Layers, canvas.left_top() + egui::vec2(40.0, 40.0));
+    h.run_steps(4);
+    let (_, a) = h.state().floating_rects(Panel::Layers).unwrap();
+    h.state_mut()
+        .place_floating(Panel::Inspector, egui::pos2(a.right(), a.top()));
+    h.run_steps(4);
+    let (_, b) = h.state().floating_rects(Panel::Inspector).unwrap();
+    assert!(
+        (b.left() - a.right()).abs() < 0.5 && b.top() < a.bottom() - 200.0,
+        "snapped side by side: {a:?} {b:?}"
+    );
+    // The left one in front (a click on its body), then its right edge dragged out.
+    let body = egui::pos2(a.center().x, a.top() + 200.0);
+    h.hover_at(body);
+    h.run_steps(1);
+    button(&h, body, true);
+    h.run_steps(1);
+    button(&h, body, false);
+    h.run_steps(2);
+    let grab = egui::pos2(a.right() - 1.0, a.top() + 160.0);
+    let held = drag_edge(&mut h, Panel::Layers, grab, grab + egui::vec2(60.0, 0.0));
+    let (_, b_after) = h.state().floating_rects(Panel::Inspector).unwrap();
+    assert!(
+        held.width() > a.width() + 40.0,
+        "the left one widens: {a:?} → {held:?}"
+    );
+    assert!(
+        (b_after.min - b.min).length() < 0.5 && (b_after.size() - b.size()).length() < 0.5,
+        "the right one stays as it was: {b:?} → {b_after:?}"
+    );
+}
+
 /// A floating panel's left edge dragged in and out: its right edge holds still on every
 /// frame of the drag, not only where it ends up (it wobbled while the contents' width was
 /// fed back into the window's).
@@ -11007,20 +11051,43 @@ fn a_left_edge_resize_never_wobbles_the_right_edge() {
         .map(|i| i as f32 * 4.0)
         .chain((0..=90).rev().map(|i| i as f32 * 4.0 - 120.0))
         .collect();
+    // (The resize cursor stays up the whole way.)
+    let cursor = |h: &Harness<'_, DriftApp>| h.output().platform_output.cursor_icon;
     for dx in path {
         h.hover_at(grab + egui::vec2(dx, 0.0));
         h.run_steps(1);
         let (_, w) = h.state().floating_rects(Panel::Layers).unwrap();
         seen.push((dx, w.left(), w.right(), w.width()));
+        assert_eq!(cursor(&h), egui::CursorIcon::ResizeHorizontal, "at {dx}");
     }
     button(&h, grab, false);
     h.run_steps(4);
-    let worst = seen
-        .iter()
-        .map(|s| (s.2 - right).abs())
-        .fold(0.0_f32, f32::max);
-    assert!(
-        worst < 0.5,
-        "the right edge moved by up to {worst} px (start {right}): {seen:?}"
-    );
+    // A fresh grab flung far in in one frame, before any least width is learnt: the
+    // right edge doesn't move for that frame either.
+    let (_, w) = h.state().floating_rects(Panel::Layers).unwrap();
+    let mut flung = Vec::new();
+    let grab = egui::pos2(w.left() + 1.0, grab.y);
+    h.hover_at(grab);
+    h.run_steps(2);
+    button(&h, grab, true);
+    h.run_steps(1);
+    for dx in [400.0, 400.0, 400.0, -60.0, -60.0] {
+        h.hover_at(grab + egui::vec2(dx, 0.0));
+        h.run_steps(1);
+        let (_, w) = h.state().floating_rects(Panel::Layers).unwrap();
+        flung.push((dx, w.left(), w.right(), w.width()));
+        assert_eq!(cursor(&h), egui::CursorIcon::ResizeHorizontal, "at {dx}");
+    }
+    button(&h, grab, false);
+    h.run_steps(4);
+    for (seen, right) in [(seen, right), (flung, w.right())] {
+        let worst = seen
+            .iter()
+            .map(|s| (s.2 - right).abs())
+            .fold(0.0_f32, f32::max);
+        assert!(
+            worst < 0.5,
+            "the right edge moved by up to {worst} px (start {right}): {seen:?}"
+        );
+    }
 }

@@ -4,7 +4,7 @@
 //! geometry (see [`dimension_anchor`]), so they travel with the geometry. Everything else (gaps,
 //! arrow sizes, text) is in screen space so annotations stay readable at any zoom.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::f32::consts::TAU as TAU32;
 
 use drift_core::{
@@ -2199,19 +2199,34 @@ pub struct GlyphLayout {
 }
 
 /// Lay out a glyph for every relation (dimensions are drawn separately). Relations between
-/// two curves get a glyph on each. Glyphs on the same entity are stacked.
+/// two curves get a glyph on each. Glyphs on the same entity never overlap: each slides
+/// along its stack direction off those already placed there.
 pub fn layout_glyphs(doc: &Document, map: &ScreenMap) -> Vec<GlyphLayout> {
     let mut out = Vec::new();
-    // Glyphs on one entity stack when they share a spot (an entity can have glyphs at its
-    // middle and at a joint).
-    let mut stack: HashMap<(EntityId, [i32; 2]), usize> = HashMap::new();
+    // The tiles already placed on each entity (their centres).
+    let mut placed: HashMap<EntityId, Vec<Pos2>> = HashMap::new();
     let p = |id| doc.point(id).ok().map(|w| map.to_screen(w));
-    let mut place = |entity: EntityId, base: Option<(Pos2, Vec2)>, id, kind, out: &mut Vec<_>| {
+    // Points tied by a coincidence, both ways round.
+    let tied: HashSet<(EntityId, EntityId)> = doc
+        .constraints()
+        .filter_map(|(_, c)| match *c {
+            Constraint::Coincident { a, b } => Some([(a, b), (b, a)]),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    // `both_ways`: a glyph beside a curve may slide either way along it, whichever is
+    // nearer; one beside a point only forward, so it stays off the point.
+    let mut place = |entity: EntityId,
+                     base: Option<(Pos2, Vec2)>,
+                     both_ways: bool,
+                     id,
+                     kind,
+                     out: &mut Vec<_>| {
         let Some((at, along)) = base else { return };
-        let spot = [(at.x / 4.0).round() as i32, (at.y / 4.0).round() as i32];
-        let k = stack.entry((entity, spot)).or_insert(0);
-        let center = at + along * (*k as f32) * (GLYPH_SIZE + 2.0);
-        *k += 1;
+        let mine = placed.entry(entity).or_default();
+        let center = stack_spot(mine, at, along, both_ways);
+        mine.push(center);
         out.push(GlyphLayout {
             id,
             kind,
@@ -2240,9 +2255,11 @@ pub fn layout_glyphs(doc: &Document, map: &ScreenMap) -> Vec<GlyphLayout> {
         use GlyphKind::*;
         match *c {
             Constraint::Horizontal { line } => {
-                place(line, line_base(line), id, Horizontal, &mut out)
+                place(line, line_base(line), true, id, Horizontal, &mut out)
             }
-            Constraint::Vertical { line } => place(line, line_base(line), id, Vertical, &mut out),
+            Constraint::Vertical { line } => {
+                place(line, line_base(line), true, id, Vertical, &mut out)
+            }
             Constraint::HorizontalPoints { a, b } | Constraint::VerticalPoints { a, b } => {
                 let base = p(a).zip(p(b)).map(|(pa, pb)| {
                     (
@@ -2255,7 +2272,7 @@ pub fn layout_glyphs(doc: &Document, map: &ScreenMap) -> Vec<GlyphLayout> {
                 } else {
                     Vertical
                 };
-                place(a, base, id, kind, &mut out);
+                place(a, base, false, id, kind, &mut out);
             }
             Constraint::Parallel { a, b }
             | Constraint::Perpendicular { a, b }
@@ -2273,23 +2290,28 @@ pub fn layout_glyphs(doc: &Document, map: &ScreenMap) -> Vec<GlyphLayout> {
                     Constraint::Collinear { .. } => Collinear,
                     _ => Equal,
                 };
-                // A tangency is marked where the two touch, on each side of the joint.
+                // A tangency is marked where the two join, a glyph on each curve just in
+                // from the joint, both on the outside of the bend.
                 let joint = if matches!(c, Constraint::Tangent { .. }) {
-                    touching(doc, map, a, b)
+                    joint_of(doc, &tied, a, b).and_then(|(pa, pb)| {
+                        let (pa, pb) = (p(pa)?, p(pb)?);
+                        Some(pa + (pb - pa) * 0.5)
+                    })
                 } else {
                     None
                 };
-                for e in [a, b] {
+                for (e, other) in [(a, b), (b, a)] {
                     let kind_of = doc.get(e).map(|x| x.kind);
                     let base = match kind_of {
                         _ if joint.is_some() => {
-                            curve_spot(doc, map, e, joint).or_else(|| line_base(e))
+                            let away = doc.shape(other).and_then(|s| centre_on_screen(&s, map));
+                            curve_spot(doc, map, e, joint, away).or_else(|| line_base(e))
                         }
                         Some(EntityKind::Line { .. }) => line_base(e),
                         // An arc's (or other open curve's) glyph sits by its middle, on the
                         // curve; a circle's at its upper right.
                         _ if !matches!(doc.shape(e), Some(drift_core::Shape::Circle { .. })) => {
-                            curve_spot(doc, map, e, None)
+                            curve_spot(doc, map, e, None, None)
                         }
                         _ => center_of(doc, e).map(|w| {
                             let r =
@@ -2304,12 +2326,15 @@ pub fn layout_glyphs(doc: &Document, map: &ScreenMap) -> Vec<GlyphLayout> {
                             )
                         }),
                     };
-                    place(e, base, id, kind, &mut out);
+                    let both_ways = !matches!(doc.shape(e), Some(drift_core::Shape::Circle { .. }));
+                    place(e, base, both_ways, id, kind, &mut out);
                 }
             }
             Constraint::Fix { point, .. }
             | Constraint::FixX { point, .. }
-            | Constraint::FixY { point, .. } => place(point, point_base(point), id, Fix, &mut out),
+            | Constraint::FixY { point, .. } => {
+                place(point, point_base(point), false, id, Fix, &mut out)
+            }
             Constraint::FixRadius { curve, .. } => {
                 let base = center_of(doc, curve).map(|w| {
                     (
@@ -2317,14 +2342,16 @@ pub fn layout_glyphs(doc: &Document, map: &ScreenMap) -> Vec<GlyphLayout> {
                         vec2(1.0, 0.0),
                     )
                 });
-                place(curve, base, id, Fix, &mut out);
+                place(curve, base, false, id, Fix, &mut out);
             }
-            Constraint::Coincident { a, .. } => place(a, point_base(a), id, Coincident, &mut out),
+            Constraint::Coincident { a, .. } => {
+                place(a, point_base(a), false, id, Coincident, &mut out)
+            }
             Constraint::Midpoint { point, .. } | Constraint::MidpointOf { point, .. } => {
-                place(point, point_base(point), id, Midpoint, &mut out)
+                place(point, point_base(point), false, id, Midpoint, &mut out)
             }
             Constraint::Corner { point, .. } => {
-                place(point, point_base(point), id, Corner, &mut out)
+                place(point, point_base(point), false, id, Corner, &mut out)
             }
             // Beside the middle of each distance.
             Constraint::EqualDistance { a, b, c, d } => {
@@ -2335,14 +2362,14 @@ pub fn layout_glyphs(doc: &Document, map: &ScreenMap) -> Vec<GlyphLayout> {
                             vec2(1.0, 0.0),
                         )
                     });
-                    place(e, base, id, Equal, &mut out);
+                    place(e, base, false, id, Equal, &mut out);
                 }
             }
             Constraint::PointOnCurve { point, .. } => {
-                place(point, point_base(point), id, OnCurve, &mut out)
+                place(point, point_base(point), false, id, OnCurve, &mut out)
             }
             Constraint::Symmetric { axis, .. } => {
-                place(axis, line_base(axis), id, Symmetric, &mut out)
+                place(axis, line_base(axis), true, id, Symmetric, &mut out)
             }
             _ => {}
         }
@@ -2350,63 +2377,146 @@ pub fn layout_glyphs(doc: &Document, map: &ScreenMap) -> Vec<GlyphLayout> {
     out
 }
 
-/// Where two curves touch on screen: the closest pair of their ends when those (nearly)
-/// meet. None when they don't share an end (a line tangent to a whole circle, say).
-fn touching(doc: &Document, map: &ScreenMap, a: EntityId, b: EntityId) -> Option<Pos2> {
-    let ends = |e: EntityId| -> Vec<Pos2> {
-        let Some(shape) = doc.shape(e) else {
-            return Vec::new();
-        };
-        if shape.is_closed() {
-            return Vec::new();
-        }
-        let pts = shape.flatten(1.0 / map.camera.scale.max(1e-9));
-        match (pts.first(), pts.last()) {
-            (Some(f), Some(l)) => vec![map.to_screen(*f), map.to_screen(*l)],
-            _ => Vec::new(),
-        }
-    };
-    let (ea, eb) = (ends(a), ends(b));
-    ea.iter()
-        .flat_map(|pa| {
-            eb.iter()
-                .map(move |pb| (pa.distance(*pb), *pa + (*pb - *pa) * 0.5))
+/// Where a glyph whose own spot is `at` goes so that its tile clears the tiles centred on
+/// `placed` by a 2 px gap: the nearest place along `along` (a unit vector) from `at`,
+/// either way when `both_ways` (forward on a tie), else forward only.
+fn stack_spot(placed: &[Pos2], at: Pos2, along: Vec2, both_ways: bool) -> Pos2 {
+    let reach = GLYPH_SIZE + 2.0;
+    // For each placed tile, the open span of slides that would bring the tile onto it.
+    let blocked: Vec<(f32, f32)> = placed
+        .iter()
+        .filter_map(|c| {
+            let d = *c - at;
+            let span = |d: f32, u: f32| -> Option<(f32, f32)> {
+                if u.abs() < 1e-6 {
+                    (d.abs() < reach).then_some((f32::NEG_INFINITY, f32::INFINITY))
+                } else {
+                    let (p, q) = ((d - reach) / u, (d + reach) / u);
+                    Some((p.min(q), p.max(q)))
+                }
+            };
+            let ((x0, x1), (y0, y1)) = (span(d.x, along.x)?, span(d.y, along.y)?);
+            let (lo, hi) = (x0.max(y0), x1.min(y1));
+            (lo < hi).then_some((lo, hi))
         })
-        .filter(|(d, _)| *d < GLYPH_SIZE)
-        .min_by(|x, y| x.0.total_cmp(&y.0))
-        .map(|(_, at)| at)
+        .collect();
+    const EPS: f32 = 1e-3;
+    let free = |t: f32| {
+        blocked
+            .iter()
+            .all(|&(lo, hi)| t <= lo + EPS || t >= hi - EPS)
+    };
+    let mut best: Option<f32> = None;
+    for t in std::iter::once(0.0).chain(blocked.iter().flat_map(|&(lo, hi)| [lo, hi])) {
+        if !t.is_finite() || (!both_ways && t < 0.0) || !free(t) {
+            continue;
+        }
+        let better = best
+            .is_none_or(|b| t.abs() < b.abs() - EPS || ((t.abs() - b.abs()).abs() <= EPS && t > b));
+        if better {
+            best = Some(t);
+        }
+    }
+    at + along * best.unwrap_or(0.0)
 }
 
-/// A glyph spot on curve `e`, standing off the curve's outside (away from an arc's centre,
-/// else above): a short way in from `near` (a joint at one of its ends) when given, else
-/// at its middle. Stacks along the curve there.
+/// The end points where curves `a` and `b` join: one end point they share, or an end of
+/// each tied by a coincidence. None when they don't join (a line tangent to a whole circle,
+/// or to an arc away from its ends).
+fn joint_of(
+    doc: &Document,
+    tied: &HashSet<(EntityId, EntityId)>,
+    a: EntityId,
+    b: EntityId,
+) -> Option<(EntityId, EntityId)> {
+    let (ea, eb) = (doc.get(a)?.kind.ends()?, doc.get(b)?.kind.ends()?);
+    ea.into_iter()
+        .flat_map(|pa| eb.into_iter().map(move |pb| (pa, pb)))
+        .find(|&(pa, pb)| pa == pb || tied.contains(&(pa, pb)))
+}
+
+/// The centre of an arc, circle or ellipse, on screen.
+fn centre_on_screen(shape: &drift_core::Shape, map: &ScreenMap) -> Option<Pos2> {
+    match *shape {
+        drift_core::Shape::Arc { center, .. }
+        | drift_core::Shape::Circle { center, .. }
+        | drift_core::Shape::Ellipse { center, .. } => Some(map.to_screen(center)),
+        _ => None,
+    }
+}
+
+/// A glyph spot on curve `e`, standing off the curve's outside: away from its own centre
+/// (an arc's or ellipse's), else away from `away` (for a line, the centre of the arc it
+/// joins), else above. A short way in from `near` (a joint at one of its ends) when given,
+/// else at its middle. Stacks along the curve there.
+///
+/// Lines, arcs and circles are worked out exactly; ellipses and Béziers from chords at a
+/// tolerance that follows the curve's size, not the zoom, so the cost stays the same however
+/// far in the view is.
 fn curve_spot(
     doc: &Document,
     map: &ScreenMap,
     e: EntityId,
     near: Option<Pos2>,
+    away: Option<Pos2>,
 ) -> Option<(Pos2, Vec2)> {
+    use drift_core::Shape;
     let shape = doc.shape(e)?;
-    let pts: Vec<Pos2> = shape
-        .flatten(0.5 / map.camera.scale.max(1e-9))
-        .into_iter()
-        .map(|w| map.to_screen(w))
-        .collect();
-    if pts.len() < 2 {
-        return None;
-    }
-    let mut lens = Vec::with_capacity(pts.len());
-    let mut total = 0.0_f32;
-    lens.push(0.0);
-    for w in pts.windows(2) {
-        total += w[0].distance(w[1]);
-        lens.push(total);
-    }
-    // Arc length from the start of the spot.
+    let scale = map.camera.scale;
+    // World to screen for a direction (screen y is down).
+    let screen_dir = |v: DVec2| {
+        let u = vec2(v.x as f32, -v.y as f32);
+        if u.length() > 1e-9 {
+            u.normalized()
+        } else {
+            vec2(1.0, 0.0)
+        }
+    };
+    // An ellipse's or Bézier's chords on screen, and their running lengths.
+    let mut pts: Vec<Pos2> = Vec::new();
+    let mut lens: Vec<f32> = Vec::new();
+    let total = match shape {
+        Shape::Point(_) => return None,
+        Shape::Line { a, b } => (a.distance(b) * scale) as f32,
+        Shape::Arc { radius, sweep, .. } => (radius * sweep * scale).abs() as f32,
+        Shape::Circle { radius, .. } => (radius * std::f64::consts::TAU * scale).abs() as f32,
+        Shape::Ellipse { .. } | Shape::Bezier { .. } => {
+            let b = shape.bounds();
+            let tol = ((b.max - b.min).length() / 256.0).max(0.5 / scale.max(1e-9));
+            pts = shape
+                .flatten(tol.max(1e-9))
+                .into_iter()
+                .map(|w| map.to_screen(w))
+                .collect();
+            if pts.len() < 2 {
+                return None;
+            }
+            lens.push(0.0);
+            let mut run = 0.0_f32;
+            for w in pts.windows(2) {
+                run += w[0].distance(w[1]);
+                lens.push(run);
+            }
+            run
+        }
+    };
+    let (first, last) = match shape {
+        Shape::Line { a, b } => (map.to_screen(a), map.to_screen(b)),
+        Shape::Arc { sweep, .. } => (
+            map.to_screen(shape.point_at(0.0)),
+            map.to_screen(shape.point_at(sweep)),
+        ),
+        Shape::Circle { .. } => {
+            let at = map.to_screen(shape.point_at(0.0));
+            (at, at)
+        }
+        _ => (pts[0], pts[pts.len() - 1]),
+    };
+    // Length along the curve from its start to the spot.
     let at_len = match near {
         Some(j) => {
             let into = (GLYPH_SIZE + 4.0).min(total * 0.5);
-            if pts[0].distance(j) <= pts[pts.len() - 1].distance(j) {
+            if first.distance(j) <= last.distance(j) {
                 into
             } else {
                 total - into
@@ -2414,22 +2524,35 @@ fn curve_spot(
         }
         None => total * 0.5,
     };
-    let i = lens
-        .windows(2)
-        .position(|w| w[1] >= at_len)
-        .unwrap_or(pts.len() - 2);
-    let seg = (lens[i + 1] - lens[i]).max(1e-6);
-    let spot = pts[i] + (pts[i + 1] - pts[i]) * ((at_len - lens[i]) / seg).clamp(0.0, 1.0);
-    let u = dir(pts[i], pts[i + 1]);
-    let mut n = u.rot90();
-    let outward = match shape {
-        drift_core::Shape::Arc { center, .. } | drift_core::Shape::Circle { center, .. } => {
-            Some(spot - map.to_screen(center))
+    let f = if total > 1e-6 { at_len / total } else { 0.5 };
+    // The spot, and the way the curve runs there (from its start to its end).
+    let (spot, u) = match shape {
+        Shape::Line { a, b } => (first + (last - first) * f, screen_dir(b - a)),
+        Shape::Arc { start, sweep, .. } => {
+            let t = sweep * f64::from(f);
+            let run = DVec2::from_angle(start + t).perp() * sweep.signum();
+            (map.to_screen(shape.point_at(t)), screen_dir(run))
         }
-        _ => None,
+        Shape::Circle { .. } => {
+            let t = std::f64::consts::TAU * f64::from(f);
+            (
+                map.to_screen(shape.point_at(t)),
+                screen_dir(DVec2::from_angle(t).perp()),
+            )
+        }
+        _ => {
+            let i = lens
+                .windows(2)
+                .position(|w| w[1] >= at_len)
+                .unwrap_or(pts.len() - 2);
+            let seg = (lens[i + 1] - lens[i]).max(1e-6);
+            let spot = pts[i] + (pts[i + 1] - pts[i]) * ((at_len - lens[i]) / seg).clamp(0.0, 1.0);
+            (spot, dir(pts[i], pts[i + 1]))
+        }
     };
-    match outward {
-        Some(o) if n.dot(o) < 0.0 => n = -n,
+    let mut n = u.rot90();
+    match centre_on_screen(&shape, map).or(away) {
+        Some(c) if n.dot(spot - c) < 0.0 => n = -n,
         None if n.y > 0.0 => n = -n,
         _ => {}
     }
@@ -3477,5 +3600,156 @@ mod tests {
             let ms = t.elapsed().as_secs_f64() * 1000.0 / runs as f64;
             eprintln!("{n} glyphs over {w}x{h} pt, {on} on handles: {ms:.3} ms a push");
         }
+    }
+
+    /// A view of the world around the origin at `scale` points per mm.
+    fn view_at(scale: f64) -> ScreenMap {
+        ScreenMap {
+            rect: Rect::from_center_size(Pos2::ZERO, vec2(1000.0, 1000.0)),
+            camera: drift_render::Camera {
+                center: DVec2::ZERO,
+                scale,
+            },
+        }
+    }
+
+    /// A slot zoomed out so its straight sides are 60 pt long: each side's horizontal
+    /// symbol and its two tangency symbols (in from each joint) are within a tile of each
+    /// other along it, yet none overlaps another, and each tangency symbol stands on the
+    /// outside of the bend.
+    #[test]
+    fn a_short_slot_side_keeps_its_symbols_apart_and_outside() {
+        let mut doc = Document::new();
+        let v = DVec2::new;
+        let (l, r) = (30.0, 10.0);
+        let [tl, tr, br, bl] = [
+            v(-l / 2.0, r),
+            v(l / 2.0, r),
+            v(l / 2.0, -r),
+            v(-l / 2.0, -r),
+        ]
+        .map(|p| doc.add_point(p));
+        let (cl, cr) = (
+            doc.add_point(v(-l / 2.0, 0.0)),
+            doc.add_point(v(l / 2.0, 0.0)),
+        );
+        let top = doc.add_line(tl, tr).unwrap();
+        let bottom = doc.add_line(br, bl).unwrap();
+        let right = doc.add_arc(cr, br, tr).unwrap();
+        let left = doc.add_arc(cl, tl, bl).unwrap();
+        for line in [top, bottom] {
+            doc.add_constraint(Constraint::Horizontal { line }).unwrap();
+        }
+        let mut tangents = Vec::new();
+        for (a, b) in [(top, right), (top, left), (bottom, right), (bottom, left)] {
+            tangents.push((
+                doc.add_constraint(Constraint::Tangent { a, b }).unwrap(),
+                a,
+                b,
+            ));
+        }
+        let map = view_at(2.0);
+        let glyphs = layout_glyphs(&doc, &map);
+        assert_eq!(glyphs.len(), 2 + 2 * 4);
+        for (i, g) in glyphs.iter().enumerate() {
+            for h in &glyphs[i + 1..] {
+                assert!(
+                    !g.rect.intersects(h.rect),
+                    "{:?} {:?} meets {:?} {:?}",
+                    g.kind,
+                    g.rect,
+                    h.kind,
+                    h.rect
+                );
+            }
+        }
+        let s = |id: EntityId| map.to_screen(doc.point(id).unwrap());
+        for (id, line, arc) in tangents {
+            let pair: Vec<Pos2> = glyphs
+                .iter()
+                .filter(|g| g.id == id)
+                .map(|g| g.rect.center())
+                .collect();
+            let centre = s(if arc == right { cr } else { cl });
+            let radius = (r * map.camera.scale) as f32;
+            // The line's (the first) on the far side of the line from the arc's centre.
+            let (on_line, on_arc) = (pair[0], pair[1]);
+            let through = s(if line == top { tl } else { bl }).y;
+            assert!(
+                (on_line.y - through) * (centre.y - through) < 0.0,
+                "{on_line:?} beside the line at y {through}, centre {centre:?}"
+            );
+            assert!(
+                on_arc.distance(centre) > radius,
+                "{on_arc:?} outside the arc about {centre:?}"
+            );
+        }
+    }
+
+    /// A line tangent to an arc at the arc's middle, ending near (but not at) one of the
+    /// arc's ends: zoomed out until those ends are a few points apart, the curves still
+    /// don't join, so the arc's tangency symbol stays by its middle.
+    #[test]
+    fn a_tangency_marks_a_joint_only_where_the_curves_join() {
+        let mut doc = Document::new();
+        let v = DVec2::new;
+        let (r, half) = (60.0_f64, 0.5_f64);
+        let c = doc.add_point(v(0.0, 0.0));
+        let up = std::f64::consts::FRAC_PI_2;
+        let s0 = doc.add_point(DVec2::from_angle(up - half) * r);
+        let s1 = doc.add_point(DVec2::from_angle(up + half) * r);
+        let arc = doc.add_arc(c, s0, s1).unwrap();
+        let (l0, l1) = (
+            doc.add_point(v(-100.0, r)),
+            doc.add_point(v(r * half.sin(), r)),
+        );
+        let line = doc.add_line(l0, l1).unwrap();
+        let tangent = doc
+            .add_constraint(Constraint::Tangent { a: line, b: arc })
+            .unwrap();
+        let map = view_at(2.0);
+        let near = map
+            .to_screen(doc.point(l1).unwrap())
+            .distance(map.to_screen(doc.point(s0).unwrap()));
+        assert!(near < GLYPH_SIZE, "the case is real: ends {near} pt apart");
+        let glyphs = layout_glyphs(&doc, &map);
+        let on_arc = glyphs
+            .iter()
+            .filter(|g| g.id == tangent)
+            .nth(1)
+            .unwrap()
+            .rect
+            .center();
+        let apex = map.to_screen(v(0.0, r));
+        assert!(
+            (on_arc.x - apex.x).abs() < GLYPH_SIZE / 2.0 && on_arc.y < apex.y,
+            "{on_arc:?} by the arc's middle {apex:?}"
+        );
+    }
+
+    /// Glyphs sharing a spot on a curve stack either way from it, nearest first; beside a
+    /// point, only forward.
+    #[test]
+    fn stacked_glyphs_take_the_nearest_free_place() {
+        let at = pos2(100.0, 100.0);
+        let step = GLYPH_SIZE + 2.0;
+        let mut placed = Vec::new();
+        for _ in 0..3 {
+            let c = stack_spot(&placed, at, vec2(1.0, 0.0), true);
+            placed.push(c);
+        }
+        assert_eq!(placed, [at, at + vec2(step, 0.0), at - vec2(step, 0.0)]);
+        let mut placed = Vec::new();
+        for _ in 0..3 {
+            let c = stack_spot(&placed, at, vec2(1.0, 0.0), false);
+            placed.push(c);
+        }
+        assert_eq!(
+            placed,
+            [at, at + vec2(step, 0.0), at + vec2(2.0 * step, 0.0)]
+        );
+        // A glyph a little way off one already placed slides the short way clear of it.
+        let c = stack_spot(&[at], at + vec2(-8.0, 0.0), vec2(1.0, 0.0), true);
+        assert_eq!(c, at - vec2(step, 0.0));
     }
 }

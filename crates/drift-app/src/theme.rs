@@ -472,8 +472,13 @@ fn style(s: &mut egui::Style, dark: bool) {
         ..egui::style::ScrollStyle::floating()
     };
     s.interaction.tooltip_delay = 0.35;
-    // Quick: a fold or a hover settles before the eye follows it.
-    s.animation_time = 0.12;
+    // Quick: a fold or a hover settles before the eye follows it. None at all when the
+    // system asks for less motion.
+    s.animation_time = if drift_platform::reduce_motion() {
+        0.0
+    } else {
+        0.12
+    };
 
     let n = neutrals(dark);
     let accent = accent(dark);
@@ -690,38 +695,67 @@ const SEGMENT_PAD: f32 = 6.0;
 /// How long a segmented control's picked segment takes to slide to a new pick.
 const SEGMENT_SLIDE: f64 = 0.22;
 
+/// A segmented control's picked segment between frames: where it is drawn and where it set
+/// off from, from the track's top left (so a control that scrolls or moves with its window
+/// takes them along).
+#[derive(Clone, Copy)]
+struct Slide {
+    /// Where it set off from, for segment `to`, at `start`.
+    from: egui::Rect,
+    to: usize,
+    start: f64,
+    /// Where it was drawn last frame: a new pick sets off from there.
+    shown: egui::Rect,
+    /// The segment just clicked, and when: a pick that changes to it straight after slides
+    /// there. Any other change (undo, the value changed elsewhere, another object picked)
+    /// shows at once.
+    clicked: Option<(usize, f64)>,
+}
+
+fn slide_id(id: egui::Id) -> egui::Id {
+    id.with("segment_slide")
+}
+
 /// Where a segmented control's picked segment is drawn this frame: at `target` (segment
-/// `index`'s place), or on its way there from where it was when the pick changed, easing in
-/// and out like a macOS segmented control. Kept per control (`id`). With animations off
-/// (an animation time of zero) it moves at once.
-fn segment_slide(ui: &egui::Ui, id: egui::Id, index: usize, target: egui::Rect) -> egui::Rect {
-    #[derive(Clone, Copy)]
-    struct Slide {
-        /// Where it set off from, for segment `to`, at `start`.
-        from: egui::Rect,
-        to: usize,
-        start: f64,
-        /// Where it was drawn last frame: a new pick sets off from there.
-        shown: egui::Rect,
-    }
-    let id = id.with("segment_slide");
+/// `index`'s place in `track`), or on its way there from where it was when a click changed
+/// the pick, easing in and out like a macOS segmented control. Kept per control (`id`).
+/// With animations off (an animation time of zero), or when the system asks for less
+/// motion, it moves at once.
+fn segment_slide(
+    ui: &egui::Ui,
+    id: egui::Id,
+    track: egui::Rect,
+    index: usize,
+    target: egui::Rect,
+) -> egui::Rect {
+    let id = slide_id(id);
     let now = ui.input(|i| i.time);
-    let animate = ui.style().animation_time > 0.0;
+    let origin = track.min.to_vec2();
+    let target = target.translate(-origin);
     let slide = ui.data(|d| d.get_temp::<Slide>(id));
     let mut slide = match slide {
         Some(s) if s.to == index => s,
-        // A new pick: from wherever it is drawn now.
-        Some(s) if animate => Slide {
-            from: s.shown,
-            to: index,
-            start: now,
-            shown: s.shown,
-        },
+        // A new pick, by a click on this control: from wherever it is drawn now.
+        Some(s)
+            if s.clicked
+                .is_some_and(|(i, at)| i == index && now - at < 0.5)
+                && ui.style().animation_time > 0.0
+                && !drift_platform::reduce_motion() =>
+        {
+            Slide {
+                from: s.shown,
+                to: index,
+                start: now,
+                shown: s.shown,
+                clicked: None,
+            }
+        }
         _ => Slide {
             from: target,
             to: index,
             start: f64::NEG_INFINITY,
             shown: target,
+            clicked: None,
         },
     };
     let t = ((now - slide.start) / SEGMENT_SLIDE).clamp(0.0, 1.0) as f32;
@@ -735,7 +769,19 @@ fn segment_slide(ui: &egui::Ui, id: egui::Id, index: usize, target: egui::Rect) 
     if t < 1.0 {
         ui.ctx().request_repaint();
     }
-    slide.shown
+    slide.shown.translate(origin)
+}
+
+/// Note that segment `index` of the control `id` was clicked: when the pick changes to it,
+/// it slides there.
+fn segment_clicked(ui: &egui::Ui, id: egui::Id, index: usize) {
+    let (id, now) = (slide_id(id), ui.input(|i| i.time));
+    ui.data_mut(|d| {
+        if let Some(mut s) = d.get_temp::<Slide>(id) {
+            s.clicked = Some((index, now));
+            d.insert_temp(id, s);
+        }
+    });
 }
 
 /// A segmented control: a track with the picked segment standing in it, sliding to a new
@@ -805,7 +851,7 @@ pub fn segmented<T: Copy + PartialEq>(
         .collect();
     // The picked segment slides to a new pick, easing in and out (see [`segment_slide`]).
     let picked = options.iter().position(|(value, _)| *value == current);
-    let shown = picked.map(|i| segment_slide(ui, track_response.id, i, rects[i]));
+    let shown = picked.map(|i| segment_slide(ui, track_response.id, rect, i, rects[i]));
     if let Some(r) = shown {
         ui.painter().rect(
             r,
@@ -842,6 +888,9 @@ pub fn segmented<T: Copy + PartialEq>(
         );
         if response.clicked() {
             clicked = Some(*value);
+            if !selected {
+                segment_clicked(ui, track_response.id, i);
+            }
         }
     }
     clicked

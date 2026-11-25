@@ -247,8 +247,16 @@ fn arc_symbols_sit_on_the_arc_and_tangency_at_the_joint() {
             "tangency symbol {d} px from the joint"
         );
     }
-    // The arc's equal symbol stands just off the arc (not inside its circle's far side).
     let (centre, r) = (at(c), joint_s.distance(at(c)));
+    // Both on the outside of the bend: the line's below it (away from the arc's centre,
+    // which is above), the arc's outside its circle.
+    let (on_line, on_arc) = (tangents[0].rect.center(), tangents[1].rect.center());
+    assert!(
+        on_line.y > joint_s.y,
+        "{on_line:?} below the line at {joint_s:?}"
+    );
+    assert!(on_arc.distance(centre) > r, "{on_arc:?} outside the arc");
+    // The arc's equal symbol stands just off the arc (not inside its circle's far side).
     let on_arc = all
         .iter()
         .filter(|g| g.id == equal)

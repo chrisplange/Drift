@@ -3147,10 +3147,8 @@ fn many_layers(h: &mut Harness<'_, DriftApp>, n: usize) -> Vec<drift_core::Layer
 pub(super) fn layer_row_gap(h: &Harness<'_, DriftApp>, name: &str) -> egui::Pos2 {
     let r = h.get_by_label(name).rect();
     let cell = h
-        .query_all_by_label("Line weight and type")
-        .map(|n| n.rect())
-        .find(|c| (c.center().y - r.center().y).abs() < 4.0)
-        .expect("the row's line cell");
+        .get_by_label(&format!("{name} line weight and type"))
+        .rect();
     egui::pos2((r.right() + cell.left()) / 2.0, r.center().y)
 }
 
@@ -3271,7 +3269,8 @@ fn long_layer_names_lose_their_middle_and_show_whole_in_the_tooltip() {
     for _ in 0..30 {
         h.step();
     }
-    assert!(h.query_by_label_contains(long).is_some());
+    // (The name's tooltip: the whole name, then its curve count.)
+    assert!(h.query_by_label_contains(&format!("{long} · ")).is_some());
     save_png("drift_ui_long_layer_name.png", &mut h);
 }
 

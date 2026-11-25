@@ -23,9 +23,10 @@ impl Unset<'_> {
         }
     }
 
-    fn tip(&self) -> String {
+    /// What it is, said for the theme in use (`dark`).
+    pub(crate) fn tip(&self, dark: bool) -> String {
         match self {
-            Unset::Ink => "Ink: white on screen, black on paper and in print".into(),
+            Unset::Ink => ink_tip(dark).into(),
             Unset::Named(n) => format!("{n}: no color of its own"),
         }
     }
@@ -64,7 +65,7 @@ const CELL_GAP: f32 = 4.0;
 /// Swatches in a row of the grid.
 const PER_ROW: usize = 8;
 
-/// Where the drawing's colours (its layers') are left for the picker each frame.
+/// Where the open drawing's colours are left for the pickers each frame.
 pub(crate) fn document_colours_id() -> egui::Id {
     egui::Id::new("colour_picker_document")
 }
@@ -81,8 +82,20 @@ pub(crate) fn hex(c: Rgb) -> String {
     format!("#{:02X}{:02X}{:02X}", c.0[0], c.0[1], c.0[2])
 }
 
+/// Ink, as it shows in the theme in use (`dark`) and on paper.
+pub(crate) fn ink_tip(dark: bool) -> &'static str {
+    if dark {
+        "Ink: white on the dark canvas, black on paper and in print"
+    } else {
+        "Ink: black on the canvas, on paper and in print"
+    }
+}
+
 fn parse_hex(text: &str) -> Option<Rgb> {
     let t = text.trim().trim_start_matches('#');
+    if !t.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
     let t = match t.len() {
         // #abc → #aabbcc
         3 => t.chars().flat_map(|c| [c, c]).collect::<String>(),
@@ -103,7 +116,8 @@ pub(crate) fn ink(dark: bool) -> Color32 {
 }
 
 /// Paint a swatch: the colour, or for Ink a square split white / black corner to corner,
-/// or for a named fallback the colour it falls back to (`fallback`) crossed by a fine line.
+/// or for a named fallback the colour it falls back to (`fallback`) with a small link in its
+/// corner, or, when that colour isn't known, a neutral square crossed by a fine line.
 /// A hairline edge keeps white and black swatches visible on either theme.
 pub(crate) fn paint_swatch(
     painter: &egui::Painter,
@@ -156,15 +170,33 @@ pub(crate) fn paint_swatch(
         Stroke::new(1.0, edge),
         egui::StrokeKind::Inside,
     );
+    if value.is_none() && matches!(unset, Unset::Named(_)) && fallback.is_some() {
+        link_mark(painter, rect, dark);
+    }
+}
+
+/// A swatch that follows another colour: a small chain link in its corner.
+fn link_mark(painter: &egui::Painter, r: Rect, dark: bool) {
+    let c = r.right_bottom() - vec2(3.0, 3.0);
+    let (bg, fg) = if dark {
+        (Color32::from_gray(0x1e), Color32::from_gray(0xd0))
+    } else {
+        (Color32::from_gray(0xf4), Color32::from_gray(0x40))
+    };
+    painter.circle_filled(c, 3.6, bg);
+    for dx in [-1.2, 1.2] {
+        painter.circle_stroke(c + vec2(dx, 0.0), 1.5, Stroke::new(0.9, fg));
+    }
 }
 
 /// A colour control filling `width`: its swatch and its hex (or what it falls back to), one
-/// click opening the picker. Returns a new colour when one is picked (`Some(None)`: back to
-/// unset).
+/// click opening the picker. `fallback` is the colour an unset value shows as, when known.
+/// Returns a new colour when one is picked (`Some(None)`: back to unset).
 pub(crate) fn colour_button(
     ui: &mut egui::Ui,
     value: Option<Rgb>,
     unset: Unset,
+    fallback: Option<Color32>,
     dark: bool,
     width: f32,
 ) -> Option<Option<Rgb>> {
@@ -183,8 +215,9 @@ pub(crate) fn colour_button(
         Pos2::new(rect.left() + 4.0 + 7.0, rect.center().y),
         vec2(14.0, 14.0),
     );
-    paint_swatch(ui.painter(), swatch, value, unset, None, dark);
+    paint_swatch(ui.painter(), swatch, value, unset, fallback, dark);
     let text = value.map_or_else(|| unset.name().to_owned(), hex);
+    let spoken = text.clone();
     let color = if value.is_some() {
         ui.visuals().text_color()
     } else {
@@ -197,26 +230,47 @@ pub(crate) fn colour_button(
         egui::TextStyle::Body.resolve(ui.style()),
         color,
     );
-    let tip = value.map_or_else(|| unset.tip(), |c| format!("{} · click to change", hex(c)));
+    let tip = value.map_or_else(
+        || unset.tip(dark),
+        |c| format!("{} · click to change", hex(c)),
+    );
     let response = response.on_hover_text(tip);
+    // (A colour well named by its colour; the row's own label says what it colours.)
     response
-        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, unset.name()));
-    colour_popup(ui, &response, value, unset, dark)
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ColorButton, true, &spoken));
+    colour_popup(ui, &response, value, unset, fallback, dark)
 }
 
-/// The picker opened by a click on `response` (a swatch): the unset swatch (Ink, By layer…),
-/// the drawing's colours, recent picks, a palette, a hex field and, under More, the full
-/// colour field. A swatch click picks and closes; the hex field and colour field pick as
-/// they change.
+/// A control's accessible name (`label`, what it is for) and the value it holds (`value`),
+/// read out together.
+pub(crate) fn labeled_with_value(
+    typ: egui::WidgetType,
+    label: &str,
+    value: &str,
+) -> egui::WidgetInfo {
+    let mut info = egui::WidgetInfo::labeled(typ, true, label);
+    info.current_text_value = Some(value.to_owned());
+    info
+}
+
+/// The picker opened by a click on `response` (a swatch): the unset swatch (Ink, By layer…,
+/// shown as `fallback` when that is known), the drawing's colours, recent picks, a palette,
+/// a hex field and, under More, the full colour field. A swatch click picks and closes; six
+/// hex digits pick as they are typed, three when the field is left; a drag in the colour
+/// field picks once, when the button is let go. Only the colour the picker closes on is
+/// kept among the recent ones.
 pub(crate) fn colour_popup(
     ui: &mut egui::Ui,
     response: &egui::Response,
     value: Option<Rgb>,
     unset: Unset,
+    fallback: Option<Color32>,
     dark: bool,
 ) -> Option<Option<Rgb>> {
     let mut out = None;
     let id = response.id.with("colour_popup");
+    let field_id = id.with("field");
+    let last_id = id.with("last");
     egui::Popup::from_toggle_button_response(response)
         .id(id)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
@@ -227,16 +281,16 @@ pub(crate) fn colour_popup(
             // The unset swatch, named.
             ui.horizontal(|ui| {
                 let (r, resp) = ui.allocate_exact_size(vec2(CELL, CELL), egui::Sense::click());
-                paint_swatch(ui.painter(), r, None, unset, None, dark);
+                paint_swatch(ui.painter(), r, None, unset, fallback, dark);
                 ring(ui, r, picked(None), resp.hovered());
-                let resp = resp.on_hover_text(unset.tip());
+                let resp = resp.on_hover_text(unset.tip(dark));
                 let name = unset.name().to_owned();
                 resp.widget_info(|| {
                     egui::WidgetInfo::selected(egui::WidgetType::Button, true, picked(None), &name)
                 });
                 let label = ui
                     .add(egui::Label::new(unset.name()).sense(egui::Sense::click()))
-                    .on_hover_text(unset.tip());
+                    .on_hover_text(unset.tip(dark));
                 if resp.clicked() || label.clicked() {
                     out = Some(None);
                     ui.close();
@@ -285,30 +339,52 @@ pub(crate) fn colour_popup(
                 }
             }
             ui.separator();
-            // Hex, typed or pasted (with or without the #, three or six digits).
+            // Hex, typed or pasted (with or without the #, three or six digits). The text is
+            // kept with the colour it was made from, and made again from the colour in use
+            // when that changes some other way (the colour field, an undo) while the field
+            // isn't being typed in.
             let text_id = id.with("hex");
-            let mut text: String = ui
+            let edit_id = id.with("hex_field");
+            let typing = ui.memory(|m| m.has_focus(edit_id));
+            let (mut from, mut text): (Option<Rgb>, String) = ui
                 .ctx()
                 .data(|d| d.get_temp(text_id))
-                .unwrap_or_else(|| value.map_or_else(String::new, hex));
+                .unwrap_or_else(|| (value, value.map_or_else(String::new, hex)));
+            if from != value && !typing {
+                from = value;
+                text = value.map_or_else(String::new, hex);
+            }
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new("Hex").weak());
                 let r = crate::theme::field(
                     ui,
                     egui::TextEdit::singleline(&mut text)
+                        .id(edit_id)
                         .hint_text("#RRGGBB")
                         .desired_width(ui.available_width()),
                 );
-                if r.changed()
-                    && let Some(c) = parse_hex(&text)
+                let parsed = parse_hex(&text);
+                // Six digits as typed; three (#abc) only once the field is left, so typing
+                // #abcdef doesn't pass through #AABBCC.
+                let six = text.trim().trim_start_matches('#').len() == 6;
+                let done = r.lost_focus() && out.is_none();
+                if let Some(c) = parsed
+                    && ((r.changed() && six) || done)
                 {
-                    out = Some(Some(c));
+                    if Some(c) != value {
+                        out = Some(Some(c));
+                    }
+                    from = Some(c);
+                }
+                if done {
+                    // Left as the colour it gave, or as the colour in use if it gave none.
+                    text = from.map_or_else(String::new, hex);
                 }
                 if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     ui.close();
                 }
             });
-            ui.ctx().data_mut(|d| d.insert_temp(text_id, text));
+            ui.ctx().data_mut(|d| d.insert_temp(text_id, (from, text)));
             // The full colour field, behind More.
             let more_id = id.with("more");
             let mut more = ui.ctx().data(|d| d.get_temp(more_id)).unwrap_or(false);
@@ -318,24 +394,61 @@ pub(crate) fn colour_popup(
             }
             ui.ctx().data_mut(|d| d.insert_temp(more_id, more));
             if more {
-                let mut c = value.map_or(ink(dark), to_color32);
+                // A drag in the field is held here and picked once, when the button is let
+                // go: one change (one undo step), not one a frame.
+                let held: Option<Color32> = ui.ctx().data(|d| d.get_temp(field_id));
+                let mut c =
+                    held.unwrap_or_else(|| value.map_or(fallback.unwrap_or(ink(dark)), to_color32));
                 if egui::color_picker::color_picker_color32(
                     ui,
                     &mut c,
                     egui::color_picker::Alpha::Opaque,
                 ) {
-                    out = Some(Some(Rgb([c.r(), c.g(), c.b()])));
+                    ui.ctx().data_mut(|d| d.insert_temp(field_id, c));
+                }
+                if !ui.input(|i| i.pointer.any_down())
+                    && let Some(c) = take::<Color32>(ui.ctx(), field_id)
+                {
+                    out = Some(Some(rgb_of(c)));
                 }
             }
         });
-    if !egui::Popup::is_id_open(ui.ctx(), id) {
+    let open = egui::Popup::is_id_open(ui.ctx(), id);
+    if !open {
+        // A colour still held from the field is picked as the picker closes.
+        if let Some(c) = take::<Color32>(ui.ctx(), field_id) {
+            out = Some(Some(rgb_of(c)));
+        }
         // Shown afresh from the colour next time it opens.
-        ui.ctx().data_mut(|d| d.remove::<String>(id.with("hex")));
+        ui.ctx()
+            .data_mut(|d| d.remove::<(Option<Rgb>, String)>(id.with("hex")));
     }
-    if let Some(Some(c)) = out {
+    match out {
+        Some(Some(c)) => ui.ctx().data_mut(|d| {
+            d.insert_temp(last_id, c);
+        }),
+        Some(None) => ui.ctx().data_mut(|d| d.remove::<Rgb>(last_id)),
+        None => {}
+    }
+    // The colour the picker closed on goes first among the recent ones (not each one
+    // passed through on the way).
+    if !open && let Some(c) = take::<Rgb>(ui.ctx(), last_id) {
         remember(ui.ctx(), c);
     }
     out
+}
+
+fn rgb_of(c: Color32) -> Rgb {
+    Rgb([c.r(), c.g(), c.b()])
+}
+
+/// Remove and return what is kept under `id`.
+fn take<T: Clone + Send + Sync + 'static>(ctx: &egui::Context, id: egui::Id) -> Option<T> {
+    ctx.data_mut(|d| {
+        let v = d.get_temp::<T>(id);
+        d.remove::<T>(id);
+        v
+    })
 }
 
 /// A swatch's ring: the accent round the colour in use, a quiet one under the pointer.
@@ -380,5 +493,182 @@ mod tests {
         assert_eq!(parse_hex("#12345"), None);
         assert_eq!(parse_hex("zzzzzz"), None);
         assert_eq!(hex(Rgb([0x0a, 0xb0, 0xff])), "#0AB0FF");
+        // Six bytes that aren't six characters: no colour, and no panic.
+        assert_eq!(parse_hex("1€23"), None);
+        assert_eq!(parse_hex("aéabc"), None);
+        assert_eq!(parse_hex("#ééé"), None);
+    }
+
+    #[test]
+    fn ink_is_said_as_it_shows_in_each_theme() {
+        let dark = Unset::Ink.tip(true);
+        let light = Unset::Ink.tip(false);
+        assert!(dark.contains("white"), "{dark}");
+        assert!(!light.contains("white"), "{light}");
+        assert!(light.contains("black on the canvas"), "{light}");
+    }
+
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::{NodeT as _, Queryable as _};
+
+    /// A colour control and every colour it gave.
+    struct Picker {
+        value: Option<Rgb>,
+        fallback: Option<Color32>,
+        picks: Vec<Option<Rgb>>,
+    }
+
+    fn picker(value: Option<Rgb>, fallback: Option<Color32>) -> Harness<'static, Picker> {
+        let mut h = Harness::builder().with_size([420.0, 640.0]).build_ui_state(
+            |ui, p: &mut Picker| {
+                let unset = Unset::Named("By layer");
+                if let Some(c) = colour_button(ui, p.value, unset, p.fallback, true, 120.0) {
+                    p.value = c;
+                    p.picks.push(c);
+                }
+            },
+            Picker {
+                value,
+                fallback,
+                picks: Vec::new(),
+            },
+        );
+        h.run();
+        h
+    }
+
+    fn open(h: &mut Harness<'static, Picker>) {
+        h.get_by_role(egui::accesskit::Role::ColorWell).click();
+        h.run();
+        h.run();
+    }
+
+    fn open_more(h: &mut Harness<'static, Picker>) {
+        open(h);
+        h.get_by_label("More…").click();
+        h.run();
+        h.run();
+    }
+
+    /// The colour field's R value.
+    fn red_box(h: &Harness<'static, Picker>) -> (Pos2, f64) {
+        let r = h
+            .get_all_by_role(egui::accesskit::Role::SpinButton)
+            .min_by(|a, b| a.rect().left().total_cmp(&b.rect().left()))
+            .expect("the R value");
+        let value = r.accesskit_node().numeric_value().unwrap_or_default();
+        (r.rect().center(), value)
+    }
+
+    fn recent(h: &Harness<'static, Picker>) -> Vec<[u8; 3]> {
+        h.ctx.data(|d| d.get_temp(recent_id())).unwrap_or_default()
+    }
+
+    fn press(h: &mut Harness<'static, Picker>, at: Pos2, pressed: bool) {
+        h.event(egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.run();
+    }
+
+    #[test]
+    fn a_drag_in_the_colour_field_is_one_pick_and_one_recent_colour() {
+        let mut h = picker(Some(Rgb([0x40, 0x40, 0x40])), None);
+        open_more(&mut h);
+        let (at, before) = red_box(&h);
+        h.hover_at(at);
+        h.run();
+        press(&mut h, at, true);
+        for i in 1..=12 {
+            h.event(egui::Event::PointerMoved(
+                at + egui::vec2(6.0 * i as f32, 0.0),
+            ));
+            h.run();
+        }
+        assert!(
+            h.state().picks.is_empty(),
+            "nothing picked while the drag goes on"
+        );
+        press(&mut h, at + egui::vec2(72.0, 0.0), false);
+        h.run();
+        let picks = &h.state().picks;
+        assert_eq!(picks.len(), 1, "one pick for the drag: {picks:?}");
+        let (_, after) = red_box(&h);
+        assert!(
+            after > before,
+            "the drag changed the colour ({before} → {after})"
+        );
+        // Closed: the colour it closed on is the one recent colour.
+        press(&mut h, egui::pos2(400.0, 620.0), true);
+        press(&mut h, egui::pos2(400.0, 620.0), false);
+        h.run();
+        assert_eq!(recent(&h), vec![h.state().value.unwrap().0]);
+    }
+
+    #[test]
+    fn hex_six_digits_pick_as_typed_three_when_entered() {
+        let mut h = picker(None, None);
+        open(&mut h);
+        h.get_by_role(egui::accesskit::Role::TextInput).click();
+        h.run();
+        for c in "#abcdef".chars() {
+            h.event(egui::Event::Text(c.to_string()));
+            h.run();
+        }
+        assert_eq!(
+            h.state().picks,
+            vec![Some(Rgb([0xab, 0xcd, 0xef]))],
+            "not #AABBCC on the way"
+        );
+        for _ in 0..7 {
+            h.key_press(egui::Key::Backspace);
+            h.run();
+        }
+        for c in "#fff".chars() {
+            h.event(egui::Event::Text(c.to_string()));
+            h.run();
+        }
+        assert_eq!(h.state().picks.len(), 1, "three digits wait for Enter");
+        h.key_press(egui::Key::Enter);
+        h.run();
+        h.run();
+        assert_eq!(h.state().picks.last(), Some(&Some(Rgb([0xff; 3]))));
+        assert_eq!(h.state().picks.len(), 2);
+        // Closed on white: only it is kept among the recent colours.
+        assert_eq!(recent(&h), vec![[0xff; 3]]);
+    }
+
+    #[test]
+    fn hex_follows_the_colour_when_it_changes_elsewhere() {
+        let mut h = picker(Some(Rgb([0xd0, 0x40, 0x40])), None);
+        open(&mut h);
+        let shown = |h: &Harness<'static, Picker>| {
+            h.get_by_role(egui::accesskit::Role::TextInput)
+                .accesskit_node()
+                .value()
+                .unwrap_or_default()
+        };
+        assert_eq!(shown(&h), "#D04040");
+        // An undo (or the colour field) changes the colour while the picker is open.
+        h.state_mut().value = Some(Rgb([0x00, 0x00, 0xff]));
+        h.run();
+        h.run();
+        assert_eq!(shown(&h), "#0000FF");
+    }
+
+    #[test]
+    fn an_unset_colour_opens_the_colour_field_at_what_it_shows() {
+        let red = Color32::from_rgb(0xc8, 0x20, 0x20);
+        let mut h = picker(None, Some(red));
+        open_more(&mut h);
+        let (_, r) = red_box(&h);
+        assert_eq!(
+            r,
+            f64::from(red.r()),
+            "the field starts at the fallback colour"
+        );
     }
 }

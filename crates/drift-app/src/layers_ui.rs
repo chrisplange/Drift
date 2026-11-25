@@ -165,6 +165,23 @@ enum LayerAction {
     Solo(LayerFlag, LayerId),
 }
 
+/// The appearance settings picked in a row's controls this frame, even to the value they
+/// had: what goes to the other picked rows.
+#[derive(Clone, Copy, Debug, Default)]
+struct Touched {
+    color: bool,
+    fill: bool,
+    weight: bool,
+    line_type: bool,
+    printable: bool,
+}
+
+impl Touched {
+    fn any(&self) -> bool {
+        self.color || self.fill || self.weight || self.line_type || self.printable
+    }
+}
+
 /// The layers and how many curves each holds, worked out again only when the drawing
 /// changes (an imported DWG can have a hundred thousand entities).
 #[derive(Default)]
@@ -177,7 +194,13 @@ pub(crate) struct LayerCounts {
     pub curves: std::collections::HashMap<LayerId, usize>,
     /// Curves in all.
     pub total: usize,
+    /// The drawing's own colours (its layers', then its objects' and fills'), first in
+    /// every colour picker.
+    pub colours: Vec<[u8; 3]>,
 }
+
+/// How many of the drawing's colours a picker offers.
+const DOCUMENT_COLOURS: usize = 16;
 
 impl LayerCounts {
     /// Bring the counts up to date with `doc`.
@@ -190,11 +213,32 @@ impl LayerCounts {
         self.layers = doc.layers().map(|(id, l)| (id, l.clone())).collect();
         self.curves.clear();
         self.total = 0;
+        self.colours.clear();
+        let colours = &mut self.colours;
+        let mut add = |c: Option<Rgb>| {
+            if let Some(c) = c
+                && colours.len() < DOCUMENT_COLOURS
+                && !colours.contains(&c.0)
+            {
+                colours.push(c.0);
+            }
+        };
+        for (_, l) in &self.layers {
+            add(l.color);
+            add(l.fill_color);
+        }
         for (_, e) in doc.iter() {
+            add(e.appearance.color);
             if !e.kind.is_point() {
                 *self.curves.entry(e.layer).or_default() += 1;
                 self.total += 1;
             }
+        }
+        for (_, f) in doc.fills() {
+            add(f.color);
+        }
+        for (_, t) in doc.texts() {
+            add(t.appearance.color);
         }
     }
 }
@@ -203,7 +247,7 @@ impl LayerCounts {
 const ICON_TOGGLE: f32 = 22.0;
 
 /// A small icon toggle: full colour when on, faint (and struck through for `strike`) when off.
-/// True when it was clicked.
+/// It tells assistive tech whether it is on. True when it was clicked.
 pub(crate) fn icon_toggle(
     ui: &mut egui::Ui,
     on: &mut bool,
@@ -225,10 +269,14 @@ pub(crate) fn icon_toggle(
             );
         }
     });
-    let clicked = r.on_hover_text(tip).clicked();
+    let r = r.on_hover_text(tip);
+    let clicked = r.clicked();
     if clicked {
         *on = !*on;
     }
+    // (A toggle button: its state as pressed or not, without the selected tile's look.)
+    let enabled = ui.is_enabled();
+    r.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, *on, tip));
     clicked
 }
 
@@ -296,7 +344,7 @@ pub(crate) fn color_choice_of(
     dark: bool,
     width: f32,
 ) -> Option<Option<Rgb>> {
-    crate::colour::colour_button(ui, value, Unset::from_label(auto_label), dark, width)
+    crate::colour::colour_button(ui, value, Unset::from_label(auto_label), None, dark, width)
 }
 
 /// A line weight's menu, as wide as the room it is given (a row's value column).
@@ -507,6 +555,15 @@ impl DriftApp {
         self.set_status(format!("Current layer: {name}"), false, now);
     }
 
+    /// Leave the open drawing's colours for the colour pickers drawn this frame, wherever
+    /// they are (worked out again only when the drawing changes). Run once a frame, before
+    /// the panels.
+    pub(crate) fn publish_document_colours(&mut self, ctx: &egui::Context) {
+        self.drawing.layer_counts.update(&self.drawing.editor.doc);
+        let colours = self.drawing.layer_counts.colours.clone();
+        ctx.data_mut(|d| d.insert_temp(crate::colour::document_colours_id(), colours));
+    }
+
     pub(crate) fn layers_panel(&mut self, ui: &mut egui::Ui, now: f64) {
         self.end_stale_isolate();
         self.drawing.layer_counts.update(&self.drawing.editor.doc);
@@ -563,17 +620,15 @@ impl DriftApp {
             solo_snap: self.solo_of(LayerFlag::Snappable),
             list: &list,
         };
-        // The drawing's own colours, first in every colour picker.
-        let mut colours: Vec<[u8; 3]> = Vec::new();
-        for (_, l) in &layers {
-            for c in [l.color, l.fill_color].into_iter().flatten() {
-                if !colours.contains(&c.0) && colours.len() < 16 {
-                    colours.push(c.0);
-                }
-            }
+        // Rows the filter hides aren't picked, so a change made on a picked row goes only to
+        // rows in sight (the current layer is always shown).
+        if !self.drawing.layer_list.picked.is_empty() {
+            let listed: std::collections::HashSet<LayerId> = list.iter().copied().collect();
+            self.drawing
+                .layer_list
+                .picked
+                .retain(|l| *l == current || listed.contains(l));
         }
-        ui.ctx()
-            .data_mut(|d| d.insert_temp(crate::colour::document_colours_id(), colours));
         let mut status = None;
         let mut action = None;
         crate::theme::section(ui, &format!("Layers · {total}"));
@@ -845,6 +900,7 @@ impl DriftApp {
         };
         let accent = crate::theme::accent(ui.visuals().dark_mode);
         let mut edited = layer.clone();
+        let mut touched = Touched::default();
         let is_current = id == info.current;
         let picked_row = self.drawing.layer_list.picked.contains(&id);
         // The whole row: a click makes the layer current, a drag moves it in the order (its
@@ -865,7 +921,9 @@ impl DriftApp {
                 egui::Frame::new()
                     .inner_margin(egui::Margin::symmetric(4, 2))
                     .show(ui, |ui| {
-                        if let Some(a) = self.layer_row(ui, id, &layer, &mut edited, info) {
+                        if let Some(a) =
+                            self.layer_row(ui, id, &layer, &mut edited, &mut touched, info)
+                        {
                             *action = Some(a);
                         }
                     });
@@ -979,16 +1037,17 @@ impl DriftApp {
                 ui.close();
             }
         });
-        if edited != layer && self.drawing.editor.doc.layer(id).is_some() {
-            self.change_layers(id, &layer, edited);
+        if (edited != layer || touched.any()) && self.drawing.editor.doc.layer(id).is_some() {
+            self.change_layers(id, edited, touched);
         }
         rect
     }
 
-    /// Row `id` changed from `was` to `now`: with it among several picked rows, its
-    /// appearance change (colours, weight, line type, printing) goes to all of them, one
-    /// undo step; otherwise to it alone.
-    fn change_layers(&mut self, id: LayerId, was: &Layer, now: Layer) {
+    /// Row `id` is now `now`, its `touched` settings picked in its controls: with it among
+    /// several picked rows, those settings (colours, weight, line type, printing) go to all
+    /// of them, one undo step, even where a pick left this row as it was; otherwise the
+    /// change goes to it alone.
+    fn change_layers(&mut self, id: LayerId, now: Layer, touched: Touched) {
         let picked = &self.drawing.layer_list.picked;
         if !(picked.len() > 1 && picked.contains(&id)) {
             self.drawing.editor.update_layer(id, now);
@@ -1002,19 +1061,19 @@ impl DriftApp {
                     return Some((id, now.clone()));
                 }
                 let mut l = doc.layer(other)?.clone();
-                if now.color != was.color {
+                if touched.color {
                     l.color = now.color;
                 }
-                if now.fill_color != was.fill_color {
+                if touched.fill {
                     l.fill_color = now.fill_color;
                 }
-                if now.weight != was.weight {
+                if touched.weight {
                     l.weight = now.weight;
                 }
-                if now.line_type != was.line_type {
+                if touched.line_type {
                     l.line_type = now.line_type;
                 }
-                if now.printable != was.printable {
+                if touched.printable {
                     l.printable = now.printable;
                 }
                 Some((other, l))
@@ -1042,6 +1101,10 @@ impl DriftApp {
             let from = rows.anchor.unwrap_or(current);
             if let (Some(a), Some(b)) = (pos_of(list, from), pos_of(list, id)) {
                 rows.picked = list[a.min(b)..=a.max(b)].iter().copied().collect();
+            } else {
+                // From a row the filter hides: the run starts at the row clicked.
+                rows.picked = std::iter::once(id).collect();
+                rows.anchor = Some(id);
             }
         } else {
             rows.picked.clear();
@@ -1064,6 +1127,7 @@ impl DriftApp {
         id: LayerId,
         layer: &Layer,
         edited: &mut Layer,
+        touched: &mut Touched,
         info: &RowInfo,
     ) -> Option<LayerAction> {
         let dark = ui.visuals().dark_mode;
@@ -1091,19 +1155,25 @@ impl DriftApp {
                 ui.allocate_exact_size(egui::vec2(SWATCH, SWATCH), egui::Sense::click());
             paint_swatch(ui.painter(), r, edited.color, Unset::Ink, None, dark);
             hover_ring(ui, r, resp.hovered());
+            let stroke_value = edited.color.map_or("Ink".to_owned(), crate::colour::hex);
             let tip = match edited.color {
                 Some(c) => format!("Stroke {} · click to change", crate::colour::hex(c)),
-                None => {
-                    "Stroke: Ink (white on screen, black on paper) · click to change".to_owned()
-                }
+                None => format!("Stroke: {} · click to change", crate::colour::ink_tip(dark)),
             };
             let resp = resp.on_hover_text(tip);
+            let label = format!("{} stroke color", layer.name);
             resp.widget_info(|| {
-                egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Stroke color")
+                crate::colour::labeled_with_value(
+                    egui::WidgetType::ColorButton,
+                    &label,
+                    &stroke_value,
+                )
             });
-            if let Some(c) = crate::colour::colour_popup(ui, &resp, edited.color, Unset::Ink, dark)
+            if let Some(c) =
+                crate::colour::colour_popup(ui, &resp, edited.color, Unset::Ink, None, dark)
             {
                 edited.color = c;
+                touched.color = true;
             }
             let (r, resp) =
                 ui.allocate_exact_size(egui::vec2(SWATCH, SWATCH), egui::Sense::click());
@@ -1119,10 +1189,10 @@ impl DriftApp {
                 Some(stroke_shown),
                 dark,
             );
-            if edited.fill_color.is_none() {
-                link_mark(ui.painter(), r, dark);
-            }
             hover_ring(ui, r, resp.hovered());
+            let fill_value = edited
+                .fill_color
+                .map_or("Match stroke".to_owned(), crate::colour::hex);
             let tip = match edited.fill_color {
                 Some(c) => format!(
                     "Fill {} (fills and hatches on this layer) · click to change",
@@ -1133,12 +1203,24 @@ impl DriftApp {
                     .to_owned(),
             };
             let resp = resp.on_hover_text(tip);
+            let label = format!("{} fill color", layer.name);
             resp.widget_info(|| {
-                egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Fill color")
+                crate::colour::labeled_with_value(
+                    egui::WidgetType::ColorButton,
+                    &label,
+                    &fill_value,
+                )
             });
-            if let Some(c) = crate::colour::colour_popup(ui, &resp, edited.fill_color, unset, dark)
-            {
+            if let Some(c) = crate::colour::colour_popup(
+                ui,
+                &resp,
+                edited.fill_color,
+                unset,
+                Some(stroke_shown),
+                dark,
+            ) {
                 edited.fill_color = c;
+                touched.fill = true;
             }
             ui.spacing_mut().item_spacing.x = ROW_SPACING;
             // Controls from the right, so the name takes the space left.
@@ -1186,9 +1268,10 @@ impl DriftApp {
                     action = Some(LayerAction::Solo(LayerFlag::Snappable, id));
                 }
                 let tip = "Printed and exported (off: shown here, left out of prints and exports)";
-                icon_toggle(ui, &mut edited.printable, Glyph::Print, true, tip);
+                touched.printable |=
+                    icon_toggle(ui, &mut edited.printable, Glyph::Print, true, tip);
                 ui.add_space(4.0);
-                line_cell(ui, id, edited);
+                line_cell(ui, id, &layer.name, edited, touched);
                 ui.add_space(4.0);
                 if info.picked.contains(&id) {
                     ui.add_space(5.0);
@@ -1419,9 +1502,20 @@ impl DriftApp {
         };
         let dark = ui.visuals().dark_mode;
         let a = first.appearance;
+        // "By layer" shown as the first curve's layer colour.
+        let by_layer = self
+            .drawing
+            .editor
+            .doc
+            .layer(first.layer)
+            .map(|l| to_color32(l.color, dark));
         crate::theme::row(ui, "Color", |ui| {
             ui.push_id((salt, "colour"), |ui| {
-                if let Some(c) = color_choice(ui, a.color, "By layer", dark) {
+                let width = ui.available_width();
+                let unset = Unset::Named("By layer");
+                if let Some(c) =
+                    crate::colour::colour_button(ui, a.color, unset, by_layer, dark, width)
+                {
                     self.drawing
                         .editor
                         .update_appearance(curves, |x| x.color = c);
@@ -1460,26 +1554,6 @@ fn hover_ring(ui: &egui::Ui, r: egui::Rect, hovered: bool) {
     }
 }
 
-/// A fill swatch that follows the stroke: a small chain link in its corner.
-fn link_mark(painter: &egui::Painter, r: egui::Rect, dark: bool) {
-    let c = r.right_bottom() - egui::vec2(3.0, 3.0);
-    let (bg, fg) = if dark {
-        (
-            egui::Color32::from_gray(0x1e),
-            egui::Color32::from_gray(0xd0),
-        )
-    } else {
-        (
-            egui::Color32::from_gray(0xf4),
-            egui::Color32::from_gray(0x40),
-        )
-    };
-    painter.circle_filled(c, 3.6, bg);
-    for dx in [-1.2, 1.2] {
-        painter.circle_stroke(c + egui::vec2(dx, 0.0), 1.5, egui::Stroke::new(0.9, fg));
-    }
-}
-
 /// Draw a short sample of a line from `a` to `b`: as thick as `weight` reads on screen, and
 /// dashed as `line_type` is.
 fn paint_line_sample(
@@ -1490,32 +1564,55 @@ fn paint_line_sample(
     line_type: LineType,
     color: egui::Color32,
 ) {
-    let width = (0.8 + weight.mm() as f32 * 3.0).clamp(0.8, 4.0);
-    let stroke = egui::Stroke::new(width, color);
-    let dashes = line_type.paper_dashes();
-    if dashes.is_empty() {
-        painter.line_segment([a, b], stroke);
-        return;
-    }
-    // The pattern at a size that reads in a row: a dash of 4 paper units as 8 points.
-    let scale = 2.0;
+    let stroke = egui::Stroke::new(sample_width(weight), color);
     let length = (b - a).length();
     let dir = (b - a) / length.max(1e-3);
-    let (mut t, mut i) = (0.0_f32, 0);
+    for (from, to) in dash_runs(line_type, length) {
+        painter.line_segment([a + dir * from, a + dir * to], stroke);
+    }
+}
+
+/// How thick a line of `weight` is drawn in a sample: from a hairline at 0.13 mm to 5 points
+/// at 2.00 mm, every ISO weight a different width.
+fn sample_width(weight: LineWeight) -> f32 {
+    let mm = (weight.mm() as f32).max(0.13);
+    (0.8 * (mm / 0.13).powf(0.67)).clamp(0.8, 5.0)
+}
+
+/// The drawn runs (start, end) of a `line_type` sample `length` points long: its pattern at a
+/// size that reads in a row (a dash of 4 paper units as 8 points). A pattern of a long dash
+/// and dots (centre, phantom) starts just after the long dash, so even a short sample shows
+/// its dots.
+fn dash_runs(line_type: LineType, length: f32) -> Vec<(f32, f32)> {
+    let dashes = line_type.paper_dashes();
+    if dashes.is_empty() {
+        return vec![(0.0, length)];
+    }
+    let scale = 2.0;
+    let mut runs = Vec::new();
+    let (mut t, mut i) = (0.0_f32, usize::from(dashes.len() > 2));
     while t < length {
         let d = dashes[i % dashes.len()] as f32 * scale;
         let end = (t + d).min(length);
         if i % 2 == 0 {
-            painter.line_segment([a + dir * t, a + dir * end], stroke);
+            runs.push((t, end));
         }
         t = end;
         i += 1;
     }
+    runs
 }
 
 /// A layer's weight and line type cell: a sample of its line and its weight; a click opens
-/// a menu of weights and line types, each shown as it draws.
-fn line_cell(ui: &mut egui::Ui, id: LayerId, edited: &mut Layer) {
+/// a menu of weights and line types, each shown as it draws. A pick there is marked in
+/// `touched`.
+fn line_cell(
+    ui: &mut egui::Ui,
+    id: LayerId,
+    name: &str,
+    edited: &mut Layer,
+    touched: &mut Touched,
+) {
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(LINE_CELL, ICON_TOGGLE), egui::Sense::click());
     let color = if response.hovered() {
@@ -1551,13 +1648,15 @@ fn line_cell(ui: &mut egui::Ui, id: LayerId, edited: &mut Layer) {
         egui::TextStyle::Small.resolve(ui.style()),
         color,
     );
-    let response = response.on_hover_text(format!(
-        "{} · {} · click to change",
+    let value = format!(
+        "{} · {}",
         edited.weight.label(),
         crate::theme::us(edited.line_type.label())
-    ));
+    );
+    let response = response.on_hover_text(format!("{value} · click to change"));
+    let label = format!("{name} line weight and type");
     response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Line weight and type")
+        crate::colour::labeled_with_value(egui::WidgetType::Button, &label, &value)
     });
     let text = ui.visuals().text_color();
     egui::Popup::from_toggle_button_response(&response)
@@ -1601,6 +1700,7 @@ fn line_cell(ui: &mut egui::Ui, id: LayerId, edited: &mut Layer) {
             for w in LineWeight::ISO {
                 if row(ui, edited.weight == w, w, LineType::Continuous, w.label()) {
                     edited.weight = w;
+                    touched.weight = true;
                     ui.close();
                 }
             }
@@ -1610,6 +1710,7 @@ fn line_cell(ui: &mut egui::Ui, id: LayerId, edited: &mut Layer) {
                 let label = crate::theme::us(t.label()).to_string();
                 if row(ui, edited.line_type == t, LineWeight(25), t, label) {
                     edited.line_type = t;
+                    touched.line_type = true;
                     ui.close();
                 }
             }
@@ -1621,4 +1722,38 @@ fn line_cell(ui: &mut egui::Ui, id: LayerId, edited: &mut Layer) {
 /// layer, "Layer 1", is renamed like any other (#423).
 fn can_rename(id: LayerId, layer: &Layer) -> bool {
     id != LayerId::DEFAULT || layer.name != Layer::CAD_ZERO
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_line_type_and_weight_looks_its_own_in_a_row() {
+        // The row's sample is 14 points long.
+        let runs: Vec<Vec<(f32, f32)>> =
+            LineType::ALL.iter().map(|t| dash_runs(*t, 14.0)).collect();
+        for (i, a) in runs.iter().enumerate() {
+            for (j, b) in runs.iter().enumerate().skip(i + 1) {
+                assert_ne!(
+                    a,
+                    b,
+                    "{:?} and {:?} draw alike",
+                    LineType::ALL[i],
+                    LineType::ALL[j]
+                );
+            }
+        }
+        // Centre shows its dot, not one solid dash.
+        assert!(dash_runs(LineType::Center, 14.0).len() >= 2);
+        // (Hair draws as the thinnest, 0.13.)
+        let widths: Vec<f32> = LineWeight::ISO[1..]
+            .iter()
+            .map(|w| sample_width(*w))
+            .collect();
+        assert!(
+            widths.windows(2).all(|w| w[1] > w[0] + 0.15),
+            "each heavier weight draws thicker: {widths:?}"
+        );
+    }
 }

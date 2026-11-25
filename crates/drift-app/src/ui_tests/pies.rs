@@ -668,3 +668,24 @@ fn a_click_with_q_held_near_the_edge_adds_the_lit_relation() {
     h.key_up(Key::Q);
     h.run();
 }
+
+/// A pie's letter held down turns its kind over once: the repeats the system sends while the
+/// key is down don't flip it back and forth.
+#[test]
+fn a_held_letter_turns_its_kind_over_once() {
+    let Some(mut h) = harness() else { return };
+    tap_snap_pie(&mut h);
+    h.key_down(Key::M);
+    h.run();
+    assert!(!kinds(&h).has(SnapKind::Midpoint));
+    for _ in 0..5 {
+        key_repeat(&mut h, egui::Modifiers::NONE, Key::M);
+    }
+    h.key_up(Key::M);
+    h.run();
+    assert!(
+        !kinds(&h).has(SnapKind::Midpoint),
+        "still off after the repeats"
+    );
+    assert!(h.state().snap_pie.is_some(), "the ring stays");
+}

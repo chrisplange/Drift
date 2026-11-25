@@ -136,7 +136,7 @@ impl DriftApp {
         // A relation's key, while the ring is open (Q held or not).
         let typed = ctx.input(|i| {
             KEYS.iter()
-                .find(|(k, _)| i.key_pressed(*k))
+                .find(|(k, _)| crate::keymap::fresh_press(i, *k))
                 .map(|(_, label)| *label)
         });
         if self.pie.is_some()
@@ -276,9 +276,10 @@ impl DriftApp {
             .order(egui::Order::Foreground)
             .fixed_pos(screen.min)
             .show(ctx, |ui| {
-                // The whole window is the pie's while it is open: a click on the lit pill
-                // chooses it (the one the caption and the conflict warning are for), a click
-                // anywhere else closes the pie.
+                // The whole window is the pie's while it is open. A click chooses what is lit: with
+                // the key held, what a flick would choose, wherever the click lands; otherwise
+                // the pill under the pointer. A click with nothing lit closes the pie.
+                // (What is lit is what the caption and the conflict warning are for.)
                 let response = ui.allocate_response(screen.size(), egui::Sense::click());
                 if response.clicked() {
                     clicked = Some(hot);

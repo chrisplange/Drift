@@ -253,7 +253,7 @@ impl DriftApp {
                 i.key_pressed(Key::Escape),
                 i.pointer.latest_pos(),
                 i.time,
-                KEYS.iter().position(|k| i.key_pressed(*k)),
+                KEYS.iter().position(|k| crate::keymap::fresh_press(i, *k)),
             )
         });
         let rects = self.pie_pills;
@@ -343,7 +343,9 @@ impl DriftApp {
             .order(egui::Order::Foreground)
             .fixed_pos(screen.min)
             .show(ctx, |ui| {
-                // A click on the lit pill turns it on or off; anywhere else closes the pie.
+                // The whole window is the pie's while it is open. A click chooses what is lit: with
+                // the key held, what a flick would choose, wherever the click lands; otherwise
+                // the pill under the pointer. A click with nothing lit closes the pie.
                 let response = ui.allocate_response(screen.size(), egui::Sense::click());
                 let painter = ui.painter();
                 let labels = PLACES.map(|(l, _)| pie_style::label_galley(painter, l));

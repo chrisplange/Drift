@@ -335,17 +335,25 @@ impl Editor {
         }
     }
 
-    /// Snap to the whole sketch alone (no origin, underlays or copies of blocks), as
+    /// Snap to the sketch alone (no origin, underlays or copies of blocks), as
     /// [`snap`](Self::snap) does: of the snap kinds turned on, on snappable layers. For what
-    /// is made on a sheet through a view: a block edited in place doesn't narrow it, since
-    /// nothing made there is written back into the block.
+    /// is made on a sheet through a view, which shows the drawing as it will be once a block
+    /// edited in place is finished: everything but that edit's temporary geometry. Those
+    /// entities aren't drawn there (the copy is, and copies aren't snapped to), and finishing
+    /// the edit deletes them, which would take with it whatever was attached to them.
     pub fn sketch_snap(
         &self,
         p: DVec2,
         options: SnapOptions,
         exclude: impl Fn(EntityId) -> bool,
     ) -> Option<Snap> {
-        self.sketch_snap_in(p, options, exclude, None)
+        let editing = self.snap_scope();
+        self.sketch_snap_in(
+            p,
+            options,
+            |id| exclude(id) || editing.as_ref().is_some_and(|s| s.contains(&id)),
+            None,
+        )
     }
 
     fn sketch_snap_in(

@@ -4380,8 +4380,9 @@ fn editing_a_block_snaps_only_to_the_block() {
     assert!(s.entity.is_some_and(|e| !ed.in_scope(e)));
 }
 
-/// What a sheet snaps to through a view isn't narrowed to a block edited in place: the
-/// drawing around the block still snaps there (nothing made on a sheet goes into the block).
+/// What a sheet snaps to through a view is the drawing as the sheet shows it, the block
+/// edited in place as finished: the drawing around the block snaps there, the edit's
+/// temporary geometry (not drawn on the sheet, deleted when the edit finishes) doesn't.
 #[test]
 fn sketch_snap_reaches_past_a_block_edit() {
     let (mut ed, copy, _, loose, _) = block_edit_fixture();
@@ -4404,6 +4405,22 @@ fn sketch_snap_reaches_past_a_block_edit() {
     let end = s.entity.expect("the end point");
     assert!(!scope.contains(&end));
     assert!(ed.doc.users_of(end).any(|u| u == loose));
+    // The box's corner: the edit snaps to its own temporary corner, the sheet never does.
+    let corner = v(20.1, 10.1);
+    let s = ed.snap(corner, opts, |_| false).expect("the edited corner");
+    assert!(s.entity.is_some_and(|e| scope.contains(&e)));
+    assert!(
+        ed.sketch_snap(corner, opts, |_| false)
+            .is_none_or(|s| s.entity.is_none_or(|e| !scope.contains(&e)))
+    );
+    // Nor anywhere else on the edited box.
+    for at in [v(0.1, 0.1), v(10.0, 0.1), v(20.1, 5.0), v(16.5, 20.1)] {
+        assert!(
+            ed.sketch_snap(at, opts, |_| false)
+                .is_none_or(|s| s.entity.is_none_or(|e| !scope.contains(&e))),
+            "{at:?}"
+        );
+    }
 }
 
 /// On a copy of a block, a snap kind turned off gives way to the next best that is on, as on

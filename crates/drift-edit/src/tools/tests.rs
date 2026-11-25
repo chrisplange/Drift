@@ -7994,6 +7994,23 @@ fn fillet_tool_drag_largest_is_the_tightest_corners_room() {
     assert_eq!(arcs(&ed.doc), 4, "{:?}", ed.out.notice);
 }
 
+/// Sized past what a corner has room for, a fillet holds at exactly the most (not a round
+/// step short of it), and applied there it takes the shorter side whole.
+#[test]
+fn fillet_tool_clamps_at_the_whole_side() {
+    let (mut ed, sides) = corners_rect(30.0, 6.0);
+    let mut tool = FilletTool::default();
+    click(&mut ed, &mut tool, v(0.0, 0.0));
+    let far = ptr(&ed, &tool, v(-40.0, -40.0));
+    tool.handle(Input::Hover(far), &mut ed);
+    let size = previewed_radius(&tool, &ed);
+    assert!((size - 6.0).abs() < 1e-9, "{size}");
+    tool.handle(Input::Click(far, Modifiers::default()), &mut ed);
+    assert_eq!(arcs(&ed.doc), 1, "{:?}", ed.out.notice);
+    let left = sides.iter().filter(|id| !ed.doc.contains(**id)).count();
+    assert_eq!(left, 1, "the short side at the corner is taken whole");
+}
+
 #[test]
 fn fillet_tool_set_of_arc_corners_applies_at_the_drag_cap() {
     // A D: a line and a half circle over it, meeting square at both ends.

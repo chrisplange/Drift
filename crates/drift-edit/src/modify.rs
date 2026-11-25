@@ -506,6 +506,21 @@ impl Arm {
         }
     }
 
+    /// The point `s` along it from `corner`.
+    fn at(&self, corner: DVec2, s: f64) -> DVec2 {
+        match self.run {
+            Run::Line { dir } => corner + dir * s,
+            Run::Circle {
+                center,
+                radius,
+                ccw,
+            } => {
+                let turn = if ccw { s / radius } else { -s / radius };
+                center + DVec2::from_angle(turn).rotate(corner - center)
+            }
+        }
+    }
+
     /// The point on it nearest `c`.
     fn foot(&self, corner: DVec2, c: DVec2) -> DVec2 {
         match self.run {
@@ -607,16 +622,27 @@ pub fn fillet_geometry(
         .into_iter()
         .min_by(|a, b| a.distance(guess).total_cmp(&b.distance(guess)))
         .ok_or_else(too_large)?;
-    let t1 = arms[0].foot(corner, c);
-    let t2 = arms[1].foot(corner, c);
-    for (arm, t) in arms.iter().zip([t1, t2]) {
-        let d = arm.along(corner, t);
-        if !(d > tolerance::SAME && d < arm.length) {
+    let mut t = [arms[0].foot(corner, c), arms[1].foot(corner, c)];
+    // A fillet may take the whole of a curve, its tangent point reaching the far end (and
+    // landing there exactly), but no more: like Blender's bevel with Clamp Overlap.
+    for (arm, t) in arms.iter().zip(&mut t) {
+        let d = arm.along(corner, *t);
+        if !(d > tolerance::SAME && d <= arm.length + consume_slack(arm.length)) {
             return Err(too_large());
         }
+        if arm.length - d <= consume_slack(arm.length) {
+            *t = arm.at(corner, arm.length);
+        }
     }
+    let [t1, t2] = t;
     let ccw = (t1 - c).perp_dot(t2 - c) > 0.0;
     Ok((t1, t2, c, ccw))
+}
+
+/// How near a fillet's tangent point may come to a curve's far end and count as reaching
+/// it (the curve is then taken whole).
+pub(crate) fn consume_slack(length: f64) -> f64 {
+    tolerance::NEAR * length.max(1.0)
 }
 
 /// How far the selection moves for the pointer during a move from `start` (the pointer where
@@ -1868,23 +1894,77 @@ impl Editor {
         let at = self.doc.point(p).unwrap_or_default();
         let (t1, t2, c, ccw) = fillet_geometry(at, [a1, a2], r)?;
         let doc_err = |e: drift_core::DocumentError| invalid(e.to_string());
-        let (p1, p2, pc) = (
-            self.doc.add_point(t1),
-            self.doc.add_point(t2),
-            self.doc.add_point(c),
-        );
-        self.cut_corner(p, [(l1, p1), (l2, p2)])?;
-        let (s, e) = if ccw { (p1, p2) } else { (p2, p1) };
+        // A curve the fillet takes whole goes; the arc ends on its far end instead, joining
+        // whatever is there.
+        let mut kept = Vec::new();
+        let mut taken = Vec::new();
+        let mut ends = [p; 2];
+        for (i, ((curve, arm), t)) in [(l1, a1), (l2, a2)].into_iter().zip([t1, t2]).enumerate() {
+            let far = self.far_end(curve, p);
+            match far {
+                Some(far) if arm.length - arm.along(at, t) <= consume_slack(arm.length) => {
+                    ends[i] = far;
+                    taken.push(curve);
+                }
+                _ => {
+                    ends[i] = self.doc.add_point(t);
+                    kept.push((curve, ends[i]));
+                }
+            }
+        }
+        let pc = self.doc.add_point(c);
+        let (s, e) = if ccw {
+            (ends[0], ends[1])
+        } else {
+            (ends[1], ends[0])
+        };
         let a = self.doc.add_arc(pc, s, e).map_err(doc_err)?;
         // The round takes the corner's look (construction stays construction).
         self.doc.copy_look(l1, a);
         // and joins the two lines' shapes (#439).
         self.doc.join_figures(&[l1, l2, a]);
-        for line in [l1, l2] {
-            self.relate(Constraint::Tangent { a: line, b: a });
+        if taken.is_empty() {
+            self.cut_corner(p, [(l1, ends[0]), (l2, ends[1])])?;
+        } else {
+            self.doc.delete(taken.iter().copied());
+            for &(curve, end) in &kept {
+                self.keep_side(curve);
+                self.replace_end(curve, p, end)?;
+            }
+            // Nothing is left for a corner relation to hold the corner between: it stays
+            // (as construction) only for what is measured to it.
+            if self.doc.contains(p) && self.doc.users_of(p).next().is_none() {
+                if self.doc.is_named(p) {
+                    self.doc.set_style(p, drift_core::LineKind::Construction);
+                } else {
+                    self.doc.delete([p]);
+                }
+            }
+        }
+        for (curve, _) in kept {
+            self.relate(Constraint::Tangent { a: curve, b: a });
         }
         self.relate(Constraint::Radius { curve: a, value: r });
         Ok(a)
+    }
+
+    /// The other end of line or arc `curve` from its end point `end`.
+    fn far_end(&self, curve: EntityId, end: EntityId) -> Option<EntityId> {
+        match self.doc.get(curve)?.kind {
+            EntityKind::Line { a, b }
+            | EntityKind::Arc {
+                start: a, end: b, ..
+            } => {
+                if a == end {
+                    Some(b)
+                } else if b == end {
+                    Some(a)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
     }
 
     /// Move the two curves meeting at corner `p` off it, onto their new ends (a fillet's or
@@ -3793,6 +3873,59 @@ mod tests {
             ed.set_dimension(width, 120.0).unwrap();
             assert!(close(ed.doc.point(corners[3]).unwrap(), v(0.0, 120.0)));
         }
+    }
+
+    /// A fillet as big as the shorter side takes it whole, like Blender's bevel with Clamp
+    /// Overlap: the side goes and the arc runs on to the next side's end. Any bigger is
+    /// refused.
+    #[test]
+    fn a_fillet_may_take_a_whole_side_but_no_more() {
+        let Plate {
+            mut ed,
+            corners,
+            sides,
+            ..
+        } = plate(false);
+        assert!(ed.fillet(corners[0], 50.0 + 1e-3).is_err());
+        let arc = ed.fillet(corners[0], 50.0).unwrap();
+        assert!(!ed.doc.contains(sides[3]), "the left side is taken whole");
+        let Some(EntityKind::Arc { center, start, end }) = ed.doc.get(arc).map(|e| e.kind) else {
+            panic!("an arc");
+        };
+        // From the top side's end (which stays where it was) round to the bottom side.
+        assert_eq!(start, corners[3]);
+        assert!(close(ed.doc.point(corners[3]).unwrap(), v(0.0, 50.0)));
+        assert!(close(ed.doc.point(end).unwrap(), v(50.0, 0.0)));
+        assert!(close(ed.doc.point(center).unwrap(), v(50.0, 50.0)));
+        assert!(ed.doc.contains(sides[2]) && ed.doc.contains(sides[0]));
+        // Undo puts the side back.
+        ed.undo();
+        assert!(ed.doc.contains(sides[3]));
+    }
+
+    /// Two fillets on one side grow until they meet: the side between them goes.
+    #[test]
+    fn fillets_at_both_ends_of_a_side_may_meet() {
+        let Plate {
+            mut ed,
+            corners,
+            sides,
+            ..
+        } = plate(false);
+        let arcs = ed.fillet_corners(&[corners[0], corners[1]], 50.0).unwrap();
+        for side in [sides[0], sides[1], sides[3]] {
+            assert!(!ed.doc.contains(side), "{side:?} taken whole");
+        }
+        let ends = |arc| match ed.doc.get(arc).map(|e| e.kind) {
+            Some(EntityKind::Arc { start, end, .. }) => [start, end],
+            _ => panic!("an arc"),
+        };
+        let (a, b) = (ends(arcs[0]), ends(arcs[1]));
+        // They share the point where they meet, at the middle of what was the bottom.
+        let shared: Vec<_> = a.iter().filter(|p| b.contains(p)).collect();
+        assert_eq!(shared.len(), 1);
+        assert!(close(ed.doc.point(*shared[0]).unwrap(), v(50.0, 0.0)));
+        assert!(ed.doc.contains(sides[2]));
     }
 
     #[test]

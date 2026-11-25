@@ -1,3 +1,143 @@
+# What's new in Beta 1.8
+
+Beta 1.8's notes. Beta 1.7 was not published, so this release also brings everything in
+"What's new in Beta 1.7" below. Drawings saved by this version are file format 46. Older
+drawings open as before, but **Beta 1.7 and earlier can't open a drawing saved by this
+version**: they ask you to update Drift. Keep a copy saved from an earlier version if you
+need to go back.
+
+## Pies and the Selection filter
+
+- **One Selection filter control** at the right end of the top bar, with every tool. It
+  names what Select picks (**All**, **Edges**, **3 kinds**) and opens a list of the kinds,
+  each with its icon and name, plus **Pick everything**.
+- **A click on a filtered-out kind says so:** "Fills are filtered out · Selection filter:
+  Edges only". Click the message to pick everything again.
+- **Selection filter pie (Shift+Q).** Hold Shift+Q and flick towards a kind to pick only
+  it, or towards **All** for everything. Tap it to leave the ring open and click kinds on
+  and off; every kind you click stays.
+- **Snap pie (Shift+S)** turns kinds of snap on and off. What you set is kept for every
+  drawing and across restarts.
+- **Snap kinds button** in the status bar. It lights up while a kind of snap is off that no
+  other switch there shows, and its menu turns each kind on and off and has **Snap to every
+  kind**.
+- **All three pies work the same way:** hold the key and flick, or tap it and click. While
+  a pie is open, each choice's letter picks it too. A pie closed while its key is still held
+  stays closed.
+
+<!-- PRs: Selection filter control (#504), Selection filter pie (#541, replaced by #549), pies and snap kinds (#558) -->
+
+## A new Layers panel
+
+- **Click a swatch for a color picker:** **Ink**, the drawing's colors, recent ones, a
+  palette, a hex value or **More…**. A fill can follow the stroke with **Match stroke**.
+- **A line cell** shows each layer's weight and line type. Click it to pick either.
+- **Print is a switch on the row**, beside snap, show and lock.
+- **Change several layers at once.** Ctrl-click or Shift-click rows, then set a color,
+  weight, line type or print setting on one of them: it goes to all, in one undo step.
+- **The filter is always there.** In a narrow panel the names keep their room and the
+  switches every layer has on fold away first.
+- An unset fill, hatch, dimension or underlay color shows what it falls back to. Esc on an
+  open menu closes just the menu. The underlay blurb is now the Import button's tooltip.
+
+<!-- PRs: Layers panel (#558), underlay blurb (#507) -->
+
+## Relations, dimensions and fillets
+
+- **Relation symbols sit on their curve**, and a tangency symbol sits at the joint, as in
+  Onshape. Symbols no longer pile on top of each other, and picking a wall moves no other
+  symbol.
+- **Dimension the gap between two concentric circles or arcs.** With **Dimension**, pick
+  one, then the other. The AI link can add one too. This is why the file format is now 46.
+- **Pick a dimension by its extension lines**, not only its text. Click again to pick the
+  curve underneath.
+- **A typed angle turns the side** instead of flinging the corner far away. Changing a
+  triangle's 90° to 145° swings the side round at its full length, and a fillet at the
+  turned corner keeps its radius.
+- **Changes ease into place.** A typed value, a new relation, undo or redo moves the
+  geometry smoothly over a moment instead of jumping. Turn it off with **Preferences →
+  General → Animate solves**. Walls ease too, without a wobble.
+- **Fillets clamp, like Blender's bevel.** A fillet too big for a side takes the side whole
+  and joins on to the next one, on one corner or on several. Two fillets meet wherever they
+  meet, and they stay smooth when a dimension changes later.
+- **A side a fillet takes keeps what's on it.** A leader's tip moves onto the arc. Anything
+  else tied to the side keeps it as construction, and the message says so.
+- **Kept corners and fillet centers are small muted crosses** until you hover or pick the
+  fillet or its lines.
+
+<!-- PRs: relation symbols (#558), gap dimension (#521), extension lines (#540), typed angle (#518, #520), easing (#517, #558), fillets (#558), muted corners (#503) -->
+
+## Drawing and editing
+
+- **Trim and Extend ignore what's picked.** They always cut against every curve, as Power
+  Trim does in SolidWorks, and leave the selection as it was. A trim drag across a shape
+  you just drew no longer takes a whole side away. This replaces the picked-curve cutting
+  described under Beta 1.7.
+- **Drags don't snap to themselves.** Nothing a drag moves, or pulls along, is a snap
+  target, and a snap holds a little way before letting go, so dragged shapes don't jitter.
+- **The right button no longer pans.** Pan with the middle button or scrolling. A right-click
+  that wobbles or is held a moment still finishes the tool.
+- **G can pick a base point first:** turn on **Preferences → General → G picks a base point
+  first**. Nothing moves until you click the base point, then the destination.
+- **Fill tool: H again** switches between Solid and the last hatch pattern.
+- **Tangent arc: Space** steps through tangent, reverse tangent and free.
+- **Grid spacing: Auto or Fixed spacing**, under **View → Grid spacing**. Type the spacing
+  (`600`, `1'`, `3.6 m`) and the divisions per major square. Grid snap and arrow-key nudges
+  follow it.
+
+<!-- PRs: power trim (#555), drag snaps (#546), right button (#556), G base point (#539), papercuts (#503), grid (#542) -->
+
+## Walls and openings
+
+- **Resizing an opening moves no other opening**, on its wall or any other. An opening
+  grows only into its own free stretch, and its offset stays put when a neighbor changes.
+- **Joining walls keeps a dimensioned, fixed or locked end** where it is. The other wall
+  moves to meet it instead.
+- **Walls are never flagged as overlapping**, in the status bar or by **Select overlapping**.
+- Walls no longer twitch when an opening is moved from the Inspector.
+
+<!-- PRs: openings (#550), wall joins (#552), overlap check (#548), walls ease (#558) -->
+
+## Panels and sheets
+
+- **Floating panels open where they cover nothing:** back where they last floated, or the
+  next free spot, never on another panel or on what you've picked. They snap to the canvas
+  edges and to each other as you drag them.
+- **The drawing holds still** when a dock opens, closes, folds or is resized.
+- **Panels are never narrower than their contents.** Dragging a floating panel's left edge
+  widens it as you drag, and dragging its right edge past the canvas no longer shifts it.
+- **Views nest under their sheets** in the Sheets panel. Right-click a view to place, zoom
+  to, move or delete it, or drag it onto another sheet. It keeps its spot on the paper.
+- **Export or print one sheet** from its right-click menu. Export and Print otherwise live
+  in the **File** menu.
+- **A placed view's Inspector** says which sheets it's on, and keeps its actions in a **⋯**
+  menu by its name.
+- **A new sheet stays in the background:** the canvas stays where it was.
+- The empty canvas no longer shows a prompt, and the start screen's unit switch slides.
+
+<!-- PRs: floating panels (#554, #557, #507), Sheets panel (#508), new sheet (#519), canvas and start screen (#558) -->
+
+## Your settings
+
+- **Change any keyboard shortcut** in **Preferences → Keyboard**. Search for a command,
+  click its key and press a new one. Start from **Drift default** or **AutoCAD-style**; your
+  changes become your own preset, which you can rename or reset.
+- **New drawings use your units.** Set **New drawings use** in **Preferences → General**. On
+  first run Drift follows your computer's region.
+- **Your title block logo carries over.** Choosing a logo on a sheet makes it the one new
+  drawings start with.
+
+<!-- PRs: keyboard shortcuts (#543), units and logo (#511) -->
+
+## Faster and steadier
+
+- **Letting go of a big move is faster.** On a 70,000-curve drawing with every curve moved,
+  recording the move for undo and checking the drawing again take a fraction of the time.
+- **A DXF whose blocks place themselves imports quickly**, cut where the loop begins, with a
+  note saying so.
+
+<!-- PRs: big moves (#524, #527), DXF blocks (#545) -->
+
 # What's new in Beta 1.7
 
 Beta 1.7's notes (Beta 1.6's are below). Drawings saved by this version are file format 45.

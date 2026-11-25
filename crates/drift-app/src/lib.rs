@@ -354,6 +354,8 @@ struct Drawing {
     align_edge: Option<drift_core::FillId>,
     /// The previewed page, as of a document revision.
     preview_cache: Option<(u64, drift_core::SheetId, drift_draft::page::Drawing)>,
+    /// The relation symbols as last laid out on the canvas.
+    glyph_cache: std::cell::RefCell<annotations::GlyphCache>,
     /// While a block is edited in place, the drawing as if editing had finished, that the
     /// sheet preview draws (see [`Drawing::finished_for_preview`]), kept while the preview
     /// shows and the layers' switches stay as they were.
@@ -535,6 +537,7 @@ impl Drawing {
             hatch_snap: None,
             note_edit: None,
             preview_cache: None,
+            glyph_cache: Default::default(),
             finished_preview: None,
             finished_previews_made: 0,
             confirm_delete_set: false,

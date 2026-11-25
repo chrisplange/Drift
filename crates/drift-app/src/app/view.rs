@@ -407,7 +407,7 @@ impl DriftApp {
     /// The relation symbols the canvas shows, where they are first laid out (before any are
     /// pushed off the transform handles): none, those of what is picked, or all.
     pub(crate) fn relation_glyphs(&self, map: &ScreenMap) -> Vec<annotations::GlyphLayout> {
-        self.relation_glyphs_in(&self.drawing.editor.doc, map)
+        self.relation_glyphs_of(None, map)
     }
 
     /// The relation symbols laid out on `doc` (see [`Self::layout_dimensions_in`]).
@@ -416,10 +416,26 @@ impl DriftApp {
         doc: &drift_core::Document,
         map: &ScreenMap,
     ) -> Vec<annotations::GlyphLayout> {
+        self.relation_glyphs_of(Some(doc), map)
+    }
+
+    /// The relation symbols laid out on the drawing, kept from frame to frame (see
+    /// [`annotations::GlyphCache`]), or on `eased` (the drawing part-way through a solve's
+    /// animation, a new one each frame) afresh.
+    fn relation_glyphs_of(
+        &self,
+        eased: Option<&drift_core::Document>,
+        map: &ScreenMap,
+    ) -> Vec<annotations::GlyphLayout> {
         if self.show_relations == ShowRelations::Off {
             return Vec::new();
         }
         let ed = &self.drawing.editor;
+        let doc = eased.unwrap_or(&ed.doc);
+        let layout = |last: &dyn Fn(&drift_core::Constraint) -> bool| match eased {
+            None => self.drawing.glyph_cache.borrow_mut().layout(doc, map, last),
+            Some(doc) => annotations::layout_glyphs_last(doc, map, last),
+        };
         // Not on walls' centrelines unless the wall is picked. Every centreline symbol is laid
         // out after the rest, picked or not, so picking a wall moves no other symbol. A drawing
         // with no walls skips all this (it runs every frame, and listing a relation's
@@ -430,7 +446,7 @@ impl DriftApp {
                 c.entities()
                     .any(|e| matches!(owners.of.get(&e), Some(drift_core::walls::Owner::Centre(_))))
             };
-            let mut glyphs = annotations::layout_glyphs_last(doc, map, on_centreline);
+            let mut glyphs = layout(&on_centreline);
             let hidden = ed.unpicked_centrelines();
             if !hidden.is_empty() {
                 glyphs.retain(|g| {
@@ -440,7 +456,7 @@ impl DriftApp {
             }
             glyphs
         } else {
-            annotations::layout_glyphs_last(doc, map, |_| false)
+            layout(&|_| false)
         };
         // Picked only: the relations on the picked curves and their points, each on everything
         // it holds (so both lines of a parallel pair), and a picked relation itself. They stay

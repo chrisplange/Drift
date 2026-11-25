@@ -382,3 +382,87 @@ fn hidden_centreline_symbols_push_no_shown_symbol() {
     h.run();
     assert_eq!(rects(&h), (None, Some(x)), "the wall let go");
 }
+
+/// The canvas lays its relation symbols out once and keeps them from frame to frame: idle
+/// frames and a pan lay out nothing again, nor do the mode and the picks, which choose only
+/// which of them show; a zoom and an edit lay them out again, and they show where they are
+/// laid out afresh.
+#[test]
+fn the_canvas_keeps_its_symbols_until_an_edit_or_a_zoom() {
+    let Some(mut h) = harness() else { return };
+    let ([first, _, third], parallel, horizontal) = drawing(&mut h);
+    h.state_mut().drawing.view.fit_target = None;
+    h.run();
+    let made = |h: &Harness<'_, DriftApp>| h.state().drawing.glyph_cache.borrow().made;
+    let fresh = |h: &Harness<'_, DriftApp>| {
+        let map = screen_map(h);
+        crate::annotations::layout_glyphs(&h.state().drawing.editor.doc, &map)
+            .iter()
+            .map(|g| (g.id, g.rect.center()))
+            .collect::<Vec<_>>()
+    };
+    let same_as_fresh = |h: &Harness<'_, DriftApp>| {
+        let got = h.state().relation_glyphs(&screen_map(h));
+        let want = fresh(h);
+        assert_eq!(got.len(), want.len());
+        for (g, (id, at)) in got.iter().zip(&want) {
+            assert_eq!(g.id, *id);
+            assert!(g.rect.center().distance(*at) < 1e-3, "{g:?} not at {at:?}");
+        }
+    };
+    let laid = made(&h);
+    assert!(laid > 0);
+    // Idle frames, and hovering.
+    for k in 0..3 {
+        h.hover_at(Pos2::new(300.0 + 40.0 * k as f32, 300.0));
+        h.run();
+    }
+    assert_eq!(made(&h), laid, "idle");
+    // A pan.
+    h.state_mut()
+        .drawing
+        .view
+        .camera
+        .pan(DVec2::new(15.0, -6.0));
+    h.run();
+    assert_eq!(made(&h), laid, "a pan");
+    same_as_fresh(&h);
+    // The mode and the picks choose which show, from those laid out.
+    h.state_mut().show_relations = ShowRelations::Picked;
+    h.state_mut().drawing.editor.selection = [third].into_iter().collect();
+    h.run();
+    assert_eq!(shown(&h), [horizontal]);
+    h.state_mut().drawing.editor.selection = [first].into_iter().collect();
+    h.run();
+    assert_eq!(shown(&h), [parallel, parallel]);
+    h.state_mut().show_relations = ShowRelations::Off;
+    h.run();
+    assert!(shown(&h).is_empty());
+    h.state_mut().show_relations = ShowRelations::All;
+    h.run();
+    assert_eq!(shown(&h), [parallel, parallel, horizontal]);
+    assert_eq!(made(&h), laid, "the mode and the picks");
+    // A zoom.
+    h.state_mut()
+        .drawing
+        .view
+        .camera
+        .zoom_at(DVec2::new(30.0, 20.0), 1.2);
+    h.run();
+    assert!(made(&h) > laid, "a zoom");
+    let laid = made(&h);
+    same_as_fresh(&h);
+    h.run();
+    assert_eq!(made(&h), laid, "idle after the zoom");
+    // An edit: a relation added.
+    let ed = &mut h.state_mut().drawing.editor;
+    ed.doc.begin();
+    ed.doc
+        .add_constraint(Constraint::Equal { a: first, b: third })
+        .unwrap();
+    ed.commit("Equal");
+    h.run();
+    assert!(made(&h) > laid, "an edit");
+    assert_eq!(shown(&h).len(), 5);
+    same_as_fresh(&h);
+}

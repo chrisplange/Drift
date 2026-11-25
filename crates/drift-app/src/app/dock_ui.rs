@@ -83,6 +83,9 @@ pub(crate) struct DockView {
     float_needs: HashMap<Panel, (f32, f32)>,
     /// How much wider than shown each panel's contents were when last drawn.
     overflow: HashMap<Panel, f32>,
+    /// A row this wide drawn in every floating panel above its body (for tests).
+    #[cfg(test)]
+    test_fixed_row: Option<f32>,
     /// The least width each dock was found to need while its edge is held (see `dock`).
     dock_needs: [Option<f32>; 2],
     /// Each dock's width as last drawn (`docks` is cleared at the start of a frame).
@@ -731,10 +734,20 @@ impl DriftApp {
                             reach.resize_grab_radius_corner,
                         );
                         // (Folded, it can't be resized: a press anywhere on it moves it.)
-                        let grip = match origin {
+                        let mut grip = match origin {
                             Some(o) if !shut => Grip::at(*r, o, side, corner),
                             _ => Grip::default(),
                         };
+                        // A left or top edge counts only when egui gave the press to that
+                        // edge of this window: a press on a neighbour's edge snapped against
+                        // this one, or on a window or popup over it, leaves it alone.
+                        let edge = egui::Id::new(egui::LayerId::new(egui::Order::Middle, id))
+                            .with("edge_drag");
+                        let held = ctx.dragged_id();
+                        let on =
+                            |sides: [&str; 3]| sides.iter().any(|s| held == Some(edge.with(*s)));
+                        grip.left &= on(["left", "left_top", "left_bottom"]);
+                        grip.top &= on(["top", "left_top", "right_top"]);
                         (*r, grip)
                     })
                 } else {
@@ -830,6 +843,7 @@ impl DriftApp {
             // far edges staying put. Left to egui, the left edge followed the pointer a frame
             // before the width did, so the right edge wobbled by each frame's move, and past
             // the least width the whole window walked on with the pointer.
+            let mut held = None;
             if down
                 && !shut
                 && let Some((from, grip)) = self.dock_view.pressed_at.get(&top).copied()
@@ -838,21 +852,14 @@ impl DriftApp {
                     ctx.input(|i| (i.pointer.press_origin(), i.pointer.latest_pos()))
             {
                 let d = at - o;
-                // Never narrower than what it holds: what was cut off while held raises the
-                // least width, from the next frame.
-                let over = stack
-                    .iter()
-                    .filter(|p| !self.layout.folded.contains(p))
-                    .filter_map(|p| self.dock_view.overflow.get(p).copied())
-                    .fold(0.0_f32, f32::max);
+                // Never narrower than what it holds: whatever was cut off while held (in a
+                // panel's scroll area or outside it) raised the least width (below, after
+                // the window is drawn), from the next frame.
                 let (needs, given) = self
                     .dock_view
                     .float_needs
                     .entry(top)
                     .or_insert((MIN_WIDTH, from.width()));
-                if over > 0.5 {
-                    *needs = needs.max(*given + over);
-                }
                 let least_w = needs.clamp(MIN_WIDTH, MOST_NEEDED);
                 let least_h = least.min(most);
                 let mut r = from;
@@ -884,8 +891,12 @@ impl DriftApp {
                 // (Already inside the canvas. egui's own fitting would use last frame's size
                 // with this frame's place, and push the left edge back by a frame's move.)
                 window = window.fixed_rect(r).constrain(false);
+                held = Some(grip);
             }
             let alt = ctx.input(|i| i.modifiers.alt);
+            // How much wider than the window its widest panel's contents are, anywhere in
+            // it (a scroll area's rows or what is outside one, such as a bar above it).
+            let mut cut = 0.0_f32;
             let shown = window.show(ctx, |ui| {
                 // Each panel gets a fixed share of the window and scrolls within it, so what
                 // it holds never makes the window taller.
@@ -923,7 +934,18 @@ impl DriftApp {
                                 bottom: 8,
                                 ..BODY_MARGIN
                             })
-                            .show(&mut child, |ui| self.panel_body(ui, p));
+                            .show(&mut child, |ui| {
+                                // (Tests: a fixed-width row above the body's own scroll
+                                // area, as a toolbar or a bar there would be.)
+                                #[cfg(test)]
+                                if let Some(w) = self.dock_view.test_fixed_row {
+                                    ui.allocate_exact_size(
+                                        egui::vec2(w, 12.0),
+                                        egui::Sense::hover(),
+                                    );
+                                }
+                                self.panel_body(ui, p)
+                            });
                     }
                     // What it holds may need more width than the window gives it: the
                     // window is told, so it grows to fit and a resize stops there (egui
@@ -940,13 +962,33 @@ impl DriftApp {
                         .max(rect.width() + over)
                         .min(MOST_NEEDED.max(rect.width()));
                     self.dock_view.content_width.insert(p, needs);
-                    ui.expand_to_include_x(rect.left() + needs);
+                    cut = cut.max(needs - rect.width());
+                    // (Sized here while an edge is held: the window is that size, else it
+                    // would be drawn as wide as what it holds for the frame before the least
+                    // width is learnt, its right edge bulging out. What is cut off for that
+                    // frame raises the least width for the next.)
+                    if held.is_none() {
+                        ui.expand_to_include_x(rect.left() + needs);
+                    }
                     self.dock_view.stacked.push((p, rect));
                     if j + 1 < n {
                         self.divider(ui, &stack, j, &heights, &folded);
                     }
                 }
             });
+            // Sized here, the window has no resize grips of its own while held, so the
+            // resize cursor is kept up here until it is let go. And what was cut off at the
+            // width it was given raises its least width, so from the next frame it holds
+            // what it holds: when it is let go, egui's own sizing (which grows a window to
+            // its contents) finds nothing to grow to, and the right edge stays put.
+            if let Some(g) = held {
+                ctx.set_cursor_icon(g.cursor());
+                if cut > 0.5
+                    && let Some((needs, given)) = self.dock_view.float_needs.get_mut(&top)
+                {
+                    *needs = needs.max(*given + cut);
+                }
+            }
             let Some(shown) = shown else {
                 continue;
             };
@@ -1051,6 +1093,19 @@ impl DriftApp {
     #[cfg(test)]
     pub(crate) fn floating_content_width(&self, p: Panel) -> Option<f32> {
         self.dock_view.content_width.get(&p).copied()
+    }
+
+    /// Draw a row `w` wide in every floating panel, above its body and outside its scroll
+    /// area (for tests).
+    #[cfg(test)]
+    pub(crate) fn set_test_fixed_row(&mut self, w: Option<f32>) {
+        self.dock_view.test_fixed_row = w;
+    }
+
+    /// Put a floating panel's window with its top left at `at` next frame (for tests).
+    #[cfg(test)]
+    pub(crate) fn place_floating(&mut self, p: Panel, at: egui::Pos2) {
+        self.dock_view.float_at.insert(p, at);
     }
 
     /// A floating panel's header as last drawn (for tests).
@@ -1718,6 +1773,20 @@ pub(crate) struct Grip {
 }
 
 impl Grip {
+    /// The resize cursor for these edges, as egui shows over a window's grips.
+    fn cursor(self) -> egui::CursorIcon {
+        use egui::CursorIcon::*;
+        if (self.left && self.top) || (self.right && self.bottom) {
+            ResizeNwSe
+        } else if (self.right && self.top) || (self.left && self.bottom) {
+            ResizeNeSw
+        } else if self.left || self.right {
+            ResizeHorizontal
+        } else {
+            ResizeVertical
+        }
+    }
+
     /// Which edges of `r` a press at `o` was on, as egui's resize grips reach: `side` from
     /// an edge, and `corner` both ways from a corner (where both edges move). The right and
     /// bottom edges reach a little further, as #505 measured; the left and top only as far

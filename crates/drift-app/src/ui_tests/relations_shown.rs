@@ -247,8 +247,16 @@ fn arc_symbols_sit_on_the_arc_and_tangency_at_the_joint() {
             "tangency symbol {d} px from the joint"
         );
     }
-    // The arc's equal symbol stands just off the arc (not inside its circle's far side).
     let (centre, r) = (at(c), joint_s.distance(at(c)));
+    // Both on the outside of the bend: the line's below it (away from the arc's centre,
+    // which is above), the arc's outside its circle.
+    let (on_line, on_arc) = (tangents[0].rect.center(), tangents[1].rect.center());
+    assert!(
+        on_line.y > joint_s.y,
+        "{on_line:?} below the line at {joint_s:?}"
+    );
+    assert!(on_arc.distance(centre) > r, "{on_arc:?} outside the arc");
+    // The arc's equal symbol stands just off the arc (not inside its circle's far side).
     let on_arc = all
         .iter()
         .filter(|g| g.id == equal)
@@ -260,4 +268,117 @@ fn arc_symbols_sit_on_the_arc_and_tangency_at_the_joint() {
         on_arc.x > centre.x && on_arc.y > centre.y,
         "{on_arc:?} {centre:?}"
     );
+}
+
+/// A symbol on a wall's centreline, hidden while the wall isn't picked, moves no shown
+/// symbol out of its way: a line just beside the centreline keeps its Horizontal symbol
+/// right over its middle, though the centreline's own symbol would sit on that spot.
+#[test]
+fn hidden_centreline_symbols_push_no_shown_symbol() {
+    use crate::annotations::layout_glyphs;
+    let Some(mut h) = harness() else { return };
+    let v = DVec2::new;
+    h.state_mut().grid_snap = false;
+    {
+        let prefs = &mut h.state_mut().drawing.editor.prefs;
+        prefs.wall_thickness = 10.0;
+        prefs.wall_justify = drift_core::Justify::Centre;
+        prefs.wall_arc = false;
+    }
+    h.state_mut().drawing.view.fit_target = Some(drift_core::Bounds {
+        min: v(-20.0, -40.0),
+        max: v(140.0, 100.0),
+    });
+    h.run();
+    h.state_mut().drawing.view.fit_target = None;
+    h.run();
+    h.key_press(Key::W);
+    h.run();
+    click_world(&mut h, v(0.0, 0.0));
+    click_world(&mut h, v(100.0, 0.0));
+    h.key_press(Key::Enter);
+    h.run();
+    h.key_press(Key::Escape);
+    h.run();
+
+    let ed = &mut h.state_mut().drawing.editor;
+    let centre = {
+        let (_, wall) = ed.doc.walls().next().expect("a wall");
+        ed.doc.path(wall.centre).expect("its centreline").curves[0]
+    };
+    ed.doc.begin();
+    // The centreline's Horizontal first, so it is laid out before the line's.
+    let on_centre = ed
+        .doc
+        .constraints()
+        .find(|(_, c)| matches!(**c, Constraint::Horizontal { line } if line == centre))
+        .map(|(id, _)| id);
+    let on_centre = on_centre.unwrap_or_else(|| {
+        ed.doc
+            .add_constraint(Constraint::Horizontal { line: centre })
+            .unwrap()
+    });
+    let (a, b) = (
+        ed.doc.add_point(v(0.0, 1.0)),
+        ed.doc.add_point(v(100.0, 1.0)),
+    );
+    let line = ed.doc.add_line(a, b).unwrap();
+    let on_line = ed
+        .doc
+        .add_constraint(Constraint::Horizontal { line })
+        .unwrap();
+    ed.commit("Drawing");
+    ed.selection.clear();
+    h.run();
+    h.run();
+
+    let map = screen_map(&h);
+    let mid_x = screen(&h, v(50.0, 1.0)).x;
+    let x_of = |glyphs: &[crate::annotations::GlyphLayout], id| {
+        glyphs
+            .iter()
+            .find(|g| g.id == id)
+            .map(|g| g.rect.center().x)
+    };
+    // Laid out with every relation, the line's symbol would slide off the centreline's.
+    let all = layout_glyphs(&h.state().drawing.editor.doc, &map);
+    let pushed = x_of(&all, on_line).unwrap();
+    assert!(
+        (pushed - mid_x).abs() > 1.0,
+        "the centreline's symbol is in the way: {pushed} vs {mid_x}"
+    );
+    // Shown: the centreline's symbol isn't, and the line's stays over its middle.
+    let shown = h.state().relation_glyphs(&map);
+    assert_eq!(x_of(&shown, on_centre), None, "the wall isn't picked");
+    let x = x_of(&shown, on_line).expect("the line's symbol");
+    assert!((x - mid_x).abs() < 0.5, "{x} not over the middle {mid_x}");
+    // Pick the wall: its centreline's symbol shows, and the line's stays where it was, in
+    // All mode and in Picked mode with the line picked too.
+    let rects = |h: &Harness<'_, DriftApp>| {
+        let shown = h.state().relation_glyphs(&map);
+        (x_of(&shown, on_centre), x_of(&shown, on_line))
+    };
+    let curves = {
+        let ed = &h.state().drawing.editor;
+        let (wall, _) = ed.doc.walls().next().expect("a wall");
+        ed.wall_curves(wall)
+    };
+    h.state_mut().drawing.editor.selection = curves.iter().copied().collect();
+    h.run();
+    let (centre_x, line_x) = rects(&h);
+    assert!(centre_x.is_some(), "the picked wall's symbol shows");
+    assert_eq!(line_x, Some(x), "picking the wall moves no other symbol");
+    h.state_mut().show_relations = ShowRelations::Picked;
+    let mut both: Vec<_> = curves;
+    both.push(line);
+    h.state_mut().drawing.editor.selection = both.into_iter().collect();
+    h.run();
+    assert_eq!(
+        rects(&h).1,
+        Some(x),
+        "Picked mode: the line's symbol stays too"
+    );
+    h.state_mut().drawing.editor.selection = [line].into_iter().collect();
+    h.run();
+    assert_eq!(rects(&h), (None, Some(x)), "the wall let go");
 }

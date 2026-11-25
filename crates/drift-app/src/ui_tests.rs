@@ -4749,9 +4749,19 @@ fn furniture_blocks_place_edit_and_export() {
         .find(|(_, i)| i.block == chair && i.angle == 0.0)
         .map(|(_, i)| i.at)
         .unwrap();
-    // On the left edge of the chair's seat, clear of the example.
+    // On the left edge of the chair's seat (its straight run, 2.5" to 19" down), clear of
+    // the example and of the relation symbols heaped on it at this zoom.
     let seat = 9.0 * drift_edit::library::INCH - 0.5 * drift_edit::library::INCH;
-    click_world(&mut h, first + DVec2::new(-seat, -300.0));
+    let map = screen_map(&h);
+    let symbols = h.state().relation_glyphs(&map);
+    let on_seat = (4..=18)
+        .map(|i| first + DVec2::new(-seat, -(i as f64) * drift_edit::library::INCH))
+        .find(|&p| {
+            let at = screen(&h, p);
+            symbols.iter().all(|g| !g.rect.expand(2.0).contains(at))
+        })
+        .expect("some of the seat's edge clear of the symbols");
+    click_world(&mut h, on_seat);
     assert_eq!(h.state().drawing.editor.selected_instances.len(), 1);
     h.state_mut().show_panel(Panel::Inspector);
     h.run();
@@ -11018,6 +11028,109 @@ fn fixed_grid_snaps_to_its_divisions_and_auto_restores() {
     assert_eq!(h.state().grid(), auto);
 }
 
+/// Two floating windows snapped side by side: dragging the left one's right edge resizes it
+/// alone. The right one's left edge lies under the press too, but the press isn't its own.
+#[test]
+fn a_resize_leaves_a_window_snapped_against_the_edge_alone() {
+    let Some(mut h) = harness() else { return };
+    h.set_size(egui::vec2(1600.0, 900.0));
+    for p in [Panel::Layers, Panel::Inspector] {
+        h.state_mut().layout.move_to(p, Place::Float, None);
+    }
+    h.run_steps(6);
+    let canvas = h.state().drawing.view.canvas_rect;
+    h.state_mut()
+        .place_floating(Panel::Layers, canvas.left_top() + egui::vec2(40.0, 40.0));
+    h.run_steps(4);
+    let (_, a) = h.state().floating_rects(Panel::Layers).unwrap();
+    h.state_mut()
+        .place_floating(Panel::Inspector, egui::pos2(a.right(), a.top()));
+    h.run_steps(4);
+    let (_, b) = h.state().floating_rects(Panel::Inspector).unwrap();
+    assert!(
+        (b.left() - a.right()).abs() < 0.5 && b.top() < a.bottom() - 200.0,
+        "snapped side by side: {a:?} {b:?}"
+    );
+    // The left one in front (a click on its body), then its right edge dragged out.
+    let body = egui::pos2(a.center().x, a.top() + 200.0);
+    h.hover_at(body);
+    h.run_steps(1);
+    button(&h, body, true);
+    h.run_steps(1);
+    button(&h, body, false);
+    h.run_steps(2);
+    let grab = egui::pos2(a.right() - 1.0, a.top() + 160.0);
+    let held = drag_edge(&mut h, Panel::Layers, grab, grab + egui::vec2(60.0, 0.0));
+    let (_, b_after) = h.state().floating_rects(Panel::Inspector).unwrap();
+    assert!(
+        held.width() > a.width() + 40.0,
+        "the left one widens: {a:?} → {held:?}"
+    );
+    assert!(
+        (b_after.min - b.min).length() < 0.5 && (b_after.size() - b.size()).length() < 0.5,
+        "the right one stays as it was: {b:?} → {b_after:?}"
+    );
+}
+
+/// A floating panel with a fixed-width row outside its scroll area (as a bar above its
+/// list), squeezed by its left edge far past that row: the row is never cut off for more
+/// than the first frame, and when the edge is let go the right edge doesn't jump out (it
+/// did once the window was again sized by egui, to its contents).
+#[test]
+fn a_left_edge_squeeze_stops_at_what_is_outside_the_scroll_area() {
+    let Some(mut h) = harness() else { return };
+    h.state_mut().set_test_fixed_row(Some(330.0));
+    h.state_mut()
+        .layout
+        .move_to(Panel::Layers, Place::Float, None);
+    h.run_steps(6);
+    let (_, w) = h.state().floating_rects(Panel::Layers).unwrap();
+    let from = egui::pos2(w.left() + 80.0, w.top() + 12.0);
+    drag_steps(&mut h, from, from - egui::vec2(300.0, 0.0), 20, None);
+    h.run_steps(4);
+    let (_, before) = h.state().floating_rects(Panel::Layers).unwrap();
+    let needs = h.state().floating_content_width(Panel::Layers).unwrap();
+    assert!(
+        needs > 330.0 && before.width() >= needs - 0.5,
+        "the case is real: it holds {needs}, wider than the least width, in {before:?}"
+    );
+    let grab = egui::pos2(before.left() + 1.0, before.top() + 160.0);
+    h.hover_at(grab);
+    h.run_steps(2);
+    button(&h, grab, true);
+    h.run_steps(2);
+    let mut seen = Vec::new();
+    for i in 1..=40 {
+        h.hover_at(grab + egui::vec2(i as f32 * 10.0, 0.0));
+        h.run_steps(1);
+        let (_, w) = h.state().floating_rects(Panel::Layers).unwrap();
+        seen.push((i, w.left(), w.right(), w.width()));
+    }
+    button(&h, grab + egui::vec2(400.0, 0.0), false);
+    h.run_steps(4);
+    let (_, after) = h.state().floating_rects(Panel::Layers).unwrap();
+    for (i, left, right, width) in &seen {
+        assert!(
+            (right - before.right()).abs() < 0.5,
+            "frame {i}: the right edge moved to {right} from {}",
+            before.right()
+        );
+        // (Only the first frame is shown at the pointer, before what is cut off is learnt:
+        // from the next one on the row is whole.)
+        if *i > 1 {
+            assert!(
+                *width >= needs - 0.5,
+                "frame {i}: {width} wide (left {left}), cutting off what needs {needs}"
+            );
+        }
+    }
+    assert!(
+        (after.right() - before.right()).abs() < 0.5
+            && (after.width() - before.width()).abs() < 0.5,
+        "let go: {before:?} → {after:?}, holding {needs}"
+    );
+}
+
 /// A floating panel's left edge dragged in and out: its right edge holds still on every
 /// frame of the drag, not only where it ends up (it wobbled while the contents' width was
 /// fed back into the window's).
@@ -11046,20 +11159,43 @@ fn a_left_edge_resize_never_wobbles_the_right_edge() {
         .map(|i| i as f32 * 4.0)
         .chain((0..=90).rev().map(|i| i as f32 * 4.0 - 120.0))
         .collect();
+    // (The resize cursor stays up the whole way.)
+    let cursor = |h: &Harness<'_, DriftApp>| h.output().platform_output.cursor_icon;
     for dx in path {
         h.hover_at(grab + egui::vec2(dx, 0.0));
         h.run_steps(1);
         let (_, w) = h.state().floating_rects(Panel::Layers).unwrap();
         seen.push((dx, w.left(), w.right(), w.width()));
+        assert_eq!(cursor(&h), egui::CursorIcon::ResizeHorizontal, "at {dx}");
     }
     button(&h, grab, false);
     h.run_steps(4);
-    let worst = seen
-        .iter()
-        .map(|s| (s.2 - right).abs())
-        .fold(0.0_f32, f32::max);
-    assert!(
-        worst < 0.5,
-        "the right edge moved by up to {worst} px (start {right}): {seen:?}"
-    );
+    // A fresh grab flung far in in one frame, before any least width is learnt: the
+    // right edge doesn't move for that frame either.
+    let (_, w) = h.state().floating_rects(Panel::Layers).unwrap();
+    let mut flung = Vec::new();
+    let grab = egui::pos2(w.left() + 1.0, grab.y);
+    h.hover_at(grab);
+    h.run_steps(2);
+    button(&h, grab, true);
+    h.run_steps(1);
+    for dx in [400.0, 400.0, 400.0, -60.0, -60.0] {
+        h.hover_at(grab + egui::vec2(dx, 0.0));
+        h.run_steps(1);
+        let (_, w) = h.state().floating_rects(Panel::Layers).unwrap();
+        flung.push((dx, w.left(), w.right(), w.width()));
+        assert_eq!(cursor(&h), egui::CursorIcon::ResizeHorizontal, "at {dx}");
+    }
+    button(&h, grab, false);
+    h.run_steps(4);
+    for (seen, right) in [(seen, right), (flung, w.right())] {
+        let worst = seen
+            .iter()
+            .map(|s| (s.2 - right).abs())
+            .fold(0.0_f32, f32::max);
+        assert!(
+            worst < 0.5,
+            "the right edge moved by up to {worst} px (start {right}): {seen:?}"
+        );
+    }
 }

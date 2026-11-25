@@ -2198,13 +2198,24 @@ pub struct GlyphLayout {
     pub along: Vec2,
 }
 
-/// Lay out a glyph for every relation (dimensions are drawn separately). Relations between
-/// two curves get a glyph on each. Each slides along its stack direction off the glyphs
-/// already placed: those on its own entity always, so they never overlap; those on others
-/// too, unless that would carry it more than two tiles further than its own entity's need
-/// (in a heap of symbols zoomed far out, which would otherwise spread over the drawing
-/// around it).
+/// [`layout_glyphs_where`] for every relation.
+#[cfg(test)]
 pub fn layout_glyphs(doc: &Document, map: &ScreenMap) -> Vec<GlyphLayout> {
+    layout_glyphs_where(doc, map, |_| true)
+}
+
+/// Lay out a glyph for every relation `keep` passes (dimensions are drawn separately); the
+/// others are left out of the layout altogether, so a symbol never shown moves no other out
+/// of its way. Relations between two curves get a glyph on each. Each slides along its
+/// stack direction off the glyphs already placed: those on its own entity always, so they
+/// never overlap; those on others too, unless that would carry it more than two tiles
+/// further than its own entity's need (in a heap of symbols zoomed far out, which would
+/// otherwise spread over the drawing around it).
+pub fn layout_glyphs_where(
+    doc: &Document,
+    map: &ScreenMap,
+    keep: impl Fn(&Constraint) -> bool,
+) -> Vec<GlyphLayout> {
     let mut out = Vec::new();
     // The tiles already placed: all of them, and those on each entity (their centres).
     let mut placed = PlacedTiles::default();
@@ -2227,12 +2238,16 @@ pub fn layout_glyphs(doc: &Document, map: &ScreenMap) -> Vec<GlyphLayout> {
             let Some((at, along)) = base else { return };
             let mine = on_entity.entry(entity).or_default();
             let own = stack_spot(mine, at, along, slide);
-            let clear = placed.spot(at, along, slide);
-            let center = if clear.distance(at) <= own.distance(at) + 2.0 * (GLYPH_SIZE + 2.0) {
-                clear
-            } else {
-                own
-            };
+            // Clear of every symbol, if that is within two tiles of what its own entity
+            // needs; only that far is looked at (a heap costs no more than its stretch).
+            let center = placed
+                .spot_within(
+                    at,
+                    along,
+                    slide,
+                    own.distance(at) + 2.0 * (GLYPH_SIZE + 2.0),
+                )
+                .unwrap_or(own);
             mine.push(center);
             placed.add(center);
             out.push(GlyphLayout {
@@ -2268,8 +2283,8 @@ pub fn layout_glyphs(doc: &Document, map: &ScreenMap) -> Vec<GlyphLayout> {
     };
     let in_order = doc
         .constraints()
-        .filter(|(_, c)| !marks_joint(c))
-        .chain(doc.constraints().filter(|(_, c)| marks_joint(c)));
+        .filter(|(_, c)| keep(c) && !marks_joint(c))
+        .chain(doc.constraints().filter(|(_, c)| keep(c) && marks_joint(c)));
     for (id, c) in in_order {
         use GlyphKind::*;
         match *c {
@@ -2436,10 +2451,12 @@ pub fn layout_glyphs(doc: &Document, map: &ScreenMap) -> Vec<GlyphLayout> {
 }
 
 /// The centres of the glyph tiles placed so far, by grid cell, so a new glyph looks only at
-/// those near the stretch it may slide over (a dense drawing doesn't cost n²).
+/// those near the stretch it may slide over.
 #[derive(Default)]
 struct PlacedTiles {
     cells: HashMap<(i32, i32), Vec<Pos2>>,
+    /// The centres kept, on a grid of `SAME` (see [`Self::add`]).
+    kept: HashSet<(i32, i32)>,
 }
 
 impl PlacedTiles {
@@ -2453,8 +2470,21 @@ impl PlacedTiles {
         )
     }
 
+    /// Centres this close (on a grid this fine) count as one tile.
+    const SAME: f32 = 0.5;
+
+    /// Adds a tile centred on `c`. One within half a point of a tile already kept adds
+    /// nothing: it blocks the same slides but for a sliver, so a symbol placed clear of the
+    /// kept one still keeps more than a point of the 2 pt gap from it. So a heap of symbols
+    /// piled on one spot (zoomed far out) doesn't make every later search longer.
     fn add(&mut self, c: Pos2) {
-        self.cells.entry(Self::cell(c)).or_default().push(c);
+        let key = (
+            (c.x / Self::SAME).round() as i32,
+            (c.y / Self::SAME).round() as i32,
+        );
+        if self.kept.insert(key) {
+            self.cells.entry(Self::cell(c)).or_default().push(c);
+        }
     }
 
     /// The placed centres within `r` of `at` (in each axis), and maybe a few more.
@@ -2462,7 +2492,9 @@ impl PlacedTiles {
         let (x0, y0) = Self::cell(at - Vec2::splat(r));
         let (x1, y1) = Self::cell(at + Vec2::splat(r));
         let mut out = Vec::new();
-        let span = (i64::from(x1) - i64::from(x0) + 1) * (i64::from(y1) - i64::from(y0) + 1);
+        // (Saturating: an unbounded reach covers every cell.)
+        let span =
+            (i64::from(x1) - i64::from(x0) + 1).saturating_mul(i64::from(y1) - i64::from(y0) + 1);
         if span > self.cells.len() as i64 {
             // Fewer cells in use than in the square: go through those in use.
             for v in self.cells.values() {
@@ -2483,24 +2515,19 @@ impl PlacedTiles {
         out
     }
 
-    /// Where a glyph whose own spot is `at` goes to clear every tile placed so far: the
-    /// [`stack_spot`] among them all. It looks only within a reach of `at` that it widens
-    /// until the spot found is well inside it, so no tile left out could meet it.
-    fn spot(&self, at: Pos2, along: Vec2, slide: Slide) -> Pos2 {
+    /// Where a glyph whose own spot is `at` goes to clear every tile placed so far (the
+    /// [`stack_spot`] among them all), when that is at most `limit` from `at`; None when it
+    /// is further. Only the tiles that could block a slide that short are looked at.
+    fn spot_within(&self, at: Pos2, along: Vec2, slide: Slide, limit: f32) -> Option<Pos2> {
         let reach = GLYPH_SIZE + 2.0;
-        if !(at.is_finite() && along.is_finite()) {
-            return at;
+        if !(at.is_finite() && along.is_finite()) || limit.is_nan() {
+            return None;
         }
-        let mut r = 4.0 * reach;
-        loop {
-            let c = stack_spot(&self.near(at, r), at, along, slide);
-            // A tile that could meet the spot is within (slide + reach) of `at` in each
-            // axis; the query took every tile within `r` in each axis.
-            if (c - at).length() + reach < r || !r.is_finite() {
-                return c;
-            }
-            r *= 2.0;
-        }
+        // A tile that blocks a slide of at most `limit` is within `limit + reach` of `at`
+        // in each axis; any tile further off blocks only longer slides, which are refused
+        // anyway, so leaving it out changes no answer within `limit`.
+        let c = stack_spot(&self.near(at, limit + reach + 1.0), at, along, slide);
+        (c.distance(at) <= limit).then_some(c)
     }
 }
 
@@ -2571,10 +2598,25 @@ fn stack_spot(placed: &[Pos2], at: Pos2, along: Vec2, slide: Slide) -> Pos2 {
         })
         .collect();
     const EPS: f32 = 1e-3;
+    // `t` is blocked when it is inside some span by more than EPS. Sorted by start, with
+    // the furthest end reached so far, that is one binary search per slide tried (so a pile
+    // of k tiles costs k log k, not k²).
+    let mut spans: Vec<(f32, f32)> = blocked
+        .iter()
+        .map(|&(lo, hi)| (lo + EPS, hi - EPS))
+        .collect();
+    spans.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let reach_to: Vec<f32> = spans
+        .iter()
+        .scan(f32::NEG_INFINITY, |m, s| {
+            *m = m.max(s.1);
+            Some(*m)
+        })
+        .collect();
     let free = |t: f32| {
-        blocked
-            .iter()
-            .all(|&(lo, hi)| t <= lo + EPS || t >= hi - EPS)
+        // The spans starting before `t`: is `t` short of where any of them ends?
+        let n = spans.partition_point(|s| s.0 < t);
+        n == 0 || reach_to[n - 1] <= t
     };
     let mut best: Option<f32> = None;
     for t in std::iter::once(0.0).chain(blocked.iter().flat_map(|&(lo, hi)| [lo, hi])) {
@@ -4174,14 +4216,180 @@ mod tests {
             (vec2(-1.0, 0.0), Slide::Within(-5.0, f32::INFINITY)),
         ] {
             let want = stack_spot(&all, at, along, slide);
-            let got = tiles.spot(at, along, slide);
-            assert!(
-                got.distance(want) < 1e-3,
-                "{slide:?}: {got:?}, not {want:?}"
-            );
+            let need = want.distance(at);
+            for limit in [0.0, 10.0, 40.0, 200.0, 2000.0, f32::INFINITY] {
+                let got = tiles.spot_within(at, along, slide, limit);
+                if need <= limit {
+                    let got = got.unwrap_or_else(|| panic!("{slide:?} within {limit}: none"));
+                    assert!(
+                        got.distance(want) < 1e-3,
+                        "{slide:?} within {limit}: {got:?}, not {want:?}"
+                    );
+                } else {
+                    assert!(got.is_none(), "{slide:?} within {limit}: {got:?}");
+                }
+            }
         }
-        let far = tiles.spot(at, vec2(1.0, 0.0), Slide::Forward);
-        assert!(far.x > at.x + 59.0 * 19.0, "past the whole run: {far:?}");
+        let far = tiles.spot_within(at, vec2(1.0, 0.0), Slide::Forward, f32::INFINITY);
+        assert!(
+            far.is_some_and(|f| f.x > at.x + 59.0 * 19.0),
+            "past the whole run: {far:?}"
+        );
+        assert_eq!(
+            tiles.spot_within(at, vec2(1.0, 0.0), Slide::Forward, 100.0),
+            None,
+            "the run is longer than the limit"
+        );
+    }
+
+    /// [`stack_spot`] (one binary search per slide tried) picks the slide the plain rule
+    /// does: the free one nearest 0 (forward on a tie) among 0 and the ends of the blocked
+    /// spans, a slide being free when it is inside no span by more than EPS. Checked on
+    /// piles of tiles that touch, overlap and sit on one another.
+    #[test]
+    fn stack_spot_matches_the_plain_rule() {
+        let reach = GLYPH_SIZE + 2.0;
+        let plain = |placed: &[Pos2], at: Pos2, along: Vec2, slide: Slide| -> Pos2 {
+            const EPS: f32 = 1e-3;
+            let blocked: Vec<(f32, f32)> = placed
+                .iter()
+                .filter_map(|c| {
+                    let d = *c - at;
+                    let span = |d: f32, u: f32| -> Option<(f32, f32)> {
+                        if u.abs() < 1e-6 {
+                            (d.abs() < reach).then_some((f32::NEG_INFINITY, f32::INFINITY))
+                        } else {
+                            let (p, q) = ((d - reach) / u, (d + reach) / u);
+                            Some((p.min(q), p.max(q)))
+                        }
+                    };
+                    let ((x0, x1), (y0, y1)) = (span(d.x, along.x)?, span(d.y, along.y)?);
+                    let (lo, hi) = (x0.max(y0), x1.min(y1));
+                    (lo < hi).then_some((lo, hi))
+                })
+                .collect();
+            let free = |t: f32| {
+                blocked
+                    .iter()
+                    .all(|&(lo, hi)| t <= lo + EPS || t >= hi - EPS)
+            };
+            let mut best: Option<f32> = None;
+            for t in std::iter::once(0.0).chain(blocked.iter().flat_map(|&(lo, hi)| [lo, hi])) {
+                let allowed = match slide {
+                    Slide::Either => true,
+                    Slide::Forward => t >= 0.0,
+                    Slide::Within(lo, hi) => t >= lo - EPS && t <= hi + EPS,
+                };
+                if !t.is_finite() || !allowed || !free(t) {
+                    continue;
+                }
+                if best.is_none_or(|b| {
+                    t.abs() < b.abs() - EPS || ((t.abs() - b.abs()).abs() <= EPS && t > b)
+                }) {
+                    best = Some(t);
+                }
+            }
+            at + along * best.unwrap_or(0.0)
+        };
+        // A small deterministic scatter (an LCG), in a few densities.
+        let mut seed = 0x2545_f491_u32;
+        let mut rnd = move || {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (seed >> 8) as f32 / (1u32 << 24) as f32
+        };
+        let at = pos2(0.0, 0.0);
+        for spread in [8.0_f32, 20.0, 60.0, 200.0] {
+            for n in [1, 5, 30, 120] {
+                let mut placed: Vec<Pos2> = (0..n)
+                    .map(|_| pos2((rnd() - 0.5) * spread, (rnd() - 0.5) * spread))
+                    .collect();
+                // Tiles exactly a tile and gap apart (touching), and a repeat.
+                placed.push(pos2(reach, 0.0));
+                placed.push(pos2(2.0 * reach, 0.0));
+                placed.push(pos2(-reach, 0.0));
+                placed.push(placed[0]);
+                for along in [vec2(1.0, 0.0), vec2(0.0, -1.0), vec2(0.6, 0.8)] {
+                    for slide in [
+                        Slide::Either,
+                        Slide::Forward,
+                        Slide::Within(-7.0, f32::INFINITY),
+                        Slide::Within(f32::NEG_INFINITY, 3.0),
+                    ] {
+                        let (got, want) = (
+                            stack_spot(&placed, at, along, slide),
+                            plain(&placed, at, along, slide),
+                        );
+                        assert!(
+                            got.distance(want) < 1e-3,
+                            "{n} over {spread}, {along:?} {slide:?}: {got:?}, not {want:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// A tile on (or within a sliver of) one already placed adds nothing to search
+    /// through.
+    #[test]
+    fn a_tile_on_a_placed_tile_is_kept_once() {
+        let mut tiles = PlacedTiles::default();
+        for i in 0..50 {
+            tiles.add(pos2(
+                4.0 + (i % 3) as f32 * 0.05,
+                4.0 - (i % 2) as f32 * 0.05,
+            ));
+        }
+        tiles.add(pos2(30.0, 4.0));
+        tiles.add(pos2(4.0, 5.0));
+        assert_eq!(tiles.near(pos2(4.0, 4.0), 100.0).len(), 3);
+    }
+
+    /// The cost of laying out a heap of symbols zoomed far out, and of the same drawing
+    /// zoomed in where they spread (a perf baseline: run with
+    /// `cargo test -p drift-app --release -- --ignored glyph_heap_baseline --nocapture`).
+    #[test]
+    #[ignore]
+    fn glyph_heap_baseline() {
+        let v = DVec2::new;
+        for n in [250, 1000] {
+            let mut doc = Document::new();
+            // A grid of short lines, each Horizontal or Vertical and each Equal to the
+            // next: two or three symbols a line.
+            let side = (f64::from(n)).sqrt().ceil() as i32;
+            let mut prev = None;
+            for i in 0..n {
+                let (x, y) = (f64::from(i % side) * 30.0, f64::from(i / side) * 30.0);
+                let flat = i % 2 == 0;
+                let a = doc.add_point(v(x, y));
+                let b = doc.add_point(if flat { v(x + 20.0, y) } else { v(x, y + 20.0) });
+                let line = doc.add_line(a, b).unwrap();
+                let c = if flat {
+                    Constraint::Horizontal { line }
+                } else {
+                    Constraint::Vertical { line }
+                };
+                doc.add_constraint(c).unwrap();
+                if let Some(p) = prev {
+                    doc.add_constraint(Constraint::Equal { a: p, b: line })
+                        .unwrap();
+                }
+                prev = Some(line);
+            }
+            let extent = f64::from(side) * 30.0;
+            for (what, scale) in [("heaped", 2.0 / extent), ("spread", 1.0)] {
+                let mut map = view_at(scale);
+                map.camera.center = v(extent / 2.0, extent / 2.0);
+                let runs = 5;
+                let t = std::time::Instant::now();
+                let mut count = 0;
+                for _ in 0..runs {
+                    count = std::hint::black_box(layout_glyphs(&doc, &map)).len();
+                }
+                let ms = t.elapsed().as_secs_f64() * 1000.0 / f64::from(runs);
+                eprintln!("{n} lines, {count} symbols, {what}: {ms:.2} ms a layout");
+            }
+        }
     }
 
     /// Zoomed so far out that many curves' symbols fall on one spot, they heap there rather

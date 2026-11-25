@@ -92,12 +92,12 @@ jobs:
             exit 1
           fi
       # The installer shows LICENSE.md for the user to accept: never ship one still marked as
-      # a draft for legal review. Exceptions: the user let Beta 1.6 (2026-11-04) and Beta 1.7
-      # (2026-11-20) ship with the draft. The list names tags one by one, matched exactly; any
-      # other tag is still refused.
+      # a draft for legal review. Exceptions: the user let Beta 1.6 (2026-11-04), Beta 1.7
+      # (2026-11-20) and Beta 1.8 (2026-11-25) ship with the draft. The list names tags one by
+      # one, matched exactly; any other tag is still refused.
       - name: Check the licence agreement is final
         env:
-          DRAFT_LICENCE_ALLOWED_TAGS: "v0.1.0-beta.1.6 v0.1.0-beta.1.7"
+          DRAFT_LICENCE_ALLOWED_TAGS: "v0.1.0-beta.1.6 v0.1.0-beta.1.7 v0.1.0-beta.1.8"
         run: |
           if grep -qw DRAFT LICENSE.md; then
             for allowed in $DRAFT_LICENCE_ALLOWED_TAGS; do

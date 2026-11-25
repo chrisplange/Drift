@@ -13,7 +13,7 @@ technical drawings, floor plans and design exploration. It is written in Rust, r
 GPU with [wgpu](https://wgpu.rs), and runs natively on Windows, macOS and Linux and in the
 browser (WebGPU, with a WebGL2 fallback).
 
-> **Status: beta (0.1.0-beta.1.7).** Expect rough edges, and save often. Files saved by a
+> **Status: beta (0.1.0-beta.1.8).** Expect rough edges, and save often. Files saved by a
 > newer build don't open in an older one.
 
 New to Drift? Start with the [user guide](docs/guide/README.md). The complete, code-referenced

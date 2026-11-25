@@ -140,7 +140,8 @@ lit. **Points** covers end points, standalone points and the origin; **Grid** is
 switch as **Snap to grid**. Hold Shift+S, move towards a kind and let go to turn it on or off.
 Tap Shift+S and the ring stays open: click kinds, or press the letter shown on each (M for
 **Midpoint**, G for **Grid**), then Shift+S, Esc or a right click to close it. The kinds you
-turn off stay off in this drawing until you turn them on again.
+turn off stay off, in every drawing and the next time you start Drift, until you turn them on
+again.
 
 **Perpendicular** and **Tangent** are the two halves of the **Perpendicular & tangent**
 switch: turn both off in the pie and the switch goes off, with its guides; turn one on while

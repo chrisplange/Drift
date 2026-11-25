@@ -90,8 +90,12 @@ impl DriftApp {
         });
         let rects = self.pie_pills;
         let Some(pie) = &mut self.select_pie else {
-            if !pressed || self.tool.is_busy() || ctx.egui_wants_keyboard_input() {
+            if !pressed || ctx.egui_wants_keyboard_input() {
                 return false;
+            }
+            if self.tool.is_busy() {
+                self.pie_waits_for_tool(crate::commands::Command::SelectionFilterPie, now);
+                return true;
             }
             // Down and up in one frame, a tap, leaves the ring open to click.
             self.open_select_pie(ctx, pointer, !released);
@@ -113,9 +117,7 @@ impl DriftApp {
             if pie.clicked {
                 // Kinds were clicked with the key down: they stand, and the ring is done.
                 self.select_pie = None;
-            } else if let Some(place) =
-                pie_style::flick_place(&rects, pie.center, pie.from, pointer)
-            {
+            } else if let Some(place) = pie_style::flick_place(&rects, pie.from, pointer) {
                 // A flick: let go towards a kind to pick only it. Let go in the middle and
                 // the ring stays, to click.
                 self.select_pie_flick(place, now);
@@ -198,9 +200,10 @@ impl DriftApp {
                 } else if response.secondary_clicked() {
                     clicked = Some(None);
                 }
-                let hot = pie_style::hot_place(&rects, center, pointer, flick_from);
+                let hot = pie_style::hot_place(&rects, pointer, flick_from);
                 let flicks = flick_from.is_some();
-                let aim = pointer.filter(|_| flicks && hot.is_some());
+                let aim =
+                    flick_from.and_then(|from| pie_style::flick_aim(&rects, center, from, pointer));
                 paint(
                     painter, center, filter, aim, &rects, labels, keys, hot, flicks,
                 );
@@ -221,7 +224,7 @@ fn paint(
     painter: &egui::Painter,
     center: egui::Pos2,
     filter: PickFilter,
-    aim: Option<egui::Pos2>,
+    aim: Option<egui::Vec2>,
     rects: &[egui::Rect; 8],
     labels: [std::sync::Arc<egui::Galley>; 8],
     keys: [std::sync::Arc<egui::Galley>; 8],

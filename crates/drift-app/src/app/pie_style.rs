@@ -140,12 +140,12 @@ pub(crate) fn pill_under(rects: &[egui::Rect; 8], pointer: Option<egui::Pos2>) -
 }
 
 /// What a flick chooses (letting go of the key), and what is lit while the key is held: the
-/// pill under the pointer, else the place it is towards. Nothing until the pointer has moved
-/// [`DEAD_ZONE`] from `from`, where it was when the pie opened, so a tap of the key never
-/// chooses, even where the window's edge kept the hub away from the pointer.
+/// pill under the pointer, else the place the pointer has moved towards from `from`, where it
+/// was when the pie opened. Nothing until it has moved [`DEAD_ZONE`] from there, so a tap of
+/// the key never chooses. Measured from `from`, not the hub, so a flick follows the gesture
+/// even where the window's edge kept the hub away from the pointer.
 pub(crate) fn flick_place(
     rects: &[egui::Rect; 8],
-    center: egui::Pos2,
     from: egui::Pos2,
     pointer: Option<egui::Pos2>,
 ) -> Option<usize> {
@@ -153,19 +153,36 @@ pub(crate) fn flick_place(
     if (p - from).length() < DEAD_ZONE {
         return None;
     }
-    pill_under(rects, Some(p)).or_else(|| place_at(center, p))
+    pill_under(rects, Some(p)).or_else(|| place_at(from, p))
+}
+
+/// Which way the hub's mark points while a flick would choose something (see
+/// [`flick_place`]): at the pill under the pointer, else along the gesture. `None` when a
+/// flick would choose nothing.
+pub(crate) fn flick_aim(
+    rects: &[egui::Rect; 8],
+    center: egui::Pos2,
+    from: egui::Pos2,
+    pointer: Option<egui::Pos2>,
+) -> Option<egui::Vec2> {
+    let place = flick_place(rects, from, pointer)?;
+    let p = pointer?;
+    Some(if rects[place].contains(p) {
+        p - center
+    } else {
+        p - from
+    })
 }
 
 /// The pill that would be chosen: while the key is held (`flick_from`, where the pointer was
 /// when the pie opened), what a flick chooses; otherwise the one under the pointer.
 pub(crate) fn hot_place(
     rects: &[egui::Rect; 8],
-    center: egui::Pos2,
     pointer: Option<egui::Pos2>,
     flick_from: Option<egui::Pos2>,
 ) -> Option<usize> {
     match flick_from {
-        Some(from) => flick_place(rects, center, from, pointer),
+        Some(from) => flick_place(rects, from, pointer),
         None => pill_under(rects, pointer),
     }
 }
@@ -286,20 +303,20 @@ pub(crate) fn paint_pill(
     }
 }
 
-/// A pie's middle: a ring, with a mark on it that rolls round towards `aim` (the pointer
-/// while a flick would choose something, `None` otherwise) rather than stepping between the
-/// eight places.
+/// A pie's middle: a ring, with a mark on it that rolls round to point along `aim` (from
+/// [`flick_aim`] while a flick would choose something, `None` otherwise) rather than stepping
+/// between the eight places.
 pub(crate) fn paint_hub(
     painter: &egui::Painter,
     center: egui::Pos2,
-    aim: Option<egui::Pos2>,
+    aim: Option<egui::Vec2>,
     mark: egui::Color32,
 ) {
     let n = theme::neutrals(painter.ctx().theme() == egui::Theme::Dark);
     let r = DEAD_ZONE - 6.0;
     painter.circle_filled(center, r, n.raised);
     painter.circle_stroke(center, r, egui::Stroke::new(2.0, n.control_border));
-    if let Some(v) = aim.map(|p| p - center).filter(|v| v.length() > 1.0) {
+    if let Some(v) = aim.filter(|v| v.length() > 1.0) {
         painter.circle_filled(center + v.normalized() * r, 3.5, mark);
     }
 }
@@ -331,7 +348,8 @@ pub(crate) fn paint_caption(
 impl DriftApp {
     /// One pie at a time: a pie's key pressed while another pie is open goes to the pie asked
     /// for, which opens in that one's place (a pie closes the others as it opens). If it
-    /// can't open now, the open one stays. Returns true if the keyboard was used here.
+    /// can't open now, the open one stays and the status line says why. Returns true if the
+    /// keyboard was used here.
     pub(crate) fn switch_pies(&mut self, ctx: &egui::Context) -> bool {
         let open = [
             self.pie.is_some(),
@@ -354,10 +372,72 @@ impl DriftApp {
         true
     }
 
+    /// A pie's key while the tool is part way through something (a shape with points placed,
+    /// a drag): the pie doesn't open, and the status line says why and what to do.
+    pub(crate) fn pie_waits_for_tool(&mut self, command: crate::commands::Command, now: f64) {
+        let key = crate::commands::spec(command)
+            .map(|s| s.key_text(cfg!(target_os = "macos")))
+            .unwrap_or_default();
+        self.set_status(
+            format!("Finish or cancel what the tool is doing (Esc), then press {key}"),
+            false,
+            now,
+        );
+    }
+
     /// Close whichever pie is open.
     pub(crate) fn close_pies(&mut self) {
         self.pie = None;
         self.select_pie = None;
         self.snap_pie = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Eight small pills round a hub at the origin.
+    fn rects(center: egui::Pos2) -> [egui::Rect; 8] {
+        pill_rects(center, [(40.0, None); 8])
+    }
+
+    #[test]
+    fn a_flick_off_the_pills_goes_the_way_the_pointer_moved_from_where_it_started() {
+        // The hub kept 150 above the pointer (as at the window's bottom).
+        let center = egui::pos2(500.0, 300.0);
+        let from = egui::pos2(500.0, 450.0);
+        let r = rects(center);
+        // A tap: nothing.
+        assert_eq!(flick_place(&r, from, Some(from)), None);
+        assert_eq!(
+            flick_place(&r, from, Some(from + egui::vec2(10.0, 0.0))),
+            None
+        );
+        // Left, right and up from where it started, though all lie below the hub.
+        let left = from + egui::vec2(-60.0, 0.0);
+        let right = from + egui::vec2(60.0, 0.0);
+        let up = from + egui::vec2(0.0, -30.0);
+        for p in [left, right, up] {
+            assert_eq!(pill_under(&r, Some(p)), None);
+        }
+        assert_eq!(flick_place(&r, from, Some(left)), Some(4));
+        assert_eq!(flick_place(&r, from, Some(right)), Some(0));
+        assert_eq!(flick_place(&r, from, Some(up)), Some(2));
+        // The mark points the same way.
+        let aim = flick_aim(&r, center, from, Some(left)).unwrap();
+        assert!(aim.x < 0.0 && aim.y.abs() < 1e-3);
+        assert_eq!(flick_aim(&r, center, from, Some(from)), None);
+    }
+
+    #[test]
+    fn over_a_pill_the_flick_and_the_mark_go_to_that_pill() {
+        let center = egui::pos2(500.0, 300.0);
+        let from = egui::pos2(500.0, 450.0);
+        let r = rects(center);
+        let p = r[6].center();
+        assert_eq!(flick_place(&r, from, Some(p)), Some(6));
+        let aim = flick_aim(&r, center, from, Some(p)).unwrap();
+        assert_eq!(place_at(center, center + aim), Some(6));
     }
 }

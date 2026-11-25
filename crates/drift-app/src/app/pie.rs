@@ -149,8 +149,12 @@ impl DriftApp {
             return true;
         }
         let Some(pie) = &mut self.pie else {
-            if !pressed || self.tool.is_busy() {
+            if !pressed {
                 return false;
+            }
+            if self.tool.is_busy() {
+                self.pie_waits_for_tool(crate::commands::Command::RelationsPie, now);
+                return true;
             }
             if self.drawing.editor.selection.is_empty()
                 && self.drawing.editor.selected_midpoints.is_empty()
@@ -180,7 +184,7 @@ impl DriftApp {
             // A flick: let go towards a relation to choose it. Let go in the middle and the
             // ring stays, to click.
             let rects = self.pie_pills;
-            if let Some(place) = pie_style::flick_place(&rects, pie.center, pie.from, pointer) {
+            if let Some(place) = pie_style::flick_place(&rects, pie.from, pointer) {
                 self.pie_choose(place, now);
             }
         }
@@ -263,8 +267,8 @@ impl DriftApp {
             std::array::from_fn(|p| (labels[p].size().x, keys[p].as_ref().map(|k| k.size().x))),
         );
         self.pie_pills = rects;
-        let hot = pie_style::hot_place(&rects, center, pointer, flick_from);
-        let aim = pointer.filter(|_| flick_from.is_some() && hot.is_some());
+        let hot = pie_style::hot_place(&rects, pointer, flick_from);
+        let aim = flick_from.and_then(|from| pie_style::flick_aim(&rects, center, from, pointer));
         let conflict = hot.is_some_and(|place| self.pie_conflict(place, &slices[place]));
         let screen = ctx.content_rect();
         let mut clicked = None;

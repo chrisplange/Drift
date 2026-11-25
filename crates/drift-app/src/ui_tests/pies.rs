@@ -7,7 +7,7 @@ use drift_edit::editor::{PickFilter, PickKind};
 use drift_geom::{SnapKind, SnapKinds};
 
 use super::*;
-use crate::app::pie_style::place_at;
+use crate::app::pie_style::{pill_under, place_at};
 use crate::commands::{Command, ViewFlag, spec};
 
 const SHIFT: egui::Modifiers = egui::Modifiers::SHIFT;
@@ -147,6 +147,35 @@ fn a_tap_near_the_edge_leaves_the_ring_open() {
     );
 }
 
+/// Near the window's bottom the hub opens well above the pointer, which is then below every
+/// pill. Hold the key and move left: the flick goes left (Quadrant), the way the pointer
+/// moved, not towards the bottom pill that lies that way from the hub.
+#[test]
+fn a_flick_near_the_edge_follows_the_gesture() {
+    let Some(mut h) = harness() else { return };
+    let canvas = h.state().drawing.view.canvas_rect;
+    let at = egui::pos2(canvas.center().x, canvas.bottom() - 20.0);
+    h.hover_at(at);
+    h.run();
+    h.key_down_modifiers(SHIFT, Key::S);
+    h.run();
+    let center = h.state().snap_pie.as_ref().expect("open").center;
+    let to = at + egui::vec2(-60.0, 0.0);
+    assert_eq!(pill_under(&h.state().pie_pills, Some(to)), None);
+    assert_ne!(
+        place_at(center, to),
+        Some(4),
+        "from the hub, the pointer is towards another place"
+    );
+    h.hover_at(to);
+    h.run();
+    h.key_up_modifiers(SHIFT, Key::S);
+    h.run();
+    assert!(h.state().snap_pie.is_none(), "a flick closes the ring");
+    assert_eq!(kinds(&h), SnapKinds::ALL.with(SnapKind::Quadrant, false));
+    assert_eq!(status(&h), "Quadrant snapping off");
+}
+
 #[test]
 fn a_kinds_letter_turns_it_on_or_off_with_the_ring_open() {
     let Some(mut h) = harness() else { return };
@@ -267,4 +296,67 @@ fn no_pie_on_a_sheet() {
             "{command:?} isn't offered on a sheet"
         );
     }
+}
+
+/// While the tool is part way through a shape, the relations and Selection filter pies wait:
+/// their keys say so on the status line, from another pie (which stays) or from none.
+#[test]
+fn a_pie_waiting_for_the_tool_says_so() {
+    let Some(mut h) = harness() else { return };
+    h.state_mut().set_tool(ToolKind::Line);
+    h.run();
+    let at = h.state().drawing.view.canvas_rect.center();
+    click_at(&mut h, at + egui::vec2(-80.0, 40.0));
+    assert!(h.state().tool.is_busy(), "a line started");
+    // The snap pie opens mid-line; the Selection filter pie's key from it is refused, aloud.
+    tap_snap_pie(&mut h);
+    h.state_mut().status = None;
+    h.key_press_modifiers(SHIFT, Key::Q);
+    h.run();
+    assert!(h.state().snap_pie.is_some(), "the snap pie stays");
+    assert!(h.state().select_pie.is_none());
+    assert!(
+        status(&h).starts_with("Finish or cancel what the tool is doing"),
+        "{}",
+        status(&h)
+    );
+    assert!(status(&h).ends_with("Shift+Q"), "{}", status(&h));
+    h.key_press(Key::Escape);
+    h.run();
+    assert!(h.state().snap_pie.is_none());
+    assert!(h.state().tool.is_busy(), "Esc closed the pie, not the line");
+    // With no pie open, the same for both.
+    for (key, modifiers) in [(Key::Q, egui::Modifiers::NONE), (Key::Q, SHIFT)] {
+        h.state_mut().status = None;
+        h.key_press_modifiers(modifiers, key);
+        h.run();
+        assert!(h.state().pie.is_none() && h.state().select_pie.is_none());
+        assert!(
+            status(&h).starts_with("Finish or cancel what the tool is doing"),
+            "{}",
+            status(&h)
+        );
+    }
+}
+
+/// The snap pie's kinds are an app preference: they carry into a new drawing, and through
+/// the saved preferences into the next start.
+#[test]
+fn snap_kinds_stay_for_every_drawing_and_the_next_start() {
+    let Some(mut h) = harness() else { return };
+    tap_snap_pie(&mut h);
+    h.key_press(Key::M);
+    h.run();
+    h.key_press(Key::Escape);
+    h.run();
+    let off = SnapKinds::ALL.with(SnapKind::Midpoint, false);
+    assert_eq!(kinds(&h), off);
+    h.state_mut().perform(crate::Pending::New);
+    h.run();
+    assert_eq!(kinds(&h), off, "a new drawing keeps them");
+    let saved = h.state().view_prefs();
+    let Some(mut next) = harness() else { return };
+    assert_eq!(kinds(&next), SnapKinds::ALL);
+    next.state_mut().apply_view_prefs(&saved);
+    assert_eq!(kinds(&next), off, "the next start keeps them");
 }

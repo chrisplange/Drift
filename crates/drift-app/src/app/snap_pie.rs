@@ -34,15 +34,17 @@ pub(crate) const PLACES: [(&str, &[SnapKind]); 8] = [
     ("Tangent", &[SnapKind::Tangent]),
 ];
 
-/// While the ring is open, the key that turns each place on or off (shown on its pill).
+/// While the ring is open, the key that turns each place on or off (shown on its pill): a
+/// letter of its name, and for Points the same as in the Selection filter pie. Q and S open
+/// pies, so Quadrant takes U and Perpendicular R.
 pub(crate) const KEYS: [Key; 8] = [
-    Key::E,
+    Key::P,
     Key::M,
     Key::G,
     Key::C,
     Key::U,
     Key::O,
-    Key::P,
+    Key::R,
     Key::T,
 ];
 
@@ -191,9 +193,7 @@ impl DriftApp {
             pie.held = false;
             if pie.clicked {
                 self.snap_pie = None;
-            } else if let Some(place) =
-                pie_style::flick_place(&rects, pie.center, pie.from, pointer)
-            {
+            } else if let Some(place) = pie_style::flick_place(&rects, pie.from, pointer) {
                 // A flick: let go towards a kind to turn it on or off, and the ring closes.
                 self.snap_pie = None;
                 self.snap_pie_toggle(place);
@@ -274,8 +274,9 @@ impl DriftApp {
                 } else if response.secondary_clicked() {
                     clicked = Some(None);
                 }
-                let hot = pie_style::hot_place(&rects, center, pointer, flick_from);
-                let aim = pointer.filter(|_| flick_from.is_some() && hot.is_some());
+                let hot = pie_style::hot_place(&rects, pointer, flick_from);
+                let aim =
+                    flick_from.and_then(|from| pie_style::flick_aim(&rects, center, from, pointer));
                 paint(painter, center, switches, aim, &rects, labels, keys, hot);
             });
         if let Some(rects) = shown {
@@ -294,7 +295,7 @@ fn paint(
     painter: &egui::Painter,
     center: egui::Pos2,
     switches: Switches,
-    aim: Option<egui::Pos2>,
+    aim: Option<egui::Vec2>,
     rects: &[egui::Rect; 8],
     labels: [std::sync::Arc<egui::Galley>; 8],
     keys: [std::sync::Arc<egui::Galley>; 8],
@@ -432,6 +433,25 @@ mod tests {
         }
         assert_eq!(none.summary(), "nothing");
         assert_eq!(none.toggled(1).toggled(2).summary(), "Midpoint, Grid");
+    }
+
+    /// A kind both pies have (Points) takes the same letter in both, so a letter learnt in
+    /// one doesn't turn something else on or off in the other.
+    #[test]
+    fn a_kind_in_both_pies_has_one_letter() {
+        let mut shared = 0;
+        for (place, kind) in crate::app::select_pie::PLACES.iter().enumerate() {
+            let label = kind.map_or("All", drift_edit::editor::PickKind::short_label);
+            if let Some(here) = PLACES.iter().position(|(name, _)| *name == label) {
+                shared += 1;
+                assert_eq!(
+                    KEYS[here],
+                    crate::app::select_pie::KEYS[place],
+                    "{label} has two letters"
+                );
+            }
+        }
+        assert!(shared > 0, "Points is in both");
     }
 
     #[test]

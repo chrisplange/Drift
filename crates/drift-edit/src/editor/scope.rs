@@ -73,6 +73,19 @@ impl Editor {
         self.edit_scope().is_none_or(|s| s.contains(&id))
     }
 
+    /// Whether the tools that pick under the pointer may take entity `id`. In the model:
+    /// what's [`in_scope`](Self::in_scope). On a sheet ([`on_sheet`](Self::on_sheet)), which
+    /// shows the drawing as it will be once a block edited in place is finished (and makes
+    /// nothing that goes into a group or block): everything but that edit's temporary
+    /// geometry, as [`sketch_snap`](Self::sketch_snap) snaps. Those entities aren't drawn
+    /// there, and finishing the edit deletes them along with whatever is tied to them.
+    pub fn in_pick_scope(&self, id: EntityId) -> bool {
+        match self.on_sheet {
+            Some(_) => self.snap_scope().is_none_or(|s| !s.contains(&id)),
+            None => self.in_scope(id),
+        }
+    }
+
     /// Whether tools may see a fill: one whose whole outline is in the
     /// [`edit_scope`](Self::edit_scope) (what finishing a block edit takes into the block).
     pub fn fill_in_scope(&self, fill: drift_core::FillId) -> bool {

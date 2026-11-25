@@ -72,13 +72,14 @@ impl<'a> Rule<'a> {
         }
     }
 
-    /// (Nothing outside a group or block open for editing, whatever the rule.)
+    /// (Nothing outside a group or block open for editing, whatever the rule; on a sheet,
+    /// nothing of a block edit's temporary geometry: see [`Editor::in_pick_scope`].)
     fn allows(&self, ed: &Editor, id: EntityId) -> bool {
         !(self.locked && ed.is_locked(id))
             && !self.hidden.is_some_and(|h| h.contains(&id))
             && !(self.centres && ed.centre_unseen(id))
             && self.filter.is_none_or(|f| f.allows(&ed.doc, id))
-            && ed.in_scope(id)
+            && ed.in_pick_scope(id)
     }
 }
 

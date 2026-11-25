@@ -50,6 +50,11 @@ const WINDOW_GAP: f32 = 10.0;
 const SNAP: f32 = 8.0;
 /// A floating window's width until it is resized.
 const FLOAT_WIDTH: f32 = 300.0;
+/// The least width of a dock or a floating window.
+const MIN_WIDTH: f32 = 240.0;
+/// The most a dock or floating window widens itself to fit what it holds; past this, the
+/// rest is cut off.
+const MOST_NEEDED: f32 = 480.0;
 
 /// Panel interaction that lasts between frames but isn't saved.
 #[derive(Default)]
@@ -68,10 +73,18 @@ pub(crate) struct DockView {
     windows: HashMap<Panel, egui::Rect>,
     /// The floating windows as drawn the frame before (`windows` fills as they are drawn).
     last_windows: HashMap<Panel, egui::Rect>,
-    /// Each floating window's top left when the pointer went down, held until it comes up:
-    /// what a resize measures its room from (#505).
-    /// And whether the press was on its right or bottom edge (a resize that keeps its top left).
-    pressed_at: HashMap<Panel, (egui::Pos2, bool)>,
+    /// Each floating window as it stood when the pointer went down, held until it comes up:
+    /// what a resize measures its room from (#505). And which of its edges the press was on.
+    pressed_at: HashMap<Panel, (egui::Rect, Grip)>,
+    /// How much wider than shown each panel's contents were when last drawn.
+    overflow: HashMap<Panel, f32>,
+    /// The least width each dock was found to need while its edge is held (see `dock`).
+    dock_needs: [Option<f32>; 2],
+    /// Each dock's width as last drawn (`docks` is cleared at the start of a frame).
+    dock_widths: [f32; 2],
+    /// How wide each floating panel's contents were when last drawn: never wider than its
+    /// window, which can't be resized narrower than this.
+    content_width: HashMap<Panel, f32>,
     /// How tall each panel's contents were when last drawn (nothing cut off).
     content: HashMap<Panel, f32>,
     /// The header of each floating panel as last drawn (the part that docks it when dragged).
@@ -213,16 +226,31 @@ impl DriftApp {
                 .show(ui, |ui| self.rail(ui, side, &panels))
                 .response
         } else {
+            let front = self.layout.active[i]
+                .filter(|p| panels.contains(p))
+                .unwrap_or(panels[0]);
+            // Never narrower than what the front panel holds. A dock can't measure that
+            // before it is drawn, so it learns it from what was cut off: while the edge is
+            // held, the least width found holds the edge there (from the next frame); let go,
+            // it is forgotten, so contents that have since become narrower can be narrowed
+            // to. What was cut off when nothing is held widens the dock to fit.
+            let over = self.dock_view.overflow.get(&front).copied().unwrap_or(0.0);
+            let needs = &mut self.dock_view.dock_needs[i];
+            if !ui.input(|i| i.pointer.primary_down()) {
+                *needs = None;
+            }
+            if over > 0.5 {
+                let wide = self.dock_view.dock_widths[i] + over;
+                *needs = Some(needs.unwrap_or(0.0).max(wide));
+            }
+            let least = needs.map_or(MIN_WIDTH, |w| w.clamp(MIN_WIDTH, MOST_NEEDED));
             make("dock")
                 .show_separator_line(false)
                 .resizable(true)
                 .default_size(310.0)
-                .min_size(240.0)
+                .min_size(least)
                 .frame(egui::Frame::side_top_panel(&style).inner_margin(egui::Margin::ZERO))
                 .show(ui, |ui| {
-                    let front = self.layout.active[i]
-                        .filter(|p| panels.contains(p))
-                        .unwrap_or(panels[0]);
                     if !self.tab_bar(ui, side, &panels, front) {
                         front_title(ui, front);
                     }
@@ -239,6 +267,7 @@ impl DriftApp {
         };
         theme::pane_edge(ui, response.rect, edge);
         self.dock_view.docks[i] = Some(response.rect);
+        self.dock_view.dock_widths[i] = response.rect.width();
     }
 
     /// A panel's contents.
@@ -569,9 +598,12 @@ impl DriftApp {
         // slide up past its top, where the header would be cut off under the bar above.
         let most = canvas.height().floor();
         let down = ctx.input(|i| i.pointer.primary_down());
-        if !down {
-            self.dock_view.pressed_at.clear();
-        }
+        // The presses just let go of.
+        let released = if down {
+            HashMap::new()
+        } else {
+            std::mem::take(&mut self.dock_view.pressed_at)
+        };
         // What a window Drift places itself keeps off: the picks, unless they fill the view.
         let avoid = self.selection_on_screen(canvas);
         let narrow = self.dock_view.was_wide == Some(false);
@@ -630,7 +662,7 @@ impl DriftApp {
                 let size = ctx
                     .memory(|m| m.area_rect(id))
                     .map_or(egui::vec2(FLOAT_WIDTH, tall), |r| {
-                        egui::vec2(r.width().max(240.0), r.height().min(most))
+                        egui::vec2(r.width().max(MIN_WIDTH), r.height().min(most))
                     });
                 let size = egui::vec2(size.x, if shut { headers } else { size.y });
                 let at = self.float_spot(
@@ -660,7 +692,7 @@ impl DriftApp {
                 .movable(true)
                 .frame(frame)
                 .default_size([FLOAT_WIDTH, tall.min(room)])
-                .min_width(240.0)
+                .min_width(MIN_WIDTH)
                 .min_height(least.min(most))
                 .max_height(most)
                 // Placed by its top left (see `float_at`).
@@ -682,36 +714,62 @@ impl DriftApp {
             // far the pointer went past the edge, and kept the pointer's size on release. The
             // cap below keeps what is drawn inside the canvas.
             if let Some(r) = self.dock_view.last_windows.get(&top) {
-                let (from, edge) = if down {
+                let (from, grip) = if down {
                     *self.dock_view.pressed_at.entry(top).or_insert_with(|| {
                         let origin = ctx.input(|i| i.pointer.press_origin());
-                        let grip = 8.0;
-                        let edge = origin.is_some_and(|o| {
-                            r.expand(grip).contains(o)
-                                && ((o.x - r.right()).abs() <= grip
-                                    || (o.y - r.bottom()).abs() <= grip)
-                        });
-                        (r.left_top(), edge)
+                        let reach = ctx.style_of(ctx.theme()).interaction.clone();
+                        let (side, corner) = (
+                            reach.resize_grab_radius_side,
+                            reach.resize_grab_radius_corner,
+                        );
+                        // (Folded, it can't be resized: a press anywhere on it moves it.)
+                        let grip = match origin {
+                            Some(o) if !shut => Grip::at(*r, o, side, corner),
+                            _ => Grip::default(),
+                        };
+                        (*r, grip)
                     })
                 } else {
-                    (r.left_top(), false)
+                    (*r, Grip::default())
                 };
-                if edge {
+                // A left (or top) edge dragged inward past the least width (or height) moves
+                // the window on with the pointer in egui, its right (or bottom) edge walking
+                // away; an area that ends at that edge holds it there.
+                if grip != Grip::default() {
                     let mut room = canvas;
-                    room.max += egui::vec2(1.0e5, 1.0e5);
+                    if grip.right || grip.bottom {
+                        room.max += egui::vec2(1.0e5, 1.0e5);
+                    }
+                    if grip.left {
+                        room.max.x = from.right();
+                    }
+                    if grip.top {
+                        room.max.y = from.bottom();
+                    }
                     window = window.constrain_to(room);
                 }
-                let wide = (canvas.right() - from.x).floor().max(240.0);
-                let high = (canvas.bottom() - from.y)
-                    .floor()
-                    .min(most)
-                    .max(least.min(most));
+                // A left (or top) edge dragged grows the window from its right (or bottom)
+                // edge, which stays put: the room is on the other side (measured from where
+                // the window stood when the pointer went down, else it can't grow until it
+                // is let go).
+                let wide = if grip.left {
+                    from.right() - canvas.left()
+                } else {
+                    canvas.right() - from.left()
+                };
+                let high = if grip.top {
+                    from.bottom() - canvas.top()
+                } else {
+                    canvas.bottom() - from.top()
+                };
+                let wide = wide.floor().max(MIN_WIDTH);
+                let high = high.floor().min(most).max(least.min(most));
                 window = window.max_width(wide).max_height(high);
             } else if let Some(at) = self.dock_view.float_at.get(&top) {
                 // Put somewhere new: no bigger than the room right of and below that place,
                 // so it isn't pushed back over what it was placed clear of.
                 window = window
-                    .max_width((canvas.right() - EDGE_GAP - at.x).floor().max(240.0))
+                    .max_width((canvas.right() - EDGE_GAP - at.x).floor().max(MIN_WIDTH))
                     .max_height(room);
             }
             // Moved by dragging: its edges snap to the canvas's and to the other windows'.
@@ -719,10 +777,11 @@ impl DriftApp {
             // pointer has gone, so that starting point is what is moved.)
             if ctx.is_being_dragged(id.with("move"))
                 && let Some(r) = self.dock_view.last_windows.get(&top)
-                && let Some((from, false)) = self.dock_view.pressed_at.get(&top).copied()
+                && let Some((from, grip)) = self.dock_view.pressed_at.get(&top).copied()
+                && grip == Grip::default()
                 && let Some(moved) = ctx.input(|i| i.pointer.total_drag_delta())
             {
-                let raw = egui::Rect::from_min_size(from + moved, r.size());
+                let raw = egui::Rect::from_min_size(from.min + moved, r.size());
                 let at = raw.min + snap_offset(raw, canvas, &others);
                 ctx.data_mut(|d| d.insert_temp(id.with("pivot_at_drag_start"), at - moved));
             }
@@ -731,6 +790,29 @@ impl DriftApp {
                     .resizable(false)
                     .min_height(headers)
                     .fixed_size([width, headers]);
+            }
+            // A left (or top) edge just let go of: egui keeps the window where the pointer
+            // put its edge, even past the least width, where it was only held in place (see
+            // above) while the button was down. Its right (or bottom) edge goes back where it
+            // was.
+            if let Some((from, grip)) = released.get(&top)
+                && (grip.left || grip.top)
+                && let Some(r) = self.dock_view.last_windows.get(&top)
+            {
+                let x = if grip.left {
+                    from.right() - r.width()
+                } else {
+                    r.left()
+                };
+                let y = if grip.top {
+                    from.bottom() - r.height()
+                } else {
+                    r.top()
+                };
+                self.dock_view
+                    .float_at
+                    .entry(top)
+                    .or_insert(egui::pos2(x, y));
             }
             if let Some(at) = self.dock_view.float_at.remove(&top) {
                 window = window.current_pos(at);
@@ -775,6 +857,22 @@ impl DriftApp {
                             })
                             .show(&mut child, |ui| self.panel_body(ui, p));
                     }
+                    // What it holds may need more width than the window gives it: the
+                    // window is told, so it grows to fit and a resize stops there (egui
+                    // measures the least width a window's contents take when a resize
+                    // starts, and holds the resize to it).
+                    // (A panel scrolls up and down within the window, so what it holds past
+                    // its right edge is cut off there and told apart.)
+                    let over = if folded[j] {
+                        0.0
+                    } else {
+                        self.dock_view.overflow.get(&p).copied().unwrap_or(0.0)
+                    };
+                    let needs = (child.min_rect().right() - rect.left())
+                        .max(rect.width() + over)
+                        .min(MOST_NEEDED.max(rect.width()));
+                    self.dock_view.content_width.insert(p, needs);
+                    ui.expand_to_include_x(rect.left() + needs);
                     self.dock_view.stacked.push((p, rect));
                     if j + 1 < n {
                         self.divider(ui, &stack, j, &heights, &folded);
@@ -875,6 +973,18 @@ impl DriftApp {
             .collect()
     }
 
+    /// How much wider than shown a panel's contents were when last drawn (for tests).
+    #[cfg(test)]
+    pub(crate) fn panel_overflow(&self, p: Panel) -> f32 {
+        self.dock_view.overflow.get(&p).copied().unwrap_or(0.0)
+    }
+
+    /// How wide a floating panel's contents were when last drawn (for tests).
+    #[cfg(test)]
+    pub(crate) fn floating_content_width(&self, p: Panel) -> Option<f32> {
+        self.dock_view.content_width.get(&p).copied()
+    }
+
     /// A floating panel's header as last drawn (for tests).
     #[cfg(test)]
     pub(crate) fn header_rect(&self, p: Panel) -> Option<egui::Rect> {
@@ -905,6 +1015,9 @@ impl DriftApp {
         };
         theme::fade_bottom(ui, output, behind);
         self.dock_view.content.insert(p, output.content_size.y);
+        // Wider than it is shown (scrolled only up and down, the rest is cut off).
+        let over = (output.content_size.x - output.inner_rect.width()).max(0.0);
+        self.dock_view.overflow.insert(p, over);
     }
 
     /// How a stack's panels share `room`: a folded one just its header, and the open ones
@@ -1524,6 +1637,51 @@ impl DriftApp {
             text,
         );
         ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+    }
+}
+
+/// Which edges of a floating window a press was on (none: inside it, or on its header).
+#[derive(Clone, Copy, Default, PartialEq, Debug)]
+pub(crate) struct Grip {
+    left: bool,
+    right: bool,
+    top: bool,
+    bottom: bool,
+}
+
+impl Grip {
+    /// Which edges of `r` a press at `o` was on, as egui's resize grips reach: `side` from
+    /// an edge, and `corner` both ways from a corner (where both edges move). The right and
+    /// bottom edges reach a little further, as #505 measured; the left and top only as far
+    /// as egui's, since the top edge is also the header, which moves the window.
+    fn at(r: egui::Rect, o: egui::Pos2, side: f32, corner: f32) -> Self {
+        const FAR: f32 = 8.0;
+        if !r.expand(FAR.max(corner)).contains(o) {
+            return Self::default();
+        }
+        let near = |a: f32, b: f32, reach: f32| (a - b).abs() <= reach;
+        let mut grip = Self {
+            left: near(o.x, r.left(), side),
+            right: near(o.x, r.right(), FAR),
+            top: near(o.y, r.top(), side),
+            bottom: near(o.y, r.bottom(), FAR),
+        };
+        for (x, y, left, top) in [
+            (r.left(), r.top(), true, true),
+            (r.right(), r.top(), false, true),
+            (r.left(), r.bottom(), true, false),
+            (r.right(), r.bottom(), false, false),
+        ] {
+            if near(o.x, x, corner) && near(o.y, y, corner) {
+                grip = Self {
+                    left,
+                    right: !left,
+                    top,
+                    bottom: !top,
+                };
+            }
+        }
+        grip
     }
 }
 

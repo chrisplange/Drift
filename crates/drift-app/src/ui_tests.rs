@@ -1753,6 +1753,208 @@ fn a_floating_panel_resized_past_the_canvas_bottom_keeps_its_top_edge() {
     );
 }
 
+/// Drags a floating window's edge from `grab` to `end` in steps, holding the button down;
+/// returns the panel as drawn while still held, then lets go.
+fn drag_edge(h: &mut Harness<'_, DriftApp>, panel: Panel, grab: Pos2, end: Pos2) -> egui::Rect {
+    h.hover_at(grab);
+    h.run_steps(2);
+    button(h, grab, true);
+    h.run_steps(2);
+    for i in 1..=30 {
+        h.hover_at(grab + (end - grab) * (i as f32 / 30.0));
+        h.run_steps(1);
+    }
+    h.run_steps(2);
+    let held = h.state().floating_rects(panel).unwrap().0;
+    button(h, end, false);
+    h.run_steps(4);
+    held
+}
+
+/// A floating panel against the canvas's right edge, widened by its left edge, grows while
+/// the edge is dragged, not only once it is let go; its right edge stays put.
+#[test]
+fn a_floating_panel_at_the_edge_widens_by_its_left_edge_while_dragged() {
+    let Some(mut h) = harness() else { return };
+    h.state_mut()
+        .layout
+        .move_to(Panel::Layers, Place::Float, None);
+    h.run_steps(6);
+    let canvas = h.state().drawing.view.canvas_rect;
+    let (before, _) = h.state().floating_rects(Panel::Layers).unwrap();
+    assert!(
+        canvas.right() - before.right() < 30.0,
+        "starts against the right edge: {before:?} in {canvas:?}"
+    );
+    let grab = egui::pos2(before.left() + 1.0, before.top() + 120.0);
+    let held = drag_edge(&mut h, Panel::Layers, grab, grab - egui::vec2(150.0, 0.0));
+    save_png("drift_ui_floating_widen_left.png", &mut h);
+    assert!(
+        held.width() > before.width() + 140.0,
+        "it should grow while dragged: {before:?} → {held:?}"
+    );
+    assert!(
+        (held.right() - before.right()).abs() < 1.0,
+        "the right edge moved: {before:?} → {held:?}"
+    );
+    let (after, _) = h.state().floating_rects(Panel::Layers).unwrap();
+    assert!(
+        (after.width() - held.width()).abs() < 1.0 && (after.right() - held.right()).abs() < 1.0,
+        "{held:?} → {after:?}"
+    );
+}
+
+/// A folded floating panel can't be resized, so a press at the very top of its header
+/// moves it like anywhere else on it (it isn't taken for a resize that holds it in place).
+#[test]
+fn a_folded_floating_panel_moves_by_the_top_of_its_header() {
+    let Some(mut h) = harness() else { return };
+    h.state_mut()
+        .layout
+        .move_to(Panel::Layers, Place::Float, None);
+    h.state_mut().layout.folded.insert(Panel::Layers);
+    h.run_steps(6);
+    let (_, before) = h.state().floating_rects(Panel::Layers).unwrap();
+    let from = egui::pos2(before.left() + 80.0, before.top() + 1.0);
+    drag_steps(&mut h, from, from + egui::vec2(-60.0, 150.0), 20, None);
+    h.run_steps(4);
+    assert_eq!(h.state().layout.floating, [vec![Panel::Layers]]);
+    let (_, after) = h.state().floating_rects(Panel::Layers).unwrap();
+    assert!(
+        (after.min - (before.min + egui::vec2(-60.0, 150.0))).length() < 2.0,
+        "{before:?} → {after:?}"
+    );
+}
+
+/// A floating panel can't be made narrower than what it holds: an open layer's settings
+/// (labels, pickers, "Printed and exported") are never cut off at its right edge.
+#[test]
+fn a_floating_panel_is_never_narrower_than_its_contents() {
+    let Some(mut h) = harness() else { return };
+    // Text a size up, as in a platform font wider than the test's: the open layer's settings
+    // then need more than the least width a floating window has.
+    h.ctx.all_styles_mut(|s| {
+        for font in s.text_styles.values_mut() {
+            font.size *= 1.35;
+        }
+    });
+    let layer = h.state().drawing.editor.doc.current_layer();
+    h.state_mut().drawing.expanded_layers.insert(layer);
+    h.state_mut()
+        .layout
+        .move_to(Panel::Layers, Place::Float, None);
+    h.run_steps(6);
+    let fits = |h: &Harness<'_, DriftApp>, what: &str| {
+        let (panel, _) = h.state().floating_rects(Panel::Layers).unwrap();
+        let needs = h.state().floating_content_width(Panel::Layers).unwrap();
+        let over = h.state().panel_overflow(Panel::Layers);
+        assert!(
+            needs <= panel.width() + 0.5 && over < 0.5,
+            "{what}: contents {needs} wide (cut off by {over}) in a panel {panel:?}"
+        );
+        panel
+    };
+    let before = fits(&h, "at first");
+    // Squeeze it from the right edge, then from the left, far past anything that fits.
+    let grab = egui::pos2(before.right() - 1.0, before.top() + 120.0);
+    let held = drag_edge(&mut h, Panel::Layers, grab, grab - egui::vec2(400.0, 0.0));
+    save_png("drift_ui_floating_squeezed.png", &mut h);
+    let after = fits(&h, "squeezed from the right");
+    assert!(held.width() >= after.width() - 0.5, "{held:?} vs {after:?}");
+    assert!(
+        after.width() > 260.0,
+        "the contents should need more: {after:?}"
+    );
+    // From the left it stops there too, its right edge staying put.
+    let grab = egui::pos2(after.left() + 1.0, after.top() + 120.0);
+    let held = drag_edge(&mut h, Panel::Layers, grab, grab + egui::vec2(400.0, 0.0));
+    let last = fits(&h, "squeezed from the left");
+    for r in [held, last] {
+        assert!(
+            (r.right() - after.right()).abs() < 1.0 && (r.width() - after.width()).abs() < 1.0,
+            "{after:?} → {r:?}"
+        );
+    }
+}
+
+/// A dock can't be made narrower than its front panel holds either: squeezed by its edge,
+/// it stops where the open layer's settings still fit, and stays there once let go.
+#[test]
+fn a_dock_is_never_narrower_than_its_contents() {
+    let Some(mut h) = harness() else { return };
+    // (Text a size up, as in the floating test above.)
+    h.ctx.all_styles_mut(|s| {
+        for font in s.text_styles.values_mut() {
+            font.size *= 1.35;
+        }
+    });
+    let layer = h.state().drawing.editor.doc.current_layer();
+    h.state_mut().drawing.expanded_layers.insert(layer);
+    h.state_mut()
+        .layout
+        .move_to(Panel::Layers, Place::Dock(crate::dock::Side::Right), None);
+    h.state_mut().layout.active[1] = Some(Panel::Layers);
+    h.run_steps(6);
+    assert!(h.state().panel_overflow(Panel::Layers) < 0.5);
+    let edge = h.state().drawing.view.canvas_rect.right();
+    let grab = egui::pos2(edge + 1.0, 400.0);
+    h.hover_at(grab);
+    h.run_steps(2);
+    button(&h, grab, true);
+    h.run_steps(2);
+    for i in 1..=30 {
+        h.hover_at(grab + egui::vec2(10.0 * i as f32, 0.0));
+        h.run_steps(1);
+    }
+    h.run_steps(2);
+    save_png("drift_ui_dock_squeezed.png", &mut h);
+    let held = h.state().drawing.view.canvas_rect.right();
+    assert!(
+        h.state().panel_overflow(Panel::Layers) < 0.5,
+        "cut off by {} with its edge held at {held}",
+        h.state().panel_overflow(Panel::Layers)
+    );
+    assert!(held > edge + 5.0, "it should narrow some: {edge} → {held}");
+    button(&h, grab + egui::vec2(300.0, 0.0), false);
+    h.run_steps(4);
+    let after = h.state().drawing.view.canvas_rect.right();
+    assert!((after - held).abs() < 1.0, "{held} → {after}");
+    assert!(h.state().panel_overflow(Panel::Layers) < 0.5);
+}
+
+/// Fitting what it holds never feeds on itself: every panel, floating or docked, keeps its
+/// width from frame to frame (one that fills its width and goes a pixel past it would
+/// otherwise widen it a little every frame).
+#[test]
+fn panels_keep_their_width_frame_to_frame() {
+    let Some(mut h) = harness() else { return };
+    let layer = h.state().drawing.editor.doc.current_layer();
+    h.state_mut().drawing.expanded_layers.insert(layer);
+    for p in crate::dock::Panel::ALL {
+        h.state_mut().layout.move_to(p, Place::Float, None);
+        h.run_steps(6);
+        let (_, first) = h.state().floating_rects(p).unwrap();
+        h.run_steps(20);
+        let (_, later) = h.state().floating_rects(p).unwrap();
+        assert!(
+            (later.width() - first.width()).abs() < 0.5,
+            "{p:?} floating: {first:?} → {later:?}"
+        );
+        h.state_mut()
+            .layout
+            .move_to(p, Place::Dock(crate::dock::Side::Right), None);
+        h.state_mut().layout.active[1] = Some(p);
+        h.run_steps(6);
+        let first = h.state().drawing.view.canvas_rect.right();
+        h.run_steps(20);
+        let later = h.state().drawing.view.canvas_rect.right();
+        assert!(
+            (later - first).abs() < 0.5,
+            "{p:?} docked: {first} → {later}"
+        );
+    }
+}
+
 /// #505: a whole panel moved by its header on past the canvas's bottom stops at the edge
 /// with its size unchanged.
 #[test]

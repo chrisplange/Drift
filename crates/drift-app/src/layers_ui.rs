@@ -915,75 +915,70 @@ impl DriftApp {
             );
         }
         let rect = row.rect;
-        let tip = if draggable {
-            "Click to make current · Ctrl- or Shift-click to pick several and change them \
-             together · drag to reorder (top draws on top)"
-        } else {
-            "Click to make current"
-        };
-        row.on_hover_text(format!("{}\n{tip}", layer.name))
-            .context_menu(|ui| {
-                if ui.button("Make current").clicked() {
-                    self.drawing.editor.set_current_layer(id);
-                    ui.close();
-                }
+        // (No tooltip of the row's own: its name, swatches, line cell and switches each have
+        // theirs, and a second one would sit over them.)
+        row.context_menu(|ui| {
+            if ui.button("Make current").clicked() {
+                self.drawing.editor.set_current_layer(id);
+                ui.close();
+            }
+            if ui
+                .add_enabled(can_rename(id, &layer), egui::Button::new("Rename"))
+                .clicked()
+            {
+                self.drawing.renaming_layer = Some(id);
+                ui.close();
+            }
+            if ui.button("Select all on this layer").clicked() {
+                self.drawing.editor.select_layer(id);
+                ui.close();
+            }
+            if ui
+                .add_enabled(
+                    info.has_selection,
+                    egui::Button::new("Move selection to this layer"),
+                )
+                .clicked()
+            {
+                self.drawing.editor.move_selection_to_layer(id);
+                ui.close();
+            }
+            ui.separator();
+            if info.isolated == Some(id) {
                 if ui
-                    .add_enabled(can_rename(id, &layer), egui::Button::new("Rename"))
+                    .button("End isolate")
+                    .on_hover_text("Show the other layers again, as they were")
                     .clicked()
                 {
-                    self.drawing.renaming_layer = Some(id);
+                    *action = Some(LayerAction::EndIsolate);
                     ui.close();
                 }
-                if ui.button("Select all on this layer").clicked() {
-                    self.drawing.editor.select_layer(id);
-                    ui.close();
+            } else if ui
+                .button("Isolate")
+                .on_hover_text("Show this layer alone (Alt-click its eye)")
+                .clicked()
+            {
+                *action = Some(LayerAction::Isolate(id));
+                ui.close();
+            }
+            if ui
+                .add_enabled(info.any_hidden, egui::Button::new("Show all layers"))
+                .clicked()
+            {
+                *action = Some(LayerAction::ShowAll);
+                ui.close();
+            }
+            ui.separator();
+            if ui
+                .add_enabled(id != LayerId::DEFAULT, egui::Button::new("Delete layer"))
+                .clicked()
+            {
+                if let Err(e) = self.drawing.editor.remove_layer(id) {
+                    *status = Some(e);
                 }
-                if ui
-                    .add_enabled(
-                        info.has_selection,
-                        egui::Button::new("Move selection to this layer"),
-                    )
-                    .clicked()
-                {
-                    self.drawing.editor.move_selection_to_layer(id);
-                    ui.close();
-                }
-                ui.separator();
-                if info.isolated == Some(id) {
-                    if ui
-                        .button("End isolate")
-                        .on_hover_text("Show the other layers again, as they were")
-                        .clicked()
-                    {
-                        *action = Some(LayerAction::EndIsolate);
-                        ui.close();
-                    }
-                } else if ui
-                    .button("Isolate")
-                    .on_hover_text("Show this layer alone (Alt-click its eye)")
-                    .clicked()
-                {
-                    *action = Some(LayerAction::Isolate(id));
-                    ui.close();
-                }
-                if ui
-                    .add_enabled(info.any_hidden, egui::Button::new("Show all layers"))
-                    .clicked()
-                {
-                    *action = Some(LayerAction::ShowAll);
-                    ui.close();
-                }
-                ui.separator();
-                if ui
-                    .add_enabled(id != LayerId::DEFAULT, egui::Button::new("Delete layer"))
-                    .clicked()
-                {
-                    if let Err(e) = self.drawing.editor.remove_layer(id) {
-                        *status = Some(e);
-                    }
-                    ui.close();
-                }
-            });
+                ui.close();
+            }
+        });
         if edited != layer && self.drawing.editor.doc.layer(id).is_some() {
             self.change_layers(id, &layer, edited);
         }
@@ -1370,9 +1365,13 @@ impl DriftApp {
                 layer.name,
                 if curves == 1 { "curve" } else { "curves" },
                 if is_current {
-                    "The current layer: new geometry goes here. Double-click to rename"
+                    "The current layer: new geometry goes here. Double-click to rename · \
+                     Ctrl- or Shift-click to pick several and change them together · drag \
+                     to reorder (top draws on top)"
                 } else {
-                    "Click to make this the current layer; double-click to rename"
+                    "Click to make this the current layer; double-click to rename · Ctrl- or \
+                     Shift-click to pick several and change them together · drag to reorder \
+                     (top draws on top)"
                 }
             ));
         if r.clicked() {

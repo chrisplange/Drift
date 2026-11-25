@@ -155,4 +155,19 @@ fn printing_is_a_toggle_on_the_row_and_the_filter_is_always_there() {
     assert!(!layer(&h, wall).printable);
     click(&mut h, at, EguiModifiers::NONE);
     assert!(layer(&h, wall).printable);
+    // Held over the switch, its own tooltip shows and not a second one (the name's).
+    h.hover_at(at);
+    for _ in 0..30 {
+        h.step();
+    }
+    assert!(
+        h.query_all_by_label_contains("Printed and exported (off")
+            .count()
+            >= 2,
+        "the switch's tooltip, besides the switch"
+    );
+    assert!(
+        h.query_by_label_contains("drag to reorder").is_none(),
+        "no second tooltip over it"
+    );
 }

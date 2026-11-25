@@ -697,44 +697,45 @@ const SEGMENT_SLIDE: f64 = 0.22;
 fn segment_slide(ui: &egui::Ui, id: egui::Id, index: usize, target: egui::Rect) -> egui::Rect {
     #[derive(Clone, Copy)]
     struct Slide {
+        /// Where it set off from, for segment `to`, at `start`.
         from: egui::Rect,
         to: usize,
         start: f64,
+        /// Where it was drawn last frame: a new pick sets off from there.
+        shown: egui::Rect,
     }
     let id = id.with("segment_slide");
     let now = ui.input(|i| i.time);
     let animate = ui.style().animation_time > 0.0;
-    let shown_at = |s: Slide, now: f64| {
-        let t = ((now - s.start) / SEGMENT_SLIDE).clamp(0.0, 1.0) as f32;
-        let e = egui::emath::easing::cubic_in_out(t);
-        egui::Rect::from_min_max(
-            s.from.min.lerp(target.min, e),
-            s.from.max.lerp(target.max, e),
-        )
+    let slide = ui.data(|d| d.get_temp::<Slide>(id));
+    let mut slide = match slide {
+        Some(s) if s.to == index => s,
+        // A new pick: from wherever it is drawn now.
+        Some(s) if animate => Slide {
+            from: s.shown,
+            to: index,
+            start: now,
+            shown: s.shown,
+        },
+        _ => Slide {
+            from: target,
+            to: index,
+            start: f64::NEG_INFINITY,
+            shown: target,
+        },
     };
-    let slide = ui.data_mut(|d| {
-        let was = d.get_temp::<Slide>(id);
-        let slide = match was {
-            Some(s) if s.to == index => s,
-            // A new pick: from wherever it is drawn now.
-            Some(s) if animate => Slide {
-                from: shown_at(s, now),
-                to: index,
-                start: now,
-            },
-            _ => Slide {
-                from: target,
-                to: index,
-                start: f64::NEG_INFINITY,
-            },
-        };
-        d.insert_temp(id, slide);
-        slide
-    });
-    if now - slide.start < SEGMENT_SLIDE {
+    let t = ((now - slide.start) / SEGMENT_SLIDE).clamp(0.0, 1.0) as f32;
+    let e = egui::emath::easing::cubic_in_out(t);
+    // (Towards the target as laid out this frame: a label turning bold moves it a little.)
+    slide.shown = egui::Rect::from_min_max(
+        slide.from.min.lerp(target.min, e),
+        slide.from.max.lerp(target.max, e),
+    );
+    ui.data_mut(|d| d.insert_temp(id, slide));
+    if t < 1.0 {
         ui.ctx().request_repaint();
     }
-    shown_at(slide, now)
+    slide.shown
 }
 
 /// A segmented control: a track with the picked segment standing in it, sliding to a new

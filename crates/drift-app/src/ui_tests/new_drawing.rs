@@ -415,3 +415,58 @@ fn start_screen_units_switch_keeps_the_layout() {
     h.run();
     assert_eq!(open(&h), before, "metric again");
 }
+
+/// The start panel's unit switch slides to a new pick, easing over a few frames, rather than
+/// jumping (every segmented control does: `theme::segmented`).
+#[test]
+fn the_unit_switch_slides_to_a_new_pick() {
+    if !crate::test_gpu::available() {
+        return;
+    }
+    // Frames a sixtieth of a second apart, with the app's animations on (the harness turns
+    // them off).
+    let mut h = Harness::builder()
+        .with_size([1280.0, 800.0])
+        .with_step_dt(1.0 / 60.0)
+        .wgpu_setup(crate::test_gpu::setup())
+        .build_eframe(|cc| DriftApp::new(cc));
+    h.ctx.all_styles_mut(|s| s.animation_time = 0.12);
+    h.state_mut().show_start = true;
+    for _ in 0..40 {
+        h.step();
+    }
+    let (metric, imperial) = (
+        h.get_by_label("Metric").rect(),
+        h.get_by_label("Imperial").rect(),
+    );
+    // The picked segment's left edge, found on a line across the switch by its colour.
+    let picked_left = |h: &mut Harness<'_, DriftApp>| {
+        let image = h.render().expect("render");
+        let fill = crate::theme::segment_picked(h.ctx.theme() == egui::Theme::Dark);
+        let y = metric.center().y as u32 + 6;
+        (metric.left() as u32..imperial.right() as u32)
+            .find(|&x| {
+                let p = image.get_pixel(x, y).0;
+                (0..3).all(|c| p[c].abs_diff([fill.r(), fill.g(), fill.b()][c]) <= 2)
+            })
+            .map(|x| x as f32)
+    };
+    let start = picked_left(&mut h).expect("the picked segment");
+    assert!(start < metric.center().x, "Metric picked: {start}");
+    h.get_by_label("Imperial").click();
+    // A few frames in (of a 0.22 s slide): on its way, between the two.
+    for _ in 0..7 {
+        h.step();
+    }
+    let mid = picked_left(&mut h).expect("the picked segment");
+    assert!(
+        mid > start + 8.0 && mid < imperial.left() - 8.0,
+        "part-way: {start} → {mid}, Imperial at {}",
+        imperial.left()
+    );
+    for _ in 0..20 {
+        h.step();
+    }
+    let end = picked_left(&mut h).expect("the picked segment");
+    assert!(end >= imperial.left() - 4.0, "lands on Imperial: {end}");
+}

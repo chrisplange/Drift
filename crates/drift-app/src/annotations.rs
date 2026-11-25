@@ -2282,16 +2282,16 @@ pub fn layout_glyphs_last(
         Constraint::Tangent { a, b } => joint_of(doc, &tied, a, b).is_some(),
         _ => false,
     };
-    let (last, marks_joint) = (&last, &marks_joint);
-    let group = |late: bool, joint: bool| {
-        doc.constraints()
-            .filter(move |(_, c)| last(c) == late && marks_joint(c) == joint)
-    };
-    let in_order = group(false, false)
-        .chain(group(false, true))
-        .chain(group(true, false))
-        .chain(group(true, true));
-    for (id, c) in in_order {
+    // One pass gives each relation its place in that order (the `last` ones after the rest,
+    // joint tangencies after the others in each), then a stable sort keeps the document's
+    // order within each. `last` and `marks_joint` are asked once a relation, and the only
+    // allocation is this one list.
+    let mut in_order: Vec<(u8, ConstraintId, &Constraint)> = doc
+        .constraints()
+        .map(|(id, c)| (u8::from(last(c)) * 2 + u8::from(marks_joint(c)), id, c))
+        .collect();
+    in_order.sort_by_key(|&(rank, _, _)| rank);
+    for (_, id, c) in in_order {
         use GlyphKind::*;
         match *c {
             Constraint::Horizontal { line } => place(
@@ -4349,6 +4349,32 @@ mod tests {
         tiles.add(pos2(30.0, 4.0));
         tiles.add(pos2(4.0, 5.0));
         assert_eq!(tiles.near(pos2(4.0, 4.0), 100.0).len(), 3);
+    }
+
+    /// The layout runs every frame, so it asks `last` once a relation, not once for each of
+    /// the four groups it orders them in; the late ones still come after the rest, each
+    /// group in the document's order.
+    #[test]
+    fn glyph_layout_asks_last_once_a_relation() {
+        let mut doc = Document::new();
+        let v = DVec2::new;
+        let (mut ids, mut lines) = (Vec::new(), Vec::new());
+        for i in 0..6 {
+            let y = f64::from(i) * 10.0;
+            let (a, b) = (doc.add_point(v(0.0, y)), doc.add_point(v(5.0, y)));
+            let line = doc.add_line(a, b).unwrap();
+            lines.push(line);
+            ids.push(doc.add_constraint(Constraint::Horizontal { line }).unwrap());
+        }
+        let late = [lines[0], lines[3]];
+        let asked = std::cell::Cell::new(0);
+        let glyphs = layout_glyphs_last(&doc, &view_at(1.0), |c| {
+            asked.set(asked.get() + 1);
+            matches!(*c, Constraint::Horizontal { line } if late.contains(&line))
+        });
+        assert_eq!(asked.get(), ids.len());
+        let order: Vec<_> = glyphs.iter().map(|g| g.id).collect();
+        assert_eq!(order, [ids[1], ids[2], ids[4], ids[5], ids[0], ids[3]]);
     }
 
     /// The cost of laying out a heap of symbols zoomed far out, and of the same drawing

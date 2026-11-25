@@ -421,18 +421,27 @@ impl DriftApp {
         }
         let ed = &self.drawing.editor;
         // Not on walls' centrelines unless the wall is picked. Every centreline symbol is laid
-        // out after the rest, picked or not, so picking a wall moves no other symbol.
-        let owners = ed.wall_owners();
-        let on_centreline = |c: &drift_core::Constraint| {
-            c.entities()
-                .any(|e| matches!(owners.of.get(&e), Some(drift_core::walls::Owner::Centre(_))))
+        // out after the rest, picked or not, so picking a wall moves no other symbol. A drawing
+        // with no walls skips all this (it runs every frame, and listing a relation's
+        // entities allocates).
+        let mut glyphs = if ed.doc.has_walls() {
+            let owners = ed.wall_owners();
+            let on_centreline = |c: &drift_core::Constraint| {
+                c.entities()
+                    .any(|e| matches!(owners.of.get(&e), Some(drift_core::walls::Owner::Centre(_))))
+            };
+            let mut glyphs = annotations::layout_glyphs_last(doc, map, on_centreline);
+            let hidden = ed.unpicked_centrelines();
+            if !hidden.is_empty() {
+                glyphs.retain(|g| {
+                    doc.constraint(g.id)
+                        .is_none_or(|c| !c.entities().any(|e| hidden.contains(&e)))
+                });
+            }
+            glyphs
+        } else {
+            annotations::layout_glyphs_last(doc, map, |_| false)
         };
-        let mut glyphs = annotations::layout_glyphs_last(doc, map, on_centreline);
-        let hidden = ed.unpicked_centrelines();
-        glyphs.retain(|g| {
-            doc.constraint(g.id)
-                .is_none_or(|c| !c.entities().any(|e| hidden.contains(&e)))
-        });
         // Picked only: the relations on the picked curves and their points, each on everything
         // it holds (so both lines of a parallel pair), and a picked relation itself. They stay
         // where they are laid out among all of them, so none moves as the picks change.

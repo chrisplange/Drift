@@ -544,6 +544,28 @@ impl SolidCurves {
 }
 
 impl Editor {
+    /// Wall poché `id`'s shape: its cluster's outline and holes, or its last shape marked
+    /// lost when the outline can't be found. None if it never had one.
+    fn poche_shape(&mut self, id: FillId) -> Option<FillShape> {
+        let Some(region) = self.wall_fill_region(id) else {
+            return self.last_fill_shapes.get(&id).map(|last| FillShape {
+                lost: true,
+                ..last.clone()
+            });
+        };
+        let mut curves: Vec<EntityId> = region_curves_of(&self.doc, id);
+        curves.sort_unstable();
+        let shape = FillShape {
+            region,
+            lost: false,
+            curves,
+            crossed: false,
+            parts: 0,
+        };
+        self.last_fill_shapes.insert(id, shape.clone());
+        Some(shape)
+    }
+
     /// Every fill's region, as of the current document revision.
     pub fn fill_shapes(&mut self) -> Rc<BTreeMap<FillId, FillShape>> {
         let revision = self.doc.revision();
@@ -585,7 +607,24 @@ impl Editor {
                         .collect::<BTreeMap<_, _>>();
                     (shapes, cache.fills.clone())
                 });
-            if let Some((shapes, fills)) = stale {
+            if let Some((mut shapes, fills)) = stale {
+                // A wall cluster's poché knows its own outline, found at once: shown as it
+                // was before the edit, it would sit askew on the walls' new faces for the
+                // frames until the areas are in.
+                if self.doc.has_walls() {
+                    let walls = self.wall_owners();
+                    let pochés: Vec<FillId> = shapes
+                        .keys()
+                        .copied()
+                        .filter(|id| walls.fills.contains_key(id))
+                        .collect();
+                    for id in pochés {
+                        match self.poche_shape(id) {
+                            Some(shape) => shapes.insert(id, shape),
+                            None => shapes.remove(&id),
+                        };
+                    }
+                }
                 let shapes = Rc::new(shapes);
                 self.fill_shapes = Some(FillShapesCache {
                     revision,
@@ -632,26 +671,8 @@ impl Editor {
             // A wall cluster's poché: its outline and holes, known exactly (nothing else in
             // the drawing is looked at).
             if walls.as_ref().is_some_and(|w| w.fills.contains_key(&id)) {
-                if let Some(region) = self.wall_fill_region(id) {
-                    let mut curves: Vec<EntityId> = region_curves_of(&self.doc, id);
-                    curves.sort_unstable();
-                    let shape = FillShape {
-                        region,
-                        lost: false,
-                        curves,
-                        crossed: false,
-                        parts: 0,
-                    };
-                    self.last_fill_shapes.insert(id, shape.clone());
+                if let Some(shape) = self.poche_shape(id) {
                     out.insert(id, shape);
-                } else if let Some(last) = self.last_fill_shapes.get(&id) {
-                    out.insert(
-                        id,
-                        FillShape {
-                            lost: true,
-                            ..last.clone()
-                        },
-                    );
                 }
                 continue;
             }
@@ -3111,8 +3132,7 @@ impl MeshCache {
                 return Rc::new((vertices.iter().map(|p| *p + d).collect(), indices.clone()));
             }
         }
-        let mesh: Mesh =
-            Rc::new(tessellate(region, drift_core::tolerance::FLATTEN_MM).unwrap_or_default());
+        let mesh = tessellate_fill(region);
         self.made += 1;
         self.meshes.insert(
             id,
@@ -3147,6 +3167,22 @@ impl MeshCache {
         let frame = self.frame;
         self.meshes.retain(|_, kept| kept.frame == frame);
     }
+}
+
+thread_local! {
+    /// Fill areas this thread has tessellated for the canvas, kept or not.
+    static TESSELLATED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many fill areas this thread has tessellated for the canvas, kept or not (tests).
+pub fn tessellations() -> usize {
+    TESSELLATED.get()
+}
+
+/// A fill area's triangles for the canvas.
+fn tessellate_fill(region: &Region) -> Mesh {
+    TESSELLATED.set(TESSELLATED.get() + 1);
+    Rc::new(tessellate(region, drift_core::tolerance::FLATTEN_MM).unwrap_or_default())
 }
 
 /// The offset `now` is `was` moved by, if it is exactly that: the same edges (lines, and
@@ -3277,83 +3313,167 @@ pub fn fill_graphics(
         );
     for (id, fill, region) in fills {
         cache.keep(id);
-        let layer = ed.doc.layer(fill.layer);
-        if layer.is_some_and(|l| !l.visible) {
-            continue;
-        }
-        let bounds = region_bounds(region);
-        if !bounds.intersects(&view) {
-            continue;
-        }
-        let mut group = FillGroup {
-            layer: fill.layer,
-            fill: id,
-            meshes: Vec::new(),
-            lines: Vec::new(),
-        };
-        let own = fill.color.or(layer.and_then(|l| l.fill_colour()));
-        let mut tint = |color: Rgb, alpha: f64, group: &mut FillGroup| {
-            let mesh = cache.get(id, region, moving);
-            let [r, g, b] = color.0;
-            group.meshes.push(FillMesh {
-                vertices: mesh.0.clone(),
-                indices: mesh.1.clone(),
-                color: [r, g, b, (alpha.clamp(0.0, 1.0) * 255.0).round() as u8],
-            });
-        };
-        match &fill.kind {
-            FillKind::Solid => {
-                tint(
-                    own.unwrap_or(default_fill_color(dark)),
-                    fill.opacity,
-                    &mut group,
-                );
-            }
-            FillKind::Hatch(h) => {
-                if let Some(bg) = h.background {
-                    tint(bg, 1.0, &mut group);
-                }
-                let line = own.unwrap_or(default_line_color(dark));
-                let scale = h.scale * if h.model { 1.0 } else { draft_scale };
-                let placement = Placement {
-                    scale,
-                    angle: h.angle,
-                    origin: h.origin,
-                };
-                let hatching = patterns
-                    .get(&h.pattern)
-                    .filter(|p| p.min_spacing() * scale * px_per_mm >= MIN_HATCH_SPACING_PX)
-                    .map(|pattern| {
-                        drift_draft::hatch(
-                            region,
-                            pattern,
-                            &placement,
-                            Some(view),
-                            HATCH_SEGMENT_LIMIT,
-                        )
-                    })
-                    .filter(|hatching| !hatching.truncated);
-                match hatching {
-                    // No pattern, too dense to see, or too much of it: a tint instead.
-                    None => tint(line, 0.25, &mut group),
-                    Some(hatching) => {
-                        let weight = fill.weight.unwrap_or_default().0;
-                        group
-                            .lines
-                            .extend(hatching.segments.into_iter().map(|[a, b]| {
-                                let mut item = SketchItem::new(Shape::Line { a, b });
-                                item.color = own.map(|c| c.0);
-                                item.weight = weight;
-                                item
-                            }));
-                    }
-                }
-            }
-        }
-        out.groups.push(group);
+        let group = fill_group(
+            ed,
+            &mut |r| cache.get(id, r, moving),
+            patterns,
+            id,
+            fill,
+            region,
+            view,
+            px_per_mm,
+            dark,
+            draft_scale,
+        );
+        out.groups.extend(group);
     }
     cache.end();
     out
+}
+
+/// The graphics of one fill over `region`, as [`fill_graphics`] draws it, its triangles
+/// found afresh (not kept): for a frame drawn from a changed copy of the drawing, such as a
+/// solve easing into place. None if it doesn't show (a hidden layer, or out of `view`).
+#[allow(clippy::too_many_arguments)]
+pub fn fill_graphics_over(
+    ed: &Editor,
+    patterns: &PatternLibrary,
+    id: FillId,
+    region: &Region,
+    view: Bounds,
+    px_per_mm: f64,
+    dark: bool,
+) -> Option<FillGroup> {
+    let fill = ed.doc.fill(id)?;
+    fill_group(
+        ed,
+        &mut tessellate_fill,
+        patterns,
+        MeshKey::Fill(id),
+        fill,
+        region,
+        view,
+        px_per_mm,
+        dark,
+        ed.doc.draft_style().scale,
+    )
+}
+
+/// The graphics of fill `id` over the area [`fill_graphics`] draws it over, cut to `view`,
+/// its triangles from `cache` (the ones kept, or made once and kept): for a frame that
+/// moves the fill's graphics by a map, such as a solve easing into place, where the view
+/// the fill is drawn for is not the canvas's. `region` must be the area `fill_graphics`
+/// keeps the fill's triangles for (its shape in [`Editor::fill_shapes`]): another one would
+/// take that place in the cache. None if it doesn't show (a hidden layer, or out of `view`).
+#[allow(clippy::too_many_arguments)]
+pub fn fill_graphics_kept(
+    ed: &Editor,
+    cache: &mut MeshCache,
+    patterns: &PatternLibrary,
+    id: FillId,
+    region: &Region,
+    view: Bounds,
+    px_per_mm: f64,
+    dark: bool,
+) -> Option<FillGroup> {
+    let fill = ed.doc.fill(id)?;
+    let key = MeshKey::Fill(id);
+    fill_group(
+        ed,
+        &mut |r| cache.get(key, r, false),
+        patterns,
+        key,
+        fill,
+        region,
+        view,
+        px_per_mm,
+        dark,
+        ed.doc.draft_style().scale,
+    )
+}
+
+/// One fill's graphics over `region`, its triangles from `mesh`. None if it doesn't show.
+#[allow(clippy::too_many_arguments)]
+fn fill_group(
+    ed: &Editor,
+    mesh: &mut dyn FnMut(&Region) -> Mesh,
+    patterns: &PatternLibrary,
+    id: MeshKey,
+    fill: &Fill,
+    region: &Region,
+    view: Bounds,
+    px_per_mm: f64,
+    dark: bool,
+    draft_scale: f64,
+) -> Option<FillGroup> {
+    let layer = ed.doc.layer(fill.layer);
+    if layer.is_some_and(|l| !l.visible) {
+        return None;
+    }
+    let bounds = region_bounds(region);
+    if !bounds.intersects(&view) {
+        return None;
+    }
+    let mut group = FillGroup {
+        layer: fill.layer,
+        fill: id,
+        meshes: Vec::new(),
+        lines: Vec::new(),
+    };
+    let own = fill.color.or(layer.and_then(|l| l.fill_colour()));
+    let mut tint = |color: Rgb, alpha: f64, group: &mut FillGroup| {
+        let mesh = mesh(region);
+        let [r, g, b] = color.0;
+        group.meshes.push(FillMesh {
+            vertices: mesh.0.clone(),
+            indices: mesh.1.clone(),
+            color: [r, g, b, (alpha.clamp(0.0, 1.0) * 255.0).round() as u8],
+        });
+    };
+    match &fill.kind {
+        FillKind::Solid => {
+            tint(
+                own.unwrap_or(default_fill_color(dark)),
+                fill.opacity,
+                &mut group,
+            );
+        }
+        FillKind::Hatch(h) => {
+            if let Some(bg) = h.background {
+                tint(bg, 1.0, &mut group);
+            }
+            let line = own.unwrap_or(default_line_color(dark));
+            let scale = h.scale * if h.model { 1.0 } else { draft_scale };
+            let placement = Placement {
+                scale,
+                angle: h.angle,
+                origin: h.origin,
+            };
+            let hatching = patterns
+                .get(&h.pattern)
+                .filter(|p| p.min_spacing() * scale * px_per_mm >= MIN_HATCH_SPACING_PX)
+                .map(|pattern| {
+                    drift_draft::hatch(region, pattern, &placement, Some(view), HATCH_SEGMENT_LIMIT)
+                })
+                .filter(|hatching| !hatching.truncated);
+            match hatching {
+                // No pattern, too dense to see, or too much of it: a tint instead.
+                None => tint(line, 0.25, &mut group),
+                Some(hatching) => {
+                    let weight = fill.weight.unwrap_or_default().0;
+                    group
+                        .lines
+                        .extend(hatching.segments.into_iter().map(|[a, b]| {
+                            let mut item = SketchItem::new(Shape::Line { a, b });
+                            item.color = own.map(|c| c.0);
+                            item.weight = weight;
+                            item
+                        }));
+                }
+            }
+        }
+    }
+    Some(group)
 }
 
 pub fn region_bounds(region: &Region) -> Bounds {
@@ -3622,6 +3742,117 @@ mod tests {
         // The disc inside the plate is its own area.
         let disc = ed.add_fill_at(DVec2::new(20.0, 11.0)).unwrap();
         assert_eq!(ed.doc.fill(disc).unwrap().boundary.len(), 1);
+    }
+
+    /// A fill drawn over a region of its own (a frame easing into place) is drawn as the
+    /// canvas draws it over its shape: the same triangles and hatch lines, solid or hatched,
+    /// zoomed in or out; nothing out of view.
+    #[test]
+    fn fill_graphics_over_its_own_shape_matches_fill_graphics() {
+        let (mut ed, _) = plate();
+        let id = ed.add_fill_at(DVec2::new(5.0, 5.0)).unwrap();
+        let mut cache = MeshCache::default();
+        let mut patterns = PatternLibrary::default();
+        patterns.update(ed.doc.custom_patterns());
+        let view = Bounds {
+            min: DVec2::splat(-10.0),
+            max: DVec2::splat(60.0),
+        };
+        for solid in [false, true] {
+            if solid {
+                let mut fill = ed.doc.fill(id).unwrap().clone();
+                fill.kind = FillKind::Solid;
+                ed.update_fill(id, fill);
+            }
+            for zoom in [10.0, 0.1] {
+                let all = fill_graphics(&mut ed, &mut cache, &patterns, view, zoom, true);
+                let drawn = &all.groups[0];
+                let region = ed.fill_shapes()[&id].region.clone();
+                let over = fill_graphics_over(&ed, &patterns, id, &region, view, zoom, true)
+                    .expect("in view");
+                assert!(!drawn.meshes.is_empty() || !drawn.lines.is_empty());
+                assert_eq!(over.meshes, drawn.meshes, "solid {solid}, zoom {zoom}");
+                assert_eq!(over.lines, drawn.lines, "solid {solid}, zoom {zoom}");
+                assert_eq!((over.layer, over.fill), (drawn.layer, drawn.fill));
+            }
+        }
+        let away = Bounds {
+            min: DVec2::splat(500.0),
+            max: DVec2::splat(600.0),
+        };
+        let region = ed.fill_shapes()[&id].region.clone();
+        assert!(fill_graphics_over(&ed, &patterns, id, &region, away, 10.0, true).is_none());
+    }
+
+    /// A fill drawn over its shape for another view (a frame easing into place) takes the
+    /// triangles the canvas keeps: drawn as `fill_graphics_over` draws it, with nothing
+    /// tessellated again. One the canvas didn't draw (out of its view) is tessellated once
+    /// and kept from then on.
+    #[test]
+    fn fill_graphics_kept_draws_from_the_kept_triangles() {
+        let (mut ed, _) = plate();
+        let id = ed.add_fill_at(DVec2::new(5.0, 5.0)).unwrap();
+        // Hatched over a background (triangles and lines).
+        let mut hatch = ed.doc.fill(id).unwrap().clone();
+        hatch.kind = FillKind::Hatch(drift_core::Hatch {
+            background: Some(Rgb([0x20, 0x40, 0x60])),
+            ..drift_core::Hatch::new("ANSI31")
+        });
+        ed.update_fill(id, hatch);
+        let mut cache = MeshCache::default();
+        let mut patterns = PatternLibrary::default();
+        patterns.update(ed.doc.custom_patterns());
+        let view = Bounds {
+            min: DVec2::splat(-10.0),
+            max: DVec2::splat(60.0),
+        };
+        // Half of it, as a map carries part of the canvas onto it.
+        let part = Bounds {
+            min: DVec2::splat(-10.0),
+            max: DVec2::new(20.0, 60.0),
+        };
+        for solid in [false, true] {
+            if solid {
+                let mut fill = ed.doc.fill(id).unwrap().clone();
+                fill.kind = FillKind::Solid;
+                ed.update_fill(id, fill);
+            }
+            fill_graphics(&mut ed, &mut cache, &patterns, view, 10.0, true);
+            let region = ed.fill_shapes()[&id].region.clone();
+            let made = tessellations();
+            let kept =
+                fill_graphics_kept(&ed, &mut cache, &patterns, id, &region, part, 10.0, true)
+                    .expect("in view");
+            assert_eq!(tessellations(), made, "solid {solid}: nothing tessellated");
+            let over = fill_graphics_over(&ed, &patterns, id, &region, part, 10.0, true).unwrap();
+            assert!(!kept.meshes.is_empty(), "solid {solid}");
+            assert_eq!(kept.meshes, over.meshes, "solid {solid}");
+            assert_eq!(kept.lines, over.lines, "solid {solid}");
+            assert_eq!(!solid, !kept.lines.is_empty(), "hatched: its lines");
+            assert_eq!((kept.layer, kept.fill), (over.layer, over.fill));
+        }
+        // Not drawn by the canvas (out of its view), then drawn for where it is shown.
+        let away = Bounds {
+            min: DVec2::splat(500.0),
+            max: DVec2::splat(600.0),
+        };
+        let mut fresh = MeshCache::default();
+        assert!(
+            fill_graphics(&mut ed, &mut fresh, &patterns, away, 10.0, true)
+                .groups
+                .is_empty()
+        );
+        let region = ed.fill_shapes()[&id].region.clone();
+        let made = tessellations();
+        for _ in 0..3 {
+            fill_graphics(&mut ed, &mut fresh, &patterns, away, 10.0, true);
+            fill_graphics_kept(&ed, &mut fresh, &patterns, id, &region, view, 10.0, true)
+                .expect("in view");
+        }
+        assert_eq!(tessellations(), made + 1, "tessellated once, then kept");
+        assert!(
+            fill_graphics_kept(&ed, &mut fresh, &patterns, id, &region, away, 10.0, true).is_none()
+        );
     }
 
     #[test]

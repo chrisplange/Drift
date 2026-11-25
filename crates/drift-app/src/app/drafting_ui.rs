@@ -114,7 +114,14 @@ impl DriftApp {
         });
         let dark = ui.visuals().dark_mode;
         theme::row(ui, "Color", |ui| {
-            if let Some(color) = crate::layers_ui::color_choice(ui, style.color, "Default", dark) {
+            if let Some(color) = crate::layers_ui::color_choice(
+                ui,
+                "Dimension color",
+                style.color,
+                "Default",
+                Some(crate::colour::Follows::Ink),
+                dark,
+            ) {
                 style.color = color;
             }
         })

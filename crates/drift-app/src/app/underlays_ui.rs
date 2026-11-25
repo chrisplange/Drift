@@ -175,7 +175,16 @@ impl DriftApp {
             }
         });
         theme::row(ui, "Color", |ui| {
-            if let Some(c) = crate::layers_ui::color_choice(ui, u.color, "Gray", dark) {
+            if let Some(c) = crate::layers_ui::color_choice(
+                ui,
+                "Underlay color",
+                u.color,
+                "Gray",
+                Some(crate::colour::Follows::Colour(drift_core::Rgb(
+                    drift_edit::underlays::default_color(dark),
+                ))),
+                dark,
+            ) {
                 edited.color = c;
             }
         });

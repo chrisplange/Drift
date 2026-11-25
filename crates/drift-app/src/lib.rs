@@ -11,6 +11,7 @@ mod anno_scale_tests;
 mod annotations;
 mod app;
 mod canvas;
+mod colour;
 mod commands;
 #[cfg(test)]
 mod corpus_build;
@@ -318,10 +319,10 @@ struct Drawing {
     params: parameters::ParamUi,
     /// Layer names being edited in the Layers tab.
     layer_names: std::collections::HashMap<drift_core::LayerId, String>,
-    /// Layers showing their colours and line settings in the Layers panel.
-    expanded_layers: std::collections::HashSet<drift_core::LayerId>,
     /// The Layers panel's layers and curve counts, kept until the drawing changes.
     layer_counts: crate::layers_ui::LayerCounts,
+    /// The drawing's colours offered in every colour picker, made while one is open.
+    document_colours: crate::layers_ui::DocumentColours,
     /// What the Inspector shows for the picks that depends only on them and the drawing's
     /// make-up, kept while neither changes.
     pick_memo: app::panels::PickMemo,
@@ -353,6 +354,8 @@ struct Drawing {
     align_edge: Option<drift_core::FillId>,
     /// The previewed page, as of a document revision.
     preview_cache: Option<(u64, drift_core::SheetId, drift_draft::page::Drawing)>,
+    /// The relation symbols as last laid out on the canvas.
+    glyph_cache: std::cell::RefCell<annotations::GlyphCache>,
     /// While a block is edited in place, the drawing as if editing had finished, that the
     /// sheet preview draws (see [`Drawing::finished_for_preview`]), kept while the preview
     /// shows and the layers' switches stay as they were.
@@ -363,6 +366,9 @@ struct Drawing {
     confirm_delete_set: bool,
     /// Add view from a sheet in progress: the sheet the view drawn next goes on.
     add_view_on: Option<drift_core::SheetId>,
+    /// Add view was started with that sheet on the canvas: the sheet is shown again after.
+    /// Started from the model (the Sheets panel), the canvas stays on the model.
+    add_view_back_to_sheet: bool,
     /// Sheets left out of the PDF and print (chosen in the output dialog, for this session).
     pdf_left_out: std::collections::BTreeSet<drift_core::SheetId>,
     /// The output dialog choosing the sheets for a PDF or print, while open.
@@ -513,8 +519,8 @@ impl Drawing {
             inference_points: Vec::new(),
             params: Default::default(),
             layer_names: Default::default(),
-            expanded_layers: Default::default(),
             layer_counts: Default::default(),
+            document_colours: Default::default(),
             pick_memo: Default::default(),
             layer_drag: None,
             renaming_layer: None,
@@ -531,10 +537,12 @@ impl Drawing {
             hatch_snap: None,
             note_edit: None,
             preview_cache: None,
+            glyph_cache: Default::default(),
             finished_preview: None,
             finished_previews_made: 0,
             confirm_delete_set: false,
             add_view_on: None,
+            add_view_back_to_sheet: false,
             pdf_left_out: Default::default(),
             #[cfg(not(feature = "demo"))]
             output_dialog: None,
@@ -621,6 +629,9 @@ pub struct DriftApp {
     pie: Option<app::pie::Pie>,
     /// The Selection filter pie (Shift+Q), open.
     select_pie: Option<app::select_pie::SelectPie>,
+    snap_pie: Option<app::snap_pie::SnapPie>,
+    /// The open pie's pills as last drawn (one pie is open at a time).
+    pie_pills: [egui::Rect; 8],
     /// Text filtering the shortcuts list.
     shortcut_filter: String,
     /// Where the side panels are (docked, floating or hidden).
@@ -887,6 +898,8 @@ impl DriftApp {
             screen_font: Default::default(),
             pie: None,
             select_pie: None,
+            snap_pie: None,
+            pie_pills: [egui::Rect::NOTHING; 8],
             shortcut_filter: String::new(),
             layout: Default::default(),
             dock_view: Default::default(),
@@ -1336,6 +1349,8 @@ impl eframe::App for DriftApp {
             // Before the panels, so it takes the arrow keys, Return and Esc first.
             self.palette_ui(&ctx);
         }
+        // The drawing's colours, offered first in every colour picker drawn this frame.
+        self.publish_document_colours(&ctx);
 
         let style = ui.style().clone();
         let frame = |x: i8, y: i8| {

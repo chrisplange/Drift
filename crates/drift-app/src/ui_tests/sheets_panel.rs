@@ -559,3 +559,53 @@ fn a_new_sheet_leaves_the_canvas_where_it_is() {
     assert!(h.state().drawing.view.sheet_preview);
     assert_eq!(h.state().current_sheet(), first, "still on the first sheet");
 }
+
+#[test]
+fn add_view_from_the_model_stays_on_the_model() {
+    let Some(mut h) = harness() else { return };
+    sheet_with_a_view(&mut h);
+    let sheet = h.state().drawing.view.active_sheet.expect("a sheet");
+    let views = |h: &Harness<'_, DriftApp>| {
+        h.state()
+            .drawing
+            .editor
+            .doc
+            .sheet(sheet)
+            .map_or(0, |s| s.viewports.len())
+    };
+    let before = views(&h);
+    h.state_mut().show_sheet(None);
+    h.run();
+    h.run();
+    // The panel's Add view (the rightmost: on the model there is no tool column's).
+    let add = h
+        .get_all_by_label("Add view")
+        .map(|n| n.rect())
+        .max_by(|a, b| a.left().total_cmp(&b.left()))
+        .unwrap()
+        .center();
+    click_at(&mut h, add);
+    assert_eq!(h.state().tool.kind(), ToolKind::View);
+    let rect = h.state().drawing.view.canvas_rect;
+    let (pa, pb) = (
+        rect.center() - egui::vec2(80.0, 60.0),
+        rect.center() + egui::vec2(80.0, 60.0),
+    );
+    h.hover_at(pa);
+    h.run();
+    button(&h, pa, true);
+    h.run();
+    for k in 1..=5 {
+        h.hover_at(pa + (pb - pa) * (k as f32 / 5.0));
+        h.run();
+    }
+    button(&h, pb, false);
+    h.run();
+    h.run();
+    assert_eq!(views(&h), before + 1, "the view went on the sheet");
+    assert!(
+        !h.state().drawing.view.sheet_preview,
+        "the canvas stays on the model"
+    );
+    assert_eq!(h.state().tool.kind(), ToolKind::Select);
+}

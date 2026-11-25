@@ -76,7 +76,8 @@ impl DriftApp {
             .on_hover_text("Fill new walls: joined walls of one style on one layer are one area");
         if self.drawing.editor.prefs.wall_poche.on {
             let mut style = self.drawing.editor.prefs.wall_poche.style.clone();
-            self.style_bar(ui, &mut style, "wall_bar");
+            let follows = self.new_fill_follows();
+            self.style_bar(ui, &mut style, follows, "wall_bar");
             self.drawing.editor.prefs.wall_poche.style = style;
         }
     }
@@ -173,7 +174,12 @@ impl DriftApp {
             }
         });
         if on {
-            self.style_row(ui, &mut style, "wall_inspector");
+            let doc = &self.drawing.editor.doc;
+            let follows = crate::layers_ui::fill_by_layer_follows(
+                doc,
+                walls.iter().filter_map(|w| doc.wall(*w)).map(|w| w.layer),
+            );
+            self.style_row(ui, &mut style, follows, "wall_inspector");
         }
         if (on, style.clone()) != was {
             self.drawing

@@ -101,6 +101,7 @@ impl DriftApp {
         pointer.round_scale = self.round_scale;
         pointer.angle_step = self.angle_snap.filter(|_| snap);
         pointer.perp_tangent = self.perp_tangent_snap;
+        pointer.guide_kinds = self.drawing.editor.prefs.snap_kinds;
         if snap && self.tool.wants_snap() {
             let options = SnapOptions {
                 tolerance: pointer.tolerance,
@@ -406,7 +407,7 @@ impl DriftApp {
     /// The relation symbols the canvas shows, where they are first laid out (before any are
     /// pushed off the transform handles): none, those of what is picked, or all.
     pub(crate) fn relation_glyphs(&self, map: &ScreenMap) -> Vec<annotations::GlyphLayout> {
-        self.relation_glyphs_in(&self.drawing.editor.doc, map)
+        self.relation_glyphs_of(None, map)
     }
 
     /// The relation symbols laid out on `doc` (see [`Self::layout_dimensions_in`]).
@@ -415,20 +416,48 @@ impl DriftApp {
         doc: &drift_core::Document,
         map: &ScreenMap,
     ) -> Vec<annotations::GlyphLayout> {
+        self.relation_glyphs_of(Some(doc), map)
+    }
+
+    /// The relation symbols laid out on the drawing, kept from frame to frame (see
+    /// [`annotations::GlyphCache`]), or on `eased` (the drawing part-way through a solve's
+    /// animation, a new one each frame) afresh.
+    fn relation_glyphs_of(
+        &self,
+        eased: Option<&drift_core::Document>,
+        map: &ScreenMap,
+    ) -> Vec<annotations::GlyphLayout> {
         if self.show_relations == ShowRelations::Off {
             return Vec::new();
         }
         let ed = &self.drawing.editor;
-        let mut glyphs = annotations::layout_glyphs(doc, map);
-        // (Not on walls' centrelines unless the wall is picked.)
-        if ed.doc.has_walls() {
+        let doc = eased.unwrap_or(&ed.doc);
+        let layout = |last: &dyn Fn(&drift_core::Constraint) -> bool| match eased {
+            None => self.drawing.glyph_cache.borrow_mut().layout(doc, map, last),
+            Some(doc) => annotations::layout_glyphs_last(doc, map, last),
+        };
+        // Not on walls' centrelines unless the wall is picked. Every centreline symbol is laid
+        // out after the rest, picked or not, so picking a wall moves no other symbol. A drawing
+        // with no walls skips all this (it runs every frame, and listing a relation's
+        // entities allocates).
+        let mut glyphs = if ed.doc.has_walls() {
+            let owners = ed.wall_owners();
+            let on_centreline = |c: &drift_core::Constraint| {
+                c.entities()
+                    .any(|e| matches!(owners.of.get(&e), Some(drift_core::walls::Owner::Centre(_))))
+            };
+            let mut glyphs = layout(&on_centreline);
             let hidden = ed.unpicked_centrelines();
-            glyphs.retain(|g| {
-                ed.doc
-                    .constraint(g.id)
-                    .is_none_or(|c| !c.entities().any(|e| hidden.contains(&e)))
-            });
-        }
+            if !hidden.is_empty() {
+                glyphs.retain(|g| {
+                    doc.constraint(g.id)
+                        .is_none_or(|c| !c.entities().any(|e| hidden.contains(&e)))
+                });
+            }
+            glyphs
+        } else {
+            layout(&|_| false)
+        };
         // Picked only: the relations on the picked curves and their points, each on everything
         // it holds (so both lines of a parallel pair), and a picked relation itself. They stay
         // where they are laid out among all of them, so none moves as the picks change.
@@ -1339,15 +1368,102 @@ impl DriftApp {
             self.drawing.view.camera.scale,
             dark,
         );
-        if let Some(frame) = &motion {
-            let shapes = self.drawing.editor.fill_shapes();
+        let fill_shapes = self.drawing.editor.fill_shapes();
+        let fill_motions = match &motion {
+            Some(frame) => frame.fill_motions(&self.drawing.editor.doc, &fill_shapes),
+            None => std::collections::HashMap::new(),
+        };
+        if !fill_motions.is_empty() {
+            let editor = &self.drawing.editor;
+            let fill_meshes = &mut self.drawing.fill_meshes;
+            let patterns = &self.hatch_patterns;
+            let px_per_mm = self.drawing.view.camera.scale;
+            // A fill on what eases in, made for where it is shown, not culled and cut to
+            // the view where it lands. `landed` is what was made for where it lands, if it
+            // shows there. None if it doesn't show as shown.
+            let mut eased =
+                |id: drift_core::FillId,
+                 motion: &crate::motion::FillMotion,
+                 landed: Option<drift_edit::fills::FillGroup>| {
+                    match motion {
+                        crate::motion::FillMotion::Remade(region) => {
+                            drift_edit::fills::fill_graphics_over(
+                                editor, patterns, id, region, view, px_per_mm, dark,
+                            )
+                        }
+                        // Made where it was solved, over what the map carries into the view.
+                        crate::motion::FillMotion::Carried(carry) => {
+                            let hatched =
+                                matches!(editor.doc.fill(id)?.kind, drift_core::FillKind::Hatch(_));
+                            let mut g = match landed {
+                                // Nothing in it is cut to the view: its triangles as made.
+                                Some(g) if !hatched => g,
+                                // Its hatch cut to what is shown; its triangles the kept ones.
+                                _ => drift_edit::fills::fill_graphics_kept(
+                                    editor,
+                                    fill_meshes,
+                                    patterns,
+                                    id,
+                                    &fill_shapes.get(&id)?.region,
+                                    carry.pull_back(view).unwrap_or(view),
+                                    px_per_mm,
+                                    dark,
+                                )?,
+                            };
+                            carry.carry(&mut g.meshes, &mut g.lines);
+                            Some(g)
+                        }
+                    }
+                };
             for g in &mut fills.groups {
-                if let drift_edit::stack::FillRef::Fill(id) = g.fill
-                    && let Some(shape) = shapes.get(&id)
-                    && let Some(map) = frame.fill_map(&self.drawing.editor.doc, &shape.curves)
-                {
-                    map.carry(&mut g.meshes, &mut g.lines);
+                let drift_edit::stack::FillRef::Fill(id) = g.fill else {
+                    continue;
+                };
+                // Out of view as shown: not drawn (not left where it lands).
+                if let Some(motion) = fill_motions.get(&id) {
+                    let landed = drift_edit::fills::FillGroup {
+                        layer: g.layer,
+                        fill: g.fill,
+                        meshes: std::mem::take(&mut g.meshes),
+                        lines: std::mem::take(&mut g.lines),
+                    };
+                    (g.meshes, g.lines) = eased(id, motion, Some(landed))
+                        .map(|eased| (eased.meshes, eased.lines))
+                        .unwrap_or_default();
                 }
+            }
+            // A fill out of view where it lands but in view as shown: drawn in its place
+            // among the fills.
+            let order = self.drawing.editor.fills_in_order();
+            let rank: std::collections::HashMap<drift_core::FillId, usize> =
+                order.iter().enumerate().map(|(k, id)| (*id, k)).collect();
+            let drawn: std::collections::HashSet<drift_core::FillId> = fills
+                .groups
+                .iter()
+                .filter_map(|g| match g.fill {
+                    drift_edit::stack::FillRef::Fill(id) => Some(id),
+                    drift_edit::stack::FillRef::Copy(..) => None,
+                })
+                .collect();
+            for (k, id) in order.iter().enumerate() {
+                let Some(motion) = fill_motions.get(id) else {
+                    continue;
+                };
+                if drawn.contains(id) {
+                    continue;
+                }
+                let Some(group) = eased(*id, motion, None) else {
+                    continue;
+                };
+                let at = fills
+                    .groups
+                    .iter()
+                    .position(|g| match g.fill {
+                        drift_edit::stack::FillRef::Fill(f) => rank.get(&f).is_none_or(|r| *r > k),
+                        drift_edit::stack::FillRef::Copy(..) => true,
+                    })
+                    .unwrap_or(fills.groups.len());
+                fills.groups.insert(at, group);
             }
         }
         // Geometry (GPU): underlays under everything else.
@@ -1563,8 +1679,7 @@ impl DriftApp {
         {
             overlay::base_point(&painter, &map, at, &colors);
         }
-        // Picked and hovered fills.
-        let shapes = self.drawing.editor.fill_shapes();
+        // Picked and hovered fills, lit over the shapes their fills were drawn from.
         for (id, alpha) in self
             .drawing
             .editor
@@ -1573,20 +1688,32 @@ impl DriftApp {
             .map(|id| (*id, 0.3))
             .chain(self.drawing.editor.hovered_fill.map(|id| (id, 0.14)))
         {
-            if let Some(shape) = shapes.get(&id) {
+            if let Some(shape) = fill_shapes.get(&id) {
                 let color = if shape.lost {
                     crate::theme::error_color(dark)
                 } else {
                     colors.window
                 };
-                overlay::region_fill(&painter, &map, &shape.region, color.gamma_multiply(alpha));
+                // A fill easing into place is lit where it is shown.
+                let color = color.gamma_multiply(alpha);
+                match fill_motions.get(&id) {
+                    Some(crate::motion::FillMotion::Remade(region)) => {
+                        overlay::region_fill(&painter, &map, region, color);
+                    }
+                    Some(crate::motion::FillMotion::Carried(carry)) => {
+                        overlay::region_fill_carried(&painter, &map, &shape.region, color, &|p| {
+                            carry.apply(p)
+                        });
+                    }
+                    None => overlay::region_fill(&painter, &map, &shape.region, color),
+                }
             }
         }
         // Fills an edit divided, kept whole: marked at their seed until fitted, split or
         // kept.
         let dark = ui.visuals().dark_mode;
         for (id, fill) in self.drawing.editor.doc.fills() {
-            let Some(shape) = shapes.get(&id).filter(|s| fill.divided && s.parts > 1) else {
+            let Some(shape) = fill_shapes.get(&id).filter(|s| fill.divided && s.parts > 1) else {
                 continue;
             };
             if self
@@ -1686,7 +1813,6 @@ impl DriftApp {
         self.paint_note_grips(&painter, &notes, ui.visuals().dark_mode);
         self.paint_groups(&painter, &map, ui.visuals().dark_mode);
         self.paint_free_directions(&painter, &map);
-        self.empty_canvas_hint(ui, &map);
         // The quick-constrain bar, and a message clear of it.
         // (It keeps off the dimensions' labels, the temporary dimensions and the relations'
         // symbols, which are read and clicked.)

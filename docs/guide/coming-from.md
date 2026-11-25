@@ -31,7 +31,7 @@ What's different: Drift is 2D only. Walls are drawn as 2D walls with joins, door
 | Command line | The command palette (Ctrl+K), plus one-key tools: L line, C circle, A arc, R rectangle, T trim, E extend, O offset, M mirror, F fillet. |
 | Typing a distance after picking a direction | The same: start drawing, point the way, type the length, Enter. Tab moves to the angle. |
 | Ortho (F8) / polar tracking | X and Y lock the segment to an axis; **Angle snap** in the status bar steps the angle (1°, 5°, 15°, 45°). |
-| Object snaps | End, mid, centre, quadrant, nearest and the origin, always on; perpendicular and tangent while drawing lines (**Perpendicular & tangent** in the status bar). Hold Alt to place without snapping. Intersection isn't a snap yet. |
+| Object snaps | End, mid, centre, quadrant, nearest and the origin, on unless you turn a kind off in the snap pie (Shift+S); perpendicular and tangent while drawing lines (**Perpendicular & tangent** in the status bar). Hold Alt to place without snapping. Intersection isn't a snap yet. |
 | Object snap tracking | Inference lines: hover a point, move away, and a dashed guide shows when you're level with it or above it. |
 | Layers, ByLayer | The same model: colour, line weight and line type by layer unless set on the object. Layer **0** always exists. |
 | Blocks, INSERT, BEDIT, BASE, EXPLODE | **Make** block (then click its base point), **Place block** (I), double-click a copy to edit in place, **Set base point**, **Explode**. **Make block from group** and **Explode to group** turn groups and blocks into each other. Blocks go to and from DXF. |

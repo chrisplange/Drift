@@ -232,6 +232,11 @@ impl DriftApp {
             "wlines={}",
             self.drawing.editor.prefs.wall_lines.key()
         ));
+        // The snap pie's kinds, as those turned off.
+        prefs.push(format!(
+            "snapoff={}",
+            self.drawing.editor.prefs.snap_kinds.off_bits()
+        ));
         prefs.push(format!(
             "fillalone={}",
             self.drawing.editor.prefs.fill_alone_picks
@@ -327,6 +332,15 @@ impl DriftApp {
                 }
                 "tdims" => self.show_temp_dims = on,
                 "quickbar" => self.show_quick_bar = on,
+                "snapoff" => {
+                    if let Ok(bits) = value.parse() {
+                        // Grid stays on here: grid snapping is its own switch (grid_snap),
+                        // and nothing in the app could turn this one back on.
+                        self.drawing.editor.prefs.snap_kinds =
+                            drift_geom::SnapKinds::from_off_bits(bits)
+                                .with(drift_geom::SnapKind::Grid, true);
+                    }
+                }
                 "fillalone" => {
                     if let Ok(n) = value.parse() {
                         self.drawing.editor.prefs.fill_alone_picks = n;

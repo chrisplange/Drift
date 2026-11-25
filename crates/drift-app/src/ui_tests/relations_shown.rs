@@ -188,3 +188,281 @@ fn which_relations_show_is_saved_and_an_older_on_off_setting_still_reads() {
     fresh.state_mut().apply_view_prefs("rels=some");
     assert_eq!(fresh.state().show_relations, ShowRelations::All);
 }
+
+/// An arc's relation symbols sit on the arc, not where the rest of its circle would be:
+/// a tangency beside the joint on each curve, other relations by the arc's middle.
+#[test]
+fn arc_symbols_sit_on_the_arc_and_tangency_at_the_joint() {
+    use crate::annotations::{GLYPH_SIZE, layout_glyphs};
+    let Some(mut h) = harness() else { return };
+    let v = DVec2::new;
+    let ed = &mut h.state_mut().drawing.editor;
+    ed.doc.begin();
+    // A line running into a quarter arc (centre above its start, ending to its right).
+    let (l0, joint) = (
+        ed.doc.add_point(v(-60.0, 0.0)),
+        ed.doc.add_point(v(0.0, 0.0)),
+    );
+    let line = ed.doc.add_line(l0, joint).unwrap();
+    let (c, e) = (
+        ed.doc.add_point(v(0.0, 50.0)),
+        ed.doc.add_point(v(50.0, 50.0)),
+    );
+    let arc = ed.doc.add_arc(c, joint, e).unwrap();
+    let (c2, s2, e2) = (
+        ed.doc.add_point(v(-60.0, 60.0)),
+        ed.doc.add_point(v(-50.0, 60.0)),
+        ed.doc.add_point(v(-60.0, 70.0)),
+    );
+    let other = ed.doc.add_arc(c2, s2, e2).unwrap();
+    let tangent = ed
+        .doc
+        .add_constraint(Constraint::Tangent { a: line, b: arc })
+        .unwrap();
+    let equal = ed
+        .doc
+        .add_constraint(Constraint::Equal { a: arc, b: other })
+        .unwrap();
+    ed.commit("Drawing");
+    ed.selection.clear();
+    h.state_mut().drawing.view.fit_target = Some(drift_core::Bounds {
+        min: v(-70.0, -10.0),
+        max: v(60.0, 80.0),
+    });
+    h.run();
+    h.run();
+    save_png("drift_ui_arc_relation_symbols.png", &mut h);
+
+    let map = screen_map(&h);
+    let doc = &h.state().drawing.editor.doc;
+    let all = layout_glyphs(doc, &map);
+    let at = |id: EntityId| map.to_screen(doc.point(id).unwrap());
+    let joint_s = at(joint);
+    let tangents: Vec<_> = all.iter().filter(|g| g.id == tangent).collect();
+    assert_eq!(tangents.len(), 2);
+    for g in &tangents {
+        let d = g.rect.center().distance(joint_s);
+        assert!(
+            d < 2.5 * GLYPH_SIZE,
+            "tangency symbol {d} px from the joint"
+        );
+    }
+    let (centre, r) = (at(c), joint_s.distance(at(c)));
+    // Both on the outside of the bend: the line's below it (away from the arc's centre,
+    // which is above), the arc's outside its circle.
+    let (on_line, on_arc) = (tangents[0].rect.center(), tangents[1].rect.center());
+    assert!(
+        on_line.y > joint_s.y,
+        "{on_line:?} below the line at {joint_s:?}"
+    );
+    assert!(on_arc.distance(centre) > r, "{on_arc:?} outside the arc");
+    // The arc's equal symbol stands just off the arc (not inside its circle's far side).
+    let on_arc = all
+        .iter()
+        .filter(|g| g.id == equal)
+        .map(|g| g.rect.center())
+        .find(|p| (p.distance(centre) - r).abs() < GLYPH_SIZE * 1.5)
+        .expect("an equal symbol beside the arc");
+    // ...by its middle: down and to the right of the centre.
+    assert!(
+        on_arc.x > centre.x && on_arc.y > centre.y,
+        "{on_arc:?} {centre:?}"
+    );
+}
+
+/// A symbol on a wall's centreline, hidden while the wall isn't picked, moves no shown
+/// symbol out of its way: a line just beside the centreline keeps its Horizontal symbol
+/// right over its middle, though the centreline's own symbol would sit on that spot.
+#[test]
+fn hidden_centreline_symbols_push_no_shown_symbol() {
+    use crate::annotations::layout_glyphs;
+    let Some(mut h) = harness() else { return };
+    let v = DVec2::new;
+    h.state_mut().grid_snap = false;
+    {
+        let prefs = &mut h.state_mut().drawing.editor.prefs;
+        prefs.wall_thickness = 10.0;
+        prefs.wall_justify = drift_core::Justify::Centre;
+        prefs.wall_arc = false;
+    }
+    h.state_mut().drawing.view.fit_target = Some(drift_core::Bounds {
+        min: v(-20.0, -40.0),
+        max: v(140.0, 100.0),
+    });
+    h.run();
+    h.state_mut().drawing.view.fit_target = None;
+    h.run();
+    h.key_press(Key::W);
+    h.run();
+    click_world(&mut h, v(0.0, 0.0));
+    click_world(&mut h, v(100.0, 0.0));
+    h.key_press(Key::Enter);
+    h.run();
+    h.key_press(Key::Escape);
+    h.run();
+
+    let ed = &mut h.state_mut().drawing.editor;
+    let centre = {
+        let (_, wall) = ed.doc.walls().next().expect("a wall");
+        ed.doc.path(wall.centre).expect("its centreline").curves[0]
+    };
+    ed.doc.begin();
+    // The centreline's Horizontal first, so it is laid out before the line's.
+    let on_centre = ed
+        .doc
+        .constraints()
+        .find(|(_, c)| matches!(**c, Constraint::Horizontal { line } if line == centre))
+        .map(|(id, _)| id);
+    let on_centre = on_centre.unwrap_or_else(|| {
+        ed.doc
+            .add_constraint(Constraint::Horizontal { line: centre })
+            .unwrap()
+    });
+    let (a, b) = (
+        ed.doc.add_point(v(0.0, 1.0)),
+        ed.doc.add_point(v(100.0, 1.0)),
+    );
+    let line = ed.doc.add_line(a, b).unwrap();
+    let on_line = ed
+        .doc
+        .add_constraint(Constraint::Horizontal { line })
+        .unwrap();
+    ed.commit("Drawing");
+    ed.selection.clear();
+    h.run();
+    h.run();
+
+    let map = screen_map(&h);
+    let mid_x = screen(&h, v(50.0, 1.0)).x;
+    let x_of = |glyphs: &[crate::annotations::GlyphLayout], id| {
+        glyphs
+            .iter()
+            .find(|g| g.id == id)
+            .map(|g| g.rect.center().x)
+    };
+    // Laid out with every relation, the line's symbol would slide off the centreline's.
+    let all = layout_glyphs(&h.state().drawing.editor.doc, &map);
+    let pushed = x_of(&all, on_line).unwrap();
+    assert!(
+        (pushed - mid_x).abs() > 1.0,
+        "the centreline's symbol is in the way: {pushed} vs {mid_x}"
+    );
+    // Shown: the centreline's symbol isn't, and the line's stays over its middle.
+    let shown = h.state().relation_glyphs(&map);
+    assert_eq!(x_of(&shown, on_centre), None, "the wall isn't picked");
+    let x = x_of(&shown, on_line).expect("the line's symbol");
+    assert!((x - mid_x).abs() < 0.5, "{x} not over the middle {mid_x}");
+    // Pick the wall: its centreline's symbol shows, and the line's stays where it was, in
+    // All mode and in Picked mode with the line picked too.
+    let rects = |h: &Harness<'_, DriftApp>| {
+        let shown = h.state().relation_glyphs(&map);
+        (x_of(&shown, on_centre), x_of(&shown, on_line))
+    };
+    let curves = {
+        let ed = &h.state().drawing.editor;
+        let (wall, _) = ed.doc.walls().next().expect("a wall");
+        ed.wall_curves(wall)
+    };
+    h.state_mut().drawing.editor.selection = curves.iter().copied().collect();
+    h.run();
+    let (centre_x, line_x) = rects(&h);
+    assert!(centre_x.is_some(), "the picked wall's symbol shows");
+    assert_eq!(line_x, Some(x), "picking the wall moves no other symbol");
+    h.state_mut().show_relations = ShowRelations::Picked;
+    let mut both: Vec<_> = curves;
+    both.push(line);
+    h.state_mut().drawing.editor.selection = both.into_iter().collect();
+    h.run();
+    assert_eq!(
+        rects(&h).1,
+        Some(x),
+        "Picked mode: the line's symbol stays too"
+    );
+    h.state_mut().drawing.editor.selection = [line].into_iter().collect();
+    h.run();
+    assert_eq!(rects(&h), (None, Some(x)), "the wall let go");
+}
+
+/// The canvas lays its relation symbols out once and keeps them from frame to frame: idle
+/// frames and a pan lay out nothing again, nor do the mode and the picks, which choose only
+/// which of them show; a zoom and an edit lay them out again, and they show where they are
+/// laid out afresh.
+#[test]
+fn the_canvas_keeps_its_symbols_until_an_edit_or_a_zoom() {
+    let Some(mut h) = harness() else { return };
+    let ([first, _, third], parallel, horizontal) = drawing(&mut h);
+    h.state_mut().drawing.view.fit_target = None;
+    h.run();
+    let made = |h: &Harness<'_, DriftApp>| h.state().drawing.glyph_cache.borrow().made;
+    let fresh = |h: &Harness<'_, DriftApp>| {
+        let map = screen_map(h);
+        crate::annotations::layout_glyphs(&h.state().drawing.editor.doc, &map)
+            .iter()
+            .map(|g| (g.id, g.rect.center()))
+            .collect::<Vec<_>>()
+    };
+    let same_as_fresh = |h: &Harness<'_, DriftApp>| {
+        let got = h.state().relation_glyphs(&screen_map(h));
+        let want = fresh(h);
+        assert_eq!(got.len(), want.len());
+        for (g, (id, at)) in got.iter().zip(&want) {
+            assert_eq!(g.id, *id);
+            assert!(g.rect.center().distance(*at) < 1e-3, "{g:?} not at {at:?}");
+        }
+    };
+    let laid = made(&h);
+    assert!(laid > 0);
+    // Idle frames, and hovering.
+    for k in 0..3 {
+        h.hover_at(Pos2::new(300.0 + 40.0 * k as f32, 300.0));
+        h.run();
+    }
+    assert_eq!(made(&h), laid, "idle");
+    // A pan.
+    h.state_mut()
+        .drawing
+        .view
+        .camera
+        .pan(DVec2::new(15.0, -6.0));
+    h.run();
+    assert_eq!(made(&h), laid, "a pan");
+    same_as_fresh(&h);
+    // The mode and the picks choose which show, from those laid out.
+    h.state_mut().show_relations = ShowRelations::Picked;
+    h.state_mut().drawing.editor.selection = [third].into_iter().collect();
+    h.run();
+    assert_eq!(shown(&h), [horizontal]);
+    h.state_mut().drawing.editor.selection = [first].into_iter().collect();
+    h.run();
+    assert_eq!(shown(&h), [parallel, parallel]);
+    h.state_mut().show_relations = ShowRelations::Off;
+    h.run();
+    assert!(shown(&h).is_empty());
+    h.state_mut().show_relations = ShowRelations::All;
+    h.run();
+    assert_eq!(shown(&h), [parallel, parallel, horizontal]);
+    assert_eq!(made(&h), laid, "the mode and the picks");
+    // A zoom.
+    h.state_mut()
+        .drawing
+        .view
+        .camera
+        .zoom_at(DVec2::new(30.0, 20.0), 1.2);
+    h.run();
+    assert!(made(&h) > laid, "a zoom");
+    let laid = made(&h);
+    same_as_fresh(&h);
+    h.run();
+    assert_eq!(made(&h), laid, "idle after the zoom");
+    // An edit: a relation added.
+    let ed = &mut h.state_mut().drawing.editor;
+    ed.doc.begin();
+    ed.doc
+        .add_constraint(Constraint::Equal { a: first, b: third })
+        .unwrap();
+    ed.commit("Equal");
+    h.run();
+    assert!(made(&h) > laid, "an edit");
+    assert_eq!(shown(&h).len(), 5);
+    same_as_fresh(&h);
+}

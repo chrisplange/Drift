@@ -128,10 +128,20 @@ impl DriftApp {
         // One hatched shape: its pattern's alignment, with the angle among it.
         let aligned =
             shapes.fills.len() == 1 && matches!(fill.kind, drift_core::FillKind::Hatch(_));
+        let doc = &self.drawing.editor.doc;
+        let follows = crate::layers_ui::fill_by_layer_follows(
+            doc,
+            shapes
+                .fills
+                .iter()
+                .filter_map(|f| doc.fill(*f))
+                .map(|f| f.layer),
+        );
         let edit = fill_style_editor_or_none(
             ui,
             &mut style,
             &self.hatch_patterns,
+            follows,
             dark,
             "shape",
             !aligned,

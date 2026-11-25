@@ -256,14 +256,41 @@ impl DriftApp {
                                         self.new_drawing.units =
                                             NewUnits::of(self.drawing.editor.doc.units());
                                     }
-                                    ui.label(
-                                        egui::RichText::new(if units.length.is_metric() {
-                                            "Millimeters; more in File → Drawing settings."
-                                        } else {
-                                            "Feet and inches; more in File → Drawing settings."
+                                    // As tall as the taller of the two, so switching units
+                                    // never moves what is below (one wraps, the other not).
+                                    let captions = [
+                                        "Millimeters; more in File → Drawing settings.",
+                                        "Feet and inches; more in File → Drawing settings.",
+                                    ];
+                                    let caption = |t: &str| {
+                                        egui::RichText::new(t)
+                                            .size(theme::size::CAPTION)
+                                            .color(n.tertiary)
+                                    };
+                                    let wide = ui.available_width();
+                                    let tall = captions
+                                        .iter()
+                                        .map(|t| {
+                                            egui::WidgetText::from(caption(t))
+                                                .into_galley(
+                                                    ui,
+                                                    Some(egui::TextWrapMode::Wrap),
+                                                    wide,
+                                                    egui::TextStyle::Body,
+                                                )
+                                                .size()
+                                                .y
                                         })
-                                        .size(theme::size::CAPTION)
-                                        .color(n.tertiary),
+                                        .fold(0.0_f32, f32::max);
+                                    ui.allocate_ui_with_layout(
+                                        egui::vec2(wide, tall),
+                                        egui::Layout::top_down(egui::Align::Min),
+                                        |ui| {
+                                            ui.set_min_height(tall);
+                                            ui.label(caption(
+                                                captions[usize::from(!units.length.is_metric())],
+                                            ));
+                                        },
                                     );
                                     ui.add_space(10.0);
                                     if ui
@@ -829,14 +856,14 @@ impl DriftApp {
         .on_hover_text(
             format!("Auto merge: a dragged point dropped on another, or a line or arc drawn on another shape's point, shares it (on the same layer only). Ctrl flips it for one drop{}", crate::commands::key_suffix("view.auto_merge")),
         );
-        crate::theme::checkbox(
-            ui,
-            &mut self.perp_tangent_snap,
-            "Snap perpendicular and tangent",
-        )
-        .on_hover_text(
-            "Lines snap square onto lines, circles and arcs, or tangent to circles and arcs",
-        );
+        let mut perp_tangent = self.perp_tangent_snap;
+        crate::theme::checkbox(ui, &mut perp_tangent, "Snap perpendicular and tangent")
+            .on_hover_text(
+                "Lines snap square onto lines, circles and arcs, or tangent to circles and arcs",
+            );
+        if perp_tangent != self.perp_tangent_snap {
+            self.set_perp_tangent_snap(perp_tangent);
+        }
         ui.horizontal(|ui| {
             ui.label("Angle snap");
             let mut options = vec![(None, "Off".to_owned())];

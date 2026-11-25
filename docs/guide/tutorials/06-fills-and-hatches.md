@@ -222,8 +222,10 @@ a CAD overlay.
 ## Fill colours and layers
 
 A fill takes its colour from its layer unless you give it one. Each layer has a stroke
-colour and a separate fill colour (**Same as stroke** by default); set them in the
-**Layers** panel or with the top bar's **Fill** swatch.
+colour and a separate fill colour (it matches the stroke until you set it); click a
+layer's swatches in the **Layers** panel, or use the top bar's **Fill** swatch. A
+**Colour** left at **By layer** shows the layer's colour with a small link in its corner;
+picks on layers of different colours show a plain grey square crossed by a line.
 
 ## What you learned
 

@@ -2415,15 +2415,19 @@ impl DriftApp {
                             }
                         }
                     });
+                    let mut perp_tangent = self.perp_tangent_snap;
                     toggle(
                         ui,
                         Glyph::PerpTangent,
                         "Perpendicular & tangent",
-                        &mut self.perp_tangent_snap,
+                        &mut perp_tangent,
                         "Perpendicular & tangent: lines snap square onto lines, circles and arcs, \
                          or tangent to circles and arcs, and follow guides square to a line or \
                          along an arc from the end you draw on from",
                     );
+                    if perp_tangent != self.perp_tangent_snap {
+                        self.set_perp_tangent_snap(perp_tangent);
+                    }
                     toggle(
                         ui,
                         Glyph::Snap,
@@ -2431,6 +2435,7 @@ impl DriftApp {
                         &mut self.grid_snap,
                         &format!("Snap to grid ({grid}){}", crate::commands::key_suffix("view.snap")),
                     );
+                    self.snap_kinds_button(ui);
                     // The pointer's position, leftmost of the cluster: the first to go when
                     // the window is narrow, so the hint keeps its room.
                     if bar.width() >= 1000.0 {

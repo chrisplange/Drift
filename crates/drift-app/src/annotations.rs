@@ -4,7 +4,7 @@
 //! geometry (see [`dimension_anchor`]), so they travel with the geometry. Everything else (gaps,
 //! arrow sizes, text) is in screen space so annotations stay readable at any zoom.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::f32::consts::TAU as TAU32;
 
 use drift_core::{
@@ -2198,24 +2198,166 @@ pub struct GlyphLayout {
     pub along: Vec2,
 }
 
-/// Lay out a glyph for every relation (dimensions are drawn separately). Relations between
-/// two curves get a glyph on each. Glyphs on the same entity are stacked.
+/// [`layout_glyphs_last`] with every relation in its usual order.
+#[cfg(test)]
 pub fn layout_glyphs(doc: &Document, map: &ScreenMap) -> Vec<GlyphLayout> {
-    let mut out = Vec::new();
-    let mut stack: HashMap<EntityId, usize> = HashMap::new();
+    layout_glyphs_last(doc, map, |_| false)
+}
+
+/// Lay out a glyph for every relation (dimensions are drawn separately). Relations between
+/// two curves get a glyph on each. Each slides along its stack direction off the glyphs
+/// already placed: those on its own entity always, so they never overlap; those on others
+/// too, unless that would carry it more than two tiles further than its own entity's need
+/// (in a heap of symbols zoomed far out, which would otherwise spread over the drawing around
+/// it). The relations `last` passes are placed after all the others, so they keep clear of
+/// the others but move none of them: symbols that are only sometimes shown (on a wall's
+/// centreline, while the wall is picked) never push the ones always shown about.
+///
+/// Zoomed so far out that the symbols vastly outnumber the room for them (more than twice
+/// the tiles that the stretch of screen they are on could hold apart), none dodges those of
+/// other curves: whatever spots they took they would be a heap, which reads no better
+/// spread, and dodging through it costs every symbol as much as the heap. Those on one
+/// curve still stack apart, so a curve's own symbols read where they can be read at all.
+pub fn layout_glyphs_last(
+    doc: &Document,
+    map: &ScreenMap,
+    last: impl Fn(&Constraint) -> bool,
+) -> Vec<GlyphLayout> {
+    layout_glyphs_within(doc, map, last, Rect::EVERYTHING).0
+}
+
+/// The relation symbols of the drawing as last laid out, kept from frame to frame: laying
+/// them out (each dodging the others) costs too much to do on every frame of a big drawing,
+/// and only an edit or a zoom moves them relative to the drawing. A pan moves them all along
+/// with a point of the drawing, without laying them out again. On a big drawing only those
+/// about the view are laid out, with room to pan before it is done again (see
+/// [`Self::MARGIN`]).
+#[derive(Default)]
+pub struct GlyphCache {
+    /// What they were laid out for.
+    key: Option<GlyphKey>,
+    /// A point of the drawing, and where it was on screen when they were laid out.
+    anchor: (DVec2, Pos2),
+    /// The stretch of screen they were laid out over (as it was then): none when that was
+    /// all of them.
+    region: Option<Rect>,
+    glyphs: Vec<GlyphLayout>,
+    /// How many times they were laid out (tests).
+    pub(crate) made: usize,
+}
+
+/// Everything the layout depends on but the view's pan (see [`GlyphCache`]): the document
+/// (where it is, which it is and its revision, which every edit changes, a point moved
+/// included) and the zoom. Which relations go last follows from the document.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct GlyphKey {
+    doc: usize,
+    lineage: u64,
+    structure: u64,
+    revision: u64,
+    scale: u64,
+}
+
+impl GlyphCache {
+    /// How far past the view the symbols are laid out, so that panning that far less half
+    /// of it lays nothing out again. (Twelve tiles: more than a symbol dodges, so the edge
+    /// of what is laid out never shows.)
+    pub const MARGIN: f32 = 12.0 * REACH;
+
+    /// The symbols of `doc` seen through `map` (see [`layout_glyphs_last`]), laid out again
+    /// only when the document or the zoom has changed since, or the view has panned out of
+    /// what was laid out.
+    pub fn layout(
+        &mut self,
+        doc: &Document,
+        map: &ScreenMap,
+        last: impl Fn(&Constraint) -> bool,
+    ) -> Vec<GlyphLayout> {
+        let key = GlyphKey {
+            doc: std::ptr::from_ref(doc) as usize,
+            lineage: doc.lineage(),
+            structure: doc.structure(),
+            revision: doc.revision(),
+            scale: map.camera.scale.to_bits(),
+        };
+        // How far the view has panned since they were laid out.
+        let shift = |(world, then): (DVec2, Pos2)| map.to_screen(world) - then;
+        let warm = self.key == Some(key)
+            && self.region.is_none_or(|r| {
+                r.contains_rect(
+                    map.rect
+                        .translate(-shift(self.anchor))
+                        .expand(Self::MARGIN / 2.0),
+                )
+            });
+        if !warm {
+            let region = map.rect.expand(Self::MARGIN);
+            let (glyphs, whole) = layout_glyphs_within(doc, map, last, region);
+            self.key = Some(key);
+            self.anchor = (map.camera.center, map.to_screen(map.camera.center));
+            self.region = (!whole).then_some(region);
+            self.glyphs = glyphs;
+            self.made += 1;
+        }
+        // (Unmoved, they are given as laid out, to the bit.)
+        let by = shift(self.anchor);
+        self.glyphs
+            .iter()
+            .map(|g| GlyphLayout {
+                rect: g.rect.translate(by),
+                ..g.clone()
+            })
+            .collect()
+    }
+}
+
+/// One glyph to place: on `entity`, its own spot `at`, stacking along `along`.
+struct GlyphAsk {
+    entity: EntityId,
+    at: Pos2,
+    along: Vec2,
+    slide: Slide,
+    id: ConstraintId,
+    kind: GlyphKind,
+}
+
+/// [`layout_glyphs_last`], leaving out the glyphs whose own spot (before any slide) is
+/// outside `region`, and whether none was left out. The rest are placed as they are among
+/// them all, but for those that would have dodged one left out (so only near the edge of
+/// `region`).
+pub fn layout_glyphs_within(
+    doc: &Document,
+    map: &ScreenMap,
+    last: impl Fn(&Constraint) -> bool,
+    region: Rect,
+) -> (Vec<GlyphLayout>, bool) {
+    // First each glyph's own spot, in the order they are placed; then they are placed.
+    let mut out: Vec<GlyphAsk> = Vec::new();
     let p = |id| doc.point(id).ok().map(|w| map.to_screen(w));
-    let mut place = |entity: EntityId, base: Option<(Pos2, Vec2)>, id, kind, out: &mut Vec<_>| {
-        let Some((at, along)) = base else { return };
-        let k = stack.entry(entity).or_insert(0);
-        let center = at + along * (*k as f32) * (GLYPH_SIZE + 2.0);
-        *k += 1;
-        out.push(GlyphLayout {
-            id,
-            kind,
-            rect: Rect::from_center_size(center, Vec2::splat(GLYPH_SIZE)),
-            along,
-        });
-    };
+    // Points tied by a coincidence, both ways round.
+    let tied: HashSet<(EntityId, EntityId)> = doc
+        .constraints()
+        .filter_map(|(_, c)| match *c {
+            Constraint::Coincident { a, b } => Some([(a, b), (b, a)]),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    // `slide`: a glyph beside a curve may slide either way along it, whichever is nearer;
+    // one beside a point only forward, so it stays off the point; one marking a joint any
+    // way that keeps it nearer that joint than the curve's other end (see `joint_slide`).
+    let place =
+        |entity: EntityId, base: Option<(Pos2, Vec2)>, slide: Slide, id, kind, out: &mut Vec<_>| {
+            let Some((at, along)) = base else { return };
+            out.push(GlyphAsk {
+                entity,
+                at,
+                along,
+                slide,
+                id,
+                kind,
+            });
+        };
     // Glyphs for a line sit beside its midpoint and stack along it.
     let line_base = |line: EntityId| -> Option<(Pos2, Vec2)> {
         let EntityKind::Line { a, b } = doc.get(line)?.kind else {
@@ -2233,13 +2375,36 @@ pub fn layout_glyphs(doc: &Document, map: &ScreenMap) -> Vec<GlyphLayout> {
         p(point).map(|q| (q + vec2(GLYPH_OFF_POINT, -GLYPH_OFF_POINT), vec2(1.0, 0.0)))
     };
 
-    for (id, c) in doc.constraints() {
+    // Tangencies that mark a joint go last: the symbols by a curve's middle keep it, and
+    // each joint's symbols slide around them toward the joint (or back around the bend),
+    // so a crowded side packs from its middle out to its ends.
+    let marks_joint = |c: &Constraint| match *c {
+        Constraint::Tangent { a, b } => joint_of(doc, &tied, a, b).is_some(),
+        _ => false,
+    };
+    // One pass gives each relation its place in that order (the `last` ones after the rest,
+    // joint tangencies after the others in each), then a stable sort keeps the document's
+    // order within each. `last` and `marks_joint` are asked once a relation, and the only
+    // allocation is this one list.
+    let mut in_order: Vec<(u8, ConstraintId, &Constraint)> = doc
+        .constraints()
+        .map(|(id, c)| (u8::from(last(c)) * 2 + u8::from(marks_joint(c)), id, c))
+        .collect();
+    in_order.sort_by_key(|&(rank, _, _)| rank);
+    for (_, id, c) in in_order {
         use GlyphKind::*;
         match *c {
-            Constraint::Horizontal { line } => {
-                place(line, line_base(line), id, Horizontal, &mut out)
+            Constraint::Horizontal { line } => place(
+                line,
+                line_base(line),
+                Slide::Either,
+                id,
+                Horizontal,
+                &mut out,
+            ),
+            Constraint::Vertical { line } => {
+                place(line, line_base(line), Slide::Either, id, Vertical, &mut out)
             }
-            Constraint::Vertical { line } => place(line, line_base(line), id, Vertical, &mut out),
             Constraint::HorizontalPoints { a, b } | Constraint::VerticalPoints { a, b } => {
                 let base = p(a).zip(p(b)).map(|(pa, pb)| {
                     (
@@ -2252,7 +2417,7 @@ pub fn layout_glyphs(doc: &Document, map: &ScreenMap) -> Vec<GlyphLayout> {
                 } else {
                     Vertical
                 };
-                place(a, base, id, kind, &mut out);
+                place(a, base, Slide::Forward, id, kind, &mut out);
             }
             Constraint::Parallel { a, b }
             | Constraint::Perpendicular { a, b }
@@ -2270,9 +2435,36 @@ pub fn layout_glyphs(doc: &Document, map: &ScreenMap) -> Vec<GlyphLayout> {
                     Constraint::Collinear { .. } => Collinear,
                     _ => Equal,
                 };
-                for e in [a, b] {
-                    let base = match doc.get(e).map(|x| x.kind) {
+                // A tangency is marked where the two join, a glyph on each curve just in
+                // from the joint, both on the outside of the bend.
+                let joint_ends = if matches!(c, Constraint::Tangent { .. }) {
+                    joint_of(doc, &tied, a, b)
+                } else {
+                    None
+                };
+                let joint = joint_ends.and_then(|(pa, pb)| {
+                    let (pa, pb) = (p(pa)?, p(pb)?);
+                    Some(pa + (pb - pa) * 0.5)
+                });
+                for (e, other) in [(a, b), (b, a)] {
+                    // The end of `e` away from the joint, on screen.
+                    let far = joint_ends.and_then(|(pa, pb)| {
+                        let mine = if e == a { pa } else { pb };
+                        let [x, y] = doc.get(e)?.kind.ends()?;
+                        p(if x == mine { y } else { x })
+                    });
+                    let kind_of = doc.get(e).map(|x| x.kind);
+                    let base = match kind_of {
+                        _ if joint.is_some() => {
+                            let away = doc.shape(other).and_then(|s| centre_on_screen(&s, map));
+                            curve_spot(doc, map, e, joint, away).or_else(|| line_base(e))
+                        }
                         Some(EntityKind::Line { .. }) => line_base(e),
+                        // An arc's (or other open curve's) glyph sits by its middle, on the
+                        // curve; a circle's at its upper right.
+                        _ if !matches!(doc.shape(e), Some(drift_core::Shape::Circle { .. })) => {
+                            curve_spot(doc, map, e, None, None)
+                        }
                         _ => center_of(doc, e).map(|w| {
                             let r =
                                 drift_solver::radius_of(doc, e).unwrap_or(0.0) * map.camera.scale;
@@ -2286,12 +2478,22 @@ pub fn layout_glyphs(doc: &Document, map: &ScreenMap) -> Vec<GlyphLayout> {
                             )
                         }),
                     };
-                    place(e, base, id, kind, &mut out);
+                    let slide = match (joint, far, base) {
+                        (Some(j), Some(f), Some((at, along))) => joint_slide(j, f, at, along),
+                        (Some(_), None, _) => Slide::Either,
+                        _ if matches!(doc.shape(e), Some(drift_core::Shape::Circle { .. })) => {
+                            Slide::Forward
+                        }
+                        _ => Slide::Either,
+                    };
+                    place(e, base, slide, id, kind, &mut out);
                 }
             }
             Constraint::Fix { point, .. }
             | Constraint::FixX { point, .. }
-            | Constraint::FixY { point, .. } => place(point, point_base(point), id, Fix, &mut out),
+            | Constraint::FixY { point, .. } => {
+                place(point, point_base(point), Slide::Forward, id, Fix, &mut out)
+            }
             Constraint::FixRadius { curve, .. } => {
                 let base = center_of(doc, curve).map(|w| {
                     (
@@ -2299,15 +2501,27 @@ pub fn layout_glyphs(doc: &Document, map: &ScreenMap) -> Vec<GlyphLayout> {
                         vec2(1.0, 0.0),
                     )
                 });
-                place(curve, base, id, Fix, &mut out);
+                place(curve, base, Slide::Forward, id, Fix, &mut out);
             }
-            Constraint::Coincident { a, .. } => place(a, point_base(a), id, Coincident, &mut out),
-            Constraint::Midpoint { point, .. } | Constraint::MidpointOf { point, .. } => {
-                place(point, point_base(point), id, Midpoint, &mut out)
+            Constraint::Coincident { a, .. } => {
+                place(a, point_base(a), Slide::Forward, id, Coincident, &mut out)
             }
-            Constraint::Corner { point, .. } => {
-                place(point, point_base(point), id, Corner, &mut out)
-            }
+            Constraint::Midpoint { point, .. } | Constraint::MidpointOf { point, .. } => place(
+                point,
+                point_base(point),
+                Slide::Forward,
+                id,
+                Midpoint,
+                &mut out,
+            ),
+            Constraint::Corner { point, .. } => place(
+                point,
+                point_base(point),
+                Slide::Forward,
+                id,
+                Corner,
+                &mut out,
+            ),
             // Beside the middle of each distance.
             Constraint::EqualDistance { a, b, c, d } => {
                 for (e, f) in [(a, b), (c, d)] {
@@ -2317,19 +2531,708 @@ pub fn layout_glyphs(doc: &Document, map: &ScreenMap) -> Vec<GlyphLayout> {
                             vec2(1.0, 0.0),
                         )
                     });
-                    place(e, base, id, Equal, &mut out);
+                    place(e, base, Slide::Forward, id, Equal, &mut out);
                 }
             }
-            Constraint::PointOnCurve { point, .. } => {
-                place(point, point_base(point), id, OnCurve, &mut out)
-            }
-            Constraint::Symmetric { axis, .. } => {
-                place(axis, line_base(axis), id, Symmetric, &mut out)
-            }
+            Constraint::PointOnCurve { point, .. } => place(
+                point,
+                point_base(point),
+                Slide::Forward,
+                id,
+                OnCurve,
+                &mut out,
+            ),
+            Constraint::Symmetric { axis, .. } => place(
+                axis,
+                line_base(axis),
+                Slide::Either,
+                id,
+                Symmetric,
+                &mut out,
+            ),
             _ => {}
         }
     }
-    out
+    place_glyphs(&out, region)
+}
+
+/// Places the glyphs `asks` (see [`layout_glyphs_within`]).
+fn place_glyphs(asks: &[GlyphAsk], region: Rect) -> (Vec<GlyphLayout>, bool) {
+    // A heap: more than twice the tiles their spots' stretch (and two tiles about it) could
+    // hold apart. Judged on all of them, wherever `region` is, so a pan never changes it.
+    let spots = asks
+        .iter()
+        .map(|a| a.at)
+        .filter(|at| at.is_finite())
+        .fold(Rect::NOTHING, |r, at| r.union(Rect::from_min_max(at, at)));
+    let heap = spots.min.x <= spots.max.x && {
+        let pad = 2.0 * REACH;
+        let room = ((spots.width() + 2.0 * pad) / PlacedTiles::CELL + 1.0)
+            * ((spots.height() + 2.0 * pad) / PlacedTiles::CELL + 1.0);
+        asks.len() as f32 > 2.0 * room
+    };
+    let mut out = Vec::with_capacity(asks.len());
+    let mut whole = true;
+    // The tiles already placed: all of them, and those on each entity (their centres).
+    let mut placed = PlacedTiles::with_capacity(asks.len());
+    let mut on_entity: Chains<EntityId> = Chains::with_capacity(asks.len());
+    let mut scratch = SlideScratch::default();
+    for &GlyphAsk {
+        entity,
+        at,
+        along,
+        slide,
+        id,
+        kind,
+    } in asks
+    {
+        // (A spot that isn't a number is kept, as it would be with no region.)
+        if at.is_finite() && !region.contains(at) {
+            whole = false;
+            continue;
+        }
+        let t = stack_slide_in(on_entity.get(entity), at, along, slide, &mut scratch);
+        let own = at + along * t;
+        // Clear of every symbol, if that is within two tiles of what its own entity needs;
+        // only that far is looked at (a heap costs no more than its stretch). Mostly its own
+        // spot is clear of them all already, and then it is the answer (see
+        // `PlacedTiles::clear_at`), found looking only around that spot.
+        let center = if heap || placed.clear_at(at, along, slide, t) {
+            own
+        } else {
+            placed
+                .spot_within_in(
+                    at,
+                    along,
+                    slide,
+                    own.distance(at) + 2.0 * (GLYPH_SIZE + 2.0),
+                    &mut scratch,
+                )
+                .unwrap_or(own)
+        };
+        on_entity.push(entity, center);
+        if !heap {
+            placed.add(center);
+        }
+        out.push(GlyphLayout {
+            id,
+            kind,
+            rect: Rect::from_center_size(center, Vec2::splat(GLYPH_SIZE)),
+            along,
+        });
+    }
+    (out, whole)
+}
+
+/// Lists of points by key, kept in the order added, all in one vector (most lists are one or
+/// two points long: an allocation for each would cost more than the rest of the layout).
+struct Chains<K> {
+    /// Each key's first and last point and how many it has.
+    heads: HashMap<K, (u32, u32, u32), QuickHash>,
+    /// Each point and the next on its list (`u32::MAX` after the last).
+    points: Vec<(Pos2, u32)>,
+}
+
+impl<K> Default for Chains<K> {
+    fn default() -> Self {
+        Self {
+            heads: HashMap::default(),
+            points: Vec::new(),
+        }
+    }
+}
+
+impl<K: std::hash::Hash + Eq> Chains<K> {
+    fn with_capacity(n: usize) -> Self {
+        Self {
+            heads: HashMap::with_capacity_and_hasher(n, QuickHash::default()),
+            points: Vec::with_capacity(n),
+        }
+    }
+
+    fn push(&mut self, key: K, p: Pos2) {
+        let i = self.points.len() as u32;
+        self.points.push((p, u32::MAX));
+        match self.heads.entry(key) {
+            std::collections::hash_map::Entry::Occupied(mut e) => {
+                let (_, last, n) = e.get_mut();
+                self.points[*last as usize].1 = i;
+                *last = i;
+                *n += 1;
+            }
+            std::collections::hash_map::Entry::Vacant(e) => {
+                e.insert((i, i, 1));
+            }
+        }
+    }
+
+    /// The points listed under `key`, in the order added.
+    fn get(&self, key: K) -> impl Iterator<Item = Pos2> + '_ {
+        let mut next = self.heads.get(&key).map_or(u32::MAX, |h| h.0);
+        std::iter::from_fn(move || {
+            let (p, after) = *self.points.get(next as usize)?;
+            next = after;
+            Some(p)
+        })
+    }
+
+    /// How many points are listed under `key`.
+    fn len(&self, key: &K) -> usize {
+        self.heads.get(key).map_or(0, |h| h.2 as usize)
+    }
+
+    /// How many keys have points.
+    fn keys(&self) -> usize {
+        self.heads.len()
+    }
+}
+
+/// The centres of the glyph tiles placed so far, by grid cell, so a new glyph looks only at
+/// those near the stretch it may slide over.
+#[derive(Default)]
+struct PlacedTiles {
+    cells: Chains<(i32, i32)>,
+    /// The centres kept, on a grid of `SAME` (see [`Self::add`]).
+    kept: HashSet<(i32, i32), QuickHash>,
+}
+
+/// A quick hash for grid cells and ids (the standard one is made to resist attacks, and
+/// dominated the glyph layout, which runs on every zoom).
+type QuickHash = std::hash::BuildHasherDefault<QuickHasher>;
+
+#[derive(Default)]
+struct QuickHasher(u64);
+
+impl std::hash::Hasher for QuickHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.write_u64(u64::from(b));
+        }
+    }
+
+    fn write_u32(&mut self, n: u32) {
+        self.write_u64(u64::from(n));
+    }
+
+    fn write_i32(&mut self, n: i32) {
+        self.write_u64(u64::from(n as u32));
+    }
+
+    fn write_u64(&mut self, n: u64) {
+        // (FxHash's step.)
+        self.0 = (self.0.rotate_left(5) ^ n).wrapping_mul(0x517c_c1b7_2722_0a95);
+    }
+}
+
+/// Room to work in that one glyph's search leaves for the next (so the layout allocates
+/// once, not for every glyph).
+#[derive(Default)]
+struct SlideScratch {
+    tiles: Vec<Pos2>,
+    blocked: Vec<(f32, f32)>,
+    spans: Vec<(f32, f32)>,
+    reach_to: Vec<f32>,
+}
+
+impl PlacedTiles {
+    /// A cell is a tile plus its gap across.
+    const CELL: f32 = GLYPH_SIZE + 2.0;
+
+    fn with_capacity(n: usize) -> Self {
+        Self {
+            cells: Chains::with_capacity(n),
+            kept: HashSet::with_capacity_and_hasher(n, QuickHash::default()),
+        }
+    }
+
+    fn cell(p: Pos2) -> (i32, i32) {
+        (
+            (p.x / Self::CELL).floor() as i32,
+            (p.y / Self::CELL).floor() as i32,
+        )
+    }
+
+    /// Centres this close (on a grid this fine) count as one tile.
+    const SAME: f32 = 0.5;
+
+    /// Adds a tile centred on `c`. One within half a point of a tile already kept adds
+    /// nothing: it blocks the same slides but for a sliver, so a symbol placed clear of the
+    /// kept one still keeps more than a point of the 2 pt gap from it. So a heap of symbols
+    /// piled on one spot (zoomed far out) doesn't make every later search longer.
+    fn add(&mut self, c: Pos2) {
+        let key = (
+            (c.x / Self::SAME).round() as i32,
+            (c.y / Self::SAME).round() as i32,
+        );
+        if self.kept.insert(key) {
+            self.cells.push(Self::cell(c), c);
+        }
+    }
+
+    /// The placed centres in the box from `lo` to `hi`, and maybe a few more, into `out`;
+    /// false when there are more than `most` of them.
+    fn near(&self, lo: Pos2, hi: Pos2, most: usize, out: &mut Vec<Pos2>) -> bool {
+        out.clear();
+        let (x0, y0) = Self::cell(lo);
+        let (x1, y1) = Self::cell(hi);
+        // (Saturating: an unbounded reach covers every cell.)
+        let span =
+            (i64::from(x1) - i64::from(x0) + 1).saturating_mul(i64::from(y1) - i64::from(y0) + 1);
+        if span > self.cells.keys() as i64 {
+            // Fewer cells in use than in the box: go through those in use.
+            let inside = Rect::from_min_max(lo, hi);
+            out.extend(
+                self.cells
+                    .points
+                    .iter()
+                    .map(|(c, _)| *c)
+                    .filter(|c| inside.contains(*c)),
+            );
+            return out.len() <= most;
+        }
+        // Counted first, so a crowd is turned down without gathering it.
+        if self.count(x0..=x1, y0..=y1) > most {
+            return false;
+        }
+        for x in x0..=x1 {
+            for y in y0..=y1 {
+                out.extend(self.cells.get((x, y)));
+            }
+        }
+        true
+    }
+
+    /// How many centres are kept in the cells `xs` by `ys`.
+    fn count(&self, xs: std::ops::RangeInclusive<i32>, ys: std::ops::RangeInclusive<i32>) -> usize {
+        xs.flat_map(|x| ys.clone().map(move |y| (x, y)))
+            .map(|k| self.cells.len(&k))
+            .sum()
+    }
+
+    /// Whether a glyph whose own spot is `at`, slid `t` along `along` (its spot among the
+    /// glyphs on its own entity), clears every tile placed so far. Then that is also the
+    /// [`stack_spot`] among them all: the tiles on its own entity are among them, so any
+    /// slide clear of them all is clear of those, and none clear of those is nearer than
+    /// `t`. (A slide bounded both ways can find a nearer spot at its bound, which isn't
+    /// tried; those are left to [`Self::spot_within`].) Only the tiles about that spot are
+    /// looked at.
+    fn clear_at(&self, at: Pos2, along: Vec2, slide: Slide, t: f32) -> bool {
+        if matches!(slide, Slide::Within(..)) || !(at.is_finite() && along.is_finite()) {
+            return false;
+        }
+        let c = at + along * t;
+        let (x0, y0) = Self::cell(c - Vec2::splat(REACH + 1.0));
+        let (x1, y1) = Self::cell(c + Vec2::splat(REACH + 1.0));
+        (x0..=x1)
+            .flat_map(|x| (y0..=y1).flat_map(move |y| self.cells.get((x, y))))
+            .all(|p| !blocked_span(p, at, along).is_some_and(|s| slide_in(t, s)))
+    }
+
+    /// Where a glyph whose own spot is `at` goes to clear every tile placed so far (the
+    /// [`stack_spot`] among them all), when that is at most `limit` from `at`; None when it
+    /// is further, or when the tiles about `at` are a heap (see below). Only the tiles that
+    /// could block a slide that short are looked at.
+    #[cfg(test)]
+    fn spot_within(&self, at: Pos2, along: Vec2, slide: Slide, limit: f32) -> Option<Pos2> {
+        self.spot_within_in(at, along, slide, limit, &mut SlideScratch::default())
+    }
+
+    /// [`Self::spot_within`], working in `scratch`.
+    fn spot_within_in(
+        &self,
+        at: Pos2,
+        along: Vec2,
+        slide: Slide,
+        limit: f32,
+        scratch: &mut SlideScratch,
+    ) -> Option<Pos2> {
+        if !(at.is_finite() && along.is_finite()) || limit.is_nan() {
+            return None;
+        }
+        // Zoomed far out, where symbols vastly outnumber the room for them, a symbol isn't
+        // moved off its own spot at all: when the nine cells about it (each a tile and its
+        // gap across, so room for nine tiles kept apart) already hold more than twice that
+        // many, it is in a heap whichever spot it takes, and looking through the heap for a
+        // gap would make every symbol cost as much as the heap. (The first symbols of a heap
+        // still keep apart; only those after the room is gone stay put.)
+        let (cx, cy) = Self::cell(at);
+        if self.count(cx - 1..=cx + 1, cy - 1..=cy + 1) > 18 {
+            return None;
+        }
+        // A tile that blocks a slide `t` is within a reach of `at + along * t` in each axis,
+        // so only those within that of the stretch of slides allowed and no longer than
+        // `limit` can block an answer; any tile further off blocks only slides refused
+        // anyway, so leaving it out changes no answer within `limit`.
+        let (t0, t1) = match slide {
+            Slide::Either => (-limit, limit),
+            Slide::Forward => (0.0, limit),
+            Slide::Within(lo, hi) => (lo.max(-limit), hi.min(limit)),
+        };
+        // (Axis by axis, so an unbounded slide straight along one axis stays on it.)
+        let span = |a: f32, u: f32| {
+            if u == 0.0 {
+                (a, a)
+            } else {
+                let (p, q) = (a + u * t0, a + u * t1);
+                (p.min(q), p.max(q))
+            }
+        };
+        let ((x0, x1), (y0, y1)) = (span(at.x, along.x), span(at.y, along.y));
+        let pad = REACH + 1.0;
+        let (lo, hi) = (pos2(x0 - pad, y0 - pad), pos2(x1 + pad, y1 + pad));
+        // (Twice the tiles the box could hold apart at most: more is a heap too.)
+        let room = ((hi.x - lo.x) / Self::CELL + 1.0) * ((hi.y - lo.y) / Self::CELL + 1.0);
+        let most = if room < 1e6 {
+            (2.0 * room) as usize
+        } else {
+            usize::MAX
+        };
+        let mut tiles = std::mem::take(&mut scratch.tiles);
+        let found = self.near(lo, hi, most, &mut tiles).then(|| {
+            let t = stack_slide_in(tiles.iter().copied(), at, along, slide, scratch);
+            at + along * t
+        });
+        scratch.tiles = tiles;
+        found.filter(|c| c.distance(at) <= limit)
+    }
+}
+
+/// Which ways a glyph may slide along its stack direction to clear the glyphs already
+/// placed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Slide {
+    /// Either way, whichever is nearer (forward on a tie).
+    Either,
+    /// Only along the stack direction.
+    Forward,
+    /// By a slide `t` (along the stack direction) with `lo <= t <= hi`, where
+    /// `lo <= 0 <= hi` and one side is unbounded, so there is always room.
+    Within(f32, f32),
+}
+
+/// How a glyph marking the joint `joint` of a curve whose other end is `far` may slide
+/// from its spot `at` along `along`: as far as it takes the way that keeps it nearer the
+/// joint, and back the other way only while it stays nearer the joint than the far end by
+/// a quarter of a tile (or not at all, when its spot already isn't). So it never ends by the
+/// curve's other end, yet where a symbol is in the way it can step back around the bend
+/// instead of being pushed past the joint onto the curve beyond.
+fn joint_slide(joint: Pos2, far: Pos2, at: Pos2, along: Vec2) -> Slide {
+    let span = joint - far;
+    let len = span.length();
+    if len < 1e-3 {
+        return Slide::Either;
+    }
+    let n = span / len;
+    // How much nearer the joint than the far end (along the line between them) the spot
+    // is, and how that changes per unit of slide.
+    let (s0, per) = ((at - joint.lerp(far, 0.5)).dot(n), along.dot(n));
+    if per.abs() < 1e-3 {
+        return Slide::Either;
+    }
+    let bound = (GLYPH_SIZE / 4.0 - s0) / per;
+    if per > 0.0 {
+        Slide::Within(bound.min(0.0), f32::INFINITY)
+    } else {
+        Slide::Within(f32::NEG_INFINITY, bound.max(0.0))
+    }
+}
+
+/// Where a glyph whose own spot is `at` goes so that its tile clears the tiles centred on
+/// `placed` by a 2 px gap: the nearest place along `along` (a unit vector) from `at`,
+/// the ways `slide` allows (forward on a tie).
+///
+/// A slide unbounded one way never gives up: past the glyphs in its way it always finds
+/// room, even beyond the end of a short curve, rather than turn back to the far side.
+#[cfg(test)]
+fn stack_spot(placed: &[Pos2], at: Pos2, along: Vec2, slide: Slide) -> Pos2 {
+    at + along * stack_slide(placed, at, along, slide)
+}
+
+/// How far a tile beside one on `c` stays clear of it: a tile and the gap between.
+const REACH: f32 = GLYPH_SIZE + 2.0;
+
+/// The open span of slides along `along` from `at` that would bring a tile onto the tile on
+/// `c`, if any.
+fn blocked_span(c: Pos2, at: Pos2, along: Vec2) -> Option<(f32, f32)> {
+    let d = c - at;
+    let span = |d: f32, u: f32| -> Option<(f32, f32)> {
+        if u.abs() < 1e-6 {
+            (d.abs() < REACH).then_some((f32::NEG_INFINITY, f32::INFINITY))
+        } else {
+            let (p, q) = ((d - REACH) / u, (d + REACH) / u);
+            Some((p.min(q), p.max(q)))
+        }
+    };
+    let ((x0, x1), (y0, y1)) = (span(d.x, along.x)?, span(d.y, along.y)?);
+    let (lo, hi) = (x0.max(y0), x1.min(y1));
+    (lo < hi).then_some((lo, hi))
+}
+
+/// Slides closer than this to either end of a blocked span count as clear of it.
+const SLIDE_EPS: f32 = 1e-3;
+
+/// Whether the slide `t` is blocked by the span `(lo, hi)`: inside it by more than
+/// [`SLIDE_EPS`].
+fn slide_in(t: f32, (lo, hi): (f32, f32)) -> bool {
+    lo + SLIDE_EPS < t && t < hi - SLIDE_EPS
+}
+
+/// [`stack_spot`] as the slide along `along` from `at`.
+#[cfg(test)]
+fn stack_slide(placed: &[Pos2], at: Pos2, along: Vec2, slide: Slide) -> f32 {
+    stack_slide_in(
+        placed.iter().copied(),
+        at,
+        along,
+        slide,
+        &mut SlideScratch::default(),
+    )
+}
+
+/// [`stack_slide`] among the tiles `placed`, working in `scratch`.
+fn stack_slide_in(
+    placed: impl IntoIterator<Item = Pos2>,
+    at: Pos2,
+    along: Vec2,
+    slide: Slide,
+    scratch: &mut SlideScratch,
+) -> f32 {
+    // For each placed tile, the open span of slides that would bring the tile onto it.
+    let SlideScratch {
+        blocked,
+        spans,
+        reach_to,
+        ..
+    } = scratch;
+    blocked.clear();
+    blocked.extend(
+        placed
+            .into_iter()
+            .filter_map(|c| blocked_span(c, at, along)),
+    );
+    // (Nothing in the way: it stays put, which every slide allows.)
+    if blocked.is_empty() {
+        return 0.0;
+    }
+    const EPS: f32 = SLIDE_EPS;
+    // `t` is blocked when it is inside some span by more than EPS. Sorted by start, with
+    // the furthest end reached so far, that is one binary search per slide tried (so a pile
+    // of k tiles costs k log k, not k²).
+    spans.clear();
+    spans.extend(blocked.iter().map(|&(lo, hi)| (lo + EPS, hi - EPS)));
+    spans.sort_by(|a, b| a.0.total_cmp(&b.0));
+    reach_to.clear();
+    reach_to.extend(spans.iter().scan(f32::NEG_INFINITY, |m, s| {
+        *m = m.max(s.1);
+        Some(*m)
+    }));
+    let free = |t: f32| {
+        // The spans starting before `t`: is `t` short of where any of them ends?
+        let n = spans.partition_point(|s| s.0 < t);
+        n == 0 || reach_to[n - 1] <= t
+    };
+    let mut best: Option<f32> = None;
+    for t in std::iter::once(0.0).chain(blocked.iter().flat_map(|&(lo, hi)| [lo, hi])) {
+        let allowed = match slide {
+            Slide::Either => true,
+            Slide::Forward => t >= 0.0,
+            Slide::Within(lo, hi) => t >= lo - EPS && t <= hi + EPS,
+        };
+        if !t.is_finite() || !allowed || !free(t) {
+            continue;
+        }
+        let better = best
+            .is_none_or(|b| t.abs() < b.abs() - EPS || ((t.abs() - b.abs()).abs() <= EPS && t > b));
+        if better {
+            best = Some(t);
+        }
+    }
+    best.unwrap_or(0.0)
+}
+
+/// The end points where curves `a` and `b` join: one end point they share, or an end of
+/// each tied by a coincidence. None when they don't join (a line tangent to a whole circle,
+/// or to an arc away from its ends).
+fn joint_of(
+    doc: &Document,
+    tied: &HashSet<(EntityId, EntityId)>,
+    a: EntityId,
+    b: EntityId,
+) -> Option<(EntityId, EntityId)> {
+    let (ea, eb) = (doc.get(a)?.kind.ends()?, doc.get(b)?.kind.ends()?);
+    ea.into_iter()
+        .flat_map(|pa| eb.into_iter().map(move |pb| (pa, pb)))
+        .find(|&(pa, pb)| pa == pb || tied.contains(&(pa, pb)))
+}
+
+/// The parameter [`Shape::point_at`] takes for a fraction `g` (0..1) of the way along an
+/// ellipse's or Bézier's parameter range.
+fn curve_param(shape: &drift_core::Shape, g: f64) -> f64 {
+    match *shape {
+        drift_core::Shape::Ellipse { sweep, .. } => sweep * g,
+        _ => g,
+    }
+}
+
+/// The way an ellipse or Bézier runs at the fraction `g` of its parameter range, from its
+/// start toward its end (world space, not unit length).
+fn curve_velocity(shape: &drift_core::Shape, g: f64) -> DVec2 {
+    match *shape {
+        drift_core::Shape::Ellipse {
+            major,
+            minor,
+            start,
+            sweep,
+            ..
+        } => {
+            let t = start + sweep * g;
+            let n = major.perp().normalize_or_zero() * minor;
+            (n * t.cos() - major * t.sin()) * sweep
+        }
+        drift_core::Shape::Bezier { p } => drift_core::shape::bezier_tangent(&p, g),
+        _ => DVec2::ZERO,
+    }
+}
+
+/// The centre of an arc, circle or ellipse, on screen.
+fn centre_on_screen(shape: &drift_core::Shape, map: &ScreenMap) -> Option<Pos2> {
+    match *shape {
+        drift_core::Shape::Arc { center, .. }
+        | drift_core::Shape::Circle { center, .. }
+        | drift_core::Shape::Ellipse { center, .. } => Some(map.to_screen(center)),
+        _ => None,
+    }
+}
+
+/// A glyph spot on curve `e`, standing off the curve's outside: away from its own centre
+/// (an arc's or ellipse's), else away from `away` (for a line, the centre of the arc it
+/// joins), else above. A short way in from `near` (a joint at one of its ends) when given,
+/// else at its middle. Stacks along the curve there.
+///
+/// The spot is always exactly on the curve. Lines, arcs and circles are worked out exactly;
+/// for ellipses and Béziers only how far along the spot is comes from chords, as many as a
+/// tolerance tied to the curve's size (not the zoom) takes, so the cost stays the same
+/// however far in the view is.
+fn curve_spot(
+    doc: &Document,
+    map: &ScreenMap,
+    e: EntityId,
+    near: Option<Pos2>,
+    away: Option<Pos2>,
+) -> Option<(Pos2, Vec2)> {
+    use drift_core::Shape;
+    let shape = doc.shape(e)?;
+    let scale = map.camera.scale;
+    // World to screen for a direction (screen y is down).
+    let screen_dir = |v: DVec2| {
+        let u = vec2(v.x as f32, -v.y as f32);
+        if u.length() > 1e-9 {
+            u.normalized()
+        } else {
+            vec2(1.0, 0.0)
+        }
+    };
+    // An ellipse's or Bézier's chords on screen, and their running lengths.
+    let mut pts: Vec<Pos2> = Vec::new();
+    let mut lens: Vec<f32> = Vec::new();
+    let total = match shape {
+        Shape::Point(_) => return None,
+        Shape::Line { a, b } => (a.distance(b) * scale) as f32,
+        Shape::Arc { radius, sweep, .. } => (radius * sweep * scale).abs() as f32,
+        Shape::Circle { radius, .. } => (radius * std::f64::consts::TAU * scale).abs() as f32,
+        Shape::Ellipse { .. } | Shape::Bezier { .. } => {
+            // Only to find how far along the spot is: as many even steps of the parameter
+            // as chords within a tolerance tied to the curve's size would take. The spot
+            // itself is then put exactly on the curve (below).
+            let b = shape.bounds();
+            let tol = ((b.max - b.min).length() / 256.0).max(0.5 / scale.max(1e-9));
+            let n = shape.flatten(tol.max(1e-9)).len().saturating_sub(1).max(1);
+            pts = (0..=n)
+                .map(|i| map.to_screen(shape.point_at(curve_param(&shape, i as f64 / n as f64))))
+                .collect();
+            lens.push(0.0);
+            let mut run = 0.0_f32;
+            for w in pts.windows(2) {
+                run += w[0].distance(w[1]);
+                lens.push(run);
+            }
+            run
+        }
+    };
+    let (first, last) = match shape {
+        Shape::Line { a, b } => (map.to_screen(a), map.to_screen(b)),
+        Shape::Arc { sweep, .. } => (
+            map.to_screen(shape.point_at(0.0)),
+            map.to_screen(shape.point_at(sweep)),
+        ),
+        Shape::Circle { .. } => {
+            let at = map.to_screen(shape.point_at(0.0));
+            (at, at)
+        }
+        _ => (pts[0], pts[pts.len() - 1]),
+    };
+    // Length along the curve from its start to the spot.
+    let at_len = match near {
+        Some(j) => {
+            // On a short curve a quarter of the way in, so the spot is still on the joint's
+            // half and the two ends' symbols never start at the same middle.
+            let into = (GLYPH_SIZE + 4.0).min(total * 0.25);
+            if first.distance(j) <= last.distance(j) {
+                into
+            } else {
+                total - into
+            }
+        }
+        None => total * 0.5,
+    };
+    let f = if total > 1e-6 { at_len / total } else { 0.5 };
+    // The spot, and the way the curve runs there (from its start to its end).
+    let (spot, u) = match shape {
+        Shape::Line { a, b } => (first + (last - first) * f, screen_dir(b - a)),
+        Shape::Arc { start, sweep, .. } => {
+            let t = sweep * f64::from(f);
+            let run = DVec2::from_angle(start + t).perp() * sweep.signum();
+            (map.to_screen(shape.point_at(t)), screen_dir(run))
+        }
+        Shape::Circle { .. } => {
+            let t = std::f64::consts::TAU * f64::from(f);
+            (
+                map.to_screen(shape.point_at(t)),
+                screen_dir(DVec2::from_angle(t).perp()),
+            )
+        }
+        _ => {
+            // The step the spot falls in, then the parameter there (the steps are even in
+            // the parameter), and the point and direction at it on the curve itself.
+            let i = lens
+                .windows(2)
+                .position(|w| w[1] >= at_len)
+                .unwrap_or(pts.len() - 2);
+            let seg = (lens[i + 1] - lens[i]).max(1e-6);
+            let frac = ((at_len - lens[i]) / seg).clamp(0.0, 1.0);
+            let n = (pts.len() - 1) as f64;
+            let g = (i as f64 + f64::from(frac)) / n;
+            let t = curve_param(&shape, g);
+            let run = curve_velocity(&shape, g);
+            let u = if run.length() > 1e-12 {
+                screen_dir(run)
+            } else {
+                dir(pts[i], pts[i + 1])
+            };
+            (map.to_screen(shape.point_at(t)), u)
+        }
+    };
+    let mut n = u.rot90();
+    match centre_on_screen(&shape, map).or(away) {
+        Some(c) if n.dot(spot - c) < 0.0 => n = -n,
+        None if n.y > 0.0 => n = -n,
+        _ => {}
+    }
+    Some((spot + n * GLYPH_OFF_LINE, u))
 }
 
 /// Push any glyph whose tile meets one of `keep_clear` (on-canvas controls such as transform
@@ -3373,5 +4276,791 @@ mod tests {
             let ms = t.elapsed().as_secs_f64() * 1000.0 / runs as f64;
             eprintln!("{n} glyphs over {w}x{h} pt, {on} on handles: {ms:.3} ms a push");
         }
+    }
+
+    /// A view of the world around the origin at `scale` points per mm.
+    fn view_at(scale: f64) -> ScreenMap {
+        ScreenMap {
+            rect: Rect::from_center_size(Pos2::ZERO, vec2(1000.0, 1000.0)),
+            camera: drift_render::Camera {
+                center: DVec2::ZERO,
+                scale,
+            },
+        }
+    }
+
+    /// A slot zoomed out so its straight sides are 60 pt long: each side's horizontal
+    /// symbol and its two tangency symbols (in from each joint) are within a tile of each
+    /// other along it, yet none overlaps another, and each tangency symbol stands on the
+    /// outside of the bend.
+    #[test]
+    fn a_short_slot_side_keeps_its_symbols_apart_and_outside() {
+        let mut doc = Document::new();
+        let v = DVec2::new;
+        let (l, r) = (30.0, 10.0);
+        let [tl, tr, br, bl] = [
+            v(-l / 2.0, r),
+            v(l / 2.0, r),
+            v(l / 2.0, -r),
+            v(-l / 2.0, -r),
+        ]
+        .map(|p| doc.add_point(p));
+        let (cl, cr) = (
+            doc.add_point(v(-l / 2.0, 0.0)),
+            doc.add_point(v(l / 2.0, 0.0)),
+        );
+        let top = doc.add_line(tl, tr).unwrap();
+        let bottom = doc.add_line(br, bl).unwrap();
+        let right = doc.add_arc(cr, br, tr).unwrap();
+        let left = doc.add_arc(cl, tl, bl).unwrap();
+        for line in [top, bottom] {
+            doc.add_constraint(Constraint::Horizontal { line }).unwrap();
+        }
+        let mut tangents = Vec::new();
+        for (a, b) in [(top, right), (top, left), (bottom, right), (bottom, left)] {
+            tangents.push((
+                doc.add_constraint(Constraint::Tangent { a, b }).unwrap(),
+                a,
+                b,
+            ));
+        }
+        let map = view_at(2.0);
+        let glyphs = layout_glyphs(&doc, &map);
+        assert_eq!(glyphs.len(), 2 + 2 * 4);
+        for (i, g) in glyphs.iter().enumerate() {
+            for h in &glyphs[i + 1..] {
+                assert!(
+                    !g.rect.intersects(h.rect),
+                    "{:?} {:?} meets {:?} {:?}",
+                    g.kind,
+                    g.rect,
+                    h.kind,
+                    h.rect
+                );
+            }
+        }
+        let s = |id: EntityId| map.to_screen(doc.point(id).unwrap());
+        for (id, line, arc) in tangents {
+            let pair: Vec<Pos2> = glyphs
+                .iter()
+                .filter(|g| g.id == id)
+                .map(|g| g.rect.center())
+                .collect();
+            let centre = s(if arc == right { cr } else { cl });
+            let radius = (r * map.camera.scale) as f32;
+            // The line's (the first) on the far side of the line from the arc's centre.
+            let (on_line, on_arc) = (pair[0], pair[1]);
+            let through = s(if line == top { tl } else { bl }).y;
+            assert!(
+                (on_line.y - through) * (centre.y - through) < 0.0,
+                "{on_line:?} beside the line at y {through}, centre {centre:?}"
+            );
+            assert!(
+                on_arc.distance(centre) > radius,
+                "{on_arc:?} outside the arc about {centre:?}"
+            );
+        }
+    }
+
+    /// A line tangent to an arc at the arc's middle, ending near (but not at) one of the
+    /// arc's ends: zoomed out until those ends are a few points apart, the curves still
+    /// don't join, so the arc's tangency symbol stays by its middle.
+    #[test]
+    fn a_tangency_marks_a_joint_only_where_the_curves_join() {
+        let mut doc = Document::new();
+        let v = DVec2::new;
+        let (r, half) = (60.0_f64, 0.5_f64);
+        let c = doc.add_point(v(0.0, 0.0));
+        let up = std::f64::consts::FRAC_PI_2;
+        let s0 = doc.add_point(DVec2::from_angle(up - half) * r);
+        let s1 = doc.add_point(DVec2::from_angle(up + half) * r);
+        let arc = doc.add_arc(c, s0, s1).unwrap();
+        let (l0, l1) = (
+            doc.add_point(v(-100.0, r)),
+            doc.add_point(v(r * half.sin(), r)),
+        );
+        let line = doc.add_line(l0, l1).unwrap();
+        let tangent = doc
+            .add_constraint(Constraint::Tangent { a: line, b: arc })
+            .unwrap();
+        let map = view_at(2.0);
+        let near = map
+            .to_screen(doc.point(l1).unwrap())
+            .distance(map.to_screen(doc.point(s0).unwrap()));
+        assert!(near < GLYPH_SIZE, "the case is real: ends {near} pt apart");
+        let glyphs = layout_glyphs(&doc, &map);
+        let on_arc = glyphs
+            .iter()
+            .filter(|g| g.id == tangent)
+            .nth(1)
+            .unwrap()
+            .rect
+            .center();
+        let apex = map.to_screen(v(0.0, r));
+        assert!(
+            (on_arc.x - apex.x).abs() < GLYPH_SIZE / 2.0 && on_arc.y < apex.y,
+            "{on_arc:?} by the arc's middle {apex:?}"
+        );
+    }
+
+    /// Glyphs sharing a spot on a curve stack either way from it, nearest first; beside a
+    /// point, only forward.
+    #[test]
+    fn stacked_glyphs_take_the_nearest_free_place() {
+        let at = pos2(100.0, 100.0);
+        let step = GLYPH_SIZE + 2.0;
+        let mut placed = Vec::new();
+        for _ in 0..3 {
+            let c = stack_spot(&placed, at, vec2(1.0, 0.0), Slide::Either);
+            placed.push(c);
+        }
+        assert_eq!(placed, [at, at + vec2(step, 0.0), at - vec2(step, 0.0)]);
+        let mut placed = Vec::new();
+        for _ in 0..3 {
+            let c = stack_spot(&placed, at, vec2(1.0, 0.0), Slide::Forward);
+            placed.push(c);
+        }
+        assert_eq!(
+            placed,
+            [at, at + vec2(step, 0.0), at + vec2(2.0 * step, 0.0)]
+        );
+        // A glyph a little way off one already placed slides the short way clear of it.
+        let c = stack_spot(&[at], at + vec2(-8.0, 0.0), vec2(1.0, 0.0), Slide::Either);
+        assert_eq!(c, at - vec2(step, 0.0));
+        // One way only: the long way round when the short way is the wrong way.
+        let off = at + vec2(8.0, 0.0);
+        let c = stack_spot(
+            &[at],
+            off,
+            vec2(1.0, 0.0),
+            Slide::Within(f32::NEG_INFINITY, 0.0),
+        );
+        assert_eq!(c, at - vec2(step, 0.0));
+        let c = stack_spot(&[at], at - vec2(8.0, 0.0), vec2(1.0, 0.0), Slide::Forward);
+        assert_eq!(c, at + vec2(step, 0.0));
+    }
+
+    /// Zoomed in until a Bézier and an elliptical arc are thousands of points across, the
+    /// tangency symbols on them, in from each joint, still stand exactly their usual way off
+    /// the curve itself (not off a chord that cuts inside it).
+    #[test]
+    fn symbols_on_a_big_ellipse_or_bezier_stand_off_the_curve_itself() {
+        let v = DVec2::new;
+        let mut doc = Document::new();
+        let [a, c1, c2, b] = [v(-50.0, 0.0), v(-30.0, 70.0), v(45.0, 40.0), v(50.0, -10.0)]
+            .map(|p| doc.add_point(p));
+        let bez = doc.add_bezier(a, c1, c2, b).unwrap();
+        // Lines tangent at the Bézier's two ends (sharing them).
+        let l0 = doc.add_point(v(-70.0, -70.0));
+        let at_start = doc.add_line(l0, a).unwrap();
+        let l1 = doc.add_point(v(60.0, -70.0));
+        let at_end = doc.add_line(b, l1).unwrap();
+        let (c, maj, min) = (
+            doc.add_point(v(0.0, -150.0)),
+            doc.add_point(v(80.0, -150.0)),
+            doc.add_point(v(0.0, -120.0)),
+        );
+        let (e0, e1) = (
+            doc.add_point(v(80.0, -150.0)),
+            doc.add_point(v(-80.0, -150.0)),
+        );
+        let ell = doc.add_ellipse_arc(c, maj, min, e0, e1).unwrap();
+        let g = doc.add_point(v(80.0, -250.0));
+        let up = doc.add_line(g, e0).unwrap();
+        let mut checks = Vec::new();
+        for (curve, line) in [(bez, at_start), (bez, at_end), (ell, up)] {
+            let id = doc
+                .add_constraint(Constraint::Tangent { a: line, b: curve })
+                .unwrap();
+            checks.push((id, curve));
+        }
+        let map = view_at(50.0);
+        let glyphs = layout_glyphs(&doc, &map);
+        for (id, curve) in checks {
+            let shape = doc.shape(curve).unwrap();
+            let on = glyphs
+                .iter()
+                .filter(|g| g.id == id)
+                .nth(1)
+                .unwrap()
+                .rect
+                .center();
+            // The nearest point of the curve on screen, from a dense sampling of it.
+            let n = 200_000;
+            let near = (0..=n)
+                .map(|i| {
+                    let g = f64::from(i) / f64::from(n);
+                    map.to_screen(shape.point_at(curve_param(&shape, g)))
+                })
+                .map(|q| q.distance(on))
+                .fold(f32::INFINITY, f32::min);
+            assert!(
+                (near - GLYPH_OFF_LINE).abs() < 0.5,
+                "{curve:?}: symbol {near} pt off the curve, not {GLYPH_OFF_LINE}"
+            );
+        }
+    }
+
+    /// Each tangency symbol stays by the joint it marks, however crowded the curve, and no
+    /// two symbols meet (unless the slot is smaller than they are): on a slot's top side
+    /// with Horizontal and Equal by its middle (where the short way round for the right
+    /// joint's symbol is toward the left joint), and on slots so small that every symbol on
+    /// a side starts at its middle, the bottom side running right to left and the arcs only
+    /// a few points across. Where the sides have room for their symbols end to end, every
+    /// symbol stays by the slot.
+    #[test]
+    fn a_tangency_symbol_stays_by_its_own_joint() {
+        for scale in [2.0, 1.0, 0.6] {
+            let mut doc = Document::new();
+            let v = DVec2::new;
+            let (l, r) = (30.0, 10.0);
+            let [tl, tr, br, bl] = [
+                v(-l / 2.0, r),
+                v(l / 2.0, r),
+                v(l / 2.0, -r),
+                v(-l / 2.0, -r),
+            ]
+            .map(|p| doc.add_point(p));
+            let (cl, cr) = (
+                doc.add_point(v(-l / 2.0, 0.0)),
+                doc.add_point(v(l / 2.0, 0.0)),
+            );
+            let top = doc.add_line(tl, tr).unwrap();
+            let bottom = doc.add_line(br, bl).unwrap();
+            let right = doc.add_arc(cr, br, tr).unwrap();
+            let left = doc.add_arc(cl, tl, bl).unwrap();
+            doc.add_constraint(Constraint::Horizontal { line: top })
+                .unwrap();
+            doc.add_constraint(Constraint::Equal { a: top, b: bottom })
+                .unwrap();
+            // Each tangency with the joint it marks, and the far ends of its two curves.
+            let mut tangents = Vec::new();
+            for (a, b, joint, line_far, arc_far) in [
+                (top, right, tr, tl, br),
+                (top, left, tl, tr, bl),
+                (bottom, right, br, bl, tr),
+                (bottom, left, bl, br, tl),
+            ] {
+                let id = doc.add_constraint(Constraint::Tangent { a, b }).unwrap();
+                tangents.push((id, joint, line_far, arc_far));
+            }
+            let map = view_at(scale);
+            let glyphs = layout_glyphs(&doc, &map);
+            // No two symbols meet, whichever curves they are on (a line's symbol pushed past
+            // its end must not land on the arc's), while the slot is still bigger than its
+            // symbols: at 0.6 it is less than two symbols across and they may heap.
+            let heaps = scale < 1.0;
+            for (i, g) in glyphs.iter().enumerate().filter(|_| !heaps) {
+                for h in &glyphs[i + 1..] {
+                    assert!(
+                        !g.rect.intersects(h.rect),
+                        "at {scale}: {:?} {:?} meets {:?} {:?}",
+                        g.kind,
+                        g.rect.center(),
+                        h.kind,
+                        h.rect.center()
+                    );
+                }
+            }
+            let s = |id: EntityId| map.to_screen(doc.point(id).unwrap());
+            // Where the sides have room for their symbols packed end to end, none strays
+            // more than its usual offset outside the slot.
+            if scale >= 2.0 {
+                let slot = Rect::from_two_pos(s(tl), s(br))
+                    .expand2(vec2((r * scale) as f32, 0.0))
+                    .expand(GLYPH_OFF_LINE + 0.5);
+                for g in &glyphs {
+                    assert!(
+                        slot.contains(g.rect.center()),
+                        "at {scale}: {:?} {:?} strays outside {slot:?}",
+                        g.kind,
+                        g.rect.center()
+                    );
+                }
+            }
+            for (id, joint, line_far, arc_far) in tangents {
+                let pair: Vec<Pos2> = glyphs
+                    .iter()
+                    .filter(|g| g.id == id)
+                    .map(|g| g.rect.center())
+                    .collect();
+                for (at, far) in [(pair[0], line_far), (pair[1], arc_far)] {
+                    assert!(
+                        at.distance(s(joint)) < at.distance(s(far)),
+                        "at {scale}: {at:?} nearer the far end {:?} than its joint {:?}",
+                        s(far),
+                        s(joint)
+                    );
+                    // While the slot is still bigger than its symbols, nearer its own joint
+                    // than any other corner of the slot too.
+                    if scale >= 1.0 {
+                        for other in [tl, tr, br, bl].into_iter().filter(|&c| c != joint) {
+                            assert!(
+                                at.distance(s(joint)) < at.distance(s(other)),
+                                "at {scale}: {at:?} nearer the corner {:?} than its joint {:?}",
+                                s(other),
+                                s(joint)
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The grid of placed tiles finds the same spot as looking at every tile, also when the
+    /// slide runs far past the first reach it looks within (a long run of tiles in the way)
+    /// and with tiles scattered elsewhere.
+    #[test]
+    fn placed_tiles_find_the_spot_stack_spot_would() {
+        let at = pos2(3.0, 7.0);
+        let mut all = Vec::new();
+        let mut tiles = PlacedTiles::default();
+        let mut add = |c: Pos2| {
+            tiles.add(c);
+            all.push(c);
+        };
+        for i in 0..60 {
+            add(at + vec2(i as f32 * 19.0, 3.0));
+        }
+        for i in 0..40 {
+            add(pos2(-500.0 + i as f32 * 37.0, 300.0 - i as f32 * 11.0));
+        }
+        for (along, slide) in [
+            (vec2(1.0, 0.0), Slide::Forward),
+            (vec2(1.0, 0.0), Slide::Either),
+            (vec2(0.6, 0.8), Slide::Within(f32::NEG_INFINITY, 4.0)),
+            (vec2(-1.0, 0.0), Slide::Within(-5.0, f32::INFINITY)),
+        ] {
+            let want = stack_spot(&all, at, along, slide);
+            let need = want.distance(at);
+            for limit in [0.0, 10.0, 40.0, 200.0, 2000.0, f32::INFINITY] {
+                let got = tiles.spot_within(at, along, slide, limit);
+                if need <= limit {
+                    let got = got.unwrap_or_else(|| panic!("{slide:?} within {limit}: none"));
+                    assert!(
+                        got.distance(want) < 1e-3,
+                        "{slide:?} within {limit}: {got:?}, not {want:?}"
+                    );
+                } else {
+                    assert!(got.is_none(), "{slide:?} within {limit}: {got:?}");
+                }
+            }
+        }
+        let far = tiles.spot_within(at, vec2(1.0, 0.0), Slide::Forward, f32::INFINITY);
+        assert!(
+            far.is_some_and(|f| f.x > at.x + 59.0 * 19.0),
+            "past the whole run: {far:?}"
+        );
+        assert_eq!(
+            tiles.spot_within(at, vec2(1.0, 0.0), Slide::Forward, 100.0),
+            None,
+            "the run is longer than the limit"
+        );
+    }
+
+    /// [`stack_spot`] (one binary search per slide tried) picks the slide the plain rule
+    /// does: the free one nearest 0 (forward on a tie) among 0 and the ends of the blocked
+    /// spans, a slide being free when it is inside no span by more than EPS. Checked on
+    /// piles of tiles that touch, overlap and sit on one another.
+    #[test]
+    fn stack_spot_matches_the_plain_rule() {
+        let reach = GLYPH_SIZE + 2.0;
+        let plain = |placed: &[Pos2], at: Pos2, along: Vec2, slide: Slide| -> Pos2 {
+            const EPS: f32 = 1e-3;
+            let blocked: Vec<(f32, f32)> = placed
+                .iter()
+                .filter_map(|c| {
+                    let d = *c - at;
+                    let span = |d: f32, u: f32| -> Option<(f32, f32)> {
+                        if u.abs() < 1e-6 {
+                            (d.abs() < reach).then_some((f32::NEG_INFINITY, f32::INFINITY))
+                        } else {
+                            let (p, q) = ((d - reach) / u, (d + reach) / u);
+                            Some((p.min(q), p.max(q)))
+                        }
+                    };
+                    let ((x0, x1), (y0, y1)) = (span(d.x, along.x)?, span(d.y, along.y)?);
+                    let (lo, hi) = (x0.max(y0), x1.min(y1));
+                    (lo < hi).then_some((lo, hi))
+                })
+                .collect();
+            let free = |t: f32| {
+                blocked
+                    .iter()
+                    .all(|&(lo, hi)| t <= lo + EPS || t >= hi - EPS)
+            };
+            let mut best: Option<f32> = None;
+            for t in std::iter::once(0.0).chain(blocked.iter().flat_map(|&(lo, hi)| [lo, hi])) {
+                let allowed = match slide {
+                    Slide::Either => true,
+                    Slide::Forward => t >= 0.0,
+                    Slide::Within(lo, hi) => t >= lo - EPS && t <= hi + EPS,
+                };
+                if !t.is_finite() || !allowed || !free(t) {
+                    continue;
+                }
+                if best.is_none_or(|b| {
+                    t.abs() < b.abs() - EPS || ((t.abs() - b.abs()).abs() <= EPS && t > b)
+                }) {
+                    best = Some(t);
+                }
+            }
+            at + along * best.unwrap_or(0.0)
+        };
+        // A small deterministic scatter (an LCG), in a few densities.
+        let mut seed = 0x2545_f491_u32;
+        let mut rnd = move || {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (seed >> 8) as f32 / (1u32 << 24) as f32
+        };
+        let at = pos2(0.0, 0.0);
+        for spread in [8.0_f32, 20.0, 60.0, 200.0] {
+            for n in [1, 5, 30, 120] {
+                let mut placed: Vec<Pos2> = (0..n)
+                    .map(|_| pos2((rnd() - 0.5) * spread, (rnd() - 0.5) * spread))
+                    .collect();
+                // Tiles exactly a tile and gap apart (touching), and a repeat.
+                placed.push(pos2(reach, 0.0));
+                placed.push(pos2(2.0 * reach, 0.0));
+                placed.push(pos2(-reach, 0.0));
+                placed.push(placed[0]);
+                for along in [vec2(1.0, 0.0), vec2(0.0, -1.0), vec2(0.6, 0.8)] {
+                    for slide in [
+                        Slide::Either,
+                        Slide::Forward,
+                        Slide::Within(-7.0, f32::INFINITY),
+                        Slide::Within(f32::NEG_INFINITY, 3.0),
+                    ] {
+                        let (got, want) = (
+                            stack_spot(&placed, at, along, slide),
+                            plain(&placed, at, along, slide),
+                        );
+                        assert!(
+                            got.distance(want) < 1e-3,
+                            "{n} over {spread}, {along:?} {slide:?}: {got:?}, not {want:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// A tile on (or within a sliver of) one already placed adds nothing to search
+    /// through.
+    #[test]
+    fn a_tile_on_a_placed_tile_is_kept_once() {
+        let mut tiles = PlacedTiles::default();
+        for i in 0..50 {
+            tiles.add(pos2(
+                4.0 + (i % 3) as f32 * 0.05,
+                4.0 - (i % 2) as f32 * 0.05,
+            ));
+        }
+        tiles.add(pos2(30.0, 4.0));
+        tiles.add(pos2(4.0, 5.0));
+        let mut near = Vec::new();
+        assert!(tiles.near(
+            pos2(-96.0, -96.0),
+            pos2(104.0, 104.0),
+            usize::MAX,
+            &mut near
+        ));
+        assert_eq!(near.len(), 3);
+    }
+
+    /// The layout runs every frame, so it asks `last` once a relation, not once for each of
+    /// the four groups it orders them in; the late ones still come after the rest, each
+    /// group in the document's order.
+    #[test]
+    fn glyph_layout_asks_last_once_a_relation() {
+        let mut doc = Document::new();
+        let v = DVec2::new;
+        let (mut ids, mut lines) = (Vec::new(), Vec::new());
+        for i in 0..6 {
+            let y = f64::from(i) * 10.0;
+            let (a, b) = (doc.add_point(v(0.0, y)), doc.add_point(v(5.0, y)));
+            let line = doc.add_line(a, b).unwrap();
+            lines.push(line);
+            ids.push(doc.add_constraint(Constraint::Horizontal { line }).unwrap());
+        }
+        let late = [lines[0], lines[3]];
+        let asked = std::cell::Cell::new(0);
+        let glyphs = layout_glyphs_last(&doc, &view_at(1.0), |c| {
+            asked.set(asked.get() + 1);
+            matches!(*c, Constraint::Horizontal { line } if late.contains(&line))
+        });
+        assert_eq!(asked.get(), ids.len());
+        let order: Vec<_> = glyphs.iter().map(|g| g.id).collect();
+        assert_eq!(order, [ids[1], ids[2], ids[4], ids[5], ids[0], ids[3]]);
+    }
+
+    /// The cost of laying out a heap of symbols zoomed far out, and of the same drawing
+    /// zoomed in where they spread (a perf baseline: run with
+    /// `cargo test -p drift-app --release -- --ignored glyph_heap_baseline --nocapture`).
+    #[test]
+    #[ignore]
+    fn glyph_heap_baseline() {
+        let v = DVec2::new;
+        for n in [250, 1000] {
+            let mut doc = Document::new();
+            // A grid of short lines, each Horizontal or Vertical and each Equal to the
+            // next: two or three symbols a line.
+            let side = (f64::from(n)).sqrt().ceil() as i32;
+            let mut prev = None;
+            for i in 0..n {
+                let (x, y) = (f64::from(i % side) * 30.0, f64::from(i / side) * 30.0);
+                let flat = i % 2 == 0;
+                let a = doc.add_point(v(x, y));
+                let b = doc.add_point(if flat { v(x + 20.0, y) } else { v(x, y + 20.0) });
+                let line = doc.add_line(a, b).unwrap();
+                let c = if flat {
+                    Constraint::Horizontal { line }
+                } else {
+                    Constraint::Vertical { line }
+                };
+                doc.add_constraint(c).unwrap();
+                if let Some(p) = prev {
+                    doc.add_constraint(Constraint::Equal { a: p, b: line })
+                        .unwrap();
+                }
+                prev = Some(line);
+            }
+            let extent = f64::from(side) * 30.0;
+            for (what, scale) in [("heaped", 2.0 / extent), ("spread", 1.0)] {
+                let mut map = view_at(scale);
+                map.camera.center = v(extent / 2.0, extent / 2.0);
+                let runs = 5;
+                let t = std::time::Instant::now();
+                let mut count = 0;
+                for _ in 0..runs {
+                    count = std::hint::black_box(layout_glyphs(&doc, &map)).len();
+                }
+                let ms = t.elapsed().as_secs_f64() * 1000.0 / f64::from(runs);
+                eprintln!("{n} lines, {count} symbols, {what}: {ms:.2} ms a layout");
+            }
+        }
+    }
+
+    /// Short horizontal lines, each with its Horizontal symbol, `n` a row `gap` mm apart in
+    /// rows `gap` apart, from the origin; and the lines.
+    fn rows_of_lines(n: usize, rows: usize, gap: f64) -> (Document, Vec<EntityId>) {
+        let mut doc = Document::new();
+        let v = DVec2::new;
+        let mut lines = Vec::new();
+        for r in 0..rows {
+            for i in 0..n {
+                let (x, y) = (i as f64 * gap, r as f64 * gap);
+                let (a, b) = (doc.add_point(v(x, y)), doc.add_point(v(x + 8.0, y)));
+                let line = doc.add_line(a, b).unwrap();
+                doc.add_constraint(Constraint::Horizontal { line }).unwrap();
+                lines.push(line);
+            }
+        }
+        (doc, lines)
+    }
+
+    /// Each symbol's rectangle.
+    fn rects(glyphs: &[GlyphLayout]) -> Vec<Rect> {
+        glyphs.iter().map(|g| g.rect).collect()
+    }
+
+    /// Kept from frame to frame, the symbols are laid out again for an edit (a point moved,
+    /// a relation added), a zoom or another drawing, and only then: a frame with nothing
+    /// changed gets them as laid out, to the bit, and a pan carries them along by the pan,
+    /// where laying them out afresh would put them.
+    #[test]
+    fn kept_symbols_are_laid_out_again_only_for_an_edit_or_a_zoom() {
+        let (mut doc, lines) = rows_of_lines(6, 3, 12.0);
+        let mut cache = GlyphCache::default();
+        let map = view_at(4.0);
+        let first = cache.layout(&doc, &map, |_| false);
+        assert_eq!(cache.made, 1);
+        assert_eq!(rects(&first), rects(&layout_glyphs(&doc, &map)));
+        // Idle.
+        let again = cache.layout(&doc, &map, |_| false);
+        assert_eq!(cache.made, 1, "idle");
+        assert_eq!(rects(&again), rects(&first));
+        // A pan: 30 mm right and 12 down at 4 pt a mm moves the view's content 120 pt
+        // left and 48 up.
+        let mut panned = map;
+        panned.camera.center += DVec2::new(30.0, -12.0);
+        let carried = cache.layout(&doc, &panned, |_| false);
+        assert_eq!(cache.made, 1, "a pan");
+        let fresh = layout_glyphs(&doc, &panned);
+        assert_eq!(carried.len(), fresh.len());
+        for ((c, f), was) in carried.iter().zip(&fresh).zip(&first) {
+            assert_eq!(c.id, f.id);
+            assert!(c.rect.center().distance(f.rect.center()) < 1e-3);
+            assert!((c.rect.center() - was.rect.center() - vec2(-120.0, -48.0)).length() < 1e-3);
+        }
+        // A zoom.
+        let mut zoomed = panned;
+        zoomed.camera.scale = 4.5;
+        let at_zoom = cache.layout(&doc, &zoomed, |_| false);
+        assert_eq!(cache.made, 2, "a zoom");
+        assert_eq!(rects(&at_zoom), rects(&layout_glyphs(&doc, &zoomed)));
+        cache.layout(&doc, &zoomed, |_| false);
+        assert_eq!(cache.made, 2);
+        // A point moved.
+        let EntityKind::Line { a, .. } = doc.get(lines[0]).unwrap().kind else {
+            unreachable!()
+        };
+        doc.set_point(a, DVec2::new(-3.0, 0.0)).unwrap();
+        let moved = cache.layout(&doc, &zoomed, |_| false);
+        assert_eq!(cache.made, 3, "a point moved");
+        assert_eq!(rects(&moved), rects(&layout_glyphs(&doc, &zoomed)));
+        // A relation added.
+        doc.add_constraint(Constraint::Equal {
+            a: lines[0],
+            b: lines[1],
+        })
+        .unwrap();
+        let added = cache.layout(&doc, &zoomed, |_| false);
+        assert_eq!(cache.made, 4, "a relation added");
+        assert_eq!(added.len(), moved.len() + 2);
+        // Another drawing, even one just like it.
+        let copy = doc.clone();
+        cache.layout(&copy, &zoomed, |_| false);
+        assert_eq!(cache.made, 5, "another drawing");
+    }
+
+    /// On a drawing much bigger than the view only the symbols about the view are laid out,
+    /// each where it is among them all. A pan within the room laid out past the view lays
+    /// out nothing again; one further does.
+    #[test]
+    fn kept_symbols_are_laid_out_about_the_view_on_a_big_drawing() {
+        let (doc, _) = rows_of_lines(60, 60, 12.0);
+        let mut cache = GlyphCache::default();
+        let mut map = view_at(4.0);
+        map.camera.center = DVec2::new(300.0, 300.0);
+        let view = map.rect;
+        let in_view = |glyphs: &[GlyphLayout]| -> Vec<(ConstraintId, Pos2)> {
+            glyphs
+                .iter()
+                .filter(|g| view.contains(g.rect.center()))
+                .map(|g| (g.id, g.rect.center()))
+                .collect()
+        };
+        let same = |got: &[GlyphLayout], map: &ScreenMap| {
+            let (got, want) = (in_view(got), in_view(&layout_glyphs(&doc, map)));
+            assert!(!want.is_empty());
+            assert_eq!(got.len(), want.len());
+            for ((gi, gc), (wi, wc)) in got.iter().zip(&want) {
+                assert_eq!(gi, wi);
+                assert!(gc.distance(*wc) < 1e-3, "{gc:?} not {wc:?}");
+            }
+        };
+        let glyphs = cache.layout(&doc, &map, |_| false);
+        assert_eq!(cache.made, 1);
+        assert!(
+            glyphs.len() < doc.constraints().count() / 2,
+            "{}",
+            glyphs.len()
+        );
+        same(&glyphs, &map);
+        // Panned a little less than half the margin: kept.
+        let step = f64::from(GlyphCache::MARGIN / 2.0 - 10.0) / 4.0;
+        map.camera.center.x += step;
+        let glyphs = cache.layout(&doc, &map, |_| false);
+        assert_eq!(cache.made, 1, "a short pan");
+        same(&glyphs, &map);
+        // And as much again: laid out about the new view.
+        map.camera.center.x += step;
+        let glyphs = cache.layout(&doc, &map, |_| false);
+        assert_eq!(cache.made, 2, "a long pan");
+        same(&glyphs, &map);
+    }
+
+    /// Zoomed so far out that the symbols vastly outnumber the room for them, none dodges
+    /// those of other curves (they heap, each by its own curve), yet those on one curve still
+    /// stack apart.
+    #[test]
+    fn a_drawing_heaped_far_out_dodges_only_on_each_curve() {
+        let (mut doc, lines) = rows_of_lines(30, 30, 12.0);
+        doc.add_constraint(Constraint::Equal {
+            a: lines[0],
+            b: lines[1],
+        })
+        .unwrap();
+        let map = view_at(0.05);
+        let glyphs = layout_glyphs(&doc, &map);
+        // The first line's Horizontal symbol, and its Equal symbol (the first of the pair).
+        let on_first: Vec<Rect> = [glyphs[0].rect]
+            .into_iter()
+            .chain(
+                glyphs
+                    .iter()
+                    .filter(|g| g.kind == GlyphKind::Equal)
+                    .map(|g| g.rect),
+            )
+            .take(2)
+            .collect();
+        assert_eq!(on_first.len(), 2);
+        assert!(!on_first[0].intersects(on_first[1]));
+        // Every Horizontal symbol at its own spot, overlapping as they fall.
+        let spot = |line: EntityId| {
+            let EntityKind::Line { a, b } = doc.get(line).unwrap().kind else {
+                unreachable!()
+            };
+            let (pa, pb) = (doc.point(a).unwrap(), doc.point(b).unwrap());
+            map.to_screen(pa.lerp(pb, 0.5)) + vec2(0.0, -GLYPH_OFF_LINE)
+        };
+        for g in glyphs.iter().filter(|g| g.kind == GlyphKind::Horizontal) {
+            let Constraint::Horizontal { line } = *doc.constraint(g.id).unwrap() else {
+                unreachable!()
+            };
+            assert!(g.rect.center().distance(spot(line)) < 1e-3);
+        }
+    }
+
+    /// Zoomed so far out that many curves' symbols fall on one spot, they heap there rather
+    /// than spread over the drawing around: none moves more than two tiles off its own spot
+    /// to dodge symbols of other curves.
+    #[test]
+    fn a_heap_of_symbols_stays_by_its_curves() {
+        let mut doc = Document::new();
+        let v = DVec2::new;
+        for i in 0..40 {
+            let y = f64::from(i) * 0.05;
+            let (a, b) = (doc.add_point(v(-1.0, y)), doc.add_point(v(1.0, y)));
+            let line = doc.add_line(a, b).unwrap();
+            doc.add_constraint(Constraint::Horizontal { line }).unwrap();
+        }
+        let map = view_at(1.0);
+        let glyphs = layout_glyphs(&doc, &map);
+        assert_eq!(glyphs.len(), 40);
+        let spot = map.to_screen(DVec2::ZERO) + vec2(0.0, -GLYPH_OFF_LINE);
+        for g in &glyphs {
+            let off = g.rect.center().distance(spot);
+            assert!(
+                off <= 2.0 * (GLYPH_SIZE + 2.0) + 1.0,
+                "{:?} {off} pt off the heap's spot",
+                g.rect.center()
+            );
+        }
+        // Yet the first few still keep apart.
+        assert!(!glyphs[0].rect.intersects(glyphs[1].rect));
+    }
+
+    /// Symbols on different entities keep apart too: two short horizontal lines one above
+    /// the other, closer than a symbol is tall, each with its own Horizontal symbol.
+    #[test]
+    fn symbols_on_different_entities_never_overlap() {
+        let mut doc = Document::new();
+        let v = DVec2::new;
+        for y in [0.0, 8.0] {
+            let (a, b) = (doc.add_point(v(-20.0, y)), doc.add_point(v(20.0, y)));
+            let line = doc.add_line(a, b).unwrap();
+            doc.add_constraint(Constraint::Horizontal { line }).unwrap();
+        }
+        let glyphs = layout_glyphs(&doc, &view_at(1.0));
+        assert_eq!(glyphs.len(), 2);
+        assert!(
+            !glyphs[0].rect.intersects(glyphs[1].rect),
+            "{:?} meets {:?}",
+            glyphs[0].rect,
+            glyphs[1].rect
+        );
     }
 }

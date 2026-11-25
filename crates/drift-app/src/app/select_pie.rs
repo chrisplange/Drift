@@ -2,14 +2,15 @@
 //! picks, plus All, in a ring around the pointer (#481). It shows as soon as the key goes down.
 //! Each kind has a fixed place, so it becomes a flick: hold the key, move towards Edges, let
 //! go, and only edges are picked; flick to All for everything back. Let go in the middle (or
-//! tap the key) and the ring stays open: clicks there turn kinds on and off, several at once.
-//! Clicks made with the key still held count the same, and letting go then just closes the
-//! ring: it never flicks over them. Esc, a right click or the key again closes it. The kinds
-//! the filter picks now are lit.
+//! tap the key) and the ring stays open: each click turns that one kind on or off.
+//! Clicks made with the key still held count the same (each chooses the lit kind, the one a
+//! flick would), and letting go then just closes the ring: it never flicks over them. While it
+//! is open, the letter on a kind turns it on or off too. Esc, a right click or the key again
+//! closes it. The kinds the filter picks now are lit.
 //!
 //! The same flick-or-click model as the relations pie (Q, [`super::pie`]), and its geometry.
 
-use super::pie::{DEAD_ZONE, RADIUS, place_at, place_pos};
+use super::pie_style;
 use crate::*;
 use drift_edit::editor::{PickFilter, PickKind};
 
@@ -25,9 +26,24 @@ pub(crate) const PLACES: [Option<PickKind>; 8] = [
     Some(PickKind::Annotations),
 ];
 
+/// While the ring is open, the key that turns each place on or off (shown on its pill); All's
+/// picks everything.
+pub(crate) const KEYS: [Key; 8] = [
+    Key::E,
+    Key::F,
+    Key::A,
+    Key::P,
+    Key::R,
+    Key::B,
+    Key::T,
+    Key::N,
+];
+
 /// The Selection filter pie, open.
 pub(crate) struct SelectPie {
     pub center: egui::Pos2,
+    /// Where the pointer was when it opened: a flick counts once it has moved from there.
+    pub from: egui::Pos2,
     /// Its key is still down: letting go towards a kind picks only that kind.
     pub held: bool,
     /// A kind has been clicked since it opened: letting go of the key no longer flicks.
@@ -47,11 +63,10 @@ fn lit(filter: PickFilter, kind: Option<PickKind>) -> bool {
     }
 }
 
-/// The filter after a click on `kind`: with everything picked, that kind alone (so clicks
-/// gather kinds); otherwise that kind on or off. All: everything.
+/// The filter after a click on `kind`: that kind on or off, like the Selection filter's own
+/// toggles (a flick picks one kind alone). All: everything.
 fn toggled(filter: PickFilter, kind: Option<PickKind>) -> PickFilter {
     match kind {
-        Some(kind) if filter.is_all() => PickFilter::only(kind),
         Some(kind) => filter.with(kind, !filter.has(kind)),
         None => PickFilter::ALL,
     }
@@ -62,7 +77,7 @@ impl DriftApp {
     /// ring is open the keys are its own. Returns true if the keyboard was used here.
     pub(crate) fn select_pie_keys(&mut self, ctx: &egui::Context) -> bool {
         // The pie's key, the user's (#499): Shift+Q unless changed.
-        let (pressed, released, escape, pointer, now) = ctx.input(|i| {
+        let (pressed, released, escape, pointer, now, typed) = ctx.input(|i| {
             let (pressed, released) =
                 crate::keymap::pressed_released(i, "edit.selection_filter_pie");
             (
@@ -71,11 +86,17 @@ impl DriftApp {
                 i.key_pressed(Key::Escape),
                 i.pointer.latest_pos(),
                 i.time,
+                KEYS.iter().position(|k| crate::keymap::fresh_press(i, *k)),
             )
         });
+        let rects = self.pie_pills;
         let Some(pie) = &mut self.select_pie else {
-            if !pressed || self.tool.is_busy() || ctx.egui_wants_keyboard_input() {
+            if !pressed || ctx.egui_wants_keyboard_input() {
                 return false;
+            }
+            if self.tool.is_busy() {
+                self.pie_waits_for_tool(crate::commands::Command::SelectionFilterPie, now);
+                return true;
             }
             // Down and up in one frame, a tap, leaves the ring open to click.
             self.open_select_pie(ctx, pointer, !released);
@@ -83,12 +104,23 @@ impl DriftApp {
         };
         if escape || (pressed && !pie.held) {
             self.select_pie = None;
+        } else if let Some(place) = typed {
+            // A kind's letter: as a click on it, and the ring stays.
+            self.select_pie_toggle(place);
+            let filter = self.drawing.editor.prefs.pick_filter;
+            self.set_status(
+                format!("Selection filter: {}", filter.summary()),
+                false,
+                now,
+            );
         } else if released && pie.held {
             pie.held = false;
             if pie.clicked {
                 // Kinds were clicked with the key down: they stand, and the ring is done.
                 self.select_pie = None;
-            } else if let Some(place) = pointer.and_then(|p| place_at(pie.center, p)) {
+            } else if let Some(place) =
+                pie_style::flick_place(&rects, pie.center, pie.from, pointer)
+            {
                 // A flick: let go towards a kind to pick only it. Let go in the middle and
                 // the ring stays, to click.
                 self.select_pie_flick(place, now);
@@ -98,22 +130,19 @@ impl DriftApp {
     }
 
     /// Open the ring around `at` (the pointer; the canvas's middle without one), kept clear
-    /// of the window's edges. `held`: its key is still down.
+    /// of the window's edges, in place of any other pie. `held`: its key is still down.
     pub(crate) fn open_select_pie(
         &mut self,
         ctx: &egui::Context,
         at: Option<egui::Pos2>,
         held: bool,
     ) {
-        let at = at.unwrap_or(self.drawing.view.canvas_rect.center());
-        // (Room for the labels around it.)
-        let screen = ctx.content_rect().shrink2(egui::vec2(170.0, 130.0));
+        let fallback = self.drawing.view.canvas_rect.center();
+        let center = pie_style::pie_center(ctx, at, fallback);
+        self.close_pies();
         self.select_pie = Some(SelectPie {
-            center: if screen.is_positive() {
-                screen.clamp(at)
-            } else {
-                at
-            },
+            center,
+            from: at.unwrap_or(center),
             held,
             clicked: false,
         });
@@ -142,31 +171,50 @@ impl DriftApp {
 
     /// Draw the Selection filter pie, once it shows, and take its clicks.
     pub(crate) fn selection_filter_pie(&mut self, ctx: &egui::Context) {
-        let Some((center, flicks)) = self
+        let Some((center, flick_from)) = self
             .select_pie
             .as_ref()
-            .map(|p| (p.center, p.held && !p.clicked))
+            .map(|p| (p.center, (p.held && !p.clicked).then_some(p.from)))
         else {
             return;
         };
         let filter = self.drawing.editor.prefs.pick_filter;
         let pointer = ctx.input(|i| i.pointer.latest_pos());
-        let towards = pointer.and_then(|p| place_at(center, p));
         let screen = ctx.content_rect();
         let mut clicked = None;
+        let mut shown = None;
         egui::Area::new(egui::Id::new("selection_filter_pie"))
             .order(egui::Order::Foreground)
             .fixed_pos(screen.min)
             .show(ctx, |ui| {
-                // The whole window is the pie's while it is open.
+                // The whole window is the pie's while it is open. A click chooses what is lit: with
+                // the key held, what a flick would choose, wherever the click lands; otherwise
+                // the pill under the pointer. A click with nothing lit closes the pie.
                 let response = ui.allocate_response(screen.size(), egui::Sense::click());
+                let painter = ui.painter();
+                let labels = PLACES.map(|k| pie_style::label_galley(painter, place_label(k)));
+                let keys = KEYS.map(|k| pie_style::key_galley(painter, k.name()));
+                let rects = pie_style::pill_rects(
+                    center,
+                    std::array::from_fn(|p| (labels[p].size().x, Some(keys[p].size().x))),
+                );
+                shown = Some(rects);
+                // What is lit is what a click chooses (see pie_style::hot_place).
+                let hot = pie_style::hot_place(&rects, center, pointer, flick_from);
                 if response.clicked() {
-                    clicked = Some(towards);
+                    clicked = Some(hot);
                 } else if response.secondary_clicked() {
                     clicked = Some(None);
                 }
-                paint(ui, center, filter, towards, flicks);
+                let flicks = flick_from.is_some();
+                let aim = flick_from.and_then(|from| pie_style::flick_aim(center, from, pointer));
+                paint(
+                    painter, center, filter, aim, &rects, labels, keys, hot, flicks,
+                );
             });
+        if let Some(rects) = shown {
+            self.pie_pills = rects;
+        }
         match clicked {
             Some(Some(place)) => self.select_pie_toggle(place),
             Some(None) => self.select_pie = None,
@@ -175,80 +223,44 @@ impl DriftApp {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn paint(
-    ui: &egui::Ui,
+    painter: &egui::Painter,
     center: egui::Pos2,
     filter: PickFilter,
-    towards: Option<usize>,
+    aim: Option<egui::Vec2>,
+    rects: &[egui::Rect; 8],
+    labels: [std::sync::Arc<egui::Galley>; 8],
+    keys: [std::sync::Arc<egui::Galley>; 8],
+    hot: Option<usize>,
     flicks: bool,
 ) {
-    let painter = ui.painter();
-    let visuals = ui.visuals();
-    let dark = visuals.dark_mode;
-    let accent = theme::accent(dark);
-    let n = theme::neutrals(dark);
-    let radius = theme::radius::MENU;
-    // The middle: a ring, with a mark towards what would be chosen.
-    painter.circle_filled(center, DEAD_ZONE - 6.0, n.raised);
-    painter.circle_stroke(
-        center,
-        DEAD_ZONE - 6.0,
-        egui::Stroke::new(2.0, n.control_border),
-    );
-    if let Some(place) = towards {
-        let dir = (place_pos(center, place) - center).normalized();
-        painter.circle_filled(center + dir * (DEAD_ZONE - 6.0), 3.5, accent);
-    }
-    for (place, kind) in PLACES.into_iter().enumerate() {
-        let on = lit(filter, kind);
-        let hot = towards == Some(place);
-        let text_color = if on {
-            visuals.strong_text_color()
-        } else {
-            n.text
+    let dark = painter.ctx().theme() == egui::Theme::Dark;
+    pie_style::paint_hub(painter, center, aim, theme::accent(dark));
+    for (place, (label, key)) in labels.into_iter().zip(keys).enumerate() {
+        let kind = PLACES[place];
+        let state = pie_style::PillState {
+            on: lit(filter, kind),
+            hot: hot == Some(place),
+            ..Default::default()
         };
-        let galley = painter.layout_no_wrap(
-            place_label(kind).to_owned(),
-            egui::FontId::proportional(theme::size::BODY),
-            text_color,
-        );
-        let size = egui::vec2(galley.size().x + 50.0, 30.0);
-        // Labels to the sides start at the ring rather than straddling it.
-        let at = place_pos(center, place);
-        let lean = (at.x - center.x) / RADIUS;
-        let rect = egui::Rect::from_center_size(at + egui::vec2(lean * size.x * 0.5, 0.0), size);
-        // Opaque, like everything that floats: what the filter picks is tinted with the accent.
-        painter.rect_filled(rect, radius, if hot { n.hover } else { n.raised });
-        if on {
-            painter.rect_filled(rect, radius, theme::accent_soft(dark));
-        }
-        let stroke = if hot {
-            egui::Stroke::new(2.5, accent)
-        } else if on {
-            egui::Stroke::new(1.5, accent)
-        } else {
-            egui::Stroke::new(1.0, n.control_border)
-        };
-        painter.rect_stroke(rect, radius, stroke, egui::StrokeKind::Inside);
-        let icon = egui::Rect::from_center_size(
-            egui::pos2(rect.left() + 19.0, rect.center().y),
-            egui::Vec2::splat(18.0),
-        );
-        let icon_color = if on { accent } else { n.text };
-        match kind {
-            Some(kind) => crate::icons::pick_kind(painter, icon, kind, icon_color),
-            None => crate::icons::tool(painter, icon, ToolKind::Select, icon_color),
-        }
-        painter.galley(
-            egui::pos2(rect.left() + 36.0, rect.center().y - galley.size().y / 2.0),
-            galley,
-            text_color,
+        pie_style::paint_pill(
+            painter,
+            rects[place],
+            place,
+            label,
+            Some(key),
+            state,
+            |p, icon, color| match kind {
+                Some(kind) => crate::icons::pick_kind(p, icon, kind, color),
+                None => crate::icons::tool(p, icon, ToolKind::Select, color),
+            },
         );
     }
     // What choosing would do, under the ring; and the filter now, while nothing is pointed at.
-    let text = match towards.map(|p| PLACES[p]) {
+    let text = match hot.map(|p| PLACES[p]) {
         Some(None) => "Pick everything".to_owned(),
-        Some(Some(kind)) if flicks || filter.is_all() => {
+        Some(Some(kind)) if flicks => {
             format!("Pick only {}", kind.label().to_lowercase())
         }
         Some(Some(kind)) if filter.has(kind) => {
@@ -257,17 +269,10 @@ fn paint(
         Some(Some(kind)) => format!("Pick {} too", kind.label().to_lowercase()),
         None => format!("Selection filter: {}", filter.summary()),
     };
-    let color = visuals.text_color();
-    let galley =
-        painter.layout_no_wrap(text, egui::FontId::proportional(theme::size::LABEL), color);
-    let at = egui::pos2(center.x - galley.size().x / 2.0, center.y + RADIUS + 26.0);
-    let back = egui::Rect::from_min_size(at, galley.size()).expand2(egui::vec2(9.0, 5.0));
-    painter.rect(
-        back,
-        theme::radius::CONTROL,
-        n.raised,
-        egui::Stroke::new(1.0, n.control_border),
-        egui::StrokeKind::Outside,
-    );
-    painter.galley(at, galley, color);
+    let color = painter
+        .ctx()
+        .style_of(painter.ctx().theme())
+        .visuals
+        .text_color();
+    pie_style::paint_caption(painter, center, rects, text, color);
 }

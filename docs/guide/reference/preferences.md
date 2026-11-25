@@ -50,6 +50,7 @@ zooms). The middle mouse button drags the view either way.
 | **Add relations automatically while drawing** | Horizontal, vertical, coincident, tangent and so on, as you snap. Also the **Auto relations** switch in the status bar (Shift+Alt+R). |
 | **Snap perpendicular and tangent** | Lines snap square onto lines, circles and arcs, or tangent to circles and arcs, and follow guides. Also the status bar and the canvas's right-click menu. |
 | **Angle snap** | Off, 1°, 5°, 15° or 45°: lines are drawn at those steps (Alt places freely). Also the status bar. |
+| **Snap kinds** | Not here: which kinds of snap target are on (Points, Midpoint, Grid and so on) is set with the snap pie (Shift+S) or the status bar's **Snap kinds** button, which is lit while a kind is off that no other status-bar switch shows (Grid is **Snap to grid**'s, and Perpendicular and Tangent both off is **Perpendicular & tangent** off); its tooltip names the kinds turned off (unlit, it names any that **Snap to grid** or **Perpendicular & tangent** has off). Its menu turns each kind on and off and has **Snap to every kind**. Kept for every drawing and across restarts. |
 | **Round sizes when scaling with dimensions (Alt)** | With a transform handle and Alt, the width and height step through round sizes. Off: any size. |
 
 ## Picked geometry

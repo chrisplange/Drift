@@ -71,6 +71,8 @@ pub enum Glyph {
     Back,
     /// The Selection filter is narrowed: a funnel.
     Filter,
+    /// Printed and exported: a printer.
+    Print,
 }
 
 /// Maps a 20 × 20 design grid into `rect`.
@@ -576,6 +578,16 @@ pub fn glyph(painter: &egui::Painter, rect: Rect, glyph: Glyph, color: Color32) 
             p.arc(10.0, 3.0, 9.5, 0.72, PI - 1.44);
             p.circle(10.0, 10.0, 2.6);
         }
+        Glyph::Print => {
+            // The paper in, the body, the sheet out.
+            p.poly(&[(6.0, 7.5), (6.0, 3.0), (14.0, 3.0), (14.0, 7.5)], false);
+            p.poly(&[(3.5, 7.5), (16.5, 7.5), (16.5, 14.0), (3.5, 14.0)], true);
+            p.poly(
+                &[(6.5, 12.0), (13.5, 12.0), (13.5, 17.0), (6.5, 17.0)],
+                true,
+            );
+            p.dot(14.0, 10.0, 0.9);
+        }
         Glyph::Lock | Glyph::Unlock => {
             p.poly(&[(4.5, 9.5), (15.5, 9.5), (15.5, 17.0), (4.5, 17.0)], true);
             if glyph == Glyph::Lock {
@@ -1002,6 +1014,44 @@ pub fn button(
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, selected, label)
     });
+    paint_tile(ui, rect, &response, selected, size, draw);
+    response
+}
+
+/// An icon button that switches `on` when clicked, with the look of an unselected
+/// [`button`] (the icon itself shows the state). It tells assistive tech its state once,
+/// as it is after the click.
+pub fn toggle(
+    ui: &mut egui::Ui,
+    size: f32,
+    on: &mut bool,
+    label: &str,
+    draw: impl FnOnce(&egui::Painter, Rect, Color32, bool),
+) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), egui::Sense::click());
+    if response.clicked() {
+        *on = !*on;
+    }
+    let enabled = ui.is_enabled();
+    let state = *on;
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, state, label)
+    });
+    paint_tile(ui, rect, &response, false, size, |p, r, c| {
+        draw(p, r, c, state)
+    });
+    response
+}
+
+/// An icon button's tile and icon.
+fn paint_tile(
+    ui: &egui::Ui,
+    rect: Rect,
+    response: &egui::Response,
+    selected: bool,
+    size: f32,
+    draw: impl FnOnce(&egui::Painter, Rect, Color32),
+) {
     let dark = ui.visuals().dark_mode;
     let accent = crate::theme::accent(dark);
     // On: a neutral raised tile with the icon in the accent (never a solid accent block).
@@ -1031,5 +1081,4 @@ pub fn button(
     }
     let inner = rect.shrink(size * 0.2);
     draw(ui.painter(), inner, fg);
-    response
 }

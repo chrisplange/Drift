@@ -61,9 +61,9 @@ turn any off, in any mix, as with the selection filters in AutoCAD, Rhino or Vec
 **Shift+Q** opens the Selection filter pie at once: the seven kinds and **All** in a ring
 around the pointer, the kinds picked now lit. Hold Shift+Q, move towards one and let go to pick
 only that kind (**Edges** is to the right, **All** at the top); flick to **All** to pick
-everything again. Tap Shift+Q, or let go in the middle, and the ring stays open: click kinds to
-turn them on and off, several at once (with everything picked, the first click picks that kind
-alone), then Shift+Q, Esc or a right click to close it. Clicks made with Shift+Q still held count
+everything again. Tap Shift+Q, or let go in the middle, and the ring stays open: click kinds,
+or press the letter shown on each (E for **Edges**, A for **All**), to turn each one on or off,
+then Shift+Q, Esc or a right click to close it. Clicks made with Shift+Q still held count
 too, and letting go then just closes the ring.
 
 ![The Selection filter pie, held open with Text and Annotations turned off](../images/selection-filter-pie.png)
@@ -269,6 +269,15 @@ a side that was cut short still measures the side from corner to corner. A fully
 sketch stays fully defined after a fillet, since (with **Auto relations** on) the fillet's
 radius is dimensioned. A
 chamfer adds two freedoms, its two cut lengths, until you dimension them.
+
+A fillet as big as the shorter side takes that side whole and runs on to the next one (two
+fillets on one side meet). The side goes, and a leader pointing at it moves onto the arc. If
+something is measured to the side or its corner, or a centre line or other annotation refers
+to it, the side stays as a construction line instead, and the status bar says so. The arc
+stays tangent where it runs on into the next curve, so the outline never kinks there. When
+that already sets the arc's size (fillets meeting round the end of a plate whose height is
+measured), its radius becomes driven, shown in parentheses: change the height and the round
+end follows it.
 
 A fillet or chamfer that's already there can be resized: click it with the same tool, or
 drag a fillet's arc with the **Select** tool. Its lines keep their directions. To put the

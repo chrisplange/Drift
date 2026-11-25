@@ -449,7 +449,7 @@ impl DriftApp {
         if port.is_some() && !alt && self.tool.wants_snap() {
             let ed = &self.drawing.editor;
             let tool = &self.tool;
-            pointer.snap = ed.index.snap(
+            pointer.snap = ed.sketch_snap(
                 world,
                 SnapOptions {
                     tolerance,

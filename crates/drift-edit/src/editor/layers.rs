@@ -491,6 +491,22 @@ impl Editor {
         self.commit("Change layer");
     }
 
+    /// Give several layers new settings, one undo step; nothing when none change.
+    pub fn update_layers(&mut self, layers: &[(LayerId, Layer)], label: &str) {
+        let changed: Vec<&(LayerId, Layer)> = layers
+            .iter()
+            .filter(|(id, l)| self.doc.layer(*id).is_some_and(|was| was != l))
+            .collect();
+        if changed.is_empty() {
+            return;
+        }
+        self.doc.begin();
+        for (id, l) in changed {
+            self.doc.set_layer(*id, l.clone());
+        }
+        self.commit(label);
+    }
+
     /// Show or hide layers (the rest stay as they are), one undo step; nothing when none
     /// change.
     pub fn set_layers_visible(&mut self, visible: &[(LayerId, bool)], label: &str) {

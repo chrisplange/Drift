@@ -33,6 +33,12 @@ impl DriftApp {
         if ctx.text_edit_focused() || self.text_was_focused {
             return;
         }
+        // An open popup (a colour picker, a layer's line menu, a combo box or menu) closes
+        // on Esc later in the frame without taking the key: that Esc only closes it, and
+        // must not also clear the selection or cancel the tool.
+        if egui::Popup::is_any_open(ctx) && ctx.input(|i| i.key_pressed(Key::Escape)) {
+            return;
+        }
         // Ctrl/⌘+PgDn and PgUp step through the canvas tabs (the model, then each sheet),
         // wrapping at the ends.
         if !self.tool.is_busy() {
@@ -50,18 +56,25 @@ impl DriftApp {
                 return;
             }
         }
-        // Add view from a sheet: Esc (before the crop is started) goes back to the sheet.
+        // Add view: Esc (before the crop is started) cancels, back to the sheet if it was
+        // started there; from the model the canvas stays on the model.
         if let Some(sheet) = self.drawing.add_view_on
             && !self.tool.is_busy()
             && ctx.input(|i| i.key_pressed(Key::Escape))
         {
             self.set_tool(ToolKind::Select);
-            self.show_sheet(Some(sheet));
+            if std::mem::take(&mut self.drawing.add_view_back_to_sheet) {
+                self.show_sheet(Some(sheet));
+            } else {
+                self.drawing.add_view_on = None;
+            }
             return;
         }
         // The sheet preview takes no drawing keys. Esc never leaves it for the model (Back
         // to model, the Sheet menu, the canvas tabs or Ctrl+PgDn / PgUp do).
         if self.drawing.view.sheet_preview {
+            // The pies work on the model: one left open when the sheet came up goes.
+            self.close_pies();
             // V adds a view, by its region in the model.
             if ctx.input(|i| i.modifiers.is_none() && i.key_pressed(Key::V))
                 && let Some(id) = self.current_sheet()
@@ -139,12 +152,20 @@ impl DriftApp {
             }
             return;
         }
+        // A pie's key with another pie open switches to it.
+        if self.switch_pies(ctx) {
+            return;
+        }
         // Q: the relations pie, which keeps the keys while it is open.
         if self.pie_keys(ctx) {
             return;
         }
         // Shift+Q: the Selection filter pie, which keeps the keys while it is open.
         if self.select_pie_keys(ctx) {
+            return;
+        }
+        // Shift+S: the snap pie, the same way.
+        if self.snap_pie_keys(ctx) {
             return;
         }
         self.edit_keys(ctx);

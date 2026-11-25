@@ -3,7 +3,8 @@
 use drift_core::{FillId, FillKind, Hatch};
 use drift_draft::{Pattern, Placement};
 
-use crate::layers_ui::{color_choice, color_choice_of, weight_combo};
+use crate::colour::Follows;
+use crate::layers_ui::{color_choice, color_choice_of, fill_by_layer_follows, weight_combo};
 use crate::*;
 use drift_edit::fills::{FillStyle, PatternLibrary};
 
@@ -98,12 +99,14 @@ fn pattern_combo(
         });
 }
 
-/// Edit a fill style. Returns true if it changed. `angle`: with a hatch's Angle row (a hatch
-/// with its own Pattern alignment rows has it there).
+/// Edit a fill style. Returns true if it changed. `follows`: what its colour shows as while
+/// By layer (see [`crate::layers_ui::fill_by_layer_follows`]). `angle`: with a hatch's Angle
+/// row (a hatch with its own Pattern alignment rows has it there).
 pub(crate) fn fill_style_editor(
     ui: &mut egui::Ui,
     style: &mut FillStyle,
     patterns: &PatternLibrary,
+    follows: Option<Follows>,
     dark: bool,
     id: &str,
     angle: bool,
@@ -118,7 +121,7 @@ pub(crate) fn fill_style_editor(
         }
     }
     ui.add_space(4.0);
-    fill_style_fields(ui, style, patterns, dark, id, angle);
+    fill_style_fields(ui, style, patterns, follows, dark, id, angle);
     *style != before
 }
 
@@ -136,6 +139,7 @@ pub(crate) fn fill_style_editor_or_none(
     ui: &mut egui::Ui,
     style: &mut FillStyle,
     patterns: &PatternLibrary,
+    follows: Option<Follows>,
     dark: bool,
     id: &str,
     angle: bool,
@@ -157,7 +161,7 @@ pub(crate) fn fill_style_editor_or_none(
         _ => {}
     }
     ui.add_space(4.0);
-    fill_style_fields(ui, style, patterns, dark, id, angle);
+    fill_style_fields(ui, style, patterns, follows, dark, id, angle);
     if *style != before {
         FillEdit::Changed
     } else {
@@ -171,6 +175,7 @@ fn fill_style_fields(
     ui: &mut egui::Ui,
     style: &mut FillStyle,
     patterns: &PatternLibrary,
+    follows: Option<Follows>,
     dark: bool,
     id: &str,
     angle: bool,
@@ -178,7 +183,9 @@ fn fill_style_fields(
     match &mut style.kind {
         FillKind::Solid => {
             theme::row(ui, "Color", |ui| {
-                if let Some(c) = color_choice(ui, style.color, "By layer", dark) {
+                if let Some(c) =
+                    color_choice(ui, "Fill color", style.color, "By layer", follows, dark)
+                {
                     style.color = c;
                 }
             });
@@ -227,7 +234,14 @@ fn fill_style_fields(
                 }
             });
             theme::row(ui, "Lines", |ui| {
-                if let Some(c) = color_choice(ui, style.color, "By layer", dark) {
+                if let Some(c) = color_choice(
+                    ui,
+                    "Hatch line color",
+                    style.color,
+                    "By layer",
+                    follows,
+                    dark,
+                ) {
                     style.color = c;
                 }
             });
@@ -378,10 +392,16 @@ impl DriftApp {
             theme::section(ui, "Style");
             let mut style = FillStyle::of(&fill);
             let aligned = fills.len() == 1 && matches!(fill.kind, FillKind::Hatch(_));
+            let doc = &self.drawing.editor.doc;
+            let follows = fill_by_layer_follows(
+                doc,
+                fills.iter().filter_map(|f| doc.fill(*f)).map(|f| f.layer),
+            );
             if fill_style_editor(
                 ui,
                 &mut style,
                 &self.hatch_patterns,
+                follows,
                 dark,
                 "selected",
                 !aligned,
@@ -450,7 +470,16 @@ impl DriftApp {
         );
         theme::section(ui, "New fills");
         let mut style = self.drawing.editor.prefs.fill_style.clone();
-        if fill_style_editor(ui, &mut style, &self.hatch_patterns, dark, "tool", true) {
+        let follows = self.new_fill_follows();
+        if fill_style_editor(
+            ui,
+            &mut style,
+            &self.hatch_patterns,
+            follows,
+            dark,
+            "tool",
+            true,
+        ) {
             self.drawing.editor.prefs.fill_style = style;
         }
         ui.add_space(6.0);
@@ -491,7 +520,8 @@ impl DriftApp {
     /// Solid or hatch, and the colour or pattern, of the current fill style.
     fn fill_style_bar(&mut self, ui: &mut egui::Ui) {
         let mut style = self.drawing.editor.prefs.fill_style.clone();
-        self.style_bar(ui, &mut style, "bar");
+        let follows = self.new_fill_follows();
+        self.style_bar(ui, &mut style, follows, "bar");
         if style != self.drawing.editor.prefs.fill_style {
             // Hatch after Solid brings back the pattern it had, not the default.
             if let (FillKind::Solid, FillKind::Hatch(_)) =
@@ -536,14 +566,35 @@ impl DriftApp {
         }
     }
 
+    /// What a new fill's By layer colour shows as: the current layer's fill colour.
+    pub(crate) fn new_fill_follows(&self) -> Option<Follows> {
+        let doc = &self.drawing.editor.doc;
+        fill_by_layer_follows(doc, [doc.current_layer()])
+    }
+
     /// Solid or hatch, and the colour or pattern, of a fill style (`salt` keeps its
-    /// pattern list's id apart from others on screen), across a bar.
-    pub(crate) fn style_bar(&mut self, ui: &mut egui::Ui, style: &mut FillStyle, salt: &str) {
+    /// pattern list's id apart from others on screen), across a bar. `follows`: what its
+    /// colour shows as while By layer.
+    pub(crate) fn style_bar(
+        &mut self,
+        ui: &mut egui::Ui,
+        style: &mut FillStyle,
+        follows: Option<Follows>,
+        salt: &str,
+    ) {
         let dark = ui.visuals().dark_mode;
         self.style_kind(ui, style);
         match &mut style.kind {
             FillKind::Solid => {
-                if let Some(c) = color_choice_of(ui, style.color, "By layer", dark, 90.0) {
+                if let Some(c) = color_choice_of(
+                    ui,
+                    "Fill color",
+                    style.color,
+                    "By layer",
+                    follows,
+                    dark,
+                    90.0,
+                ) {
                     style.color = c;
                 }
             }
@@ -576,12 +627,20 @@ impl DriftApp {
 
     /// The colour of a solid fill style or the pattern of a hatch, as a row of an inspector
     /// (what [`Self::style_bar`] shows after the kind).
-    pub(crate) fn style_row(&mut self, ui: &mut egui::Ui, style: &mut FillStyle, salt: &str) {
+    pub(crate) fn style_row(
+        &mut self,
+        ui: &mut egui::Ui,
+        style: &mut FillStyle,
+        follows: Option<Follows>,
+        salt: &str,
+    ) {
         let dark = ui.visuals().dark_mode;
         match &mut style.kind {
             FillKind::Solid => {
                 theme::row(ui, "Color", |ui| {
-                    if let Some(c) = color_choice(ui, style.color, "By layer", dark) {
+                    if let Some(c) =
+                        color_choice(ui, "Fill color", style.color, "By layer", follows, dark)
+                    {
                         style.color = c;
                     }
                 });

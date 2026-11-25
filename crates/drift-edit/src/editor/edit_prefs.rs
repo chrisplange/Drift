@@ -15,6 +15,8 @@ pub struct EditPrefs {
     pub auto_merge: bool,
     /// What the select tool picks: everything, or only edges (curves) or only points.
     pub pick_filter: PickFilter,
+    /// Which kinds of target the pointer snaps to (the snap pie, Shift+S).
+    pub snap_kinds: drift_geom::SnapKinds,
     /// Drawing tools draw construction geometry (Alt+C with a drawing tool in hand).
     pub draw_construction: bool,
     /// A click inside an empty closed area picks it whatever the drawing's rules say (the

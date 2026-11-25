@@ -38,6 +38,8 @@ mod inspector_layer;
 mod keymap;
 /// Picking an object shows its layer, or makes it current (drift-releases#19).
 mod layer_on_pick;
+/// The Layers panel's swatches, line cell, picked rows and filter.
+mod layer_panel;
 /// Alt-click a layer's lock or snap to set the other layers.
 mod layer_toggles;
 /// The live link: assistants editing the open drawing.
@@ -52,7 +54,9 @@ mod new_drawing;
 mod note_typing;
 /// Selection filters you can combine.
 mod pick_filters;
-/// The quick-constrain bar on the canvas, the message above it, and the empty canvas's hint.
+/// The three pies: the snap pie's switches, flicks, taps, keys and switching.
+mod pies;
+/// The quick-constrain bar on the canvas, and the message above it.
 #[cfg(not(feature = "demo"))]
 mod quick_bar;
 /// Which relations show their symbols: Off, Picked only, All (#337).
@@ -1826,20 +1830,50 @@ fn a_folded_floating_panel_moves_by_the_top_of_its_header() {
     );
 }
 
-/// A floating panel can't be made narrower than what it holds: an open layer's settings
-/// (labels, pickers, "Printed and exported") are never cut off at its right edge.
+/// A layer row with every switch showing (some layer not printed or snapped to) and no
+/// room for its name holds a floating Layers panel wider, the name kept readable.
+#[test]
+fn a_layer_row_short_of_room_holds_the_panel_wider_for_its_name() {
+    let Some(mut h) = harness() else { return };
+    {
+        let ed = &mut h.state_mut().drawing.editor;
+        let id = ed.doc.current_layer();
+        let mut l = ed.doc.layer(id).cloned().unwrap();
+        l.printable = false;
+        l.snappable = false;
+        ed.update_layer(id, l);
+    }
+    h.state_mut()
+        .layout
+        .move_to(Panel::Layers, Place::Float, None);
+    h.run_steps(6);
+    let (_, before) = h.state().floating_rects(Panel::Layers).unwrap();
+    let grab = egui::pos2(before.right() - 1.0, before.top() + 120.0);
+    drag_edge(&mut h, Panel::Layers, grab, grab - egui::vec2(400.0, 0.0));
+    h.run_steps(4);
+    let (panel, _) = h.state().floating_rects(Panel::Layers).unwrap();
+    assert!(h.state().panel_overflow(Panel::Layers) < 0.5, "{panel:?}");
+    assert!(
+        panel.width() > 240.5,
+        "held wider than the least width: {panel:?}"
+    );
+    assert!(
+        h.query_by_label("Layer 1").is_some(),
+        "the layer's name shown whole"
+    );
+}
+
+/// A floating panel can't be made narrower than what it holds, nor than the least width a
+/// floating window has: the Layers panel's rows are never cut off at its right edge.
 #[test]
 fn a_floating_panel_is_never_narrower_than_its_contents() {
     let Some(mut h) = harness() else { return };
-    // Text a size up, as in a platform font wider than the test's: the open layer's settings
-    // then need more than the least width a floating window has.
+    // Text a size up, as in a platform font wider than the test's.
     h.ctx.all_styles_mut(|s| {
         for font in s.text_styles.values_mut() {
             font.size *= 1.35;
         }
     });
-    let layer = h.state().drawing.editor.doc.current_layer();
-    h.state_mut().drawing.expanded_layers.insert(layer);
     h.state_mut()
         .layout
         .move_to(Panel::Layers, Place::Float, None);
@@ -1859,11 +1893,18 @@ fn a_floating_panel_is_never_narrower_than_its_contents() {
     let grab = egui::pos2(before.right() - 1.0, before.top() + 120.0);
     let held = drag_edge(&mut h, Panel::Layers, grab, grab - egui::vec2(400.0, 0.0));
     save_png("drift_ui_floating_squeezed.png", &mut h);
+    // The layer's name is still there to read, not just "…" (the row gives up its least
+    // used switches first, and holds the panel wider than that).
+    assert!(
+        h.query_by_label("Layer 1").is_some(),
+        "the layer's name shown whole"
+    );
     let after = fits(&h, "squeezed from the right");
     assert!(held.width() >= after.width() - 0.5, "{held:?} vs {after:?}");
+    let needs = h.state().floating_content_width(Panel::Layers).unwrap();
     assert!(
-        after.width() > 260.0,
-        "the contents should need more: {after:?}"
+        after.width() >= needs.max(238.0) - 0.5 && after.width() <= needs.max(240.0) + 1.0,
+        "stops where its contents (or the least width) stop it: {after:?}, needs {needs}"
     );
     // From the left it stops there too, its right edge staying put.
     let grab = egui::pos2(after.left() + 1.0, after.top() + 120.0);
@@ -1888,8 +1929,6 @@ fn a_dock_is_never_narrower_than_its_contents() {
             font.size *= 1.35;
         }
     });
-    let layer = h.state().drawing.editor.doc.current_layer();
-    h.state_mut().drawing.expanded_layers.insert(layer);
     h.state_mut()
         .layout
         .move_to(Panel::Layers, Place::Dock(crate::dock::Side::Right), None);
@@ -1928,8 +1967,6 @@ fn a_dock_is_never_narrower_than_its_contents() {
 #[test]
 fn panels_keep_their_width_frame_to_frame() {
     let Some(mut h) = harness() else { return };
-    let layer = h.state().drawing.editor.doc.current_layer();
-    h.state_mut().drawing.expanded_layers.insert(layer);
     for p in crate::dock::Panel::ALL {
         h.state_mut().layout.move_to(p, Place::Float, None);
         h.run_steps(6);
@@ -3146,6 +3183,16 @@ fn many_layers(h: &mut Harness<'_, DriftApp>, n: usize) -> Vec<drift_core::Layer
     ids
 }
 
+/// A spot on the row of the layer named `name` with nothing of its own: between the name
+/// and the line cell.
+pub(super) fn layer_row_gap(h: &Harness<'_, DriftApp>, name: &str) -> egui::Pos2 {
+    let r = h.get_by_label(name).rect();
+    let cell = h
+        .get_by_label(&format!("{name} line weight and type"))
+        .rect();
+    egui::pos2((r.right() + cell.left()) / 2.0, r.center().y)
+}
+
 /// The layer rows drawn this frame.
 fn drawn_rows(h: &Harness<'_, DriftApp>) -> Vec<String> {
     let doc = &h.state().drawing.editor.doc;
@@ -3187,19 +3234,9 @@ fn hundreds_of_layers_draw_only_the_rows_in_view() {
     assert!(rows.contains(&"A-WALL-000".to_owned()), "{rows:?}");
     assert!(!rows.contains(&"A-ANNO-499".to_owned()));
     assert!(rows.len() < 40, "{} rows drawn", rows.len());
-    // Opening a row there (taller) keeps the rows below it in place, and clicking one
-    // still makes it current.
+    // Clicking a row there makes it current.
     let walls = ids[0];
-    h.state_mut().drawing.expanded_layers.insert(ids[3]);
-    h.run();
-    h.run();
-    // (The open row pushes the last ones down, past the pane's foot in a font with taller
-    // lines: scroll to the end again, so the row clicked is in view whatever the font.)
-    to_bottom(&mut h, 4);
-    h.hover_at(h.state().drawing.view.canvas_rect.center());
-    h.run();
-    let r = h.get_by_label("A-WALL-000").rect();
-    let at = egui::pos2(r.right() + 40.0, r.center().y);
+    let at = layer_row_gap(&h, "A-WALL-000");
     h.hover_at(at);
     h.run();
     button(&h, at, true);
@@ -3259,13 +3296,22 @@ fn long_layer_names_lose_their_middle_and_show_whole_in_the_tooltip() {
     h.run();
     assert!(h.query_by_label(long).is_none());
     // (The row's name, shortened; "Import PDF or DXF…" is the other.)
+    // Its beginning and its end kept, at least four characters of each, around the "…".
+    let kept = |v: &str| {
+        v.split_once('…').is_some_and(|(head, tail)| {
+            head.chars().count() >= 4
+                && tail.chars().count() >= 4
+                && long.starts_with(head)
+                && long.ends_with(tail)
+        })
+    };
     let shown = h
         .query_all_by_label_contains("…")
-        .find(|n| n.value().is_some_and(|v| v.contains("HATCH")))
-        .expect("the shortened name");
+        .find(|n| n.value().is_some_and(|v| kept(&v)))
+        .expect("the shortened name, its beginning and end kept");
     let label = shown.value().unwrap_or_default();
     assert!(
-        label.starts_with("A-WALL-") && label.ends_with("HATCH"),
+        label.starts_with("A-WAL") && label.ends_with("ATCH"),
         "{label}"
     );
     let at = shown.rect().center();
@@ -3273,7 +3319,8 @@ fn long_layer_names_lose_their_middle_and_show_whole_in_the_tooltip() {
     for _ in 0..30 {
         h.step();
     }
-    assert!(h.query_by_label_contains(long).is_some());
+    // (The name's tooltip: the whole name, then its curve count.)
+    assert!(h.query_by_label_contains(&format!("{long} · ")).is_some());
     save_png("drift_ui_long_layer_name.png", &mut h);
 }
 
@@ -3300,8 +3347,7 @@ fn a_layer_is_isolated_and_the_isolate_ended_in_one_undo_step_each() {
     let before = visible(&h);
     let target = ids[9]; // A-ANNO-009
     // Right-click its row: Isolate.
-    let r = h.get_by_label("A-ANNO-009").rect();
-    let at = egui::pos2(r.right() + 30.0, r.center().y);
+    let at = layer_row_gap(&h, "A-ANNO-009");
     h.hover_at(at);
     h.run();
     for pressed in [true, false] {
@@ -4742,9 +4788,19 @@ fn furniture_blocks_place_edit_and_export() {
         .find(|(_, i)| i.block == chair && i.angle == 0.0)
         .map(|(_, i)| i.at)
         .unwrap();
-    // On the left edge of the chair's seat, clear of the example.
+    // On the left edge of the chair's seat (its straight run, 2.5" to 19" down), clear of
+    // the example and of the relation symbols heaped on it at this zoom.
     let seat = 9.0 * drift_edit::library::INCH - 0.5 * drift_edit::library::INCH;
-    click_world(&mut h, first + DVec2::new(-seat, -300.0));
+    let map = screen_map(&h);
+    let symbols = h.state().relation_glyphs(&map);
+    let on_seat = (4..=18)
+        .map(|i| first + DVec2::new(-seat, -(i as f64) * drift_edit::library::INCH))
+        .find(|&p| {
+            let at = screen(&h, p);
+            symbols.iter().all(|g| !g.rect.expand(2.0).contains(at))
+        })
+        .expect("some of the seat's edge clear of the symbols");
+    click_world(&mut h, on_seat);
     assert_eq!(h.state().drawing.editor.selected_instances.len(), 1);
     h.state_mut().show_panel(Panel::Inspector);
     h.run();
@@ -10810,17 +10866,60 @@ fn saved_preferences_read_back_unchanged() {
     // didn't write. Auto merge reads back off, its default.)
     // (And whether the rail shows names since the Studio rail: appended, off unless set.)
     // (And where floating panels last stood: none here.)
+    // (And the snap pie's kinds since: every kind, its default.)
     let written = h
         .state()
         .view_prefs()
         .replace("rels=all;", "")
         .replace("merge=0;", "")
-        .replace("dock_spots=;", "");
+        .replace("dock_spots=;", "")
+        .replace("snapoff=0;", "");
+    assert_eq!(
+        h.state().drawing.editor.prefs.snap_kinds,
+        drift_geom::SnapKinds::ALL
+    );
     // (And the grid's spacing since #506: appended, Auto unless set.)
     assert_eq!(
         written.strip_suffix(";gfixed=0;gspace=304.8;gdiv=12;gtext=1';railnames=0"),
         Some(SAVED)
     );
+}
+
+/// The snap pie's kinds turned off are there again after a restart; a value that can't be
+/// read leaves every kind on.
+#[test]
+fn snap_kinds_turned_off_read_back() {
+    use drift_geom::{SnapKind, SnapKinds};
+    let Some(mut h) = harness() else { return };
+    let kinds = SnapKinds::ALL
+        .with(SnapKind::Midpoint, false)
+        .with(SnapKind::Tangent, false);
+    h.state_mut().drawing.editor.prefs.snap_kinds = kinds;
+    let saved = h.state().view_prefs();
+    let Some(mut fresh) = harness() else { return };
+    assert_eq!(
+        fresh.state().drawing.editor.prefs.snap_kinds,
+        SnapKinds::ALL
+    );
+    fresh.state_mut().apply_view_prefs(&saved);
+    assert_eq!(fresh.state().drawing.editor.prefs.snap_kinds, kinds);
+    // A saved Grid bit (no build writes one) is dropped: grid snapping is grid_snap's.
+    let Some(mut h) = harness() else { return };
+    h.state_mut().apply_view_prefs("snapoff=136");
+    assert_eq!(
+        h.state().drawing.editor.prefs.snap_kinds,
+        SnapKinds::ALL.with(SnapKind::Midpoint, false),
+        "Midpoint off, Grid kept on"
+    );
+    for bad in ["snapoff=abc", "snapoff=70000", "snapoff=-1"] {
+        let Some(mut h) = harness() else { return };
+        h.state_mut().apply_view_prefs(bad);
+        assert_eq!(
+            h.state().drawing.editor.prefs.snap_kinds,
+            SnapKinds::ALL,
+            "{bad}"
+        );
+    }
 }
 
 #[test]
@@ -10974,4 +11073,176 @@ fn fixed_grid_snaps_to_its_divisions_and_auto_restores() {
     h.state_mut().grid_fixed = false;
     h.run();
     assert_eq!(h.state().grid(), auto);
+}
+
+/// Two floating windows snapped side by side: dragging the left one's right edge resizes it
+/// alone. The right one's left edge lies under the press too, but the press isn't its own.
+#[test]
+fn a_resize_leaves_a_window_snapped_against_the_edge_alone() {
+    let Some(mut h) = harness() else { return };
+    h.set_size(egui::vec2(1600.0, 900.0));
+    for p in [Panel::Layers, Panel::Inspector] {
+        h.state_mut().layout.move_to(p, Place::Float, None);
+    }
+    h.run_steps(6);
+    let canvas = h.state().drawing.view.canvas_rect;
+    h.state_mut()
+        .place_floating(Panel::Layers, canvas.left_top() + egui::vec2(40.0, 40.0));
+    h.run_steps(4);
+    let (_, a) = h.state().floating_rects(Panel::Layers).unwrap();
+    h.state_mut()
+        .place_floating(Panel::Inspector, egui::pos2(a.right(), a.top()));
+    h.run_steps(4);
+    let (_, b) = h.state().floating_rects(Panel::Inspector).unwrap();
+    assert!(
+        (b.left() - a.right()).abs() < 0.5 && b.top() < a.bottom() - 200.0,
+        "snapped side by side: {a:?} {b:?}"
+    );
+    // The left one in front (a click on its body), then its right edge dragged out.
+    let body = egui::pos2(a.center().x, a.top() + 200.0);
+    h.hover_at(body);
+    h.run_steps(1);
+    button(&h, body, true);
+    h.run_steps(1);
+    button(&h, body, false);
+    h.run_steps(2);
+    let grab = egui::pos2(a.right() - 1.0, a.top() + 160.0);
+    let held = drag_edge(&mut h, Panel::Layers, grab, grab + egui::vec2(60.0, 0.0));
+    let (_, b_after) = h.state().floating_rects(Panel::Inspector).unwrap();
+    assert!(
+        held.width() > a.width() + 40.0,
+        "the left one widens: {a:?} → {held:?}"
+    );
+    assert!(
+        (b_after.min - b.min).length() < 0.5 && (b_after.size() - b.size()).length() < 0.5,
+        "the right one stays as it was: {b:?} → {b_after:?}"
+    );
+}
+
+/// A floating panel with a fixed-width row outside its scroll area (as a bar above its
+/// list), squeezed by its left edge far past that row: the row is never cut off for more
+/// than the first frame, and when the edge is let go the right edge doesn't jump out (it
+/// did once the window was again sized by egui, to its contents).
+#[test]
+fn a_left_edge_squeeze_stops_at_what_is_outside_the_scroll_area() {
+    let Some(mut h) = harness() else { return };
+    h.state_mut().set_test_fixed_row(Some(330.0));
+    h.state_mut()
+        .layout
+        .move_to(Panel::Layers, Place::Float, None);
+    h.run_steps(6);
+    let (_, w) = h.state().floating_rects(Panel::Layers).unwrap();
+    let from = egui::pos2(w.left() + 80.0, w.top() + 12.0);
+    drag_steps(&mut h, from, from - egui::vec2(300.0, 0.0), 20, None);
+    h.run_steps(4);
+    let (_, before) = h.state().floating_rects(Panel::Layers).unwrap();
+    let needs = h.state().floating_content_width(Panel::Layers).unwrap();
+    assert!(
+        needs > 330.0 && before.width() >= needs - 0.5,
+        "the case is real: it holds {needs}, wider than the least width, in {before:?}"
+    );
+    let grab = egui::pos2(before.left() + 1.0, before.top() + 160.0);
+    h.hover_at(grab);
+    h.run_steps(2);
+    button(&h, grab, true);
+    h.run_steps(2);
+    let mut seen = Vec::new();
+    for i in 1..=40 {
+        h.hover_at(grab + egui::vec2(i as f32 * 10.0, 0.0));
+        h.run_steps(1);
+        let (_, w) = h.state().floating_rects(Panel::Layers).unwrap();
+        seen.push((i, w.left(), w.right(), w.width()));
+    }
+    button(&h, grab + egui::vec2(400.0, 0.0), false);
+    h.run_steps(4);
+    let (_, after) = h.state().floating_rects(Panel::Layers).unwrap();
+    for (i, left, right, width) in &seen {
+        assert!(
+            (right - before.right()).abs() < 0.5,
+            "frame {i}: the right edge moved to {right} from {}",
+            before.right()
+        );
+        // (Only the first frame is shown at the pointer, before what is cut off is learnt:
+        // from the next one on the row is whole.)
+        if *i > 1 {
+            assert!(
+                *width >= needs - 0.5,
+                "frame {i}: {width} wide (left {left}), cutting off what needs {needs}"
+            );
+        }
+    }
+    assert!(
+        (after.right() - before.right()).abs() < 0.5
+            && (after.width() - before.width()).abs() < 0.5,
+        "let go: {before:?} → {after:?}, holding {needs}"
+    );
+}
+
+/// A floating panel's left edge dragged in and out: its right edge holds still on every
+/// frame of the drag, not only where it ends up (it wobbled while the contents' width was
+/// fed back into the window's).
+#[test]
+fn a_left_edge_resize_never_wobbles_the_right_edge() {
+    let Some(mut h) = harness() else { return };
+    h.state_mut()
+        .layout
+        .move_to(Panel::Layers, Place::Float, None);
+    h.run_steps(6);
+    // Away from the canvas's right edge first, by its header.
+    let (_, w) = h.state().floating_rects(Panel::Layers).unwrap();
+    let from = egui::pos2(w.left() + 80.0, w.top() + 12.0);
+    drag_steps(&mut h, from, from - egui::vec2(300.0, 0.0), 20, None);
+    h.run_steps(4);
+    let (_, before) = h.state().floating_rects(Panel::Layers).unwrap();
+    let right = before.right();
+    let grab = egui::pos2(before.left() + 1.0, before.top() + 160.0);
+    h.hover_at(grab);
+    h.run_steps(2);
+    button(&h, grab, true);
+    h.run_steps(2);
+    let mut seen = Vec::new();
+    // In (narrower, past the least width), then out (wider), a few pixels a frame.
+    let path: Vec<f32> = (0..=60)
+        .map(|i| i as f32 * 4.0)
+        .chain((0..=90).rev().map(|i| i as f32 * 4.0 - 120.0))
+        .collect();
+    // (The resize cursor stays up the whole way.)
+    let cursor = |h: &Harness<'_, DriftApp>| h.output().platform_output.cursor_icon;
+    for dx in path {
+        h.hover_at(grab + egui::vec2(dx, 0.0));
+        h.run_steps(1);
+        let (_, w) = h.state().floating_rects(Panel::Layers).unwrap();
+        seen.push((dx, w.left(), w.right(), w.width()));
+        assert_eq!(cursor(&h), egui::CursorIcon::ResizeHorizontal, "at {dx}");
+    }
+    button(&h, grab, false);
+    h.run_steps(4);
+    // A fresh grab flung far in in one frame, before any least width is learnt: the
+    // right edge doesn't move for that frame either.
+    let (_, w) = h.state().floating_rects(Panel::Layers).unwrap();
+    let mut flung = Vec::new();
+    let grab = egui::pos2(w.left() + 1.0, grab.y);
+    h.hover_at(grab);
+    h.run_steps(2);
+    button(&h, grab, true);
+    h.run_steps(1);
+    for dx in [400.0, 400.0, 400.0, -60.0, -60.0] {
+        h.hover_at(grab + egui::vec2(dx, 0.0));
+        h.run_steps(1);
+        let (_, w) = h.state().floating_rects(Panel::Layers).unwrap();
+        flung.push((dx, w.left(), w.right(), w.width()));
+        assert_eq!(cursor(&h), egui::CursorIcon::ResizeHorizontal, "at {dx}");
+    }
+    button(&h, grab, false);
+    h.run_steps(4);
+    for (seen, right) in [(seen, right), (flung, w.right())] {
+        let worst = seen
+            .iter()
+            .map(|s| (s.2 - right).abs())
+            .fold(0.0_f32, f32::max);
+        assert!(
+            worst < 0.5,
+            "the right edge moved by up to {worst} px (start {right}): {seen:?}"
+        );
+    }
 }

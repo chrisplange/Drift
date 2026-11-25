@@ -509,17 +509,28 @@ pub(crate) fn save(storage: &mut dyn eframe::Storage) {
 }
 
 /// Whether a key of the command `id` went down this frame (with exactly its modifiers), and
-/// whether one came up: for the keys read where they act (a pie's hold or tap).
+/// whether one came up: for the keys read where they act (a pie's hold or tap). Only a fresh
+/// press counts: the repeats a held key sends are not presses, so a pie closed while its key
+/// is still down (by a click, say) stays closed.
 pub(crate) fn pressed_released(i: &eframe::egui::InputState, id: &str) -> (bool, bool) {
     let keys = commands::spec_by_id(id)
         .map(|s| s.shortcuts())
         .unwrap_or_default();
     let m = i.modifiers;
     let pressed = keys.iter().any(|k| {
-        m.shift == k.shift && m.alt == k.alt && m.command == k.command && i.key_pressed(k.key)
+        m.shift == k.shift && m.alt == k.alt && m.command == k.command && fresh_press(i, k.key)
     });
     let released = keys.iter().any(|k| i.key_released(k.key));
     (pressed, released)
+}
+
+/// Whether `key` went down this frame, not counting the repeats a held key sends: for keys
+/// that turn something over (a pie's letters), so holding one doesn't flip it on and off.
+pub(crate) fn fresh_press(i: &eframe::egui::InputState, key: Key) -> bool {
+    i.events.iter().any(|e| {
+        matches!(e, eframe::egui::Event::Key { key: k, pressed: true, repeat: false, .. }
+            if *k == key)
+    })
 }
 
 /// The shortcut a key press makes, for assigning: Ctrl (⌘) and the other modifiers held.

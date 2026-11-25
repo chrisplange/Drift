@@ -5,8 +5,24 @@ use drift_core::{DVec2, EntityId, Shape};
 use crate::index::{PointRole, SceneIndex};
 use crate::primitives::{angle_in_sweep, nearest_point};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SnapKind {
+/// Declares [`SnapKind`] and [`SnapKind::EVERY`] from one list, so no kind can be left out
+/// of `EVERY` (and so out of [`SnapKinds::ALL`], never snapping).
+macro_rules! snap_kinds {
+    ($($(#[$doc:meta])* $kind:ident,)*) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub enum SnapKind {
+            $($(#[$doc])* $kind,)*
+        }
+
+        impl SnapKind {
+            /// Every kind, in declaration order. Each also has its own bit in
+            /// `SnapKinds::bit`.
+            pub const EVERY: [SnapKind; [$(SnapKind::$kind),*].len()] = [$(SnapKind::$kind),*];
+        }
+    };
+}
+
+snap_kinds! {
     /// End of a line or arc. `entity` is the point.
     Endpoint,
     /// A standalone sketch point. `entity` is the point.
@@ -64,6 +80,72 @@ impl SnapKind {
             SnapKind::OnCurve => 3,
             SnapKind::Grid => 4,
         }
+    }
+}
+
+/// Which [`SnapKind`]s the pointer snaps to: all of them by default. Grid snapping and
+/// perpendicular/tangent snapping also need [`SnapOptions::grid`] and [`SnapOptions::from`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SnapKinds(u16);
+
+impl Default for SnapKinds {
+    fn default() -> Self {
+        Self::ALL
+    }
+}
+
+impl SnapKinds {
+    /// Every kind.
+    pub const ALL: SnapKinds = {
+        let mut bits = 0;
+        let mut i = 0;
+        while i < SnapKind::EVERY.len() {
+            bits |= Self::bit(SnapKind::EVERY[i]);
+            i += 1;
+        }
+        // No two kinds share a bit.
+        assert!(bits.count_ones() as usize == SnapKind::EVERY.len());
+        SnapKinds(bits)
+    };
+
+    /// Each kind's own bit, fixed: saved preferences name kinds by these.
+    const fn bit(kind: SnapKind) -> u16 {
+        1 << match kind {
+            SnapKind::Endpoint => 0,
+            SnapKind::Point => 1,
+            SnapKind::Center => 2,
+            SnapKind::Midpoint => 3,
+            SnapKind::Quadrant => 4,
+            SnapKind::OnCurve => 5,
+            SnapKind::Origin => 6,
+            SnapKind::Grid => 7,
+            SnapKind::Perpendicular => 8,
+            SnapKind::Tangent => 9,
+        }
+    }
+
+    pub fn has(self, kind: SnapKind) -> bool {
+        self.0 & Self::bit(kind) != 0
+    }
+
+    /// With `kind` turned on or off.
+    pub fn with(self, kind: SnapKind, on: bool) -> Self {
+        if on {
+            Self(self.0 | Self::bit(kind))
+        } else {
+            Self(self.0 & !Self::bit(kind))
+        }
+    }
+
+    /// The kinds turned off, as a number, for saving: a kind added later is on for
+    /// preferences saved before it.
+    pub fn off_bits(self) -> u16 {
+        Self::ALL.0 & !self.0
+    }
+
+    /// From [`off_bits`](Self::off_bits) (unknown bits dropped).
+    pub fn from_off_bits(bits: u16) -> Self {
+        Self(Self::ALL.0 & !bits)
     }
 }
 
@@ -197,11 +279,23 @@ impl SceneIndex {
         options: SnapOptions,
         exclude: impl Fn(EntityId) -> bool,
     ) -> Option<Snap> {
+        self.snap_to(p, options, SnapKinds::ALL, exclude)
+    }
+
+    /// [`snap`](Self::snap) to only the `kinds` given: a nearer target of a kind that is off
+    /// gives way to the best one of a kind that is on.
+    pub fn snap_to(
+        &self,
+        p: DVec2,
+        options: SnapOptions,
+        kinds: SnapKinds,
+        exclude: impl Fn(EntityId) -> bool,
+    ) -> Option<Snap> {
         let tol = options.tolerance;
         let mut best: Option<(Snap, f64)> = None;
         let mut offer = |snap: Snap| {
             let d = snap.at.distance(p);
-            if d > tol {
+            if d > tol || !kinds.has(snap.kind) {
                 return;
             }
             let better = match &best {
@@ -324,7 +418,11 @@ impl SceneIndex {
         if let Some((snap, _)) = best {
             return Some(snap);
         }
-        options.grid.filter(|g| *g > 0.0).map(|g| Snap {
+        // The grid, last, and only while Grid is one of the kinds.
+        let grid = options
+            .grid
+            .filter(|g| *g > 0.0 && kinds.has(SnapKind::Grid));
+        grid.map(|g| Snap {
             at: (p / g).round() * g,
             kind: SnapKind::Grid,
             entity: None,
@@ -414,6 +512,55 @@ mod tests {
     }
 
     #[test]
+    fn kinds_turned_off_give_way_to_the_next_best() {
+        let (doc, _, line, _) = fixture();
+        let index = SceneIndex::build(&doc);
+        // By the end: with endpoints off, the line itself.
+        let kinds = SnapKinds::ALL.with(SnapKind::Endpoint, false);
+        let s = index
+            .snap_to(v(0.4, 0.3), options(1.0), kinds, |_| false)
+            .unwrap();
+        assert_eq!((s.kind, s.entity), (SnapKind::OnCurve, Some(line)));
+        // By the midpoint: with midpoints and on-curve off, nothing.
+        let kinds = SnapKinds::ALL
+            .with(SnapKind::Midpoint, false)
+            .with(SnapKind::OnCurve, false);
+        assert!(
+            index
+                .snap_to(v(5.2, 0.3), options(1.0), kinds, |_| false)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn snap_kinds_keep_their_saved_bits() {
+        // Every kind is in ALL, on its own bit.
+        let mut seen = 0u16;
+        for kind in SnapKind::EVERY {
+            assert!(SnapKinds::ALL.has(kind), "{kind:?}");
+            let off = SnapKinds::ALL.with(kind, false).off_bits();
+            assert_eq!(off.count_ones(), 1, "{kind:?}");
+            assert_eq!(seen & off, 0, "{kind:?}");
+            seen |= off;
+        }
+        assert_eq!(seen, SnapKinds::ALL.0);
+        // Saved bits name the same kinds in every build.
+        let kinds = SnapKinds::ALL
+            .with(SnapKind::Midpoint, false)
+            .with(SnapKind::Tangent, false);
+        assert_eq!(kinds.off_bits(), (1 << 3) | (1 << 9));
+        assert_eq!(SnapKinds::from_off_bits(kinds.off_bits()), kinds);
+        // Nothing off is every kind; bits no kind has are dropped.
+        assert_eq!(SnapKinds::ALL.off_bits(), 0);
+        assert_eq!(SnapKinds::from_off_bits(0), SnapKinds::ALL);
+        assert_eq!(SnapKinds::from_off_bits(1 << 15), SnapKinds::ALL);
+        assert_eq!(
+            SnapKinds::from_off_bits(u16::MAX).off_bits(),
+            SnapKinds::ALL.0
+        );
+    }
+
+    #[test]
     fn falls_back_to_curve_then_grid() {
         let (doc, ..) = fixture();
         let index = SceneIndex::build(&doc);
@@ -428,6 +575,9 @@ mod tests {
         };
         let s = index.snap(v(47.0, 52.0), grid, |_| false).unwrap();
         assert_eq!((s.kind, s.at), (SnapKind::Grid, v(50.0, 50.0)));
+        // Grid off: no grid either.
+        let no_grid = SnapKinds::ALL.with(SnapKind::Grid, false);
+        assert_eq!(index.snap_to(v(47.0, 52.0), grid, no_grid, |_| false), None);
     }
 
     #[test]

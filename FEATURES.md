@@ -34,7 +34,8 @@ Seeded 2026-11-09 from the command registry, importers/exporters, agent schema a
 - Slot. `crates/drift-edit/src/tools/slot.rs`
 - Point. `crates/drift-edit/src/tools/point.rs`
 - Construction geometry toggle. `crates/drift-app/src/commands.rs`
-- Snaps: grid, end, midpoint, perpendicular, tangent. `crates/drift-geom/src/snap.rs`
+- Snaps: grid, end, midpoint, centre, quadrant, on curve, origin, perpendicular, tangent. `crates/drift-geom/src/snap.rs`
+- Snap pie (Shift+S): each kind of snap on or off, by flick, click or its letter (a click chooses the lit pill, so with the key held near the window's edge it matches the flick); an app preference, kept for every drawing and across restarts. The status bar's Snap kinds button is lit while a kind is off that no other status-bar switch shows (not Grid, which is grid snap's switch, nor Perpendicular and Tangent with the Perpendicular & tangent switch off), and its tooltip names the kinds turned off (unlit, it names any that Grid or Perpendicular & tangent has off); its menu checks each kind on and off and has Snap to every kind. Perpendicular and Tangent are the two halves of the status bar's Perpendicular & tangent switch. `crates/drift-app/src/app/snap_pie.rs`
 - Typed lengths and angles while drawing. `crates/drift-app/src/app/temp_dims_ui.rs`
 
 ## Modify
@@ -42,6 +43,7 @@ Seeded 2026-11-09 from the command registry, importers/exporters, agent schema a
 - Rotate tool around a base point. `crates/drift-edit/src/tools/rotate.rs`
 - Trim (click a piece, or drag across pieces as a power trim; every curve cuts, whatever is picked), extend (to the next curve, likewise whatever is picked), break at point. `crates/drift-edit/src/tools/curve_ops.rs`
 - Fillet and chamfer, editable by drag. `crates/drift-edit/src/tools/corners.rs`
+- A fillet may take the shorter side whole: the side goes (kept as construction for what is measured, related or annotated on it), its leaders move onto the arc, and the arc stays tangent where it runs on, its radius driven when that sets its size. `crates/drift-edit/src/modify.rs`
 - A corner kept for a dimension, and a fillet's centre, drawn as a muted cross until the fillet or its lines are lit. `crates/drift-edit/src/editor/muted_points.rs`
 - Join corners. `crates/drift-app/src/commands.rs`
 - Linear and circular arrays, previewed on the canvas until applied (one undo step). `crates/drift-app/src/app/arrays.rs`
@@ -117,7 +119,8 @@ Seeded 2026-11-09 from the command registry, importers/exporters, agent schema a
 - Box select and Shift/Ctrl modifiers. `crates/drift-edit/src/tools/select.rs`
 - Pan, zoom, zoom to fit, zoom to selection. `crates/drift-edit/src/tools/view.rs`
 - Grid and origin axes; grid spacing Auto or fixed (typed length, divisions per major square, View → Grid spacing). `crates/drift-app/src/commands.rs`, `crates/drift-render/src/frame.rs`
-- Right-click pie / context menus. `crates/drift-app/src/app/pie.rs`
+- Right-click context menus. `crates/drift-app/src/app/context_ui.rs`
+- Pies, one look and one flick-or-click model (`crates/drift-app/src/app/pie_style.rs`): relations pie (Q, `pie.rs`), Selection filter pie (Shift+Q, `select_pie.rs`), snap pie (Shift+S, `snap_pie.rs`). Hold the key and flick, or tap it and click; each pill's letter chooses it while the pie is open.
 
 ## UI
 - Command palette with CAD aliases (LINE, TRIM, HATCH…). `crates/drift-app/src/app/palette.rs`

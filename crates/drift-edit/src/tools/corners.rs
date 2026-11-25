@@ -144,7 +144,12 @@ pub(super) fn fillet_radius_at(corner: DVec2, half: f64, room: f64, p: &Pointer)
         moved: true,
         size: 0.0,
     };
-    s.follow(p, |d, half| d / (1.0 / half.sin() - 1.0), room * half.tan());
+    s.follow(
+        p,
+        |d, half| d / (1.0 / half.sin() - 1.0),
+        room * half.tan(),
+        false,
+    );
     (s.size > 0.0).then_some(s.size)
 }
 
@@ -168,9 +173,10 @@ fn is_corner(ed: &Editor, p: EntityId, arcs: bool) -> bool {
     (tolerance::ANGLE..=PI - tolerance::ANGLE).contains(&alpha)
 }
 
-/// The largest fillet `fillet_geometry` makes at `at` between `arms`.
+/// The largest fillet at `at` between `arms` whose tangent points at most reach their far
+/// ends.
 fn largest_fillet(at: DVec2, arms: [Arm; 2]) -> f64 {
-    let fits = |r: f64| crate::modify::fillet_geometry(at, arms, r).is_ok();
+    let fits = |r: f64| crate::modify::fillet_reaches(at, arms, r);
     let (half, room) = corner_angle(at, arms);
     let (mut lo, mut hi) = (0.0, (room * half.tan()).max(tolerance::SAME));
     for _ in 0..64 {
@@ -543,8 +549,16 @@ impl Sizing {
 
     /// Follow the pointer: `size_at` turns its distance from the corner into a size, and
     /// `largest` is the most the lines have room for. Steps are round numbers a few pixels
-    /// apart; Alt sizes freely.
-    fn follow(&mut self, p: &Pointer, size_at: impl Fn(f64, f64) -> f64, largest: f64) {
+    /// apart; Alt sizes freely. With `whole`, a size may take a line whole: past the
+    /// largest, it holds at exactly the largest (a clamp, like Blender's bevel), where it
+    /// otherwise stops a round step short of it.
+    fn follow(
+        &mut self,
+        p: &Pointer,
+        size_at: impl Fn(f64, f64) -> f64,
+        largest: f64,
+        whole: bool,
+    ) {
         if !self.moved && p.raw.distance(self.start) < p.tolerance * 0.5 {
             return;
         }
@@ -553,7 +567,11 @@ impl Sizing {
         if !free.is_finite() {
             return;
         }
-        let largest = largest * 0.999;
+        if whole && free >= largest {
+            self.size = largest;
+            return;
+        }
+        let largest = if whole { largest } else { largest * 0.999 };
         self.size = if p.alt {
             free.min(largest)
         } else {
@@ -617,7 +635,9 @@ impl FilletTool {
             // The arc passes under the pointer: its middle is r / sin(half) - r from the
             // corner. The tangent points must stay on the lines.
             let largest = s.largest.unwrap_or(s.room * s.half.tan());
-            s.follow(p, |d, half| d / (1.0 / half.sin() - 1.0), largest);
+            // A new fillet may take a line whole; one being re-sized stops short of that.
+            let whole = s.arc.is_none();
+            s.follow(p, |d, half| d / (1.0 / half.sin() - 1.0), largest, whole);
         }
     }
 
@@ -852,7 +872,7 @@ impl ChamferTool {
         if let Some(s) = &mut self.sizing {
             // The cut passes under the pointer: its middle is d · cos(half) from the corner.
             let largest = s.largest.unwrap_or(s.room);
-            s.follow(p, |d, half| d / half.cos(), largest);
+            s.follow(p, |d, half| d / half.cos(), largest, false);
         }
     }
 

@@ -165,10 +165,14 @@ pub fn join_marker(painter: &egui::Painter, map: &ScreenMap, snap: &Snap, color:
 /// midpoints, diamond for quadrants, cross for on-curve, plus for grid, ⊥ for perpendicular and
 /// a circle on a line for tangent.
 pub fn snap_marker(painter: &egui::Painter, map: &ScreenMap, snap: &Snap, color: Color32) {
-    let c = map.to_screen(snap.at);
+    snap_glyph(painter, map.to_screen(snap.at), snap.kind, color);
+}
+
+/// A snap kind's glyph (see [`snap_marker`]) centred on `c`, as the snap pie shows it too.
+pub fn snap_glyph(painter: &egui::Painter, c: egui::Pos2, kind: SnapKind, color: Color32) {
     let s = 5.0;
     let stroke = Stroke::new(1.5, color);
-    match snap.kind {
+    match kind {
         SnapKind::Endpoint | SnapKind::Point => {
             painter.rect_stroke(
                 Rect::from_center_size(c, vec2(2.0 * s, 2.0 * s)),
@@ -341,6 +345,18 @@ pub fn region_fill(
     region: &drift_geom::regions::Region,
     color: Color32,
 ) {
+    region_fill_carried(painter, map, region, color, &|p| p);
+}
+
+/// Fill a region with a translucent colour where `carry` takes its points (a fill easing
+/// into place, carried from where it was solved).
+pub fn region_fill_carried(
+    painter: &egui::Painter,
+    map: &ScreenMap,
+    region: &drift_geom::regions::Region,
+    color: Color32,
+    carry: &dyn Fn(DVec2) -> DVec2,
+) {
     use lyon_tessellation::geometry_builder::simple_builder;
     use lyon_tessellation::math::point;
     use lyon_tessellation::path::Path;
@@ -359,7 +375,7 @@ pub fn region_fill(
         let poly: Vec<DVec2> = lp
             .polygon(max_angle)
             .into_iter()
-            .map(|p| map.camera.world_to_view(p))
+            .map(|p| map.camera.world_to_view(carry(p)))
             .collect();
         let poly = drift_render::clip_polygon(&poly, half);
         let Some(first) = poly.first() else {

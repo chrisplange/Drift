@@ -1,5 +1,5 @@
 use drift_core::{Document, EntityKind};
-use drift_geom::SnapOptions;
+use drift_geom::{SnapKind, SnapOptions};
 
 use super::*;
 
@@ -4380,6 +4380,78 @@ fn editing_a_block_snaps_only_to_the_block() {
     assert!(s.entity.is_some_and(|e| !ed.in_scope(e)));
 }
 
+/// What a sheet snaps to through a view is the drawing as the sheet shows it, the block
+/// edited in place as finished: the drawing around the block snaps there, the edit's
+/// temporary geometry (not drawn on the sheet, deleted when the edit finishes) doesn't.
+#[test]
+fn sketch_snap_reaches_past_a_block_edit() {
+    let (mut ed, copy, _, loose, _) = block_edit_fixture();
+    let opts = SnapOptions {
+        tolerance: TOL,
+        grid: None,
+        from: None,
+    };
+    ed.edit_block(copy);
+    let at = v(10.1, 25.1);
+    let scope = ed.edit_scope().unwrap();
+    assert!(
+        ed.snap(at, opts, |_| false)
+            .is_none_or(|s| s.entity.is_none_or(|e| scope.contains(&e)))
+    );
+    let s = ed
+        .sketch_snap(at, opts, |_| false)
+        .expect("the loose line's end");
+    assert_eq!((s.kind, s.at), (SnapKind::Endpoint, v(10.0, 25.0)));
+    let end = s.entity.expect("the end point");
+    assert!(!scope.contains(&end));
+    assert!(ed.doc.users_of(end).any(|u| u == loose));
+    // The box's corner: the edit snaps to its own temporary corner, the sheet never does.
+    let corner = v(20.1, 10.1);
+    let s = ed.snap(corner, opts, |_| false).expect("the edited corner");
+    assert!(s.entity.is_some_and(|e| scope.contains(&e)));
+    assert!(
+        ed.sketch_snap(corner, opts, |_| false)
+            .is_none_or(|s| s.entity.is_none_or(|e| !scope.contains(&e)))
+    );
+    // Nor anywhere else on the edited box.
+    for at in [v(0.1, 0.1), v(10.0, 0.1), v(20.1, 5.0), v(16.5, 20.1)] {
+        assert!(
+            ed.sketch_snap(at, opts, |_| false)
+                .is_none_or(|s| s.entity.is_none_or(|e| !scope.contains(&e))),
+            "{at:?}"
+        );
+    }
+}
+
+/// On a copy of a block, a snap kind turned off gives way to the next best that is on, as on
+/// the sketch.
+#[test]
+fn block_snaps_keep_to_the_snap_kinds() {
+    let (mut ed, _, other, _, _) = block_edit_fixture();
+    let opts = SnapOptions {
+        tolerance: 2.0,
+        grid: None,
+        from: None,
+    };
+    // The other copy's short line (3 long, above its box's top).
+    let (a, b) = ed
+        .doc
+        .instance_items(other)
+        .into_iter()
+        .find_map(|item| match item.shape {
+            Shape::Line { a, b } if (a.distance(b) - 3.0).abs() < 1e-9 => Some((a, b)),
+            _ => None,
+        })
+        .expect("the copy's short line");
+    let at = a + (b - a).normalize() * 0.3;
+    let s = ed.snap(at, opts, |_| false).expect("the line's end");
+    assert_eq!((s.kind, s.at), (SnapKind::Endpoint, a));
+    ed.prefs.snap_kinds = drift_geom::SnapKinds::ALL.with(SnapKind::Endpoint, false);
+    let s = ed.snap(at, opts, |_| false).expect("the line's middle");
+    assert_eq!(s.kind, SnapKind::Midpoint);
+    assert!(s.at.distance((a + b) * 0.5) < 1e-9, "{}", s.at);
+}
+
 #[test]
 fn grouping_inside_a_block_edit_keeps_editing() {
     let (mut ed, copy, _, _, _) = block_edit_fixture();
@@ -6676,6 +6748,21 @@ fn drawing_on_from_a_line_follows_a_square_guide() {
     p.perp_tangent = false;
     tool.refine_pointer(&mut p);
     assert_eq!(p.guide, None);
+    // Drawing on from the second line: near the guide square to it, with Perpendicular alone
+    // turned off (the snap pie), no guide; with only Tangent off, the square guide.
+    let near = on_guide + dir.perp() * 10.0 + dir * 0.3;
+    let guide_with = |off: drift_geom::SnapKind| {
+        let mut p = Pointer::new(near, TOL);
+        p.perp_tangent = true;
+        p.guide_kinds = drift_geom::SnapKinds::ALL.with(off, false);
+        tool.refine_pointer(&mut p);
+        p.guide.map(|g| g.kind)
+    };
+    assert_eq!(
+        guide_with(drift_geom::SnapKind::Tangent),
+        Some(GuideKind::Perpendicular(second))
+    );
+    assert_eq!(guide_with(drift_geom::SnapKind::Perpendicular), None);
 }
 
 #[test]
@@ -7994,6 +8081,23 @@ fn fillet_tool_drag_largest_is_the_tightest_corners_room() {
     assert_eq!(arcs(&ed.doc), 4, "{:?}", ed.out.notice);
 }
 
+/// Sized past what a corner has room for, a fillet holds at exactly the most (not a round
+/// step short of it), and applied there it takes the shorter side whole.
+#[test]
+fn fillet_tool_clamps_at_the_whole_side() {
+    let (mut ed, sides) = corners_rect(30.0, 6.0);
+    let mut tool = FilletTool::default();
+    click(&mut ed, &mut tool, v(0.0, 0.0));
+    let far = ptr(&ed, &tool, v(-40.0, -40.0));
+    tool.handle(Input::Hover(far), &mut ed);
+    let size = previewed_radius(&tool, &ed);
+    assert!((size - 6.0).abs() < 1e-9, "{size}");
+    tool.handle(Input::Click(far, Modifiers::default()), &mut ed);
+    assert_eq!(arcs(&ed.doc), 1, "{:?}", ed.out.notice);
+    let gone = sides.iter().filter(|id| !ed.doc.contains(**id)).count();
+    assert_eq!(gone, 1, "the short side at the corner is taken whole");
+}
+
 #[test]
 fn fillet_tool_set_of_arc_corners_applies_at_the_drag_cap() {
     // A D: a line and a half circle over it, meeting square at both ends.
@@ -8012,10 +8116,28 @@ fn fillet_tool_set_of_arc_corners_applies_at_the_drag_cap() {
     let mut far = ptr(&ed, &tool, v(5.0, 40.0));
     far.alt = true;
     tool.handle(Input::Hover(far), &mut ed);
-    let size = previewed_radius(&tool, &ed);
-    assert!(size > 1.0, "{size}");
+    // Both fillets are previewed at the cap, where they are one circle's two halves.
+    for item in tool.editor_preview(&ed) {
+        if let Shape::Arc { radius, .. } = item.shape {
+            assert!((radius - 5.0).abs() < 1e-9, "{radius}");
+        }
+    }
     tool.handle(Input::Click(far, Modifiers::default()), &mut ed);
-    assert_eq!(radii(&ed).len(), 3, "{:?}", ed.out.notice);
+    // At the cap the two fillets meet on both curves and take them whole: a circle of two
+    // arcs, with no sliver of either curve left between them.
+    assert_eq!(radii(&ed), vec![5.0, 5.0], "{:?}", ed.out.notice);
+    assert_eq!(lines(&ed.doc), 0);
+    assert!(no_sliver(&ed));
+}
+
+/// Whether every line and arc in the drawing is longer than a curve a fillet may take whole
+/// would be.
+fn no_sliver(ed: &Editor) -> bool {
+    ed.doc.iter().all(|(id, _)| match ed.doc.shape(id) {
+        Some(Shape::Line { a, b }) => a.distance(b) > 1e-6,
+        Some(Shape::Arc { radius, sweep, .. }) => radius * sweep > 1e-6,
+        _ => true,
+    })
 }
 
 #[test]
@@ -8042,7 +8164,11 @@ fn fillet_tool_set_sharing_a_short_arc_applies_at_the_drag_cap() {
     far.alt = true;
     tool.handle(Input::Hover(far), &mut ed);
     tool.handle(Input::Click(far, Modifiers::default()), &mut ed);
-    assert_eq!(radii(&ed).len(), 3, "{:?}", ed.out.notice);
+    // The two fillets meet on the arc and take it whole, leaving no sliver of it.
+    assert_eq!(radii(&ed).len(), 2, "{:?}", ed.out.notice);
+    assert!(!ed.doc.contains(arc));
+    assert_eq!(lines(&ed.doc), 2);
+    assert!(no_sliver(&ed));
 }
 
 #[test]

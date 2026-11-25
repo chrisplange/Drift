@@ -2202,11 +2202,14 @@ pub struct GlyphLayout {
 /// two curves get a glyph on each. Glyphs on the same entity are stacked.
 pub fn layout_glyphs(doc: &Document, map: &ScreenMap) -> Vec<GlyphLayout> {
     let mut out = Vec::new();
-    let mut stack: HashMap<EntityId, usize> = HashMap::new();
+    // Glyphs on one entity stack when they share a spot (an entity can have glyphs at its
+    // middle and at a joint).
+    let mut stack: HashMap<(EntityId, [i32; 2]), usize> = HashMap::new();
     let p = |id| doc.point(id).ok().map(|w| map.to_screen(w));
     let mut place = |entity: EntityId, base: Option<(Pos2, Vec2)>, id, kind, out: &mut Vec<_>| {
         let Some((at, along)) = base else { return };
-        let k = stack.entry(entity).or_insert(0);
+        let spot = [(at.x / 4.0).round() as i32, (at.y / 4.0).round() as i32];
+        let k = stack.entry((entity, spot)).or_insert(0);
         let center = at + along * (*k as f32) * (GLYPH_SIZE + 2.0);
         *k += 1;
         out.push(GlyphLayout {
@@ -2270,9 +2273,24 @@ pub fn layout_glyphs(doc: &Document, map: &ScreenMap) -> Vec<GlyphLayout> {
                     Constraint::Collinear { .. } => Collinear,
                     _ => Equal,
                 };
+                // A tangency is marked where the two touch, on each side of the joint.
+                let joint = if matches!(c, Constraint::Tangent { .. }) {
+                    touching(doc, map, a, b)
+                } else {
+                    None
+                };
                 for e in [a, b] {
-                    let base = match doc.get(e).map(|x| x.kind) {
+                    let kind_of = doc.get(e).map(|x| x.kind);
+                    let base = match kind_of {
+                        _ if joint.is_some() => {
+                            curve_spot(doc, map, e, joint).or_else(|| line_base(e))
+                        }
                         Some(EntityKind::Line { .. }) => line_base(e),
+                        // An arc's (or other open curve's) glyph sits by its middle, on the
+                        // curve; a circle's at its upper right.
+                        _ if !matches!(doc.shape(e), Some(drift_core::Shape::Circle { .. })) => {
+                            curve_spot(doc, map, e, None)
+                        }
                         _ => center_of(doc, e).map(|w| {
                             let r =
                                 drift_solver::radius_of(doc, e).unwrap_or(0.0) * map.camera.scale;
@@ -2330,6 +2348,92 @@ pub fn layout_glyphs(doc: &Document, map: &ScreenMap) -> Vec<GlyphLayout> {
         }
     }
     out
+}
+
+/// Where two curves touch on screen: the closest pair of their ends when those (nearly)
+/// meet. None when they don't share an end (a line tangent to a whole circle, say).
+fn touching(doc: &Document, map: &ScreenMap, a: EntityId, b: EntityId) -> Option<Pos2> {
+    let ends = |e: EntityId| -> Vec<Pos2> {
+        let Some(shape) = doc.shape(e) else {
+            return Vec::new();
+        };
+        if shape.is_closed() {
+            return Vec::new();
+        }
+        let pts = shape.flatten(1.0 / map.camera.scale.max(1e-9));
+        match (pts.first(), pts.last()) {
+            (Some(f), Some(l)) => vec![map.to_screen(*f), map.to_screen(*l)],
+            _ => Vec::new(),
+        }
+    };
+    let (ea, eb) = (ends(a), ends(b));
+    ea.iter()
+        .flat_map(|pa| {
+            eb.iter()
+                .map(move |pb| (pa.distance(*pb), *pa + (*pb - *pa) * 0.5))
+        })
+        .filter(|(d, _)| *d < GLYPH_SIZE)
+        .min_by(|x, y| x.0.total_cmp(&y.0))
+        .map(|(_, at)| at)
+}
+
+/// A glyph spot on curve `e`, standing off the curve's outside (away from an arc's centre,
+/// else above): a short way in from `near` (a joint at one of its ends) when given, else
+/// at its middle. Stacks along the curve there.
+fn curve_spot(
+    doc: &Document,
+    map: &ScreenMap,
+    e: EntityId,
+    near: Option<Pos2>,
+) -> Option<(Pos2, Vec2)> {
+    let shape = doc.shape(e)?;
+    let pts: Vec<Pos2> = shape
+        .flatten(0.5 / map.camera.scale.max(1e-9))
+        .into_iter()
+        .map(|w| map.to_screen(w))
+        .collect();
+    if pts.len() < 2 {
+        return None;
+    }
+    let mut lens = Vec::with_capacity(pts.len());
+    let mut total = 0.0_f32;
+    lens.push(0.0);
+    for w in pts.windows(2) {
+        total += w[0].distance(w[1]);
+        lens.push(total);
+    }
+    // Arc length from the start of the spot.
+    let at_len = match near {
+        Some(j) => {
+            let into = (GLYPH_SIZE + 4.0).min(total * 0.5);
+            if pts[0].distance(j) <= pts[pts.len() - 1].distance(j) {
+                into
+            } else {
+                total - into
+            }
+        }
+        None => total * 0.5,
+    };
+    let i = lens
+        .windows(2)
+        .position(|w| w[1] >= at_len)
+        .unwrap_or(pts.len() - 2);
+    let seg = (lens[i + 1] - lens[i]).max(1e-6);
+    let spot = pts[i] + (pts[i + 1] - pts[i]) * ((at_len - lens[i]) / seg).clamp(0.0, 1.0);
+    let u = dir(pts[i], pts[i + 1]);
+    let mut n = u.rot90();
+    let outward = match shape {
+        drift_core::Shape::Arc { center, .. } | drift_core::Shape::Circle { center, .. } => {
+            Some(spot - map.to_screen(center))
+        }
+        _ => None,
+    };
+    match outward {
+        Some(o) if n.dot(o) < 0.0 => n = -n,
+        None if n.y > 0.0 => n = -n,
+        _ => {}
+    }
+    Some((spot + n * GLYPH_OFF_LINE, u))
 }
 
 /// Push any glyph whose tile meets one of `keep_clear` (on-canvas controls such as transform

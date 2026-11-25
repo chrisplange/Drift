@@ -188,3 +188,76 @@ fn which_relations_show_is_saved_and_an_older_on_off_setting_still_reads() {
     fresh.state_mut().apply_view_prefs("rels=some");
     assert_eq!(fresh.state().show_relations, ShowRelations::All);
 }
+
+/// An arc's relation symbols sit on the arc, not where the rest of its circle would be:
+/// a tangency beside the joint on each curve, other relations by the arc's middle.
+#[test]
+fn arc_symbols_sit_on_the_arc_and_tangency_at_the_joint() {
+    use crate::annotations::{GLYPH_SIZE, layout_glyphs};
+    let Some(mut h) = harness() else { return };
+    let v = DVec2::new;
+    let ed = &mut h.state_mut().drawing.editor;
+    ed.doc.begin();
+    // A line running into a quarter arc (centre above its start, ending to its right).
+    let (l0, joint) = (
+        ed.doc.add_point(v(-60.0, 0.0)),
+        ed.doc.add_point(v(0.0, 0.0)),
+    );
+    let line = ed.doc.add_line(l0, joint).unwrap();
+    let (c, e) = (
+        ed.doc.add_point(v(0.0, 50.0)),
+        ed.doc.add_point(v(50.0, 50.0)),
+    );
+    let arc = ed.doc.add_arc(c, joint, e).unwrap();
+    let (c2, s2, e2) = (
+        ed.doc.add_point(v(-60.0, 60.0)),
+        ed.doc.add_point(v(-50.0, 60.0)),
+        ed.doc.add_point(v(-60.0, 70.0)),
+    );
+    let other = ed.doc.add_arc(c2, s2, e2).unwrap();
+    let tangent = ed
+        .doc
+        .add_constraint(Constraint::Tangent { a: line, b: arc })
+        .unwrap();
+    let equal = ed
+        .doc
+        .add_constraint(Constraint::Equal { a: arc, b: other })
+        .unwrap();
+    ed.commit("Drawing");
+    ed.selection.clear();
+    h.state_mut().drawing.view.fit_target = Some(drift_core::Bounds {
+        min: v(-70.0, -10.0),
+        max: v(60.0, 80.0),
+    });
+    h.run();
+    h.run();
+    save_png("drift_ui_arc_relation_symbols.png", &mut h);
+
+    let map = screen_map(&h);
+    let doc = &h.state().drawing.editor.doc;
+    let all = layout_glyphs(doc, &map);
+    let at = |id: EntityId| map.to_screen(doc.point(id).unwrap());
+    let joint_s = at(joint);
+    let tangents: Vec<_> = all.iter().filter(|g| g.id == tangent).collect();
+    assert_eq!(tangents.len(), 2);
+    for g in &tangents {
+        let d = g.rect.center().distance(joint_s);
+        assert!(
+            d < 2.5 * GLYPH_SIZE,
+            "tangency symbol {d} px from the joint"
+        );
+    }
+    // The arc's equal symbol stands just off the arc (not inside its circle's far side).
+    let (centre, r) = (at(c), joint_s.distance(at(c)));
+    let on_arc = all
+        .iter()
+        .filter(|g| g.id == equal)
+        .map(|g| g.rect.center())
+        .find(|p| (p.distance(centre) - r).abs() < GLYPH_SIZE * 1.5)
+        .expect("an equal symbol beside the arc");
+    // ...by its middle: down and to the right of the centre.
+    assert!(
+        on_arc.x > centre.x && on_arc.y > centre.y,
+        "{on_arc:?} {centre:?}"
+    );
+}

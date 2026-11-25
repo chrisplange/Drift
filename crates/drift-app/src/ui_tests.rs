@@ -52,7 +52,7 @@ mod new_drawing;
 mod note_typing;
 /// Selection filters you can combine.
 mod pick_filters;
-/// The quick-constrain bar on the canvas, the message above it, and the empty canvas's hint.
+/// The quick-constrain bar on the canvas, and the message above it.
 #[cfg(not(feature = "demo"))]
 mod quick_bar;
 /// Which relations show their symbols: Off, Picked only, All (#337).

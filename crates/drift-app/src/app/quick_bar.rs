@@ -41,11 +41,6 @@ pub(crate) fn rect_id() -> egui::Id {
     egui::Id::new("quick_bar_rect")
 }
 
-/// Where the empty canvas's hint was painted this frame (for the tests).
-pub(crate) fn hint_rect_id() -> egui::Id {
-    egui::Id::new("empty_canvas_hint_rect")
-}
-
 /// One thing the bar offers.
 #[derive(Clone)]
 struct Item {
@@ -448,112 +443,6 @@ impl DriftApp {
         };
         response.on_hover_ui(|ui| theme::command_tip(ui, name, "", &about))
     }
-
-    /// Whether the empty canvas says how to start: nothing in the drawing at all (no curve
-    /// or point, text, fill, block copy, note, underlay or wall), the start panel closed,
-    /// the Select tool idle and nothing else up.
-    pub(crate) fn empty_hint_wanted(&self, canvas: egui::Rect) -> bool {
-        let doc = &self.drawing.editor.doc;
-        !self.show_start
-            && doc.is_empty()
-            && doc.texts().next().is_none()
-            && doc.fills().next().is_none()
-            && doc.instances().next().is_none()
-            && doc.annotations().next().is_none()
-            && doc.underlays().next().is_none()
-            && doc.walls().next().is_none()
-            && self.tool.kind() == ToolKind::Select
-            && !self.tool.is_busy()
-            && !self.drawing.view.sheet_preview
-            && !self.canvas_occupied()
-            && canvas.width() >= 360.0
-            && canvas.height() >= 220.0
-    }
-
-    /// The hint on an empty canvas: how to start, in three quiet lines. Painted only (key
-    /// caps and words, nothing behind them): it takes no clicks and nothing is added to what
-    /// a screen reader sees. It sits clear of the origin's axes, in the middle of the
-    /// quarter of the canvas under and to the right of them (or of another quarter with the
-    /// room). Gone as soon as anything exists.
-    pub(crate) fn empty_canvas_hint(&self, ui: &egui::Ui, map: &ScreenMap) {
-        let canvas = map.rect;
-        ui.ctx()
-            .data_mut(|d| d.remove::<egui::Rect>(hint_rect_id()));
-        if !self.empty_hint_wanted(canvas) {
-            return;
-        }
-        let n = theme::neutrals(ui.visuals().dark_mode);
-        let lines = [
-            ("L".to_owned(), "Line"),
-            ("R".to_owned(), "Rectangle"),
-            (
-                app::panels::shortcut("K", false),
-                "Search every tool and command",
-            ),
-        ];
-        const LINE: f32 = 28.0;
-        const GAP: f32 = 12.0;
-        let font = egui::FontId::proportional(theme::size::BODY);
-        let painter = ui.painter_at(canvas);
-        let texts: Vec<_> = lines
-            .iter()
-            .map(|(_, what)| painter.layout_no_wrap((*what).to_owned(), font.clone(), n.tertiary))
-            .collect();
-        // The keys end and the words start either side of one line down the block.
-        let keys_w = lines
-            .iter()
-            .map(|(keys, _)| theme::keycaps_width(ui, keys))
-            .fold(0.0_f32, f32::max);
-        let text_w = texts.iter().map(|g| g.size().x).fold(0.0_f32, f32::max);
-        let size = egui::vec2(keys_w + GAP + text_w, LINE * lines.len() as f32);
-        let Some(block) = hint_place(canvas, map.to_screen(DVec2::ZERO), size) else {
-            return;
-        };
-        ui.ctx().data_mut(|d| d.insert_temp(hint_rect_id(), block));
-        let spine = block.left() + keys_w;
-        for (i, ((keys, _), text)) in lines.iter().zip(texts).enumerate() {
-            let y = block.top() + LINE * (i as f32 + 0.5);
-            theme::keycap_at(ui, egui::pos2(spine, y), keys);
-            painter.galley(
-                egui::pos2(spine + GAP, y - text.size().y / 2.0),
-                text,
-                n.tertiary,
-            );
-        }
-    }
-}
-
-/// Where the empty canvas's hint (a block of `size`) goes: the middle of the quarter of the
-/// canvas under and to the right of the origin's axes, or of the first other quarter with
-/// the room for it and some air; nowhere when no quarter has. With the origin out of view
-/// along a direction the canvas isn't divided that way.
-pub(crate) fn hint_place(
-    canvas: egui::Rect,
-    origin: egui::Pos2,
-    size: egui::Vec2,
-) -> Option<egui::Rect> {
-    /// The least air between the block and an axis or the canvas's edge.
-    const AIR: f32 = 24.0;
-    let halves = |at: f32, range: egui::Rangef| {
-        if at > range.min && at < range.max {
-            // (After the axis first: right of it, under it.)
-            [
-                egui::Rangef::new(at, range.max),
-                egui::Rangef::new(range.min, at),
-            ]
-        } else {
-            [range, range]
-        }
-    };
-    let columns = halves(origin.x, canvas.x_range());
-    let rows = halves(origin.y, canvas.y_range());
-    [(0, 0), (1, 0), (0, 1), (1, 1)]
-        .into_iter()
-        .map(|(column, row)| egui::Rect::from_x_y_ranges(columns[column], rows[row]))
-        .find(|quarter| {
-            quarter.width() >= size.x + 2.0 * AIR && quarter.height() >= size.y + 2.0 * AIR
-        })
-        .map(|quarter| egui::Rect::from_min_size((quarter.center() - size / 2.0).round(), size))
 }
 
 /// The bar's caption: painted, so it is nothing to click and has no name of its own. Its

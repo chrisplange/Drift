@@ -543,99 +543,6 @@ fn the_bar_keeps_clear_of_picks_at_the_foot_of_the_canvas() {
 }
 
 #[test]
-fn an_empty_canvas_says_how_to_start_without_adding_anything_to_click() {
-    let Some(mut h) = harness() else { return };
-    let canvas = h.state().drawing.view.canvas_rect;
-    assert!(h.state().empty_hint_wanted(canvas));
-    // Painted only: nothing is named after it, and the tools it mentions are still the
-    // rail's alone.
-    assert!(
-        h.query_all_by_label_contains("Search every tool")
-            .next()
-            .is_none()
-    );
-    h.get_by_label("Line");
-    h.get_by_label("Rectangle");
-    // It sits in the quarter of the canvas under and to the right of the origin's axes, in
-    // the middle of it, and neither axis runs through it.
-    let hint: egui::Rect = h
-        .ctx
-        .data(|d| d.get_temp(quick_bar::hint_rect_id()))
-        .expect("the hint is painted");
-    let origin = screen(&h, DVec2::ZERO);
-    assert!(canvas.contains(origin), "the axes cross in view");
-    assert!(canvas.contains_rect(hint));
-    assert!(
-        hint.left() >= origin.x + 24.0 && hint.top() >= origin.y + 24.0,
-        "{hint:?} is clear of the axes through {origin:?}"
-    );
-    let quarter = egui::Rect::from_min_max(origin, canvas.max);
-    assert!((hint.center() - quarter.center()).length() <= 1.5);
-    // It is there to see, and only its key caps and words are painted: most of its box is
-    // still the canvas's own colour (no patch behind it), grid lines and all.
-    let image = h.render().expect("render");
-    let background = *image.get_pixel(canvas.right() as u32 - 40, canvas.top() as u32 + 40);
-    let differs = |x: u32, y: u32, by: u8| {
-        let p = image.get_pixel(x, y);
-        (0..3).any(|c| p.0[c].abs_diff(background.0[c]) > by)
-    };
-    let inside = || {
-        (hint.top() as u32..hint.bottom() as u32)
-            .flat_map(|y| (hint.left() as u32..hint.right() as u32).map(move |x| (x, y)))
-    };
-    let marked = inside().filter(|(x, y)| differs(*x, *y, 60)).count();
-    assert!(marked > 200, "{marked} pixels of the hint");
-    assert!(
-        marked < inside().count() / 2,
-        "{marked} pixels: more than key caps and words"
-    );
-    save_png("drift_ui_empty_canvas_hint.png", &mut h);
-    // It takes no clicks: the canvas under it has the pointer, and a box can be dragged
-    // from the middle of it.
-    let on_hint = hint.center();
-    h.hover_at(on_hint);
-    h.run();
-    assert!(h.state().drawing.view.pointer.is_some());
-    button(&h, on_hint, true);
-    h.run();
-    h.hover_at(on_hint + egui::vec2(40.0, 30.0));
-    h.run();
-    assert!(
-        h.state().tool.is_busy(),
-        "a selection box, from on the hint"
-    );
-    assert!(
-        !h.state().empty_hint_wanted(canvas),
-        "out of the way meanwhile"
-    );
-    button(&h, on_hint + egui::vec2(40.0, 30.0), false);
-    h.run();
-    assert!(h.state().empty_hint_wanted(canvas));
-    // Not with the start panel, nor with a drawing tool.
-    h.state_mut().show_start = true;
-    h.run();
-    assert!(!h.state().empty_hint_wanted(canvas));
-    h.get_by_label("New sketch").click();
-    h.run();
-    h.run();
-    assert!(h.state().empty_hint_wanted(canvas));
-    h.key_press(Key::L);
-    h.run();
-    assert!(!h.state().empty_hint_wanted(canvas));
-    // Gone for good once anything exists.
-    click_world(&mut h, DVec2::new(-20.0, 10.0));
-    click_world(&mut h, DVec2::new(20.0, 20.0));
-    h.key_press(Key::Escape);
-    h.run();
-    h.state_mut().set_tool(ToolKind::Select);
-    h.run();
-    assert_eq!(lines(&h), 1);
-    assert!(!h.state().empty_hint_wanted(canvas));
-}
-
-/// With every panel hidden the Inspector's field isn't there to type into: a new dimension's
-/// value is typed on the dimension itself.
-#[test]
 fn with_the_panels_hidden_a_new_dimension_is_typed_on_the_canvas() {
     let Some(mut h) = harness() else { return };
     two_lines(&mut h);
@@ -726,28 +633,6 @@ fn the_bar_is_hidden_while_the_start_panel_shows() {
     h.run();
     assert!(!h.state().show_start, "gone again: there is a drawing");
     assert!(shows(&h));
-}
-
-/// A drawing holding only a block copy isn't empty: the hint is for a canvas with nothing
-/// on it at all.
-#[test]
-fn the_empty_canvas_hint_is_only_for_a_drawing_with_nothing_in_it() {
-    let Some(mut h) = harness() else { return };
-    let canvas = h.state().drawing.view.canvas_rect;
-    assert!(h.state().empty_hint_wanted(canvas));
-    {
-        let ed = &mut h.state_mut().drawing.editor;
-        let block = ed.library_block(&drift_edit::library::all()[0]);
-        ed.place_instance(block, DVec2::new(40.0, 30.0), 0.0, false);
-        // (Nothing of it is picked.)
-        ed.selected_instances.clear();
-    }
-    h.run();
-    assert_eq!(h.state().drawing.editor.doc.instances().count(), 1);
-    assert!(
-        !h.state().empty_hint_wanted(canvas),
-        "a block copy is something"
-    );
 }
 
 #[test]

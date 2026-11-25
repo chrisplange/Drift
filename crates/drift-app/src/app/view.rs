@@ -1686,7 +1686,6 @@ impl DriftApp {
         self.paint_note_grips(&painter, &notes, ui.visuals().dark_mode);
         self.paint_groups(&painter, &map, ui.visuals().dark_mode);
         self.paint_free_directions(&painter, &map);
-        self.empty_canvas_hint(ui, &map);
         // The quick-constrain bar, and a message clear of it.
         // (It keeps off the dimensions' labels, the temporary dimensions and the relations'
         // symbols, which are read and clicked.)

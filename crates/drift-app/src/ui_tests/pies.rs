@@ -7,7 +7,7 @@ use drift_edit::editor::{PickFilter, PickKind};
 use drift_geom::{SnapKind, SnapKinds};
 
 use super::*;
-use crate::app::pie_style::{pill_under, place_at};
+use crate::app::pie_style::{DEAD_ZONE, pill_under, place_at};
 use crate::commands::{Command, ViewFlag, spec};
 
 const SHIFT: egui::Modifiers = egui::Modifiers::SHIFT;
@@ -174,6 +174,45 @@ fn a_flick_near_the_edge_follows_the_gesture() {
     assert!(h.state().snap_pie.is_none(), "a flick closes the ring");
     assert_eq!(kinds(&h), SnapKinds::ALL.with(SnapKind::Quadrant, false));
     assert_eq!(status(&h), "Quadrant snapping off");
+}
+
+/// Near the window's bottom the hub opens well above the pointer. Hold the key and move up
+/// towards it: the pointer crosses the bottom pill (Perpendicular) on the way. Let go there:
+/// the flick goes up (Grid), the way the pointer moved, not to the pill behind the gesture.
+#[test]
+fn a_flick_near_the_edge_ignores_a_pill_behind_the_gesture() {
+    let Some(mut h) = harness() else { return };
+    let canvas = h.state().drawing.view.canvas_rect;
+    let at = egui::pos2(canvas.center().x, canvas.bottom() - 20.0);
+    h.hover_at(at);
+    h.run();
+    let before = (h.state().grid_snap, h.state().perp_tangent_snap, kinds(&h));
+    h.key_down_modifiers(SHIFT, Key::S);
+    h.run();
+    let center = h.state().snap_pie.as_ref().expect("open").center;
+    assert!((center.x - at.x).abs() < 1.0, "straight above");
+    // Near the pill's top, the far side from the pointer.
+    let to = egui::pos2(at.x, pill(&h, 6).top() + 4.0);
+    assert!(
+        to.y < at.y - DEAD_ZONE,
+        "the bottom pill is above the pointer"
+    );
+    assert_eq!(pill_under(&h.state().pie_pills, Some(to)), Some(6));
+    // Move up in steps, as a hand does, and let go over the bottom pill.
+    let mut p = at;
+    while p.y > to.y {
+        p.y = (p.y - 4.0).max(to.y);
+        h.hover_at(p);
+        h.run();
+    }
+    h.key_up_modifiers(SHIFT, Key::S);
+    h.run();
+    assert!(h.state().snap_pie.is_none(), "a flick closes the ring");
+    assert_eq!(
+        (h.state().grid_snap, h.state().perp_tangent_snap, kinds(&h)),
+        (!before.0, before.1, before.2),
+        "Grid turned on or off, Perpendicular untouched"
+    );
 }
 
 #[test]

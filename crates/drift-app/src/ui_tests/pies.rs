@@ -402,3 +402,40 @@ fn snap_kinds_stay_for_every_drawing_and_the_next_start() {
     next.state_mut().apply_view_prefs(&saved);
     assert_eq!(kinds(&next), off, "the next start keeps them");
 }
+
+/// A kind turned off shows on the status bar: the Snap kinds button is lit and its menu
+/// checks each kind on and off, and turns every kind back on.
+#[test]
+fn the_status_bar_shows_and_sets_the_snap_kinds() {
+    let Some(mut h) = harness() else { return };
+    h.run();
+    let switches = |h: &Harness<'_, DriftApp>| {
+        let s = h.state();
+        (
+            s.drawing.editor.prefs.snap_kinds,
+            s.grid_snap,
+            s.perp_tangent_snap,
+        )
+    };
+    assert_eq!(kinds(&h), SnapKinds::ALL);
+    // Points off, as a stray flick would leave it.
+    h.state_mut().drawing.editor.prefs.snap_kinds = SnapKinds::ALL
+        .with(SnapKind::Endpoint, false)
+        .with(SnapKind::Point, false)
+        .with(SnapKind::Origin, false);
+    h.run();
+    h.get_by_label("Snap kinds").click();
+    h.run();
+    save_png("drift_ui_snap_kinds_menu.png", &mut h);
+    // Its rows: the pie's kinds. Points checked back on, the menu staying open.
+    h.get_by_label("Points").click();
+    h.run();
+    assert_eq!(kinds(&h), SnapKinds::ALL);
+    h.get_by_label("Midpoint").click();
+    h.run();
+    assert_eq!(kinds(&h), SnapKinds::ALL.with(SnapKind::Midpoint, false));
+    // Every kind back on, Grid and the perpendicular & tangent switch too.
+    h.get_by_label("Snap to every kind").click();
+    h.run();
+    assert_eq!(switches(&h), (SnapKinds::ALL, true, true));
+}

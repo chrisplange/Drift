@@ -2435,6 +2435,7 @@ impl DriftApp {
                         &mut self.grid_snap,
                         &format!("Snap to grid ({grid}){}", crate::commands::key_suffix("view.snap")),
                     );
+                    self.snap_kinds_button(ui);
                     // The pointer's position, leftmost of the cluster: the first to go when
                     // the window is narrow, so the hint keeps its room.
                     if bar.width() >= 1000.0 {

@@ -35,7 +35,7 @@ Seeded 2026-11-09 from the command registry, importers/exporters, agent schema a
 - Point. `crates/drift-edit/src/tools/point.rs`
 - Construction geometry toggle. `crates/drift-app/src/commands.rs`
 - Snaps: grid, end, midpoint, centre, quadrant, on curve, origin, perpendicular, tangent. `crates/drift-geom/src/snap.rs`
-- Snap pie (Shift+S): each kind of snap on or off, by flick, click or its letter; an app preference, kept for every drawing and across restarts. Perpendicular and Tangent are the two halves of the status bar's Perpendicular & tangent switch. `crates/drift-app/src/app/snap_pie.rs`
+- Snap pie (Shift+S): each kind of snap on or off, by flick, click or its letter; an app preference, kept for every drawing and across restarts. The status bar's Snap kinds button is lit while any kind is off; its menu checks each kind on and off and has Snap to every kind. Perpendicular and Tangent are the two halves of the status bar's Perpendicular & tangent switch. `crates/drift-app/src/app/snap_pie.rs`
 - Typed lengths and angles while drawing. `crates/drift-app/src/app/temp_dims_ui.rs`
 
 ## Modify

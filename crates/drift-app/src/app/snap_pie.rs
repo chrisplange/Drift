@@ -148,6 +148,54 @@ impl DriftApp {
         self.perp_tangent_snap = s.perp_tangent;
     }
 
+    /// The status bar's snap kinds: a button, lit while some kind is off, that opens the
+    /// snap pie's kinds as rows to check on and off, and one to turn every kind back on. So a
+    /// kind turned off (by a stray flick, say, and kept across restarts) shows where snapping
+    /// is shown.
+    pub(crate) fn snap_kinds_button(&mut self, ui: &mut egui::Ui) {
+        let s = self.snap_switches();
+        let filtered = s.kinds != SnapKinds::ALL;
+        let key = crate::commands::key_suffix("edit.snap_pie");
+        let tip = if filtered {
+            format!(
+                "Snap kinds: snapping to {} · click to choose{key}",
+                s.summary()
+            )
+        } else {
+            format!("Snap kinds: every kind snaps · click to turn kinds off{key}")
+        };
+        let button = icons::button(ui, 22.0, filtered, "Snap kinds", |p, r, c| {
+            icons::glyph(p, r, icons::Glyph::Filter, c)
+        })
+        .on_hover_text(tip);
+        egui::Popup::menu(&button)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .show(|ui| {
+                ui.set_min_width(170.0);
+                ui.label(egui::RichText::new("Snap to").small().weak());
+                for (place, (name, _)) in PLACES.iter().enumerate() {
+                    let on = self.snap_switches().lit(place);
+                    if theme::menu_check(ui, on, name, "").clicked() {
+                        let s = self.snap_switches().toggled(place);
+                        self.set_snap_switches(s);
+                    }
+                }
+                ui.separator();
+                let every = Switches {
+                    kinds: SnapKinds::ALL,
+                    grid: true,
+                    perp_tangent: true,
+                };
+                let all_on = (0..8).all(|p| self.snap_switches().lit(p));
+                if ui
+                    .add_enabled(!all_on, egui::Button::new("Snap to every kind"))
+                    .clicked()
+                {
+                    self.set_snap_switches(every);
+                }
+            });
+    }
+
     /// The perpendicular & tangent switch (the status bar, the palette, the settings): turned on, it
     /// snaps both, whichever of the two the snap pie had left off.
     pub(crate) fn set_perp_tangent_snap(&mut self, on: bool) {

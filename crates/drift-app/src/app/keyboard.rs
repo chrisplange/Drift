@@ -33,6 +33,12 @@ impl DriftApp {
         if ctx.text_edit_focused() || self.text_was_focused {
             return;
         }
+        // An open popup (a colour picker, a layer's line menu, a combo box or menu) closes
+        // on Esc later in the frame without taking the key: that Esc only closes it, and
+        // must not also clear the selection or cancel the tool.
+        if egui::Popup::is_any_open(ctx) && ctx.input(|i| i.key_pressed(Key::Escape)) {
+            return;
+        }
         // Ctrl/⌘+PgDn and PgUp step through the canvas tabs (the model, then each sheet),
         // wrapping at the ends.
         if !self.tool.is_busy() {

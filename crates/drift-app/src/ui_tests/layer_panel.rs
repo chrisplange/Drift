@@ -382,3 +382,47 @@ fn every_colour_picker_offers_the_open_drawings_colours() {
     assert!(h.query_all_by_label("#120556").next().is_none());
     assert!(h.query_all_by_label("#120456").next().is_some());
 }
+
+#[test]
+fn esc_closes_a_layers_popup_and_leaves_the_pick_and_the_tool_alone() {
+    let Some(mut h) = harness() else { return };
+    three(&mut h);
+    let line = {
+        let ed = &mut h.state_mut().drawing.editor;
+        ed.doc.begin();
+        let a = ed.doc.add_point(DVec2::ZERO);
+        let b = ed.doc.add_point(DVec2::new(50.0, 0.0));
+        let line = ed.doc.add_line(a, b).unwrap();
+        ed.commit("Line");
+        ed.selection = [line].into();
+        line
+    };
+    h.run();
+    // The stroke picker, then the line menu: Esc closes each and the line stays picked.
+    for (control_label, inside) in [
+        ("A-WALL stroke color", "Ink"),
+        ("A-WALL line weight and type", "0.50 mm"),
+    ] {
+        let at = control(&h, control_label);
+        click(&mut h, at, EguiModifiers::NONE);
+        assert!(
+            h.query_all_by_label(inside).next().is_some(),
+            "{control_label} open"
+        );
+        h.key_press(Key::Escape);
+        h.run();
+        h.run();
+        assert!(
+            h.query_all_by_label(inside).next().is_none(),
+            "Esc closes the {control_label} popup"
+        );
+        assert!(
+            h.state().drawing.editor.selection.contains(&line),
+            "Esc on the {control_label} popup keeps the pick"
+        );
+    }
+    // With nothing open, Esc clears the pick as before.
+    h.key_press(Key::Escape);
+    h.run();
+    assert!(h.state().drawing.editor.selection.is_empty());
+}

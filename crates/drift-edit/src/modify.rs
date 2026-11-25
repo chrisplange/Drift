@@ -2023,11 +2023,12 @@ impl Editor {
     /// measured or related to the corner (or anything else uses it), or to a taken curve
     /// beyond which way it runs, the taken curves stay as construction: with the kept curve
     /// they hold the corner where it was, so what was measured to it still means what it
-    /// did. Otherwise they go. Either way the arc is held tangent to a curve it runs
-    /// smoothly on into at a far end. When the taken curves stay, that tangency may set
-    /// again what they and the dimensions on them already place (the far end, and so where
-    /// the two curves meet), and changing one would then fail; so it is returned, for the
-    /// caller to keep only if a solve finds it independent once the arc is related.
+    /// did. Otherwise they go. Either way the arc is made tangent to a curve it runs
+    /// smoothly on into at a far end. That tangency may set again what is already placed
+    /// (by the construction curves and their dimensions, or, where two fillets meet, by a
+    /// dimension across both, such as the length of the side between them), and changing
+    /// one would then fail; so it is returned, for the caller to keep only if a solve finds
+    /// it independent once the arc is related.
     fn take_whole(
         &mut self,
         p: EntityId,
@@ -2060,10 +2061,6 @@ impl Editor {
                     })
                     .map_err(|e| invalid(e.to_string()))?;
             }
-            Ok(taken
-                .iter()
-                .filter_map(|&(_, far)| self.join_smoothly(arc, far, &skip))
-                .collect())
         } else {
             // One at a time, so what runs through two taken sides (parallel to one that is
             // square to the other) still carries on.
@@ -2078,11 +2075,11 @@ impl Editor {
                 self.doc.delete([p]);
             }
             self.keep_independent(carried);
-            for &(_, far) in taken {
-                self.join_smoothly(arc, far, &skip);
-            }
-            Ok(Vec::new())
         }
+        Ok(taken
+            .iter()
+            .filter_map(|&(_, far)| self.join_smoothly(arc, far, &skip))
+            .collect())
     }
 
     /// What line `side`'s orientation relations (horizontal, vertical, parallel and
@@ -4366,6 +4363,42 @@ mod tests {
         assert!(ed.doc.contains(sides[2]));
         assert_eq!(tangents(&ed, arcs[0], arcs[1]), 1);
         assert!(ed.analysis().conflicts.is_empty());
+    }
+
+    /// Fillets meeting where the sides they take go, on a plate whose width is measured on
+    /// the side they leave: a tangency where they meet would put both centres on one point,
+    /// making that width the most the arcs' far ends can be apart, set twice. So the arcs
+    /// meet untied, nothing is over-defined, and the width still drives the plate.
+    #[test]
+    fn fillets_meeting_under_a_measured_side_leave_its_length_free() {
+        let (mut ed, corners, sides) = bare_plate();
+        ed.doc.begin();
+        let width = ed
+            .doc
+            .add_constraint(Constraint::Distance {
+                a: corners[2],
+                b: corners[3],
+                value: 100.0,
+            })
+            .unwrap();
+        ed.commit("Width");
+        let arcs = ed.fillet_corners(&[corners[0], corners[1]], 50.0).unwrap();
+        for side in [sides[0], sides[1], sides[3]] {
+            assert!(!ed.doc.contains(side), "{side:?} taken whole");
+        }
+        let (a, b) = (arc_ends(&ed, arcs[0]), arc_ends(&ed, arcs[1]));
+        assert_eq!(a.iter().filter(|p| b.contains(p)).count(), 1);
+        assert_eq!(tangents(&ed, arcs[0], arcs[1]), 0);
+        assert!(ed.out.notice.is_none(), "{:?}", ed.out.notice);
+        assert_eq!(ed.analysis().dependent_equations, 0);
+        assert!(ed.analysis().conflicts.is_empty());
+        ed.set_dimension(width, 120.0).unwrap();
+        let (left, right) = (
+            ed.doc.point(corners[3]).unwrap(),
+            ed.doc.point(corners[2]).unwrap(),
+        );
+        assert!(((right - left).length() - 120.0).abs() < 1e-7);
+        assert_eq!(ed.analysis().dependent_equations, 0);
     }
 
     /// Fillets meeting on a plate whose corners are measured: the sides they take stay as

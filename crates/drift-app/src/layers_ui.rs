@@ -220,11 +220,12 @@ impl LayerCounts {
 }
 
 /// The drawing's own colours (its layers', then its objects', fills' and texts'), first in
-/// every colour picker. A pass over the whole drawing, so made only while a picker is open
-/// and asks for them, never on a frame of a drag with no picker in sight.
+/// every colour picker. A pass over the whole drawing, so made only while a picker is open,
+/// and keyed on the drawing's structure, which a colour can't change without: geometry
+/// moving (a drag's every frame) leaves them as they are, picker open or not.
 #[derive(Default)]
 pub(crate) struct DocumentColours {
-    /// The document revision, entity count and layer count these were taken at.
+    /// The document structure, entity count and layer count these were taken at.
     key: Option<(u64, usize, usize)>,
     colours: Vec<[u8; 3]>,
     /// Passes over the drawing made so far (for the tests).
@@ -234,7 +235,7 @@ pub(crate) struct DocumentColours {
 
 impl DocumentColours {
     fn key(doc: &drift_core::Document) -> (u64, usize, usize) {
-        (doc.revision(), doc.len(), doc.layers().count())
+        (doc.structure(), doc.len(), doc.layers().count())
     }
 
     /// Up to date with `doc` (worked out again only if it changed).
@@ -273,8 +274,10 @@ impl DocumentColours {
         }
     }
 
-    /// Leave the colours for this pass's pickers: worked out afresh first if a picker asked
-    /// for them, and marked stale when `doc` has changed since, so an open picker asks.
+    /// Leave the colours for this pass's pickers: brought up to date first while a picker is
+    /// open (it asks every pass, so a change made after it was drawn is caught here, with no
+    /// pass run again), and marked stale when `doc` has changed since, so a picker that opens
+    /// on them asks.
     pub(crate) fn publish(&mut self, ctx: &egui::Context, doc: &drift_core::Document) {
         if crate::colour::document_colours_wanted(ctx) {
             self.update(doc);
@@ -447,7 +450,16 @@ const DOT: f32 = 10.0;
 const SWATCH: f32 = 13.0;
 const ROW_SPACING: f32 = 5.0;
 /// The weight and line type cell: a sample of the line and its weight.
-const LINE_CELL: f32 = 44.0;
+const LINE_CELL: f32 = 48.0;
+/// How long the line sample in a layer row is: room for a phantom line's long dash, its two
+/// dots and the next long dash, each dot and gap at least [`MIN_MARK`].
+const ROW_SAMPLE: f32 = 18.0;
+/// The shortest dot or gap a line sample draws, in points: two pixels at one point per
+/// pixel, so the edges egui feathers leave a gap clear between two dots.
+const MIN_MARK: f32 = 2.0;
+// The row's sample (from 3 points in) leaves room in its cell for the weight: "0.25" is
+// about 20 points wide, 3 in from the right, and a few points of gap.
+const _: () = assert!(3.0 + ROW_SAMPLE + 25.0 <= LINE_CELL);
 
 /// Space between two rows of the list.
 const ROW_GAP: f32 = 1.0;
@@ -1590,7 +1602,7 @@ fn hover_ring(ui: &egui::Ui, r: egui::Rect, hovered: bool) {
 }
 
 /// Draw a short sample of a line from `a` to `b`: as thick as `weight` reads on screen, and
-/// dashed as `line_type` is.
+/// dashed as `line_type` is. A dot as long as the line is thick is drawn round.
 fn paint_line_sample(
     painter: &egui::Painter,
     a: egui::Pos2,
@@ -1599,11 +1611,16 @@ fn paint_line_sample(
     line_type: LineType,
     color: egui::Color32,
 ) {
-    let stroke = egui::Stroke::new(sample_width(weight), color);
     let length = (b - a).length();
     let dir = (b - a) / length.max(1e-3);
-    for (from, to) in dash_runs(line_type, length) {
-        painter.line_segment([a + dir * from, a + dir * to], stroke);
+    let sample = dash_runs(line_type, length, sample_width(weight));
+    let stroke = egui::Stroke::new(sample.width, color);
+    for (from, to) in sample.runs {
+        if sample.round_dots && to - from <= sample.width + 1e-3 {
+            painter.circle_filled(a + dir * (from + to) / 2.0, sample.width / 2.0, color);
+        } else {
+            painter.line_segment([a + dir * from, a + dir * to], stroke);
+        }
     }
 }
 
@@ -1629,24 +1646,48 @@ fn sample_width(weight: LineWeight) -> f32 {
     (0.8 * (mm / 0.13).powf(0.67)).clamp(0.8, 5.0)
 }
 
-/// The drawn runs (start, end) of a `line_type` sample `length` points long, flush with
+/// A line sample: the runs drawn and how thick.
+#[derive(Debug, PartialEq)]
+struct Sample {
+    /// (start, end) of each run, in points along the sample.
+    runs: Vec<(f32, f32)>,
+    /// How thick it is drawn: as asked, or thinner when its dots wouldn't fit otherwise.
+    width: f32,
+    /// Its dots are as long as it is thick, and drawn round.
+    round_dots: bool,
+}
+
+/// The drawn runs of a `line_type` sample `length` points long and `width` thick, flush with
 /// both ends: its pattern at a size that reads in a row (a dash of 4 paper units as 8
 /// points). A pattern of a long dash and dots (centre, phantom) shows as the end of one long
-/// dash, its dots, and the start of the next, shrunk to fit if it must, so even a short
-/// sample shows a long dash and every dot.
-fn dash_runs(line_type: LineType, length: f32) -> Vec<(f32, f32)> {
+/// dash, its dots, and the start of the next: every dot and gap at least [`MIN_MARK`] and at
+/// least as long as the line is thick, so a dot reads as a dot, not a bar, and each long
+/// dash at least twice a dot. Where that can't fit, the dots shrink, then the line is drawn
+/// thinner (its weight is shown beside it in numbers).
+fn dash_runs(line_type: LineType, length: f32, width: f32) -> Sample {
     let dashes = line_type.paper_dashes();
+    let mut sample = Sample {
+        runs: Vec::new(),
+        width,
+        round_dots: false,
+    };
     if dashes.is_empty() {
-        return vec![(0.0, length)];
+        sample.runs.push((0.0, length));
+        return sample;
     }
     let scale = 2.0;
-    let mut runs = Vec::new();
+    let runs = &mut sample.runs;
     if dashes.len() > 2 {
-        // The long dash's stubs each side are at least this long.
-        const STUB: f32 = 4.0;
         let dots = &dashes[1..];
         let group = dots.iter().sum::<f64>() as f32;
-        let scale = ((length - 2.0 * STUB) / group).clamp(0.5, scale);
+        let shortest = dots.iter().copied().fold(f64::INFINITY, f64::min) as f32;
+        // The shortest dot or gap: the pattern's own size, or as long as the line is thick,
+        // but no longer than leaves each long dash twice as long.
+        let fit = length / (group / shortest + 4.0);
+        let mark = (shortest * scale).max(width).min(fit).max(MIN_MARK);
+        sample.width = width.min(mark);
+        sample.round_dots = sample.width >= mark - 1e-3;
+        let scale = mark / shortest;
         let stub = ((length - group * scale) / 2.0).max(0.0);
         runs.push((0.0, stub));
         let mut t = stub;
@@ -1659,20 +1700,19 @@ fn dash_runs(line_type: LineType, length: f32) -> Vec<(f32, f32)> {
             t = end;
         }
         runs.push((t.min(length), length));
-        return runs;
+        return sample;
     }
-    let mut t = 0.0_f32;
-    let mut i = 0;
-    while t < length {
-        let d = dashes[i % dashes.len()] as f32 * scale;
-        let end = (t + d).min(length);
-        if i % 2 == 0 {
-            runs.push((t, end));
-        }
-        t = end;
-        i += 1;
+    // A dash and a gap, repeated: as many whole dashes as come nearest to fitting, stretched
+    // or squeezed a little to end flush on a dash, never cut short to a sliver.
+    let (dash, gap) = (dashes[0] as f32 * scale, dashes[1] as f32 * scale);
+    let count = ((length + gap) / (dash + gap)).round().max(1.0);
+    let scale = length / (count * dash + (count - 1.0) * gap);
+    let (dash, gap) = (dash * scale, gap * scale);
+    for k in 0..count as usize {
+        let from = k as f32 * (dash + gap);
+        runs.push((from, (from + dash).min(length)));
     }
-    runs
+    sample
 }
 
 /// A layer's weight and line type cell: a sample of its line and its weight; a click opens
@@ -1703,7 +1743,7 @@ fn line_cell(
     paint_line_sample(
         ui.painter(),
         egui::pos2(rect.left() + 3.0, y),
-        egui::pos2(rect.left() + 17.0, y),
+        egui::pos2(rect.left() + 3.0 + ROW_SAMPLE, y),
         edited.weight,
         edited.line_type,
         color,
@@ -1878,39 +1918,65 @@ mod tests {
 
     #[test]
     fn every_line_type_and_weight_looks_its_own_in_a_row() {
-        // The row's sample is 14 points long.
-        let runs: Vec<Vec<(f32, f32)>> =
-            LineType::ALL.iter().map(|t| dash_runs(*t, 14.0)).collect();
-        for (i, a) in runs.iter().enumerate() {
-            for (j, b) in runs.iter().enumerate().skip(i + 1) {
-                assert_ne!(
-                    a,
-                    b,
-                    "{:?} and {:?} draw alike",
-                    LineType::ALL[i],
-                    LineType::ALL[j]
-                );
+        let widths: Vec<f32> = LineWeight::ISO.iter().map(|w| sample_width(*w)).collect();
+        // In a row, every line type draws its own, at every weight.
+        for w in &widths {
+            let runs: Vec<Vec<(f32, f32)>> = LineType::ALL
+                .iter()
+                .map(|t| dash_runs(*t, ROW_SAMPLE, *w).runs)
+                .collect();
+            for (i, a) in runs.iter().enumerate() {
+                for (j, b) in runs.iter().enumerate().skip(i + 1) {
+                    assert_ne!(
+                        a,
+                        b,
+                        "{:?} and {:?} draw alike at {w}",
+                        LineType::ALL[i],
+                        LineType::ALL[j]
+                    );
+                }
             }
         }
-        // Every sample, in a row (14) and in the menu (40), starts and ends flush.
+        let len = |(a, b): (f32, f32)| b - a;
         for t in LineType::ALL {
-            for length in [14.0, 40.0] {
-                let r = dash_runs(t, length);
-                assert_eq!(r[0].0, 0.0, "{t:?} at {length} starts flush");
-                let end = r.last().unwrap().1;
-                assert!((end - length).abs() < 1e-3, "{t:?} at {length} ends flush");
+            for length in [ROW_SAMPLE, 40.0] {
+                for w in &widths {
+                    let sample = dash_runs(t, length, *w);
+                    let r = &sample.runs;
+                    // Starts and ends flush.
+                    assert_eq!(r[0].0, 0.0, "{t:?} at {length} starts flush");
+                    let end = r.last().unwrap().1;
+                    assert!((end - length).abs() < 1e-3, "{t:?} at {length} ends flush");
+                    // Every gap stays clear of egui's feathered edges.
+                    for pair in r.windows(2) {
+                        let gap = pair[1].0 - pair[0].1;
+                        assert!(gap >= MIN_MARK - 1e-3, "{t:?} at {length}, {w}: {r:?}");
+                    }
+                    assert!(sample.width <= *w);
+                }
             }
         }
-        // Centre and phantom read as a long dash, their dots (one, two), and a long dash.
+        // Centre and phantom read as a long dash, their dots (one, two), and a long dash:
+        // each dot at least two pixels and as long as the line is thick (a dot, not a bar),
+        // the long dashes at least twice a dot.
         for (t, dots) in [(LineType::Center, 1), (LineType::Phantom, 2)] {
-            for length in [14.0, 40.0] {
-                let r = dash_runs(t, length);
-                assert_eq!(r.len(), dots + 2, "{t:?} at {length}: {r:?}");
-                let len = |(a, b): (f32, f32)| b - a;
-                let (first, last) = (len(r[0]), len(r[r.len() - 1]));
-                for dot in &r[1..r.len() - 1] {
-                    assert!(len(*dot) > 0.5, "{t:?}: a dot shows");
-                    assert!(first >= 2.0 * len(*dot) && last >= 2.0 * len(*dot), "{r:?}");
+            for length in [ROW_SAMPLE, 40.0] {
+                for w in &widths {
+                    let sample = dash_runs(t, length, *w);
+                    let r = &sample.runs;
+                    assert_eq!(r.len(), dots + 2, "{t:?} at {length}: {r:?}");
+                    let (first, last) = (len(r[0]), len(r[r.len() - 1]));
+                    for dot in &r[1..r.len() - 1] {
+                        let dot = len(*dot);
+                        assert!(dot >= MIN_MARK - 1e-3, "{t:?} at {length}, {w}: {r:?}");
+                        assert!(dot >= sample.width - 1e-3, "{t:?}: a dot, not a bar");
+                        assert!(first >= 2.0 * dot - 1e-3 && last >= 2.0 * dot - 1e-3);
+                    }
+                }
+                // The usual weights (up to 0.50 mm) keep their width.
+                let usual = sample_width(LineWeight::ISO[5]);
+                for w in widths.iter().filter(|w| **w <= usual) {
+                    assert_eq!(dash_runs(t, length, *w).width, *w, "{t:?} at {length}");
                 }
             }
         }

@@ -92,7 +92,8 @@ pub(crate) fn document_colours_id() -> egui::Id {
     egui::Id::new("colour_picker_document")
 }
 
-/// Set by an open picker whose drawing colours are stale; taken by the app.
+/// Set by an open picker every pass (so the next pass brings the colours up to date before
+/// it is drawn); taken by the app.
 fn document_colours_wanted_id() -> egui::Id {
     egui::Id::new("colour_picker_document_wanted")
 }
@@ -110,19 +111,21 @@ pub(crate) fn offer_document_colours(ctx: &egui::Context, fresh: bool, colours: 
     ctx.data_mut(|d| d.insert_temp(document_colours_id(), Offered { fresh, colours }));
 }
 
-/// True (once) when an open picker asked for the drawing's colours to be worked out afresh.
+/// True (once) when a picker was open since last asked: the drawing's colours are wanted.
 pub(crate) fn document_colours_wanted(ctx: &egui::Context) -> bool {
     take::<bool>(ctx, document_colours_wanted_id()).unwrap_or(false)
 }
 
-/// The drawing's colours for an open picker. Stale ones are asked for afresh and the pass is
-/// run again (its output thrown away), so the picker never shows last edit's colours.
+/// The drawing's colours for an open picker, which asks for them every pass so the next one
+/// starts up to date. Stale ones (the picker just opened, or the drawing changed this pass
+/// before it was drawn) make the pass run again (its output thrown away), so the picker never
+/// shows last edit's colours.
 fn document_colours(ctx: &egui::Context) -> Vec<[u8; 3]> {
     let Some(offered) = ctx.data(|d| d.get_temp::<Offered>(document_colours_id())) else {
         return Vec::new();
     };
+    ctx.data_mut(|d| d.insert_temp(document_colours_wanted_id(), true));
     if !offered.fresh {
-        ctx.data_mut(|d| d.insert_temp(document_colours_wanted_id(), true));
         ctx.request_discard("the drawing's colours, for an open colour picker");
         // (If this pass can't be run again, the next frame has them.)
         ctx.request_repaint();
@@ -797,7 +800,11 @@ mod tests {
         h.run();
         assert!(h.query_by_label("#123456").is_some());
         // The drawing changes (an undo) while the picker is open: the very next frame shows
-        // its colours, not the last ones.
+        // its colours, not the last ones, worked out before the picker is drawn, so the pass
+        // isn't run twice (a drag's every frame would otherwise run the whole app twice).
+        let reruns =
+            |h: &Harness<'_, Drawing>| h.ctx.cumulative_pass_nr() - h.ctx.cumulative_frame_nr();
+        let before = reruns(&h);
         h.state_mut().colours = vec![[0x65, 0x43, 0x21]];
         h.state_mut().revision += 1;
         h.step();
@@ -806,6 +813,7 @@ mod tests {
             "this frame's colours"
         );
         assert!(h.query_by_label("#123456").is_none());
+        assert_eq!(reruns(&h), before, "no pass run again");
     }
 
     #[test]

@@ -341,6 +341,40 @@ fn every_colour_picker_offers_the_open_drawings_colours() {
     assert!(offered(&h).fresh);
     assert!(h.query_all_by_label("#120556").next().is_some(), "offered");
     assert_eq!(h.state().drawing.document_colours.scans, scans + 1);
+    // A drag on the canvas with the picker still open (a drag is not a click, so it stays):
+    // geometry moving can't change a colour, so no pass over the drawing and no pass of the
+    // app run twice, frame after frame.
+    let p = h
+        .state_mut()
+        .drawing
+        .editor
+        .doc
+        .add_point(DVec2::new(0.0, 0.0));
+    h.run();
+    h.run();
+    let scans = h.state().drawing.document_colours.scans;
+    let reruns =
+        |h: &Harness<'_, DriftApp>| h.ctx.cumulative_pass_nr() - h.ctx.cumulative_frame_nr();
+    let before = reruns(&h);
+    let revision = h.state().drawing.editor.doc.revision();
+    h.state_mut().drawing.editor.doc.begin();
+    for i in 1..=5 {
+        let doc = &mut h.state_mut().drawing.editor.doc;
+        doc.set_point(p, DVec2::new(f64::from(i), 0.0)).unwrap();
+        h.step();
+    }
+    assert_ne!(
+        h.state().drawing.editor.doc.revision(),
+        revision,
+        "it moved"
+    );
+    assert!(
+        h.query_all_by_label("#120556").next().is_some(),
+        "still open"
+    );
+    assert_eq!(h.state().drawing.document_colours.scans, scans);
+    assert_eq!(reruns(&h), before, "no pass run again");
+    h.state_mut().drawing.editor.doc.rollback();
     // Changed by undo while the picker is open, the list follows.
     h.state_mut().undo();
     h.run();

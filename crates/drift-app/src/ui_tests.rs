@@ -3255,13 +3255,22 @@ fn long_layer_names_lose_their_middle_and_show_whole_in_the_tooltip() {
     h.run();
     assert!(h.query_by_label(long).is_none());
     // (The row's name, shortened; "Import PDF or DXF…" is the other.)
+    // Its beginning and its end kept, at least four characters of each, around the "…".
+    let kept = |v: &str| {
+        v.split_once('…').is_some_and(|(head, tail)| {
+            head.chars().count() >= 4
+                && tail.chars().count() >= 4
+                && long.starts_with(head)
+                && long.ends_with(tail)
+        })
+    };
     let shown = h
         .query_all_by_label_contains("…")
-        .find(|n| n.value().is_some_and(|v| v.contains("HATCH")))
-        .expect("the shortened name");
+        .find(|n| n.value().is_some_and(|v| kept(&v)))
+        .expect("the shortened name, its beginning and end kept");
     let label = shown.value().unwrap_or_default();
     assert!(
-        label.starts_with("A-WAL") && label.ends_with("HATCH"),
+        label.starts_with("A-WAL") && label.ends_with("ATCH"),
         "{label}"
     );
     let at = shown.rect().center();

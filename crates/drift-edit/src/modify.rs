@@ -574,6 +574,17 @@ fn crossings(a: Path, b: Path) -> Vec<DVec2> {
     }
 }
 
+/// How far along its curves a fillet's tangent points may go.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reach {
+    /// Each stops short of its curve's far end (by more than [`consume_slack`]): a fillet
+    /// being re-sized, whose curves stay.
+    Short,
+    /// One may reach its curve's far end, and then lands on it exactly: a new fillet, which
+    /// takes that curve whole (like Blender's bevel with Clamp Overlap).
+    Whole,
+}
+
 /// Fillet geometry where two curves leave `corner` along `arms`: tangent points, centre, and
 /// whether the arc runs counter-clockwise from the first tangent point. The centre is where
 /// the curves cross once each is offset by `r` towards the other.
@@ -581,7 +592,59 @@ pub fn fillet_geometry(
     corner: DVec2,
     arms: [Arm; 2],
     r: f64,
+    reach: Reach,
 ) -> Result<(DVec2, DVec2, DVec2, bool), EditError> {
+    let (c, mut t, along) = fillet_feet(corner, arms, r)?;
+    for ((arm, t), d) in arms.iter().zip(&mut t).zip(along) {
+        let slack = consume_slack(arm.length);
+        let fits = match reach {
+            Reach::Short => d < arm.length - slack,
+            Reach::Whole => d <= arm.length + slack,
+        };
+        if !fits {
+            return Err(too_large(arms));
+        }
+        if arm.length - d <= slack {
+            *t = arm.at(corner, arm.length);
+        }
+    }
+    let [t1, t2] = t;
+    // From the first tangent point the arc heads back along the first curve, towards the
+    // corner (which way round its ends lie alone can't say for a half turn, where a fillet
+    // takes a curving side whole).
+    let ccw = (t1 - c).perp().dot(-arms[0].dir(t1)) > 0.0;
+    Ok((t1, t2, c, ccw))
+}
+
+/// Whether a fillet of radius `r` at `corner` keeps its tangent points on `arms`, at most
+/// reaching their far ends (exactly, with no slack). The largest such radius is the most a
+/// curve shared by two corners gives each: their fillets then meet within the slack, and
+/// the second takes what the first leaves. The arc must touch both curves truly, not only
+/// within the tolerance that finds where two offsets touch: past the most, offsets that
+/// just miss each other still count as touching, and the arc made there would be off.
+pub(crate) fn fillet_reaches(corner: DVec2, arms: [Arm; 2], r: f64) -> bool {
+    let size = (corner.abs().max_element() + r).max(1.0);
+    fillet_feet(corner, arms, r).is_ok_and(|(c, t, along)| {
+        (0..2).all(|i| {
+            along[i] <= arms[i].length && (c.distance(t[i]) - r).abs() <= tolerance::NONE * size
+        })
+    })
+}
+
+fn too_large(arms: [Arm; 2]) -> EditError {
+    let lines = arms.iter().all(|a| matches!(a.run, Run::Line { .. }));
+    let curves = if lines { "lines" } else { "curves" };
+    invalid(format!("the radius is too large for these {curves}"))
+}
+
+/// A fillet's centre, where its tangent points fall on the two curves' whole lines or
+/// circles, and how far along each from `corner` they are (not yet held to the curves'
+/// lengths).
+fn fillet_feet(
+    corner: DVec2,
+    arms: [Arm; 2],
+    r: f64,
+) -> Result<(DVec2, [DVec2; 2], [f64; 2]), EditError> {
     let lines = arms.iter().all(|a| matches!(a.run, Run::Line { .. }));
     let curves = if lines { "lines" } else { "curves" };
     let u = [arms[0].dir(corner), arms[1].dir(corner)];
@@ -594,7 +657,7 @@ pub fn fillet_geometry(
     if !(r > 0.0 && r.is_finite()) {
         return Err(invalid("the radius must be positive"));
     }
-    let too_large = || invalid(format!("the radius is too large for these {curves}"));
+    let too_large = || too_large(arms);
     let offset = |i: usize| -> Option<Path> {
         let mut n = u[i].perp();
         if n.dot(u[1 - i]) < 0.0 {
@@ -622,21 +685,12 @@ pub fn fillet_geometry(
         .into_iter()
         .min_by(|a, b| a.distance(guess).total_cmp(&b.distance(guess)))
         .ok_or_else(too_large)?;
-    let mut t = [arms[0].foot(corner, c), arms[1].foot(corner, c)];
-    // A fillet may take the whole of a curve, its tangent point reaching the far end (and
-    // landing there exactly), but no more: like Blender's bevel with Clamp Overlap.
-    for (arm, t) in arms.iter().zip(&mut t) {
-        let d = arm.along(corner, *t);
-        if !(d > tolerance::SAME && d <= arm.length + consume_slack(arm.length)) {
-            return Err(too_large());
-        }
-        if arm.length - d <= consume_slack(arm.length) {
-            *t = arm.at(corner, arm.length);
-        }
+    let t = [arms[0].foot(corner, c), arms[1].foot(corner, c)];
+    let along = [arms[0].along(corner, t[0]), arms[1].along(corner, t[1])];
+    if along.iter().any(|d| d.is_nan() || *d <= tolerance::SAME) {
+        return Err(too_large());
     }
-    let [t1, t2] = t;
-    let ccw = (t1 - c).perp_dot(t2 - c) > 0.0;
-    Ok((t1, t2, c, ccw))
+    Ok((c, t, along))
 }
 
 /// How near a fillet's tangent point may come to a curve's far end and count as reaching
@@ -1776,10 +1830,33 @@ impl Editor {
             .collect()
     }
 
+    /// The curves that make the corner at point `p`: those ending there, less construction
+    /// curves when two others are left. A construction line that ends at a corner (one a
+    /// fillet kept for what was measured to it, or a centre line drawn to it) doesn't make
+    /// it any less a corner of the two solid curves there.
+    fn corner_curves(&self, p: EntityId) -> Vec<EntityId> {
+        let ending = self.curves_ending_at(p);
+        if ending.len() > 2 {
+            let solid: Vec<EntityId> = ending
+                .iter()
+                .copied()
+                .filter(|id| {
+                    self.doc
+                        .get(*id)
+                        .is_some_and(|e| e.style != drift_core::LineKind::Construction)
+                })
+                .collect();
+            if solid.len() == 2 {
+                return solid;
+            }
+        }
+        ending
+    }
+
     /// The two lines meeting at a corner point (and their far ends), for fillets and
     /// chamfers.
     pub fn corner(&self, p: EntityId) -> Result<[(EntityId, EntityId); 2], EditError> {
-        let ending = self.curves_ending_at(p);
+        let ending = self.corner_curves(p);
         let [c1, c2] = ending[..] else {
             return Err(not_a_corner(ending.len(), "lines"));
         };
@@ -1836,7 +1913,7 @@ impl Editor {
     /// The two curves (lines or arcs) meeting at a corner point, and how each runs from it,
     /// for fillets.
     pub fn fillet_corner(&self, p: EntityId) -> Result<[(EntityId, Arm); 2], EditError> {
-        let ending = self.curves_ending_at(p);
+        let ending = self.corner_curves(p);
         let [c1, c2] = ending[..] else {
             return Err(not_a_corner(ending.len(), "lines or arcs"));
         };
@@ -1855,7 +1932,8 @@ impl Editor {
     /// The fillet arc at corner `p` with radius `r`, for previews.
     pub fn fillet_preview(&self, p: EntityId, r: f64) -> Option<Shape> {
         let [(_, a1), (_, a2)] = self.fillet_corner(p).ok()?;
-        let (t1, t2, c, ccw) = fillet_geometry(self.doc.point(p).ok()?, [a1, a2], r).ok()?;
+        let (t1, t2, c, ccw) =
+            fillet_geometry(self.doc.point(p).ok()?, [a1, a2], r, Reach::Whole).ok()?;
         Some(if ccw {
             arc_shape(c, t1, t2)
         } else {
@@ -1892,10 +1970,10 @@ impl Editor {
     fn fillet_in(&mut self, p: EntityId, r: f64) -> Result<EntityId, EditError> {
         let [(l1, a1), (l2, a2)] = self.fillet_corner(p)?;
         let at = self.doc.point(p).unwrap_or_default();
-        let (t1, t2, c, ccw) = fillet_geometry(at, [a1, a2], r)?;
+        let (t1, t2, c, ccw) = fillet_geometry(at, [a1, a2], r, Reach::Whole)?;
         let doc_err = |e: drift_core::DocumentError| invalid(e.to_string());
-        // A curve the fillet takes whole goes; the arc ends on its far end instead, joining
-        // whatever is there.
+        // On a curve the fillet takes whole, the arc ends on its far end, joining whatever
+        // is there.
         let mut kept = Vec::new();
         let mut taken = Vec::new();
         let mut ends = [p; 2];
@@ -1904,7 +1982,7 @@ impl Editor {
             match far {
                 Some(far) if arm.length - arm.along(at, t) <= consume_slack(arm.length) => {
                     ends[i] = far;
-                    taken.push(curve);
+                    taken.push((curve, far));
                 }
                 _ => {
                     ends[i] = self.doc.add_point(t);
@@ -1923,29 +2001,252 @@ impl Editor {
         self.doc.copy_look(l1, a);
         // and joins the two lines' shapes (#439).
         self.doc.join_figures(&[l1, l2, a]);
+        let mut checked = Vec::new();
         if taken.is_empty() {
             self.cut_corner(p, [(l1, ends[0]), (l2, ends[1])])?;
         } else {
-            self.doc.delete(taken.iter().copied());
-            for &(curve, end) in &kept {
-                self.keep_side(curve);
-                self.replace_end(curve, p, end)?;
-            }
-            // Nothing is left for a corner relation to hold the corner between: it stays
-            // (as construction) only for what is measured to it.
-            if self.doc.contains(p) && self.doc.users_of(p).next().is_none() {
-                if self.doc.is_named(p) {
-                    self.doc.set_style(p, drift_core::LineKind::Construction);
-                } else {
-                    self.doc.delete([p]);
-                }
-            }
+            checked = self.take_whole(p, a, &kept, &taken)?;
         }
         for (curve, _) in kept {
             self.relate(Constraint::Tangent { a: curve, b: a });
         }
         self.relate(Constraint::Radius { curve: a, value: r });
+        // With the radius and the other tangencies in place, so a solve can tell whether
+        // they already set it.
+        self.keep_independent(checked);
         Ok(a)
+    }
+
+    /// After fillet `arc` at corner `p` takes the curves `taken` whole (each with its far
+    /// end, where the arc now ends), inside an open transaction: the curve it keeps, if any,
+    /// moves off `p` onto its new end as in [`Editor::cut_corner`]. When anything is
+    /// measured or related to the corner (or anything else uses it), or to a taken curve
+    /// beyond which way it runs, the taken curves stay as construction: with the kept curve
+    /// they hold the corner where it was, so what was measured to it still means what it
+    /// did. Otherwise they go. Either way the arc is made tangent to a curve it runs
+    /// smoothly on into at a far end. That tangency may set again what is already placed
+    /// (by the construction curves and their dimensions, or, where two fillets meet, by a
+    /// dimension across both, such as the length of the side between them), and changing
+    /// one would then fail; so it is returned, for the caller to keep only if a solve finds
+    /// it independent once the arc is related.
+    fn take_whole(
+        &mut self,
+        p: EntityId,
+        arc: EntityId,
+        kept: &[(EntityId, EntityId)],
+        taken: &[(EntityId, EntityId)],
+    ) -> Result<Vec<ConstraintId>, EditError> {
+        let skip: Vec<EntityId> = taken.iter().map(|&(curve, _)| curve).collect();
+        for &(curve, end) in kept {
+            self.keep_side(curve);
+            self.replace_end(curve, p, end)?;
+        }
+        let needed = self.doc.is_named(p)
+            || self.doc.users_of(p).any(|u| !skip.contains(&u))
+            || taken
+                .iter()
+                .any(|&(curve, _)| self.holds_more_than_its_run(curve));
+        if needed {
+            for &(curve, _) in taken {
+                self.doc
+                    .set_style(curve, drift_core::LineKind::Construction);
+            }
+            // The corner stays a taken curve's end, and is held on the kept curve (two taken
+            // curves hold it between them). Not an automatic relation, as in `cut_corner`.
+            if let [(curve, _)] = kept {
+                self.doc
+                    .add_constraint(Constraint::PointOnCurve {
+                        point: p,
+                        curve: *curve,
+                    })
+                    .map_err(|e| invalid(e.to_string()))?;
+            }
+        } else {
+            // One at a time, so what runs through two taken sides (parallel to one that is
+            // square to the other) still carries on.
+            let mut carried = Vec::new();
+            for &curve in &skip {
+                for c in self.orientation_through(curve) {
+                    carried.extend(self.doc.add_constraint(c).ok());
+                }
+                self.doc.delete([curve]);
+            }
+            if self.doc.contains(p) && self.doc.users_of(p).next().is_none() {
+                self.doc.delete([p]);
+            }
+            self.keep_independent(carried);
+        }
+        Ok(taken
+            .iter()
+            .filter_map(|&(_, far)| self.join_smoothly(arc, far, &skip))
+            .collect())
+    }
+
+    /// What line `side`'s orientation relations (horizontal, vertical, parallel and
+    /// perpendicular to other lines) hold between the other lines and the axes through it,
+    /// for when it goes: two lines both parallel to it are parallel to each other, a line
+    /// square to a horizontal side is vertical, and so on. Taken from the first relation
+    /// (one to an axis if there is one) to each of the others; whatever the side was square
+    /// or parallel to alone only held the side itself.
+    fn orientation_through(&self, side: EntityId) -> Vec<Constraint> {
+        #[derive(Clone, Copy)]
+        enum Toward {
+            /// An axis: horizontal (true) or vertical.
+            Axis(bool),
+            Line(EntityId),
+        }
+        // Each partner, and whether the side is square to it.
+        let mut partners: Vec<(Toward, bool)> = self
+            .doc
+            .constraints_on(side)
+            .filter_map(|id| match self.doc.constraint(id).copied()? {
+                Constraint::Horizontal { line } if line == side => {
+                    Some((Toward::Axis(true), false))
+                }
+                Constraint::Vertical { line } if line == side => Some((Toward::Axis(false), false)),
+                Constraint::Parallel { a, b } if (a == side) != (b == side) => {
+                    Some((Toward::Line(if a == side { b } else { a }), false))
+                }
+                Constraint::Perpendicular { a, b } if (a == side) != (b == side) => {
+                    Some((Toward::Line(if a == side { b } else { a }), true))
+                }
+                _ => None,
+            })
+            .collect();
+        partners.sort_by_key(|(t, _)| !matches!(t, Toward::Axis(_)));
+        let Some(&(anchor, anchor_square)) = partners.first() else {
+            return Vec::new();
+        };
+        partners[1..]
+            .iter()
+            .filter_map(|&(toward, square)| {
+                let square = square != anchor_square;
+                match (anchor, toward) {
+                    (Toward::Axis(horizontal), Toward::Line(line)) => {
+                        Some(if horizontal != square {
+                            Constraint::Horizontal { line }
+                        } else {
+                            Constraint::Vertical { line }
+                        })
+                    }
+                    (Toward::Line(a), Toward::Line(b)) if a != b => Some(if square {
+                        Constraint::Perpendicular { a, b }
+                    } else {
+                        Constraint::Parallel { a, b }
+                    }),
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+
+    /// Of the relations `added` (met as drawn), keep those the rest don't already imply, as
+    /// a solve judges it, and take off the others, so carrying a relation on never leaves
+    /// the drawing over-defined.
+    fn keep_independent(&mut self, added: Vec<ConstraintId>) {
+        let added: Vec<(ConstraintId, Constraint)> = added
+            .into_iter()
+            .filter_map(|id| Some((id, *self.doc.constraint(id)?)))
+            .collect();
+        if added.is_empty() {
+            return;
+        }
+        for (id, _) in &added {
+            self.doc.remove_constraint(*id);
+        }
+        let lowering = self.lowering();
+        let seeds: Vec<EntityId> = added.iter().flat_map(|(_, c)| c.entities()).collect();
+        let scope = std::rc::Rc::new(drift_solver::connected_with(
+            &self.doc,
+            seeds,
+            lowering.as_deref(),
+        ));
+        let solved = |doc: &drift_core::Document| {
+            drift_solver::solve(
+                &mut doc.clone(),
+                &drift_solver::SolveOptions {
+                    analyze: true,
+                    scope: Some(scope.clone()),
+                    lowering: lowering.clone(),
+                    ..Default::default()
+                },
+            )
+        };
+        let base = solved(&self.doc).dependent_equations;
+        for (_, c) in added {
+            let Ok(id) = self.doc.add_constraint(c) else {
+                continue;
+            };
+            let report = solved(&self.doc);
+            if report.dependent_equations > base
+                || report.redundant.contains(&id)
+                || report.conflicts.contains(&id)
+            {
+                self.doc.remove_constraint(id);
+            }
+        }
+    }
+
+    /// Whether anything is measured or related to line or arc `curve` beyond which way it
+    /// runs (horizontal, vertical, parallel or perpendicular to another line) and its
+    /// tangency to a curve it joins end to end.
+    fn holds_more_than_its_run(&self, curve: EntityId) -> bool {
+        let kind = |id: EntityId| self.doc.get(id).map(|e| e.kind);
+        let joins = |other: EntityId| match (kind(curve), kind(other)) {
+            (Some(a), Some(b)) => a.shared_end(&b).is_some(),
+            _ => false,
+        };
+        self.doc
+            .measurements()
+            .any(|(_, m)| m.entities().any(|e| e == curve))
+            || self
+                .doc
+                .constraints_on(curve)
+                .any(|id| match self.doc.constraint(id).copied() {
+                    Some(
+                        Constraint::Horizontal { .. }
+                        | Constraint::Vertical { .. }
+                        | Constraint::Parallel { .. }
+                        | Constraint::Perpendicular { .. },
+                    )
+                    | None => false,
+                    Some(Constraint::Tangent { a, b }) => !joins(if a == curve { b } else { a }),
+                    Some(_) => true,
+                })
+    }
+
+    /// Hold `arc` tangent to the one other line or arc (not one of `skip`) that ends at its
+    /// end point `at`, where the two run smoothly on from one to the other. The tangency
+    /// added, if any.
+    fn join_smoothly(
+        &mut self,
+        arc: EntityId,
+        at: EntityId,
+        skip: &[EntityId],
+    ) -> Option<ConstraintId> {
+        let others: Vec<EntityId> = self
+            .curves_ending_at(at)
+            .into_iter()
+            .filter(|c| *c != arc && !skip.contains(c))
+            .collect();
+        let [next] = others[..] else {
+            return None;
+        };
+        let (Ok(pos), Some(out), Some(on)) =
+            (self.doc.point(at), self.arm(arc, at), self.arm(next, at))
+        else {
+            return None;
+        };
+        let (u, w) = (out.dir(pos), on.dir(pos));
+        let related = self.doc.constraints_on(arc).any(|id| {
+            matches!(self.doc.constraint(id), Some(Constraint::Tangent { a, b })
+                if (*a == next && *b == arc) || (*a == arc && *b == next))
+        });
+        if u.perp_dot(w).abs() < tolerance::ANGLE && u.dot(w) < 0.0 && !related {
+            self.relate(Constraint::Tangent { a: next, b: arc })
+        } else {
+            None
+        }
     }
 
     /// The other end of line or arc `curve` from its end point `end`.
@@ -2288,7 +2589,7 @@ impl Editor {
     /// The arc a fillet would be at radius `r`, for previews.
     pub fn refillet_preview(&self, arc: EntityId, r: f64) -> Option<Shape> {
         let f = self.fillet_at(arc)?;
-        let (t1, t2, c, _) = fillet_geometry(f.corner, f.arms, r).ok()?;
+        let (t1, t2, c, _) = fillet_geometry(f.corner, f.arms, r, Reach::Short).ok()?;
         // The arc keeps its direction: its start stays on the first line.
         Some(arc_shape(c, t1, t2))
     }
@@ -2301,7 +2602,7 @@ impl Editor {
         let Some(f) = self.fillet_at(arc) else {
             return false;
         };
-        let Ok((t1, t2, c, _)) = fillet_geometry(f.corner, f.arms, r) else {
+        let Ok((t1, t2, c, _)) = fillet_geometry(f.corner, f.arms, r, Reach::Short) else {
             return false;
         };
         let points = [(f.ends[0], t1), (f.ends[1], t2), (f.center, c)];
@@ -2365,7 +2666,7 @@ impl Editor {
         let Some(f) = self.fillet_at(arc) else {
             return;
         };
-        if let Ok((t1, t2, c, _)) = fillet_geometry(f.corner, f.arms, r) {
+        if let Ok((t1, t2, c, _)) = fillet_geometry(f.corner, f.arms, r, Reach::Short) {
             for (id, at) in [(f.ends[0], t1), (f.ends[1], t2), (f.center, c)] {
                 let _ = self.doc.set_point(id, at);
             }
@@ -2377,7 +2678,7 @@ impl Editor {
         let Some(f) = self.fillet_at(arc) else {
             return Err(invalid("that arc isn't a fillet between two curves"));
         };
-        fillet_geometry(f.corner, f.arms, r)?;
+        fillet_geometry(f.corner, f.arms, r, Reach::Short)?;
         self.doc.begin();
         let result = if self.drag_fillet(arc, r) {
             Ok(())
@@ -3875,20 +4176,51 @@ mod tests {
         }
     }
 
+    /// A 100 × 50 rectangle with only its sides' directions held. Corners anticlockwise from
+    /// the bottom left; sides bottom, right, top, left.
+    fn bare_plate() -> (Editor, [EntityId; 4], [EntityId; 4]) {
+        let mut ed = related();
+        ed.doc.begin();
+        let corners = [v(0.0, 0.0), v(100.0, 0.0), v(100.0, 50.0), v(0.0, 50.0)]
+            .map(|at| ed.doc.add_point(at));
+        let sides =
+            [0, 1, 2, 3].map(|i| ed.doc.add_line(corners[i], corners[(i + 1) % 4]).unwrap());
+        for (i, &line) in sides.iter().enumerate() {
+            let c = if i % 2 == 0 {
+                Constraint::Horizontal { line }
+            } else {
+                Constraint::Vertical { line }
+            };
+            ed.doc.add_constraint(c).unwrap();
+        }
+        ed.commit("Plate");
+        (ed, corners, sides)
+    }
+
+    fn arc_ends(ed: &Editor, arc: EntityId) -> [EntityId; 2] {
+        match ed.doc.get(arc).map(|e| e.kind) {
+            Some(EntityKind::Arc { start, end, .. }) => [start, end],
+            _ => panic!("an arc"),
+        }
+    }
+
+    fn tangents(ed: &Editor, a: EntityId, b: EntityId) -> usize {
+        count(
+            ed,
+            |c| matches!(*c, Constraint::Tangent { a: x, b: y } if (x, y) == (a, b) || (x, y) == (b, a)),
+        )
+    }
+
     /// A fillet as big as the shorter side takes it whole, like Blender's bevel with Clamp
-    /// Overlap: the side goes and the arc runs on to the next side's end. Any bigger is
-    /// refused.
+    /// Overlap: with nothing measured to it or its corner, the side goes and the arc runs on
+    /// to the next side's end. Any bigger is refused.
     #[test]
     fn a_fillet_may_take_a_whole_side_but_no_more() {
-        let Plate {
-            mut ed,
-            corners,
-            sides,
-            ..
-        } = plate(false);
+        let (mut ed, corners, sides) = bare_plate();
         assert!(ed.fillet(corners[0], 50.0 + 1e-3).is_err());
         let arc = ed.fillet(corners[0], 50.0).unwrap();
         assert!(!ed.doc.contains(sides[3]), "the left side is taken whole");
+        assert!(!ed.doc.contains(corners[0]), "and its corner with it");
         let Some(EntityKind::Arc { center, start, end }) = ed.doc.get(arc).map(|e| e.kind) else {
             panic!("an arc");
         };
@@ -3898,34 +4230,487 @@ mod tests {
         assert!(close(ed.doc.point(end).unwrap(), v(50.0, 0.0)));
         assert!(close(ed.doc.point(center).unwrap(), v(50.0, 50.0)));
         assert!(ed.doc.contains(sides[2]) && ed.doc.contains(sides[0]));
+        assert_eq!(tangents(&ed, sides[0], arc), 1);
+        assert!(ed.out.notice.is_none(), "{:?}", ed.out.notice);
         // Undo puts the side back.
         ed.undo();
-        assert!(ed.doc.contains(sides[3]));
+        assert!(ed.doc.contains(sides[3]) && ed.doc.contains(corners[0]));
     }
 
-    /// Two fillets on one side grow until they meet: the side between them goes.
+    /// A side taken whole whose corner has things measured to it stays, as construction:
+    /// with the kept side it holds the corner where it was, so the plate is as defined as
+    /// before and its dimensions drive it as they did.
+    #[test]
+    fn a_side_taken_whole_stays_as_construction_for_what_is_measured_to_its_corner() {
+        let Plate {
+            mut ed,
+            corners,
+            sides,
+            width,
+            side,
+            middle,
+        } = plate(false);
+        let arc = ed.fillet(corners[0], 50.0).unwrap();
+        assert_eq!(
+            ed.doc.get(sides[3]).map(|e| e.style),
+            Some(drift_core::LineKind::Construction)
+        );
+        assert_eq!(ends(&ed, sides[3]), (v(0.0, 50.0), v(0.0, 0.0)));
+        assert_eq!(arc_ends(&ed, arc)[0], corners[3]);
+        assert_eq!(
+            count(&ed, |c| *c
+                == Constraint::PointOnCurve {
+                    point: corners[0],
+                    curve: sides[0]
+                }),
+            1
+        );
+        // Everything measured to the corner is still there.
+        assert_eq!(count(&ed, |c| matches!(c, Constraint::Fix { .. })), 1);
+        assert_eq!(count(&ed, |c| matches!(c, Constraint::Distance { .. })), 2);
+        assert_eq!(
+            ed.doc.constraint(side),
+            Some(&Constraint::MidpointOf {
+                point: middle,
+                a: corners[0],
+                b: corners[1]
+            })
+        );
+        assert!(ed.out.notice.is_none(), "{:?}", ed.out.notice);
+        assert_eq!(dof(&mut ed), 0);
+        assert!(ed.analysis().conflicts.is_empty());
+        ed.set_dimension(width, 120.0).unwrap();
+        assert!(close(ed.doc.point(corners[1]).unwrap(), v(120.0, 0.0)));
+        assert!((ed.doc.point(middle).unwrap().x - 60.0).abs() < 1e-7);
+        assert!(close(ed.doc.point(corners[0]).unwrap(), v(0.0, 0.0)));
+    }
+
+    /// A dimension to a side the fillet takes whole keeps the side (as construction), and
+    /// still drives what it measures.
+    #[test]
+    fn a_dimension_to_a_side_taken_whole_keeps_it() {
+        let (mut ed, corners, sides) = bare_plate();
+        ed.doc.begin();
+        let hole = ed.doc.add_point(v(20.0, 25.0));
+        let gap = ed
+            .doc
+            .add_constraint(Constraint::PointLineDistance {
+                point: hole,
+                line: sides[3],
+                value: 20.0,
+            })
+            .unwrap();
+        ed.commit("Hole");
+        ed.fillet(corners[0], 50.0).unwrap();
+        assert_eq!(
+            ed.doc.get(sides[3]).map(|e| e.style),
+            Some(drift_core::LineKind::Construction)
+        );
+        assert!(ed.doc.constraint(gap).is_some());
+        ed.set_dimension(gap, 30.0).unwrap();
+        assert!((ed.doc.point(hole).unwrap().x - 30.0).abs() < 1e-7);
+    }
+
+    /// The kept side's length, kept equal to another line's from corner to corner, still
+    /// measures to a corner held where it was: the fillet leaves no point free to move.
+    #[test]
+    fn a_kept_sides_equal_length_still_holds_when_the_other_side_is_taken() {
+        let (mut ed, corners, sides) = bare_plate();
+        ed.doc.begin();
+        let (p, q) = (
+            ed.doc.add_point(v(0.0, 80.0)),
+            ed.doc.add_point(v(100.0, 80.0)),
+        );
+        let other = ed.doc.add_line(p, q).unwrap();
+        let equal = ed
+            .doc
+            .add_constraint(Constraint::Equal {
+                a: sides[0],
+                b: other,
+            })
+            .unwrap();
+        ed.commit("Equal");
+        let free = dof(&mut ed);
+        ed.fillet(corners[0], 50.0).unwrap();
+        assert_eq!(
+            ed.doc.constraint(equal),
+            Some(&Constraint::EqualDistance {
+                a: corners[0],
+                b: corners[1],
+                c: p,
+                d: q
+            })
+        );
+        assert!(ed.doc.contains(sides[3]) && ed.doc.contains(corners[0]));
+        assert_eq!(dof(&mut ed), free, "no new freedom: the corner is held");
+        assert!(ed.analysis().conflicts.is_empty());
+    }
+
+    /// Two fillets on one side grow until they meet: the side between them goes, and the two
+    /// arcs are held tangent where they meet.
     #[test]
     fn fillets_at_both_ends_of_a_side_may_meet() {
+        let (mut ed, corners, sides) = bare_plate();
+        let arcs = ed.fillet_corners(&[corners[0], corners[1]], 50.0).unwrap();
+        for side in [sides[0], sides[1], sides[3]] {
+            assert!(!ed.doc.contains(side), "{side:?} taken whole");
+        }
+        let (a, b) = (arc_ends(&ed, arcs[0]), arc_ends(&ed, arcs[1]));
+        // They share the point where they meet, at the middle of what was the bottom.
+        let shared: Vec<_> = a.iter().filter(|p| b.contains(p)).collect();
+        assert_eq!(shared.len(), 1);
+        assert!(close(ed.doc.point(*shared[0]).unwrap(), v(50.0, 0.0)));
+        assert!(ed.doc.contains(sides[2]));
+        assert_eq!(tangents(&ed, arcs[0], arcs[1]), 1);
+        assert!(ed.analysis().conflicts.is_empty());
+    }
+
+    /// Fillets meeting where the sides they take go, on a plate whose width is measured on
+    /// the side they leave: a tangency where they meet would put both centres on one point,
+    /// making that width the most the arcs' far ends can be apart, set twice. So the arcs
+    /// meet untied, nothing is over-defined, and the width still drives the plate.
+    #[test]
+    fn fillets_meeting_under_a_measured_side_leave_its_length_free() {
+        let (mut ed, corners, sides) = bare_plate();
+        ed.doc.begin();
+        let width = ed
+            .doc
+            .add_constraint(Constraint::Distance {
+                a: corners[2],
+                b: corners[3],
+                value: 100.0,
+            })
+            .unwrap();
+        ed.commit("Width");
+        let arcs = ed.fillet_corners(&[corners[0], corners[1]], 50.0).unwrap();
+        for side in [sides[0], sides[1], sides[3]] {
+            assert!(!ed.doc.contains(side), "{side:?} taken whole");
+        }
+        let (a, b) = (arc_ends(&ed, arcs[0]), arc_ends(&ed, arcs[1]));
+        assert_eq!(a.iter().filter(|p| b.contains(p)).count(), 1);
+        assert_eq!(tangents(&ed, arcs[0], arcs[1]), 0);
+        assert!(ed.out.notice.is_none(), "{:?}", ed.out.notice);
+        assert_eq!(ed.analysis().dependent_equations, 0);
+        assert!(ed.analysis().conflicts.is_empty());
+        ed.set_dimension(width, 120.0).unwrap();
+        let (left, right) = (
+            ed.doc.point(corners[3]).unwrap(),
+            ed.doc.point(corners[2]).unwrap(),
+        );
+        assert!(((right - left).length() - 120.0).abs() < 1e-7);
+        assert_eq!(ed.analysis().dependent_equations, 0);
+    }
+
+    /// Fillets meeting on a plate whose corners are measured: the sides they take stay as
+    /// construction, and the plate is still fully defined, with nothing over-defined.
+    #[test]
+    fn fillets_meeting_on_a_measured_plate_keep_it_defined() {
+        let Plate {
+            mut ed,
+            corners,
+            sides,
+            width,
+            ..
+        } = plate(false);
+        let arcs = ed.fillet_corners(&[corners[0], corners[1]], 50.0).unwrap();
+        for side in [sides[0], sides[1], sides[3]] {
+            assert_eq!(
+                ed.doc.get(side).map(|e| e.style),
+                Some(drift_core::LineKind::Construction)
+            );
+        }
+        let (a, b) = (arc_ends(&ed, arcs[0]), arc_ends(&ed, arcs[1]));
+        assert_eq!(a.iter().filter(|p| b.contains(p)).count(), 1);
+        assert!(ed.out.notice.is_none(), "{:?}", ed.out.notice);
+        assert_eq!(dof(&mut ed), 0);
+        assert!(ed.analysis().conflicts.is_empty());
+        // The construction sides place where the arcs meet: a tangency between them there
+        // would set again what the width and height set.
+        assert_eq!(tangents(&ed, arcs[0], arcs[1]), 0);
+        assert_eq!(ed.analysis().dependent_equations, 0);
+        // So the dimensions still drive the plate.
+        ed.set_dimension(width, 120.0).unwrap();
+        assert!(close(ed.doc.point(corners[1]).unwrap(), v(120.0, 0.0)));
+        ed.set_dimension(height(&ed, &corners), 60.0).unwrap();
+        assert!(close(ed.doc.point(corners[2]).unwrap(), v(120.0, 60.0)));
+    }
+
+    /// The plate's height dimension (corner to corner up its left side).
+    fn height(ed: &Editor, corners: &[EntityId; 4]) -> ConstraintId {
+        ed.doc
+            .constraints()
+            .find(|(_, c)| {
+                matches!(**c, Constraint::Distance { a, b, .. } if (a, b) == (corners[3], corners[0]))
+            })
+            .map(|(id, _)| id)
+            .expect("a height")
+    }
+
+    /// A fillet taking a measured side whole up to an earlier fillet stays clear of it: no
+    /// tangency between the two arcs over-defines the plate, and its height still drives it.
+    #[test]
+    fn a_fillet_taking_a_measured_side_up_to_another_fillet_leaves_its_height_free() {
+        let Plate {
+            mut ed, corners, ..
+        } = plate(false);
+        let top = ed.fillet(corners[3], 10.0).unwrap();
+        let bottom = ed.fillet(corners[0], 40.0).unwrap();
+        assert_eq!(tangents(&ed, top, bottom), 0);
+        assert_eq!(dof(&mut ed), 0);
+        assert_eq!(ed.analysis().dependent_equations, 0);
+        assert!(ed.analysis().conflicts.is_empty());
+        ed.set_dimension(height(&ed, &corners), 60.0).unwrap();
+        assert!(close(ed.doc.point(corners[2]).unwrap(), v(100.0, 60.0)));
+    }
+
+    /// A side kept as construction doesn't stop its far corner being rounded: the corner is
+    /// still the solid top side's and the arc's, and the construction side stays on it.
+    #[test]
+    fn the_corner_beyond_a_side_kept_as_construction_can_still_be_rounded() {
         let Plate {
             mut ed,
             corners,
             sides,
             ..
         } = plate(false);
-        let arcs = ed.fillet_corners(&[corners[0], corners[1]], 50.0).unwrap();
-        for side in [sides[0], sides[1], sides[3]] {
-            assert!(!ed.doc.contains(side), "{side:?} taken whole");
+        let arc = ed.fillet(corners[0], 50.0).unwrap();
+        assert_eq!(
+            ed.doc.get(sides[3]).map(|e| e.style),
+            Some(drift_core::LineKind::Construction)
+        );
+        let [(c1, _), (c2, _)] = ed.fillet_corner(corners[3]).unwrap();
+        assert!([c1, c2].contains(&sides[2]) && [c1, c2].contains(&arc));
+        ed.fillet(corners[3], 10.0).unwrap();
+        assert!(ed.doc.contains(sides[3]));
+        assert!(close(ed.doc.point(corners[3]).unwrap(), v(0.0, 50.0)));
+        assert!(ed.out.notice.is_none(), "{:?}", ed.out.notice);
+        assert_eq!(dof(&mut ed), 0);
+        assert!(ed.analysis().conflicts.is_empty());
+    }
+
+    /// A construction line drawn to a rectangle's corner doesn't stop the corner being
+    /// rounded or cut; it stays on the corner, held where the sides would meet.
+    #[test]
+    fn a_construction_line_to_a_corner_doesnt_stop_a_fillet_or_chamfer() {
+        for chamfer in [false, true] {
+            let (mut ed, corners, _) = bare_plate();
+            ed.doc.begin();
+            let centre = ed.doc.add_point(v(50.0, 25.0));
+            let guide = ed.doc.add_line(centre, corners[0]).unwrap();
+            ed.doc.set_style(guide, drift_core::LineKind::Construction);
+            ed.commit("Guide");
+            if chamfer {
+                ed.chamfer(corners[0], 5.0, 5.0).unwrap();
+            } else {
+                ed.fillet(corners[0], 5.0).unwrap();
+            }
+            assert!(ed.doc.contains(guide) && ed.doc.contains(corners[0]));
+            assert_eq!(
+                count(
+                    &ed,
+                    |c| matches!(*c, Constraint::Corner { point, .. } if point == corners[0])
+                ),
+                1
+            );
         }
-        let ends = |arc| match ed.doc.get(arc).map(|e| e.kind) {
-            Some(EntityKind::Arc { start, end, .. }) => [start, end],
-            _ => panic!("an arc"),
-        };
-        let (a, b) = (ends(arcs[0]), ends(arcs[1]));
-        // They share the point where they meet, at the middle of what was the bottom.
-        let shared: Vec<_> = a.iter().filter(|p| b.contains(p)).collect();
+    }
+
+    /// Something else using the corner (a circle centred on it) keeps a side taken whole,
+    /// as construction, so the corner stays held where it was.
+    #[test]
+    fn a_circle_centred_on_the_corner_keeps_a_side_taken_whole() {
+        let (mut ed, corners, sides) = bare_plate();
+        ed.doc.begin();
+        ed.doc.add_circle(corners[0], 5.0).unwrap();
+        ed.commit("Hole");
+        ed.fillet(corners[0], 50.0).unwrap();
+        assert_eq!(
+            ed.doc.get(sides[3]).map(|e| e.style),
+            Some(drift_core::LineKind::Construction)
+        );
+        assert!(close(ed.doc.point(corners[0]).unwrap(), v(0.0, 0.0)));
+    }
+
+    /// Two fillets meeting on a side kept as construction (a circle on the first corner
+    /// keeps that corner, and its corner relation refers to the side): nothing measured
+    /// places where they meet, so they are still held tangent there, and moving the plate
+    /// never puts a kink where they meet. The construction side holds where they meet on
+    /// it, so the plate's height is then the two radii's: it changes with them.
+    #[test]
+    fn fillets_meeting_on_an_unmeasured_construction_side_stay_tangent() {
+        let (mut ed, corners, sides) = bare_plate();
+        ed.doc.begin();
+        ed.doc.add_circle(corners[0], 5.0).unwrap();
+        ed.commit("Hole");
+        let low = ed.fillet(corners[0], 25.0).unwrap();
+        let free = dof(&mut ed);
+        let high = ed.fillet(corners[3], 25.0).unwrap();
+        assert_eq!(
+            ed.doc.get(sides[3]).map(|e| e.style),
+            Some(drift_core::LineKind::Construction)
+        );
+        let (a, b) = (arc_ends(&ed, low), arc_ends(&ed, high));
+        let shared: Vec<_> = a.iter().filter(|p| b.contains(p)).copied().collect();
         assert_eq!(shared.len(), 1);
-        assert!(close(ed.doc.point(*shared[0]).unwrap(), v(50.0, 0.0)));
-        assert!(ed.doc.contains(sides[2]));
+        assert_eq!(tangents(&ed, low, high), 1);
+        // The height is the one freedom taken: nothing set twice, nothing in conflict.
+        assert_eq!(dof(&mut ed), free - 1);
+        assert_eq!(ed.analysis().dependent_equations, 0);
+        assert!(ed.analysis().conflicts.is_empty());
+        assert!(ed.out.notice.is_none(), "{:?}", ed.out.notice);
+        let smooth = |ed: &Editor| {
+            let at = ed.doc.point(shared[0]).unwrap();
+            let centre = |arc| match ed.doc.get(arc).map(|e| e.kind) {
+                Some(EntityKind::Arc { center, .. }) => ed.doc.point(center).unwrap(),
+                _ => panic!("an arc"),
+            };
+            let (u, w) = (centre(low) - at, centre(high) - at);
+            u.length() > 1.0 && u.perp_dot(w).abs() < 1e-6 * u.length() * w.length()
+        };
+        // Wider: the arcs still meet smoothly.
+        let to = ed.doc.point(corners[2]).unwrap() + v(30.0, 0.0);
+        assert!(ed.move_point_to(corners[2], to));
+        assert!(smooth(&ed), "no kink after widening");
+        // Pulled up: the top stays where the radii put it, with no kink.
+        let to = ed.doc.point(corners[2]).unwrap() + v(0.0, 30.0);
+        ed.move_point_to(corners[2], to);
+        assert!(smooth(&ed), "no kink after pulling the top up");
+        let height =
+            |ed: &Editor| ed.doc.point(corners[2]).unwrap().y - ed.doc.point(corners[0]).unwrap().y;
+        assert!((height(&ed) - 50.0).abs() < 1e-7);
+        // A bigger top fillet raises the top.
+        let radius = ed
+            .doc
+            .constraints()
+            .find(|(_, c)| matches!(**c, Constraint::Radius { curve, .. } if curve == high))
+            .map(|(id, _)| id)
+            .unwrap();
+        ed.set_dimension(radius, 30.0).unwrap();
+        assert!(smooth(&ed), "no kink after resizing");
+        assert!((height(&ed) - 55.0).abs() < 1e-7);
+    }
+
+    /// A rectangle whose sides are held square and parallel to each other, as the Line
+    /// tool's guides draw a rotated one: a fillet takes a side whole just as on one held
+    /// horizontal and vertical, with no construction line left, and what ran through the
+    /// side (the right side square to the bottom) still holds.
+    #[test]
+    fn a_side_held_square_and_parallel_is_taken_like_one_held_level() {
+        let (mut axes, axes_corners, _) = bare_plate();
+        axes.fillet(axes_corners[0], 50.0).unwrap();
+        let level = dof(&mut axes);
+        let (mut ed, corners, sides) = bare_plate();
+        ed.doc.begin();
+        for (id, c) in ed
+            .doc
+            .constraints()
+            .map(|(id, c)| (id, *c))
+            .collect::<Vec<_>>()
+        {
+            let swap = match c {
+                Constraint::Vertical { line } if line == sides[3] => Constraint::Perpendicular {
+                    a: sides[3],
+                    b: sides[0],
+                },
+                Constraint::Vertical { line } if line == sides[1] => Constraint::Parallel {
+                    a: sides[1],
+                    b: sides[3],
+                },
+                Constraint::Horizontal { line } if line == sides[2] => Constraint::Parallel {
+                    a: sides[2],
+                    b: sides[0],
+                },
+                _ => continue,
+            };
+            ed.doc.set_constraint(id, swap).unwrap();
+        }
+        ed.commit("Square");
+        let free = dof(&mut ed);
+        assert_eq!(free, {
+            let (mut b, ..) = bare_plate();
+            dof(&mut b)
+        });
+        ed.fillet(corners[0], 50.0).unwrap();
+        assert!(!ed.doc.contains(sides[3]), "the left side goes");
+        assert!(!ed.doc.contains(corners[0]));
+        let square = |c: &Constraint| {
+            matches!(*c, Constraint::Perpendicular { a, b }
+                if (a, b) == (sides[0], sides[1]) || (a, b) == (sides[1], sides[0]))
+        };
+        assert_eq!(
+            count(&ed, square),
+            1,
+            "the right side stays square to the bottom"
+        );
+        assert_eq!(dof(&mut ed), level);
+        assert_eq!(ed.analysis().dependent_equations, 0);
+    }
+
+    /// A relation carried through a side taken whole that the others already imply isn't
+    /// added: nothing is left over-defined.
+    #[test]
+    fn a_relation_carried_through_a_taken_side_is_not_added_twice() {
+        let (mut ed, corners, sides) = bare_plate();
+        ed.doc.begin();
+        ed.doc
+            .add_constraint(Constraint::Perpendicular {
+                a: sides[3],
+                b: sides[0],
+            })
+            .unwrap();
+        ed.commit("Square");
+        ed.fillet(corners[0], 50.0).unwrap();
+        assert!(!ed.doc.contains(sides[3]));
+        assert_eq!(
+            count(&ed, |c| *c == Constraint::Horizontal { line: sides[0] }),
+            1
+        );
+        dof(&mut ed);
+        assert!(ed.analysis().redundant.is_empty());
+        assert_eq!(ed.analysis().dependent_equations, 0);
+    }
+
+    /// A fillet may take an arc whole too: on a D (a line and a half circle), two fillets of
+    /// half the line meet on both, leaving a circle of two arcs held tangent.
+    #[test]
+    fn fillets_may_take_an_arc_whole() {
+        let mut ed = related();
+        ed.doc.begin();
+        let a = ed.doc.add_point(v(0.0, 0.0));
+        let b = ed.doc.add_point(v(20.0, 0.0));
+        let c = ed.doc.add_point(v(10.0, 0.0));
+        let line = ed.doc.add_line(a, b).unwrap();
+        let half = ed.doc.add_arc(c, b, a).unwrap();
+        ed.commit("D");
+        let arcs = ed.fillet_corners(&[a, b], 5.0).unwrap();
+        assert!(!ed.doc.contains(line) && !ed.doc.contains(half));
+        let (p, q) = (arc_ends(&ed, arcs[0]), arc_ends(&ed, arcs[1]));
+        assert!(p.iter().all(|e| q.contains(e)), "{p:?} {q:?}");
+        for e in p {
+            let at = ed.doc.point(e).unwrap();
+            assert!(
+                close(at, v(10.0, 0.0)) || close(at, v(10.0, 10.0)),
+                "{at:?}"
+            );
+        }
+        assert_eq!(tangents(&ed, arcs[0], arcs[1]), 1);
+    }
+
+    /// Re-sizing a fillet never takes a side whole: its sides stay, so a radius that would
+    /// run a tangent point onto a side's far end is refused, and nothing changes.
+    #[test]
+    fn a_fillet_is_not_resized_onto_a_sides_far_end() {
+        let (mut ed, corners, sides) = bare_plate();
+        let arc = ed.fillet(corners[0], 10.0).unwrap();
+        assert!(ed.refillet(arc, 50.0).is_err());
+        ed.doc.begin();
+        assert!(!ed.drag_fillet(arc, 50.0));
+        ed.doc.rollback();
+        let (lo, hi) = ends(&ed, sides[3]);
+        assert!((lo.distance(hi) - 40.0).abs() < 1e-7, "{lo:?} {hi:?}");
+        ed.refillet(arc, 49.0).unwrap();
+        let (lo, hi) = ends(&ed, sides[3]);
+        assert!((lo.distance(hi) - 1.0).abs() < 1e-7, "{lo:?} {hi:?}");
     }
 
     #[test]

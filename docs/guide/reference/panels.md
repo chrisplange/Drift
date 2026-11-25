@@ -79,16 +79,21 @@ Ctrl+L shows or hides it.
 ![The Layers panel: Walls is current (filled dot); the Survey layer's magnet is off, so it isn't snapped to](../images/layers.png)
 
 - Each layer is a row: a dot, its **stroke** and **fill** swatches, its name, its line
-  (weight and type), and print, snap, show and lock switches. The filled dot and
+  (weight and type), and print, snap, show and lock switches. In a narrow panel the names
+  keep their room: the line cell drops its weight figure, then the print switch, then the
+  snap switch go while every layer has them on (a layer with one off brings it back on
+  every row), and a row's right-click menu always has **Printed and exported** and **Snap
+  to this layer**. The filled dot and
   highlighted row mark the **current layer**, where new geometry goes. Click anywhere on a
   row to make that layer current; double-click the name to rename it. Hover the name for
   how many curves are on the layer.
 - Click a swatch to pick its colour: **Ink** (white on the dark canvas, black on the light
   one, and black on paper and in print), the drawing's colours, recent ones, a palette, a
-  hex value, or **More…** for any colour. A fill swatch with a small link follows the
+  hex value, or **More…** for any colour. Each colour is offered once (a palette colour
+  stays in the palette). A fill swatch with a small link follows the
   stroke (**Match stroke**) until you give it a colour of its own; it colours the fills and
   hatches on the layer.
-- Click the line cell (a sample of the line and its weight) to pick a **weight** or **line
+- Click the line cell (a sample of the line, and its weight when there is room) to pick a **weight** or **line
   type**. The printer switch sets whether the layer is printed and exported.
 - **Ctrl-click** rows to pick several (Shift-click picks a run of them); a colour, weight,
   line type or print setting picked on one of them goes to all of them, in one undo step,

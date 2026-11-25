@@ -283,7 +283,15 @@ pub(crate) fn colour_button(
     );
     paint_swatch(ui.painter(), swatch, value, unset, fallback, dark);
     let text = value.map_or_else(|| unset.name().to_owned(), hex);
-    let spoken = text.clone();
+    // Unset, it is read out with what it shows as: "By layer, #E5484D".
+    let follows = match (value, unset, fallback) {
+        (None, Unset::Named(_), Some(Follows::Colour(c))) => Some(hex(c)),
+        (None, Unset::Named(_), Some(Follows::Ink)) => Some("Ink".to_owned()),
+        _ => None,
+    };
+    let spoken = follows
+        .as_ref()
+        .map_or_else(|| text.clone(), |f| format!("{text}, {f}"));
     let color = if value.is_some() {
         ui.visuals().text_color()
     } else {
@@ -296,10 +304,11 @@ pub(crate) fn colour_button(
         egui::TextStyle::Body.resolve(ui.style()),
         color,
     );
-    let tip = value.map_or_else(
-        || unset.tip(dark),
-        |c| format!("{} · click to change", hex(c)),
-    );
+    let tip = match (value, follows) {
+        (Some(c), _) => format!("{} · click to change", hex(c)),
+        (None, Some(f)) => format!("{}: {f} for now · click to change", unset.name()),
+        (None, None) => unset.tip(dark),
+    };
     let response = response.on_hover_text(tip);
     response.widget_info(|| labeled_with_value(egui::WidgetType::ColorButton, name, &spoken));
     colour_popup(ui, &response, value, unset, fallback, dark)
@@ -360,11 +369,11 @@ pub(crate) fn colour_popup(
                     ui.close();
                 }
             });
-            let document = document_colours(ui.ctx());
             let recent: Vec<[u8; 3]> = ui
                 .ctx()
                 .data(|d| d.get_temp(recent_id()))
                 .unwrap_or_default();
+            let (document, recent) = offered_once(&document_colours(ui.ctx()), &recent);
             for (title, colours) in [
                 ("In this drawing", document.as_slice()),
                 ("Recent", recent.as_slice()),
@@ -542,6 +551,26 @@ fn ring(ui: &egui::Ui, r: Rect, picked: bool, hovered: bool) {
     }
 }
 
+/// The drawing's colours and the recent picks to show above the palette, so that each
+/// colour is offered once: the palette keeps its fixed places, the drawing's colours leave
+/// out the palette's, and the recent picks leave out both.
+fn offered_once(document: &[[u8; 3]], recent: &[[u8; 3]]) -> (Vec<[u8; 3]>, Vec<[u8; 3]>) {
+    let mut seen: Vec<[u8; 3]> = PALETTE.to_vec();
+    let mut keep = |list: &[[u8; 3]]| {
+        let mut out = Vec::new();
+        for &c in list {
+            if !seen.contains(&c) {
+                seen.push(c);
+                out.push(c);
+            }
+        }
+        out
+    };
+    let document = keep(document);
+    let recent = keep(recent);
+    (document, recent)
+}
+
 /// Keep `c` first among the recent picks.
 fn remember(ctx: &egui::Context, c: Rgb) {
     ctx.data_mut(|d| {
@@ -555,6 +584,17 @@ fn remember(ctx: &egui::Context, c: Rgb) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_colour_is_offered_once() {
+        let blue = PALETTE[5];
+        let red = [0xd0, 0x40, 0x40];
+        let teal = [0x10, 0x80, 0x80];
+        // Blue is in the palette, red in the drawing and among the recent picks.
+        let (document, recent) = offered_once(&[blue, red], &[red, blue, teal, teal]);
+        assert_eq!(document, vec![red]);
+        assert_eq!(recent, vec![teal]);
+    }
 
     #[test]
     fn hex_takes_what_people_paste() {
@@ -743,7 +783,20 @@ mod tests {
             Some("Stroke color")
         );
         assert_eq!(well.accesskit_node().value().as_deref(), Some("#FF0000"));
+        // Unset, it says what it shows as, when that is one colour.
         let h = picker(None, Some(Follows::Ink));
+        let well = h.get_by_role(egui::accesskit::Role::ColorWell);
+        assert_eq!(
+            well.accesskit_node().value().as_deref(),
+            Some("By layer, Ink")
+        );
+        let h = picker(None, Some(Follows::Colour(Rgb([0xe5, 0x48, 0x4d]))));
+        let well = h.get_by_role(egui::accesskit::Role::ColorWell);
+        assert_eq!(
+            well.accesskit_node().value().as_deref(),
+            Some("By layer, #E5484D")
+        );
+        let h = picker(None, None);
         let well = h.get_by_role(egui::accesskit::Role::ColorWell);
         assert_eq!(well.accesskit_node().value().as_deref(), Some("By layer"));
     }

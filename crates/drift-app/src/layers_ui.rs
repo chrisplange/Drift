@@ -5,7 +5,7 @@ use drift_core::{EntityId, Layer, LayerId, LineType, LineWeight, Rgb};
 use eframe::egui;
 
 use crate::DriftApp;
-use crate::colour::{Unset, paint_swatch};
+use crate::colour::{Follows, Unset, paint_swatch};
 use crate::icons::{self, Glyph};
 use drift_edit::editor::LayerFlag;
 
@@ -362,17 +362,20 @@ pub(crate) fn to_color32(c: Option<Rgb>, dark: bool) -> egui::Color32 {
 
 /// A colour control (a swatch and its hex; one click opens the picker), `name` saying what
 /// it colours (to assistive tech, with its colour as the value) and `auto_label` naming what
-/// an unset colour falls back to ("Auto": the theme's ink). It takes the width it is given:
-/// a row's value column.
+/// an unset colour falls back to ("Auto": the theme's ink). `fallback` is the colour that
+/// fallback is now (a layer's, the default ink), shown with a small link while unset; None
+/// only when it isn't one colour (picks on layers of different colours). It takes the width
+/// it is given: a row's value column.
 pub(crate) fn color_choice(
     ui: &mut egui::Ui,
     name: &str,
     value: Option<Rgb>,
     auto_label: &str,
+    fallback: Option<Follows>,
     dark: bool,
 ) -> Option<Option<Rgb>> {
     let width = ui.available_width();
-    color_choice_of(ui, name, value, auto_label, dark, width)
+    color_choice_of(ui, name, value, auto_label, fallback, dark, width)
 }
 
 /// [`color_choice`] at a set width (on a bar, among other controls).
@@ -381,11 +384,12 @@ pub(crate) fn color_choice_of(
     name: &str,
     value: Option<Rgb>,
     auto_label: &str,
+    fallback: Option<Follows>,
     dark: bool,
     width: f32,
 ) -> Option<Option<Rgb>> {
     let unset = Unset::from_label(auto_label);
-    crate::colour::colour_button(ui, name, value, unset, None, dark, width)
+    crate::colour::colour_button(ui, name, value, unset, fallback, dark, width)
 }
 
 /// A line weight's menu, as wide as the room it is given (a row's value column).
@@ -452,6 +456,66 @@ const SWATCH: f32 = 13.0;
 const ROW_SPACING: f32 = 5.0;
 /// The weight and line type cell: a sample of the line and its weight.
 const LINE_CELL: f32 = 48.0;
+/// The same cell when the row is short of room: the sample alone (the weight is in its
+/// tooltip and menu).
+const LINE_CELL_NARROW: f32 = 3.0 + ROW_SAMPLE + 3.0;
+/// The room a layer's name should have (about 16 characters, "A-WALL-FULL-PATT"): a
+/// narrower row first leaves out the line cell's weight, then the print switch, then the
+/// snap switch, each only while every layer has it on (the row's right-click menu still
+/// has both).
+const NAME_ROOM: f32 = 112.0;
+/// The least room a name is given, however narrow the panel: past it the row runs over and
+/// the panel is held wider (see `dock_needs`), rather than the name going to "…".
+const NAME_MIN: f32 = 72.0;
+/// What a row shows right of its name, by the room it has.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RowFit {
+    weight: bool,
+    print: bool,
+    snap: bool,
+}
+
+impl RowFit {
+    /// For `width`, the room after the dot and swatches; `unprinted` and `unsnapped`: some
+    /// layer has that switch off, so its column stays to show it.
+    fn of(width: f32, unprinted: bool, unsnapped: bool) -> RowFit {
+        let name = |switches: f32, cell: f32| width - RIGHT_GAPS - switches * ICON_TOGGLE - cell;
+        if name(4.0, LINE_CELL) >= NAME_ROOM {
+            return RowFit {
+                weight: true,
+                print: true,
+                snap: true,
+            };
+        }
+        // (A column kept to show a switch that is off takes from the name, not from the
+        // other switch.)
+        let print = name(4.0, LINE_CELL_NARROW) >= NAME_ROOM;
+        let switches = if print { 4.0 } else { 3.0 };
+        let snap = name(switches, LINE_CELL_NARROW) >= NAME_ROOM;
+        RowFit {
+            weight: false,
+            print: print || unprinted,
+            snap: snap || unsnapped,
+        }
+    }
+
+    /// The width of what it shows right of the name (less the picked mark).
+    fn width(self) -> f32 {
+        let switches = 2 + usize::from(self.print) + usize::from(self.snap);
+        let cell = if self.weight {
+            LINE_CELL
+        } else {
+            LINE_CELL_NARROW
+        };
+        RIGHT_GAPS + switches as f32 * ICON_TOGGLE + cell
+    }
+}
+
+/// The gaps right of a row's name: after the name, and either side of the line cell.
+const RIGHT_GAPS: f32 = 12.0;
+/// The mark on a row whose layer some of the selection is on, and its gap.
+const PICKED_MARK: f32 = 9.0;
+const PICKED_GAP: f32 = 5.0;
 /// How long the line sample in a layer row is: room for a phantom line's long dash, its two
 /// dots and the next long dash, each dot and gap at least [`MIN_MARK`].
 const ROW_SAMPLE: f32 = 18.0;
@@ -461,6 +525,9 @@ const MIN_MARK: f32 = 2.0;
 // The row's sample (from 3 points in) leaves room in its cell for the weight: "0.25" is
 // about 20 points wide, 3 in from the right, and a few points of gap.
 const _: () = assert!(3.0 + ROW_SAMPLE + 25.0 <= LINE_CELL);
+
+/// The print switch's tooltip (and its name to assistive tech).
+const PRINT_TIP: &str = "Printed and exported (off: shown here, left out of prints and exports)";
 
 /// Space between two rows of the list.
 const ROW_GAP: f32 = 1.0;
@@ -509,6 +576,10 @@ struct RowInfo<'a> {
     /// The layer each setting is Alt-clicked onto, if any.
     solo_lock: Option<LayerId>,
     solo_snap: Option<LayerId>,
+    /// Some layer isn't printed, or isn't snapped to: that switch's column stays when the
+    /// rows are short of room.
+    any_unprinted: bool,
+    any_unsnapped: bool,
     /// The rows as listed (top down, filtered): what a Shift-click range runs over.
     list: &'a [LayerId],
 }
@@ -649,11 +720,14 @@ impl DriftApp {
         let needle = self.drawing.layer_list.filter.trim().to_lowercase();
         let mut total = 0;
         let mut any_hidden = false;
+        let (mut any_unprinted, mut any_unsnapped) = (false, false);
         let mut list: Vec<LayerId> = Vec::new();
         for (id, layer) in layers.iter().rev() {
             let id = *id;
             total += 1;
             any_hidden |= !layer.visible;
+            any_unprinted |= !layer.printable;
+            any_unsnapped |= !layer.snappable;
             if needle.is_empty() || layer.name.to_lowercase().contains(&needle) {
                 list.push(id);
             }
@@ -668,6 +742,8 @@ impl DriftApp {
             any_hidden,
             solo_lock: self.solo_of(LayerFlag::Locked),
             solo_snap: self.solo_of(LayerFlag::Snappable),
+            any_unprinted,
+            any_unsnapped,
             list: &list,
         };
         // Rows the filter hides aren't picked, so a change made on a picked row goes only to
@@ -1077,6 +1153,22 @@ impl DriftApp {
                 ui.close();
             }
             ui.separator();
+            // The print and snap switches, also here for a row too narrow to show them.
+            if ui
+                .checkbox(&mut edited.printable, "Printed and exported")
+                .on_hover_text(PRINT_TIP)
+                .clicked()
+            {
+                touched.printable = true;
+                ui.close();
+            }
+            if ui
+                .checkbox(&mut edited.snappable, "Snap to this layer")
+                .clicked()
+            {
+                ui.close();
+            }
+            ui.separator();
             if ui
                 .add_enabled(id != LayerId::DEFAULT, egui::Button::new("Delete layer"))
                 .clicked()
@@ -1270,37 +1362,51 @@ impl DriftApp {
                 edited.fill_color = c;
                 touched.fill = true;
             }
-            ui.spacing_mut().item_spacing.x = ROW_SPACING;
-            // Controls from the right, so the name takes the space left.
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.spacing_mut().item_spacing.x = 0.0;
-                let mut locked = edited.locked;
-                let glyph = if locked { Glyph::Lock } else { Glyph::Unlock };
-                let tip = if info.solo_lock == Some(id) {
-                    "Lock or unlock (locked geometry can be snapped to but not edited) · \
-                     Alt-click: put the other layers' locks back"
-                } else {
-                    "Lock or unlock (locked geometry can be snapped to but not edited) · \
-                     Alt-click: lock every other layer"
-                };
-                if icon_toggle(ui, &mut locked, glyph, false, tip) && ui.input(|i| i.modifiers.alt)
-                {
-                    locked = edited.locked;
-                    action = Some(LayerAction::Solo(LayerFlag::Locked, id));
-                }
-                edited.locked = locked;
-                let visible = edited.visible;
-                let tip = "Show or hide · Alt-click: show this layer alone";
-                if icon_toggle(ui, &mut edited.visible, Glyph::Eye, true, tip)
-                    && ui.input(|i| i.modifiers.alt)
-                {
-                    edited.visible = visible;
-                    action = Some(if info.isolated == Some(id) {
-                        LayerAction::EndIsolate
-                    } else {
-                        LayerAction::Isolate(id)
-                    });
-                }
+            ui.spacing_mut().item_spacing.x = 0.0;
+            ui.add_space(ROW_SPACING);
+            // The name takes the room the controls leave, never less than NAME_MIN: a row
+            // narrower than that runs over, and the panel is held wider.
+            let fit = RowFit::of(ui.available_width(), info.any_unprinted, info.any_unsnapped);
+            let picked = info.picked.contains(&id);
+            let mark = if picked {
+                PICKED_MARK + PICKED_GAP
+            } else {
+                0.0
+            };
+            let name_width = (ui.available_width() - fit.width() - mark).max(NAME_MIN);
+            ui.allocate_ui_with_layout(
+                egui::vec2(name_width, ICON_TOGGLE),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.set_width(name_width);
+                    self.layer_name(ui, id, layer, edited, info);
+                },
+            );
+            ui.add_space(4.0);
+            if picked {
+                ui.add_space(PICKED_GAP);
+                let (mark, response) = ui.allocate_exact_size(
+                    egui::vec2(PICKED_MARK, PICKED_MARK),
+                    egui::Sense::hover(),
+                );
+                let r = mark.shrink(0.5);
+                ui.painter().rect(
+                    r,
+                    1.5,
+                    accent.gamma_multiply(0.25),
+                    egui::Stroke::new(1.2, accent),
+                    egui::StrokeKind::Inside,
+                );
+                response.on_hover_text("Some of the selection is on this layer");
+            }
+            ui.add_space(4.0);
+            line_cell(ui, id, &layer.name, edited, touched, fit.weight);
+            ui.add_space(4.0);
+            if fit.print {
+                touched.printable |=
+                    icon_toggle(ui, &mut edited.printable, Glyph::Print, true, PRINT_TIP);
+            }
+            if fit.snap {
                 let snappable = edited.snappable;
                 let tip = if info.solo_snap == Some(id) {
                     "Snap to this layer's geometry (off: it can still be picked and edited) · \
@@ -1315,31 +1421,33 @@ impl DriftApp {
                     edited.snappable = snappable;
                     action = Some(LayerAction::Solo(LayerFlag::Snappable, id));
                 }
-                let tip = "Printed and exported (off: shown here, left out of prints and exports)";
-                touched.printable |=
-                    icon_toggle(ui, &mut edited.printable, Glyph::Print, true, tip);
-                ui.add_space(4.0);
-                line_cell(ui, id, &layer.name, edited, touched);
-                ui.add_space(4.0);
-                if info.picked.contains(&id) {
-                    ui.add_space(5.0);
-                    let (mark, response) =
-                        ui.allocate_exact_size(egui::vec2(9.0, 9.0), egui::Sense::hover());
-                    let r = mark.shrink(0.5);
-                    ui.painter().rect(
-                        r,
-                        1.5,
-                        accent.gamma_multiply(0.25),
-                        egui::Stroke::new(1.2, accent),
-                        egui::StrokeKind::Inside,
-                    );
-                    response.on_hover_text("Some of the selection is on this layer");
-                }
-                ui.add_space(4.0);
-                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    self.layer_name(ui, id, layer, edited, info);
+            }
+            let visible = edited.visible;
+            let tip = "Show or hide · Alt-click: show this layer alone";
+            if icon_toggle(ui, &mut edited.visible, Glyph::Eye, true, tip)
+                && ui.input(|i| i.modifiers.alt)
+            {
+                edited.visible = visible;
+                action = Some(if info.isolated == Some(id) {
+                    LayerAction::EndIsolate
+                } else {
+                    LayerAction::Isolate(id)
                 });
-            });
+            }
+            let mut locked = edited.locked;
+            let glyph = if locked { Glyph::Lock } else { Glyph::Unlock };
+            let tip = if info.solo_lock == Some(id) {
+                "Lock or unlock (locked geometry can be snapped to but not edited) · \
+                 Alt-click: put the other layers' locks back"
+            } else {
+                "Lock or unlock (locked geometry can be snapped to but not edited) · \
+                 Alt-click: lock every other layer"
+            };
+            if icon_toggle(ui, &mut locked, glyph, false, tip) && ui.input(|i| i.modifiers.alt) {
+                locked = edited.locked;
+                action = Some(LayerAction::Solo(LayerFlag::Locked, id));
+            }
+            edited.locked = locked;
         });
         action
     }
@@ -1640,6 +1748,21 @@ fn by_layer_follows(
     follows.all(|f| f == first).then_some(first)
 }
 
+/// What a fill's or hatch's "By layer" shows as on `layers`: their fill colour (which
+/// matches the stroke, or Ink, until given its own) when they all have the same one;
+/// unknown (`None`) when they differ.
+pub(crate) fn fill_by_layer_follows(
+    doc: &drift_core::Document,
+    layers: impl IntoIterator<Item = LayerId>,
+) -> Option<Follows> {
+    let mut follows = layers
+        .into_iter()
+        .filter_map(|id| doc.layer(id))
+        .map(|l| Follows::of(l.fill_colour()));
+    let first = follows.next()?;
+    follows.all(|f| f == first).then_some(first)
+}
+
 /// How thick a line of `weight` is drawn in a sample: from a hairline at 0.13 mm to 5 points
 /// at 2.00 mm, every ISO weight a different width.
 fn sample_width(weight: LineWeight) -> f32 {
@@ -1725,9 +1848,15 @@ fn line_cell(
     name: &str,
     edited: &mut Layer,
     touched: &mut Touched,
+    weight_shown: bool,
 ) {
+    let width = if weight_shown {
+        LINE_CELL
+    } else {
+        LINE_CELL_NARROW
+    };
     let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(LINE_CELL, ICON_TOGGLE), egui::Sense::click());
+        ui.allocate_exact_size(egui::vec2(width, ICON_TOGGLE), egui::Sense::click());
     let color = if response.hovered() {
         ui.visuals().strong_text_color()
     } else {
@@ -1749,18 +1878,20 @@ fn line_cell(
         edited.line_type,
         color,
     );
-    let weight = if edited.weight.0 == 0 {
-        "Hair".to_owned()
-    } else {
-        format!("{:.2}", edited.weight.mm())
-    };
-    ui.painter().text(
-        egui::pos2(rect.right() - 3.0, y),
-        egui::Align2::RIGHT_CENTER,
-        weight,
-        egui::TextStyle::Small.resolve(ui.style()),
-        color,
-    );
+    if weight_shown {
+        let weight = if edited.weight.0 == 0 {
+            "Hair".to_owned()
+        } else {
+            format!("{:.2}", edited.weight.mm())
+        };
+        ui.painter().text(
+            egui::pos2(rect.right() - 3.0, y),
+            egui::Align2::RIGHT_CENTER,
+            weight,
+            egui::TextStyle::Small.resolve(ui.style()),
+            color,
+        );
+    }
     let value = format!(
         "{} · {}",
         edited.weight.label(),
@@ -1840,7 +1971,49 @@ fn can_rename(id: LayerId, layer: &Layer) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::colour::Follows;
+
+    #[test]
+    fn a_narrow_row_gives_up_the_weight_then_print_then_snap_for_the_name() {
+        let fit = |w: f32| RowFit::of(w, false, false);
+        let all = RowFit {
+            weight: true,
+            print: true,
+            snap: true,
+        };
+        assert_eq!(fit(400.0), all);
+        let mut want = RowFit {
+            weight: false,
+            ..all
+        };
+        let mut last = 400.0;
+        for w in (100..400).rev().map(|w| w as f32) {
+            let f = fit(w);
+            if f != fit(last) {
+                // Each step gives up one more thing, in that order.
+                assert_eq!(f, want, "at {w}");
+                if !want.weight && want.print {
+                    want.print = false;
+                } else if !want.print && want.snap {
+                    want.snap = false;
+                }
+            }
+            // The name has its room, unless every control that can go has gone.
+            let name = w - f.width();
+            assert!(name >= NAME_ROOM || f.width() <= RowFit::of(0.0, false, false).width());
+            last = w;
+        }
+        assert_eq!(
+            fit(100.0),
+            RowFit {
+                weight: false,
+                print: false,
+                snap: false
+            }
+        );
+        // A switch some layer has off keeps its column, to show it.
+        let off = RowFit::of(100.0, true, true);
+        assert!(off.print && off.snap && !off.weight);
+    }
 
     #[test]
     fn by_layer_shows_as_the_layers_stroke_ink_too_or_unknown_when_they_differ() {

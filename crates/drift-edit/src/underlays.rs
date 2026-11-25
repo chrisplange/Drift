@@ -53,7 +53,7 @@ pub struct UnderlayReport {
 }
 
 /// Neutral grey underlays, by theme.
-fn default_color(dark: bool) -> [u8; 3] {
+pub fn default_color(dark: bool) -> [u8; 3] {
     if dark {
         [0xa0, 0xa6, 0xb0]
     } else {

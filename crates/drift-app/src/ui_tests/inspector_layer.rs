@@ -307,3 +307,39 @@ fn a_mixed_pick_with_a_text_shows_its_layer_first() {
         on
     });
 }
+
+#[test]
+fn a_fill_by_layer_shows_its_layers_colour() {
+    let Some((mut h, _)) = inspector_harness(DVec2::new(-10.0, -10.0), DVec2::new(60.0, 40.0))
+    else {
+        return;
+    };
+    // The current layer red, the Fill tool's style solid and by layer.
+    let red = drift_core::Rgb([0xe5, 0x48, 0x4d]);
+    {
+        let ed = &mut h.state_mut().drawing.editor;
+        let id = ed.doc.current_layer();
+        let mut l = ed.doc.layer(id).cloned().unwrap();
+        l.color = Some(red);
+        ed.update_layer(id, l);
+        ed.prefs.fill_style.kind = drift_core::FillKind::Solid;
+        ed.prefs.fill_style.color = None;
+    }
+    let sides = rectangle(&mut h, DVec2::ZERO, DVec2::new(40.0, 30.0));
+    let ed = &mut h.state_mut().drawing.editor;
+    ed.prefs.fill_new_shapes = true;
+    ed.doc.begin();
+    ed.add_shape(&sides).expect("a shape");
+    ed.commit("Shape");
+    ed.selection = sides.iter().copied().collect();
+    h.run();
+    h.run();
+    save_png("drift_ui_fill_by_layer.png", &mut h);
+    // The Fill color button shows (and says) the layer's red, not an unknown colour.
+    let value = h
+        .get_by_label("Fill color")
+        .accesskit_node()
+        .value()
+        .map(|v| v.to_string());
+    assert_eq!(value.as_deref(), Some("By layer, #E5484D"));
+}

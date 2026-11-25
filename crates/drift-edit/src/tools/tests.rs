@@ -1,5 +1,5 @@
 use drift_core::{Document, EntityKind};
-use drift_geom::SnapOptions;
+use drift_geom::{SnapKind, SnapOptions};
 
 use super::*;
 
@@ -4378,6 +4378,78 @@ fn editing_a_block_snaps_only_to_the_block() {
         .snap(v(40.1, 0.1), opts, |_| false)
         .expect("the outside end");
     assert!(s.entity.is_some_and(|e| !ed.in_scope(e)));
+}
+
+/// What a sheet snaps to through a view is the drawing as the sheet shows it, the block
+/// edited in place as finished: the drawing around the block snaps there, the edit's
+/// temporary geometry (not drawn on the sheet, deleted when the edit finishes) doesn't.
+#[test]
+fn sketch_snap_reaches_past_a_block_edit() {
+    let (mut ed, copy, _, loose, _) = block_edit_fixture();
+    let opts = SnapOptions {
+        tolerance: TOL,
+        grid: None,
+        from: None,
+    };
+    ed.edit_block(copy);
+    let at = v(10.1, 25.1);
+    let scope = ed.edit_scope().unwrap();
+    assert!(
+        ed.snap(at, opts, |_| false)
+            .is_none_or(|s| s.entity.is_none_or(|e| scope.contains(&e)))
+    );
+    let s = ed
+        .sketch_snap(at, opts, |_| false)
+        .expect("the loose line's end");
+    assert_eq!((s.kind, s.at), (SnapKind::Endpoint, v(10.0, 25.0)));
+    let end = s.entity.expect("the end point");
+    assert!(!scope.contains(&end));
+    assert!(ed.doc.users_of(end).any(|u| u == loose));
+    // The box's corner: the edit snaps to its own temporary corner, the sheet never does.
+    let corner = v(20.1, 10.1);
+    let s = ed.snap(corner, opts, |_| false).expect("the edited corner");
+    assert!(s.entity.is_some_and(|e| scope.contains(&e)));
+    assert!(
+        ed.sketch_snap(corner, opts, |_| false)
+            .is_none_or(|s| s.entity.is_none_or(|e| !scope.contains(&e)))
+    );
+    // Nor anywhere else on the edited box.
+    for at in [v(0.1, 0.1), v(10.0, 0.1), v(20.1, 5.0), v(16.5, 20.1)] {
+        assert!(
+            ed.sketch_snap(at, opts, |_| false)
+                .is_none_or(|s| s.entity.is_none_or(|e| !scope.contains(&e))),
+            "{at:?}"
+        );
+    }
+}
+
+/// On a copy of a block, a snap kind turned off gives way to the next best that is on, as on
+/// the sketch.
+#[test]
+fn block_snaps_keep_to_the_snap_kinds() {
+    let (mut ed, _, other, _, _) = block_edit_fixture();
+    let opts = SnapOptions {
+        tolerance: 2.0,
+        grid: None,
+        from: None,
+    };
+    // The other copy's short line (3 long, above its box's top).
+    let (a, b) = ed
+        .doc
+        .instance_items(other)
+        .into_iter()
+        .find_map(|item| match item.shape {
+            Shape::Line { a, b } if (a.distance(b) - 3.0).abs() < 1e-9 => Some((a, b)),
+            _ => None,
+        })
+        .expect("the copy's short line");
+    let at = a + (b - a).normalize() * 0.3;
+    let s = ed.snap(at, opts, |_| false).expect("the line's end");
+    assert_eq!((s.kind, s.at), (SnapKind::Endpoint, a));
+    ed.prefs.snap_kinds = drift_geom::SnapKinds::ALL.with(SnapKind::Endpoint, false);
+    let s = ed.snap(at, opts, |_| false).expect("the line's middle");
+    assert_eq!(s.kind, SnapKind::Midpoint);
+    assert!(s.at.distance((a + b) * 0.5) < 1e-9, "{}", s.at);
 }
 
 #[test]

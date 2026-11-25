@@ -662,6 +662,92 @@ mod tests {
         assert!(p.ed.out.notice.take().is_some());
     }
 
+    /// A block edited in place, seen through a view: the sheet shows the drawing as it will
+    /// be with the edit finished, so the Note and Dimension tools pick the drawing around the
+    /// block there (the edit's scope doesn't narrow them) and never the edit's temporary
+    /// geometry, which isn't drawn on the sheet and goes, with whatever is tied to it, when
+    /// the edit finishes.
+    #[test]
+    fn sheet_tools_pick_past_a_block_edit_and_never_its_temporary_geometry() {
+        let mut p = plan();
+        // A 200 × 100 box inside the rectangle made a block, its one copy edited in place.
+        let corners = [
+            (100.0, 100.0),
+            (300.0, 100.0),
+            (300.0, 200.0),
+            (100.0, 200.0),
+        ]
+        .map(|(x, y)| p.ed.doc.add_point(V(x, y)));
+        p.ed.selection = (0..4)
+            .map(|i| p.ed.doc.add_line(corners[i], corners[(i + 1) % 4]).unwrap())
+            .collect();
+        let copy = p.ed.make_block("Box").unwrap();
+        p.ed.edit_block(copy);
+        let scope = p.ed.edit_scope().expect("editing the block");
+        let temporary = |e: Option<EntityId>| e.is_some_and(|e| scope.contains(&e));
+
+        // The Note tool partway along the box's bottom side (the model's (150, 100), no
+        // snap there): no leader to the temporary side; the click places a note without one.
+        let mut note = NoteTool::default();
+        p.click(&mut note, Some(0), V(165.0, 135.0));
+        assert!(
+            note.sheet_targets()
+                .iter()
+                .all(|t| !temporary(t.to.entity()))
+        );
+        assert!(!note.is_busy());
+        let SheetAnnotation::Note { leaders, .. } = &p.annotations()[0].1 else {
+            panic!("a note");
+        };
+        assert!(leaders.is_empty(), "{leaders:?}");
+        // Partway along the rectangle's bottom edge, outside the block (the model's
+        // (300, 0)): a leader to it, though it's outside what's being edited.
+        p.click(&mut note, Some(0), V(180.0, 125.0));
+        assert_eq!(note.sheet_targets().len(), 1);
+        assert_eq!(note.sheet_targets()[0].to.entity(), Some(p.lines[0]));
+        p.click(&mut note, None, V(300.0, 250.0));
+        assert_eq!(p.annotations().len(), 2);
+
+        // The Dimension tool: the box's side picks nothing; the rectangle's edge does, and
+        // the sheet's dimension of it is made.
+        let mut dim = DimensionTool::default();
+        p.click(&mut dim, Some(0), V(165.0, 135.0));
+        assert!(!dim.is_busy(), "the temporary side is not picked");
+        assert!(!temporary(p.ed.hovered));
+        p.click(&mut dim, Some(0), V(180.0, 125.0));
+        assert!(dim.is_busy(), "the edge outside the block is picked");
+        assert_eq!(p.ed.hovered, Some(p.lines[0]));
+        p.click(&mut dim, Some(0), V(200.0, 80.0));
+        assert!(!dim.is_busy());
+        let made = p.annotations();
+        assert_eq!(made.len(), 3);
+        let SheetAnnotation::Dimension { measure, .. } = &made[2].1 else {
+            panic!("a dimension: {made:?}");
+        };
+        assert!(measure.entities().all(|e| !scope.contains(&e)));
+
+        // In the model the edit still keeps the tools to the block: the edge isn't picked.
+        p.ed.on_sheet = None;
+        let mut dim = DimensionTool::default();
+        let at = Pointer::new(V(300.0, 0.0), TOL);
+        dim.handle(Input::Click(at, Modifiers::default()), &mut p.ed);
+        assert!(!dim.is_busy());
+
+        // Finishing the edit takes nothing made on the sheet with it.
+        p.ed.finish_block_edit();
+        assert!(p.ed.block_edit.is_none());
+        let made = p.annotations();
+        assert_eq!(made.len(), 3);
+        let SheetAnnotation::Note { leaders, .. } = &made[1].1 else {
+            panic!("a note");
+        };
+        assert_eq!(leaders[0].leader.to.entity(), Some(p.lines[0]));
+        let SheetAnnotation::Dimension { measure, .. } = &made[2].1 else {
+            panic!("a dimension");
+        };
+        assert!(measure.entities().all(|e| p.ed.doc.get(e).is_some()));
+    }
+
     #[test]
     fn the_note_tool_on_a_sheet_makes_the_sheets_own_note() {
         let mut p = plan();

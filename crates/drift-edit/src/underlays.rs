@@ -255,14 +255,15 @@ impl Editor {
         runs
     }
 
-    /// The best snap onto a visible underlay with snapping on.
+    /// The best snap onto a visible underlay with snapping on, of the snap kinds turned on.
     pub fn underlay_snap(&self, p: DVec2, tolerance: f64) -> Option<Snap> {
+        let kinds = self.prefs.snap_kinds;
         let mut best: Option<(Snap, f64)> = None;
         for (id, u) in self.doc.underlays() {
             if !(u.visible && u.snap) {
                 continue;
             }
-            if let Some(s) = self.cached(id).and_then(|i| i.snap(p, tolerance)) {
+            if let Some(s) = self.cached(id).and_then(|i| i.snap_to(p, tolerance, kinds)) {
                 let d = s.at.distance(p);
                 if best
                     .as_ref()
@@ -295,25 +296,13 @@ impl Editor {
         exclude: impl Fn(EntityId) -> bool,
         exclude_copy: impl Fn(drift_core::InstanceId) -> bool,
     ) -> Option<Snap> {
-        // (Walls' hidden centrelines aren't snapped to. In a block being edited, only its own
-        // geometry is: a join to anything else, other copies included, would be lost when
-        // the edit is written back.)
-        let hidden = self.hidden_centrelines();
         let scope = self.snap_scope();
-        let snap = self.snap_sketch_and_underlays(p, options, |id| {
-            exclude(id)
-                || hidden.contains(&id)
-                || !self.snappable(id)
-                || scope.as_ref().is_some_and(|s| !s.contains(&id))
-        });
+        let sketch = self.sketch_snap_in(p, options, exclude, scope.as_ref());
+        let snap = self.with_origin_and_underlays(p, options, sketch);
         if scope.is_some() {
             return snap;
         }
-        let kinds = self.prefs.snap_kinds;
-        let Some(block) = self
-            .block_snap(p, options.tolerance, exclude_copy)
-            .filter(|s| kinds.has(s.kind))
-        else {
+        let Some(block) = self.block_snap(p, options.tolerance, exclude_copy) else {
             return snap;
         };
         match snap {
@@ -346,14 +335,54 @@ impl Editor {
         }
     }
 
-    fn snap_sketch_and_underlays(
+    /// Snap to the sketch alone (no origin, underlays or copies of blocks), as
+    /// [`snap`](Self::snap) does: of the snap kinds turned on, on snappable layers. For what
+    /// is made on a sheet through a view, which shows the drawing as it will be once a block
+    /// edited in place is finished: everything but that edit's temporary geometry. Those
+    /// entities aren't drawn there (the copy is, and copies aren't snapped to), and finishing
+    /// the edit deletes them, which would take with it whatever was attached to them.
+    pub fn sketch_snap(
         &self,
         p: DVec2,
         options: SnapOptions,
         exclude: impl Fn(EntityId) -> bool,
     ) -> Option<Snap> {
+        let editing = self.snap_scope();
+        self.sketch_snap_in(
+            p,
+            options,
+            |id| exclude(id) || editing.as_ref().is_some_and(|s| s.contains(&id)),
+            None,
+        )
+    }
+
+    fn sketch_snap_in(
+        &self,
+        p: DVec2,
+        options: SnapOptions,
+        exclude: impl Fn(EntityId) -> bool,
+        scope: Option<&crate::editor::EditScope>,
+    ) -> Option<Snap> {
+        // (Walls' hidden centrelines aren't snapped to. In a block being edited, only its own
+        // geometry is: a join to anything else, other copies included, would be lost when
+        // the edit is written back.)
+        let hidden = self.hidden_centrelines();
+        self.index.snap_to(p, options, self.prefs.snap_kinds, |id| {
+            exclude(id)
+                || hidden.contains(&id)
+                || !self.snappable(id)
+                || scope.is_some_and(|s| !s.contains(&id))
+        })
+    }
+
+    /// `sketch` (the sketch's snap) against the origin and the underlays.
+    fn with_origin_and_underlays(
+        &self,
+        p: DVec2,
+        options: SnapOptions,
+        sketch: Option<Snap>,
+    ) -> Option<Snap> {
         let kinds = self.prefs.snap_kinds;
-        let sketch = self.index.snap_to(p, options, kinds, exclude);
         // The origin is always there to snap to. A point of the sketch at it comes first (it
         // can be joined to); anything else there gives way.
         let sketch = match sketch {
@@ -365,10 +394,7 @@ impl Editor {
             }),
             other => other,
         };
-        let Some(reference) = self
-            .underlay_snap(p, options.tolerance)
-            .filter(|s| kinds.has(s.kind))
-        else {
+        let Some(reference) = self.underlay_snap(p, options.tolerance) else {
             return sketch;
         };
         match sketch {
@@ -805,6 +831,39 @@ mod tests {
                 RefPrim::Line(v(0.0, 0.0), v(100.0, 50.0)),
             ],
         )
+    }
+
+    /// A snap kind turned off gives way to the next best that is on, on an underlay as on
+    /// the sketch; the origin too goes with its kind.
+    #[test]
+    fn underlay_and_origin_snaps_keep_to_the_snap_kinds() {
+        let mut ed = Editor::default();
+        ed.add_underlay(plan());
+        ed.update_underlays();
+        let options = SnapOptions {
+            tolerance: 0.5,
+            grid: None,
+            from: None,
+        };
+        let snap = |ed: &Editor, at: DVec2| ed.snap(at, options, |_| false);
+        let points_off = drift_geom::SnapKinds::ALL
+            .with(SnapKind::Endpoint, false)
+            .with(SnapKind::Point, false)
+            .with(SnapKind::Origin, false);
+        // By the rectangle's corner: the corner, or with points off, the side nearest.
+        assert_eq!(
+            snap(&ed, v(99.8, 0.3)).map(|s| s.kind),
+            Some(SnapKind::Endpoint)
+        );
+        ed.prefs.snap_kinds = points_off;
+        let s = snap(&ed, v(99.8, 0.3)).expect("the underlay's side");
+        assert_eq!((s.kind, s.at), (SnapKind::OnCurve, v(100.0, 0.3)));
+        // By the origin, with nothing drawn there: the origin only while its kind is on.
+        let mut ed = Editor::default();
+        let s = snap(&ed, v(0.2, 0.1)).expect("the origin");
+        assert_eq!((s.kind, s.at), (SnapKind::Origin, DVec2::ZERO));
+        ed.prefs.snap_kinds = points_off;
+        assert!(snap(&ed, v(0.2, 0.1)).is_none());
     }
 
     #[test]

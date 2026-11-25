@@ -7,7 +7,7 @@ use drift_core::{Bounds, DVec2, Shape};
 use rstar::{AABB, RTree, RTreeObject};
 
 use crate::primitives::{angle_in_sweep, nearest_point};
-use crate::snap::{Snap, SnapKind};
+use crate::snap::{Snap, SnapKind, SnapKinds};
 
 struct RefEntry {
     shape: Shape,
@@ -75,10 +75,16 @@ impl RefIndex {
     /// The best snap within `tolerance` of `p`: end points and centres, then midpoints and
     /// quadrants, then the nearest point on a curve.
     pub fn snap(&self, p: DVec2, tolerance: f64) -> Option<Snap> {
+        self.snap_to(p, tolerance, SnapKinds::ALL)
+    }
+
+    /// [`snap`](Self::snap) to the kinds in `kinds` only: one turned off gives way to the next
+    /// best that is on.
+    pub fn snap_to(&self, p: DVec2, tolerance: f64, kinds: SnapKinds) -> Option<Snap> {
         let mut best: Option<(Snap, f64)> = None;
         let mut offer = |at: DVec2, kind: SnapKind| {
             let d = at.distance(p);
-            if d > tolerance {
+            if d > tolerance || !kinds.has(kind) {
                 return;
             }
             if best
@@ -202,6 +208,10 @@ mod tests {
         let s = index.snap(v(7.5, 0.3), 1.0).unwrap();
         assert_eq!((s.kind, s.at), (SnapKind::OnCurve, v(7.5, 0.0)));
         assert!(index.snap(v(50.0, 50.0), 1.0).is_none());
+        // By the end with endpoints off: the line itself, not nothing.
+        let kinds = SnapKinds::ALL.with(SnapKind::Endpoint, false);
+        let s = index.snap_to(v(0.3, 0.2), 1.0, kinds).unwrap();
+        assert_eq!((s.kind, s.at), (SnapKind::OnCurve, v(0.3, 0.0)));
         let visible: Vec<_> = index
             .query(Bounds::from_center_half_size(v(30.0, 0.0), v(1.0, 1.0)))
             .collect();

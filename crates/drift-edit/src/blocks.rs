@@ -94,7 +94,8 @@ impl Editor {
     /// The nearest snap point of a copy of a block within `tol` of `p`: its box's corners,
     /// edge middles and centre, its insertion point, and its curves' ends, middles and
     /// centres. Copies `exclude` names are passed over, and so is any copy whose box is
-    /// further than `tol` from `p`.
+    /// further than `tol` from `p`. Only the snap kinds turned on count: one turned off gives
+    /// way to the next best that is on.
     pub fn block_snap(
         &self,
         p: DVec2,
@@ -103,10 +104,12 @@ impl Editor {
     ) -> Option<drift_geom::Snap> {
         use drift_geom::{Snap, SnapKind};
         let editing = self.block_edit.map(|e| e.instance);
+        let kinds = self.prefs.snap_kinds;
         let mut best: Option<(Snap, f64)> = None;
         let mut offer = |at: DVec2, kind: SnapKind| {
             let d = at.distance(p);
             if d <= tol
+                && kinds.has(kind)
                 && best
                     .as_ref()
                     .is_none_or(|(b, bd)| (kind.priority(), d) < (b.kind.priority(), *bd))

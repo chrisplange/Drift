@@ -905,3 +905,25 @@ fn a_models_dimension_is_moved_onto_the_sheet_from_its_right_click_menu() {
     assert!(annotations(&h, p.sheet).is_empty());
     assert_eq!(h.state().drawing.editor.doc, p.ed.doc);
 }
+
+/// Through a view on a sheet, the pointer snaps to the kinds the snap pie has on, as it does
+/// on the model canvas.
+#[test]
+fn snapping_through_a_view_keeps_to_the_snap_kinds() {
+    use drift_geom::{SnapKind, SnapKinds};
+    let Some((mut h, _)) = on_sheet() else { return };
+    h.get_by_label("Note").click();
+    h.run();
+    let snap_at = |h: &mut Harness<'_, DriftApp>, p: DVec2| {
+        let at = on_paper(h, p);
+        h.hover_at(at);
+        h.run();
+        h.state().drawing.view.pointer.and_then(|p| p.snap)
+    };
+    // The line's middle is on the paper at (200, 150).
+    let s = snap_at(&mut h, V(200.0, 150.3)).expect("a snap");
+    assert_eq!(s.kind, SnapKind::Midpoint);
+    h.state_mut().drawing.editor.prefs.snap_kinds = SnapKinds::ALL.with(SnapKind::Midpoint, false);
+    let s = snap_at(&mut h, V(200.0, 150.2)).expect("a snap");
+    assert_eq!(s.kind, SnapKind::OnCurve, "the line itself, not its middle");
+}

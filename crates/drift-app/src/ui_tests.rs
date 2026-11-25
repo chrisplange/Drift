@@ -10816,7 +10816,7 @@ fn saved_preferences_read_back_unchanged() {
         .replace("rels=all;", "")
         .replace("merge=0;", "")
         .replace("dock_spots=;", "")
-        .replace("snapk=1023;", "");
+        .replace("snapoff=0;", "");
     assert_eq!(
         h.state().drawing.editor.prefs.snap_kinds,
         drift_geom::SnapKinds::ALL
@@ -10826,6 +10826,35 @@ fn saved_preferences_read_back_unchanged() {
         written.strip_suffix(";gfixed=0;gspace=304.8;gdiv=12;gtext=1';railnames=0"),
         Some(SAVED)
     );
+}
+
+/// The snap pie's kinds turned off are there again after a restart; a value that can't be
+/// read leaves every kind on.
+#[test]
+fn snap_kinds_turned_off_read_back() {
+    use drift_geom::{SnapKind, SnapKinds};
+    let Some(mut h) = harness() else { return };
+    let kinds = SnapKinds::ALL
+        .with(SnapKind::Midpoint, false)
+        .with(SnapKind::Tangent, false);
+    h.state_mut().drawing.editor.prefs.snap_kinds = kinds;
+    let saved = h.state().view_prefs();
+    let Some(mut fresh) = harness() else { return };
+    assert_eq!(
+        fresh.state().drawing.editor.prefs.snap_kinds,
+        SnapKinds::ALL
+    );
+    fresh.state_mut().apply_view_prefs(&saved);
+    assert_eq!(fresh.state().drawing.editor.prefs.snap_kinds, kinds);
+    for bad in ["snapoff=abc", "snapoff=70000", "snapoff=-1"] {
+        let Some(mut h) = harness() else { return };
+        h.state_mut().apply_view_prefs(bad);
+        assert_eq!(
+            h.state().drawing.editor.prefs.snap_kinds,
+            SnapKinds::ALL,
+            "{bad}"
+        );
+    }
 }
 
 #[test]

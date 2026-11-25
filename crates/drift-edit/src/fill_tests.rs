@@ -2866,3 +2866,77 @@ fn a_moving_fills_mesh_moves_with_it_and_is_made_afresh_where_it_lands() {
         );
     }
 }
+
+/// A wall poché whose outline can't be found shows as lost at once, while the edit's other
+/// fills wait for their areas: the same as once they are in, not its old shape unflagged.
+#[test]
+fn a_poche_with_no_outline_shows_lost_while_areas_wait() {
+    let mut ed = Editor::new(Document::new());
+    ed.prefs.auto_relations = false;
+    ed.areas.defer = Some(true);
+    ed.doc.begin();
+    let corners: Vec<EntityId> = [
+        v(0.0, 0.0),
+        v(4000.0, 0.0),
+        v(4000.0, 3000.0),
+        v(0.0, 3000.0),
+    ]
+    .iter()
+    .map(|p| ed.doc.add_point(*p))
+    .collect();
+    let curves: Vec<EntityId> = (0..4)
+        .map(|i| {
+            let c = ed.doc.add_line(corners[i], corners[(i + 1) % 4]).unwrap();
+            ed.doc.set_style(c, drift_core::LineKind::Construction);
+            c
+        })
+        .collect();
+    let path = ed
+        .doc
+        .add_path(drift_core::Path {
+            curves,
+            closed: true,
+        })
+        .unwrap();
+    let wall = ed
+        .doc
+        .add_wall(drift_core::Wall::new(
+            path,
+            200.0,
+            drift_core::LayerId::DEFAULT,
+        ))
+        .unwrap();
+    assert!(ed.commit("Walls"));
+    let (plate_corners, _) = polygon(
+        &mut ed,
+        &[
+            v(6000.0, 0.0),
+            v(6040.0, 0.0),
+            v(6040.0, 20.0),
+            v(6000.0, 20.0),
+        ],
+    );
+    area_fill_at(&mut ed, v(6020.0, 10.0));
+    ed.settle_areas();
+    let poche = *ed.wall_owners().fills.keys().next().expect("a poché");
+    assert!(!ed.fill_shapes()[&poche].lost);
+    // One edit moves the plate (its fill waits for the areas) and leaves the cluster with
+    // no outline.
+    ed.doc.begin();
+    ed.doc.translate(plate_corners, v(1.0, 0.0));
+    let outline = *ed
+        .doc
+        .wall(wall)
+        .unwrap()
+        .made
+        .outlines
+        .values()
+        .next()
+        .unwrap();
+    ed.doc.remove_path(outline);
+    assert!(ed.commit("Edit"));
+    assert!(ed.areas.pending.is_some(), "the plate's fill waits");
+    assert!(ed.fill_shapes()[&poche].lost, "lost while the areas wait");
+    ed.settle_areas();
+    assert!(ed.fill_shapes()[&poche].lost);
+}

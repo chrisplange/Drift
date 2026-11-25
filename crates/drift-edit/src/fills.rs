@@ -544,6 +544,28 @@ impl SolidCurves {
 }
 
 impl Editor {
+    /// Wall poché `id`'s shape: its cluster's outline and holes, or its last shape marked
+    /// lost when the outline can't be found. None if it never had one.
+    fn poche_shape(&mut self, id: FillId) -> Option<FillShape> {
+        let Some(region) = self.wall_fill_region(id) else {
+            return self.last_fill_shapes.get(&id).map(|last| FillShape {
+                lost: true,
+                ..last.clone()
+            });
+        };
+        let mut curves: Vec<EntityId> = region_curves_of(&self.doc, id);
+        curves.sort_unstable();
+        let shape = FillShape {
+            region,
+            lost: false,
+            curves,
+            crossed: false,
+            parts: 0,
+        };
+        self.last_fill_shapes.insert(id, shape.clone());
+        Some(shape)
+    }
+
     /// Every fill's region, as of the current document revision.
     pub fn fill_shapes(&mut self) -> Rc<BTreeMap<FillId, FillShape>> {
         let revision = self.doc.revision();
@@ -597,19 +619,10 @@ impl Editor {
                         .filter(|id| walls.fills.contains_key(id))
                         .collect();
                     for id in pochés {
-                        if let Some(region) = self.wall_fill_region(id) {
-                            let mut curves: Vec<EntityId> = region_curves_of(&self.doc, id);
-                            curves.sort_unstable();
-                            let shape = FillShape {
-                                region,
-                                lost: false,
-                                curves,
-                                crossed: false,
-                                parts: 0,
-                            };
-                            self.last_fill_shapes.insert(id, shape.clone());
-                            shapes.insert(id, shape);
-                        }
+                        match self.poche_shape(id) {
+                            Some(shape) => shapes.insert(id, shape),
+                            None => shapes.remove(&id),
+                        };
                     }
                 }
                 let shapes = Rc::new(shapes);
@@ -658,26 +671,8 @@ impl Editor {
             // A wall cluster's poché: its outline and holes, known exactly (nothing else in
             // the drawing is looked at).
             if walls.as_ref().is_some_and(|w| w.fills.contains_key(&id)) {
-                if let Some(region) = self.wall_fill_region(id) {
-                    let mut curves: Vec<EntityId> = region_curves_of(&self.doc, id);
-                    curves.sort_unstable();
-                    let shape = FillShape {
-                        region,
-                        lost: false,
-                        curves,
-                        crossed: false,
-                        parts: 0,
-                    };
-                    self.last_fill_shapes.insert(id, shape.clone());
+                if let Some(shape) = self.poche_shape(id) {
                     out.insert(id, shape);
-                } else if let Some(last) = self.last_fill_shapes.get(&id) {
-                    out.insert(
-                        id,
-                        FillShape {
-                            lost: true,
-                            ..last.clone()
-                        },
-                    );
                 }
                 continue;
             }
@@ -3699,6 +3694,46 @@ mod tests {
         // The disc inside the plate is its own area.
         let disc = ed.add_fill_at(DVec2::new(20.0, 11.0)).unwrap();
         assert_eq!(ed.doc.fill(disc).unwrap().boundary.len(), 1);
+    }
+
+    /// A fill drawn over a region of its own (a frame easing into place) is drawn as the
+    /// canvas draws it over its shape: the same triangles and hatch lines, solid or hatched,
+    /// zoomed in or out; nothing out of view.
+    #[test]
+    fn fill_graphics_over_its_own_shape_matches_fill_graphics() {
+        let (mut ed, _) = plate();
+        let id = ed.add_fill_at(DVec2::new(5.0, 5.0)).unwrap();
+        let mut cache = MeshCache::default();
+        let mut patterns = PatternLibrary::default();
+        patterns.update(ed.doc.custom_patterns());
+        let view = Bounds {
+            min: DVec2::splat(-10.0),
+            max: DVec2::splat(60.0),
+        };
+        for solid in [false, true] {
+            if solid {
+                let mut fill = ed.doc.fill(id).unwrap().clone();
+                fill.kind = FillKind::Solid;
+                ed.update_fill(id, fill);
+            }
+            for zoom in [10.0, 0.1] {
+                let all = fill_graphics(&mut ed, &mut cache, &patterns, view, zoom, true);
+                let drawn = &all.groups[0];
+                let region = ed.fill_shapes()[&id].region.clone();
+                let over = fill_graphics_over(&ed, &patterns, id, &region, view, zoom, true)
+                    .expect("in view");
+                assert!(!drawn.meshes.is_empty() || !drawn.lines.is_empty());
+                assert_eq!(over.meshes, drawn.meshes, "solid {solid}, zoom {zoom}");
+                assert_eq!(over.lines, drawn.lines, "solid {solid}, zoom {zoom}");
+                assert_eq!((over.layer, over.fill), (drawn.layer, drawn.fill));
+            }
+        }
+        let away = Bounds {
+            min: DVec2::splat(500.0),
+            max: DVec2::splat(600.0),
+        };
+        let region = ed.fill_shapes()[&id].region.clone();
+        assert!(fill_graphics_over(&ed, &patterns, id, &region, away, 10.0, true).is_none());
     }
 
     #[test]

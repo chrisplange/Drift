@@ -22,9 +22,11 @@
 //! than moving them (an opening added or taken out, walls joining: points that come or go)
 //! lands at once, with nothing to slide between.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
-use drift_core::{DVec2, Document, EntityId, EntityKind, FillMesh, Shape, SketchItem};
+use drift_core::{DVec2, Document, EntityId, EntityKind, FillId, FillMesh, Shape, SketchItem};
+use drift_edit::fills::FillShape;
+use drift_geom::regions::Region;
 
 /// How long a solve takes to ease into place, in seconds.
 pub(crate) const DURATION: f64 = 0.12;
@@ -312,6 +314,36 @@ impl Frame {
         }
         Affine::fit(&pairs)
     }
+
+    /// How each fill on what eases in is drawn this frame, by the fills' `shapes` as solved.
+    /// Found once a frame, for the fills and for their lit-up overlays alike.
+    pub(crate) fn fill_motions(
+        &self,
+        solved: &Document,
+        shapes: &BTreeMap<FillId, FillShape>,
+    ) -> HashMap<FillId, FillMotion> {
+        shapes
+            .iter()
+            .filter(|(_, s)| self.touches(&s.curves))
+            .filter_map(|(&id, s)| {
+                // A wall's poché is made again from its faces as shown: no one map carries
+                // it (an opening sliding along leaves the rest where it is).
+                let motion = match drift_edit::walls::wall_poche_region(&self.doc, id) {
+                    Some(region) => FillMotion::Remade(region),
+                    None => FillMotion::Carried(self.fill_map(solved, &s.curves)?),
+                };
+                Some((id, motion))
+            })
+            .collect()
+    }
+}
+
+/// How a fill on what eases in is drawn in a frame.
+pub(crate) enum FillMotion {
+    /// A wall's poché: its region made again from the faces as shown.
+    Remade(Region),
+    /// Any other fill: carried from where it was solved by one map.
+    Carried(Affine),
 }
 
 impl crate::DriftApp {
@@ -657,6 +689,77 @@ mod tests {
         let a =
             Affine::fit(&[(DVec2::ZERO, DVec2::ONE), (DVec2::X, DVec2::X + DVec2::ONE)]).unwrap();
         assert!(a.apply(DVec2::Y).distance(DVec2::Y + DVec2::ONE) < 1e-9);
+    }
+
+    /// A ring of walls round a 4000 × 3000 room, 200 thick, made by the editor (faces and
+    /// poché).
+    fn walled() -> drift_edit::editor::Editor {
+        let mut ed = drift_edit::editor::Editor::new(Document::new());
+        ed.prefs.auto_relations = false;
+        ed.doc.begin();
+        let corners: Vec<EntityId> = [(0.0, 0.0), (4000.0, 0.0), (4000.0, 3000.0), (0.0, 3000.0)]
+            .iter()
+            .map(|&(x, y)| ed.doc.add_point(DVec2::new(x, y)))
+            .collect();
+        let curves = (0..4)
+            .map(|i| {
+                let c = ed.doc.add_line(corners[i], corners[(i + 1) % 4]).unwrap();
+                ed.doc.set_style(c, drift_core::LineKind::Construction);
+                c
+            })
+            .collect();
+        let path = ed
+            .doc
+            .add_path(drift_core::Path {
+                curves,
+                closed: true,
+            })
+            .unwrap();
+        ed.doc
+            .add_wall(drift_core::Wall::new(
+                path,
+                200.0,
+                drift_core::LayerId::DEFAULT,
+            ))
+            .unwrap();
+        assert!(ed.commit("Walls"));
+        ed
+    }
+
+    /// Fine enough a gate for a room thousands of units across.
+    const ROOM: Gate = Gate { scale: 0.1, ..ON };
+
+    #[test]
+    fn an_opening_placed_or_taken_out_lands_at_once_and_slid_eases() {
+        let mut ed = walled();
+        let mut m = SolveMotion::default();
+        m.observe(&ed.doc, 0.0, ROOM);
+        let (w, _) = ed.doc.walls().next().unwrap();
+        let o = ed.place_opening(w, 0, 1000.0).expect("placed");
+        m.observe(&ed.doc, 1.0, ROOM);
+        assert!(!m.animating(), "placed: nothing to slide between");
+        assert!(ed.delete_openings(&[o]));
+        m.observe(&ed.doc, 2.0, ROOM);
+        assert!(!m.animating(), "taken out: nothing to slide between");
+        assert_eq!(m.started, 0);
+        let o = ed.place_opening(w, 0, 1000.0).expect("placed");
+        m.observe(&ed.doc, 3.0, ROOM);
+        ed.set_opening_offset(o, "1500").unwrap();
+        m.observe(&ed.doc, 4.0, ROOM);
+        assert!(m.animating(), "slid along its wall");
+        assert_eq!(m.started, 1);
+    }
+
+    #[test]
+    fn a_change_that_adds_points_still_eases_what_it_moves() {
+        let (mut doc, _, b, _) = line();
+        let mut m = SolveMotion::default();
+        m.observe(&doc, 0.0, ON);
+        doc.add_point(DVec2::new(50.0, 50.0));
+        doc.set_point(b, DVec2::new(20.0, 0.0)).unwrap();
+        m.observe(&doc, 1.0, ON);
+        assert!(m.animating());
+        assert_eq!(m.started, 1);
     }
 
     #[test]

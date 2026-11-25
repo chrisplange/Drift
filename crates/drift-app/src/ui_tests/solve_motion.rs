@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-use drift_core::{Constraint, ConstraintId, DVec2, EntityId};
+use drift_core::{Constraint, ConstraintId, DVec2, EntityId, FillId};
 
 use super::*;
 
@@ -215,12 +215,9 @@ fn a_dragged_end_moves_with_the_pointer_without_easing() {
     assert_eq!(h.state().solve_motion.started, 0);
 }
 
-#[test]
-fn a_hatched_rectangle_stretches_with_its_dimension() {
-    let Some((mut h, _, _)) = dimensioned_line() else {
-        return;
-    };
-    // A 40 × 20 rectangle at (0, -30), its width dimensioned, hatched.
+/// A 40 × 20 rectangle at (0, -30), its width dimensioned, filled: its corners (from the
+/// bottom left, anticlockwise), its width and its fill.
+fn filled_rectangle(h: &mut Harness<'_, DriftApp>) -> ([EntityId; 4], ConstraintId, FillId) {
     let ed = &mut h.state_mut().drawing.editor;
     ed.doc.begin();
     let p = [(0.0, -30.0), (40.0, -30.0), (40.0, -10.0), (0.0, -10.0)]
@@ -260,6 +257,15 @@ fn a_hatched_rectangle_stretches_with_its_dimension() {
     let fill = ed.fill_new_shape(&sides).expect("filled");
     assert!(ed.commit("Shape"));
     h.run();
+    (p, width, fill)
+}
+
+#[test]
+fn a_hatched_rectangle_stretches_with_its_dimension() {
+    let Some((mut h, _, _)) = dimensioned_line() else {
+        return;
+    };
+    let (p, width, fill) = filled_rectangle(&mut h);
     let ed = &mut h.state_mut().drawing.editor;
     let mut hatch = ed.doc.fill(fill).unwrap().clone();
     hatch.kind = drift_core::FillKind::Hatch(drift_core::Hatch::new("ANSI31"));
@@ -301,4 +307,41 @@ fn a_hatched_rectangle_stretches_with_its_dimension() {
     save_png("drift_ui_514_mid_solve.png", &mut h);
     h.run();
     save_png("drift_ui_514_solved.png", &mut h);
+}
+
+/// A picked fill easing into place is lit where it is shown, not where it lands.
+#[test]
+fn a_picked_fill_is_lit_where_it_is_shown_while_it_eases() {
+    let Some((mut h, _, _)) = dimensioned_line() else {
+        return;
+    };
+    let (_, width, fill) = filled_rectangle(&mut h);
+    h.state_mut().drawing.editor.selected_fills = [fill].into();
+    h.hover_at(screen(&h, DVec2::new(100.0, 30.0)));
+    h.run();
+    // Where the rectangle will reach, clear of it and its dimension now.
+    let at = screen(&h, DVec2::new(70.0, -15.0));
+    let before = h.render().expect("render");
+    let bare = before.get_pixel(at.x as u32, at.y as u32).0;
+    h.state_mut()
+        .drawing
+        .editor
+        .set_dimension(width, 80.0)
+        .unwrap();
+    // The first frame shows the rectangle where it was.
+    h.step();
+    assert!(h.state().solve_motion.animating());
+    let shown = h.render().expect("render");
+    assert_eq!(
+        shown.get_pixel(at.x as u32, at.y as u32).0,
+        bare,
+        "the fill's highlight waits for the fill"
+    );
+    h.run();
+    let landed = h.render().expect("render");
+    assert_ne!(
+        landed.get_pixel(at.x as u32, at.y as u32).0,
+        bare,
+        "the fill, lit, where it lands"
+    );
 }

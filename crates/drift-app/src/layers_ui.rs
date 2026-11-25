@@ -194,9 +194,6 @@ pub(crate) struct LayerCounts {
     pub curves: std::collections::HashMap<LayerId, usize>,
     /// Curves in all.
     pub total: usize,
-    /// The drawing's own colours (its layers', then its objects' and fills'), first in
-    /// every colour picker.
-    pub colours: Vec<[u8; 3]>,
 }
 
 /// How many of the drawing's colours a picker offers.
@@ -213,6 +210,44 @@ impl LayerCounts {
         self.layers = doc.layers().map(|(id, l)| (id, l.clone())).collect();
         self.curves.clear();
         self.total = 0;
+        for (_, e) in doc.iter() {
+            if !e.kind.is_point() {
+                *self.curves.entry(e.layer).or_default() += 1;
+                self.total += 1;
+            }
+        }
+    }
+}
+
+/// The drawing's own colours (its layers', then its objects', fills' and texts'), first in
+/// every colour picker. A pass over the whole drawing, so made only while a picker is open
+/// and asks for them, never on a frame of a drag with no picker in sight.
+#[derive(Default)]
+pub(crate) struct DocumentColours {
+    /// The document revision, entity count and layer count these were taken at.
+    key: Option<(u64, usize, usize)>,
+    colours: Vec<[u8; 3]>,
+    /// Passes over the drawing made so far (for the tests).
+    #[cfg(test)]
+    pub scans: usize,
+}
+
+impl DocumentColours {
+    fn key(doc: &drift_core::Document) -> (u64, usize, usize) {
+        (doc.revision(), doc.len(), doc.layers().count())
+    }
+
+    /// Up to date with `doc` (worked out again only if it changed).
+    fn update(&mut self, doc: &drift_core::Document) {
+        let key = Self::key(doc);
+        if self.key == Some(key) {
+            return;
+        }
+        self.key = Some(key);
+        #[cfg(test)]
+        {
+            self.scans += 1;
+        }
         self.colours.clear();
         let colours = &mut self.colours;
         let mut add = |c: Option<Rgb>| {
@@ -223,16 +258,12 @@ impl LayerCounts {
                 colours.push(c.0);
             }
         };
-        for (_, l) in &self.layers {
+        for (_, l) in doc.layers() {
             add(l.color);
             add(l.fill_color);
         }
         for (_, e) in doc.iter() {
             add(e.appearance.color);
-            if !e.kind.is_point() {
-                *self.curves.entry(e.layer).or_default() += 1;
-                self.total += 1;
-            }
         }
         for (_, f) in doc.fills() {
             add(f.color);
@@ -240,6 +271,16 @@ impl LayerCounts {
         for (_, t) in doc.texts() {
             add(t.appearance.color);
         }
+    }
+
+    /// Leave the colours for this pass's pickers: worked out afresh first if a picker asked
+    /// for them, and marked stale when `doc` has changed since, so an open picker asks.
+    pub(crate) fn publish(&mut self, ctx: &egui::Context, doc: &drift_core::Document) {
+        if crate::colour::document_colours_wanted(ctx) {
+            self.update(doc);
+        }
+        let fresh = self.key == Some(Self::key(doc));
+        crate::colour::offer_document_colours(ctx, fresh, self.colours.clone());
     }
 }
 
@@ -255,29 +296,21 @@ pub(crate) fn icon_toggle(
     strike: bool,
     tip: &str,
 ) -> bool {
-    let r = icons::button(ui, ICON_TOGGLE, false, tip, |painter, rect, color| {
-        let color = if *on {
+    let r = icons::toggle(ui, ICON_TOGGLE, on, tip, |painter, rect, color, on| {
+        let color = if on {
             color.gamma_multiply(0.85)
         } else {
             color.gamma_multiply(0.35)
         };
         icons::glyph(painter, rect, glyph, color);
-        if strike && !*on {
+        if strike && !on {
             painter.line_segment(
                 [rect.left_bottom(), rect.right_top()],
                 egui::Stroke::new(1.5, color),
             );
         }
     });
-    let r = r.on_hover_text(tip);
-    let clicked = r.clicked();
-    if clicked {
-        *on = !*on;
-    }
-    // (A toggle button: its state as pressed or not, without the selected tile's look.)
-    let enabled = ui.is_enabled();
-    r.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, *on, tip));
-    clicked
+    r.on_hover_text(tip).clicked()
 }
 
 /// `text` shortened in the middle with an ellipsis to fit `width` (CAD layer names share
@@ -323,28 +356,32 @@ pub(crate) fn to_color32(c: Option<Rgb>, dark: bool) -> egui::Color32 {
     }
 }
 
-/// A colour control (a swatch and its hex; one click opens the picker), `auto_label`
-/// naming what an unset colour falls back to ("Auto": the theme's ink). It takes the width
-/// it is given: a row's value column.
+/// A colour control (a swatch and its hex; one click opens the picker), `name` saying what
+/// it colours (to assistive tech, with its colour as the value) and `auto_label` naming what
+/// an unset colour falls back to ("Auto": the theme's ink). It takes the width it is given:
+/// a row's value column.
 pub(crate) fn color_choice(
     ui: &mut egui::Ui,
+    name: &str,
     value: Option<Rgb>,
     auto_label: &str,
     dark: bool,
 ) -> Option<Option<Rgb>> {
     let width = ui.available_width();
-    color_choice_of(ui, value, auto_label, dark, width)
+    color_choice_of(ui, name, value, auto_label, dark, width)
 }
 
 /// [`color_choice`] at a set width (on a bar, among other controls).
 pub(crate) fn color_choice_of(
     ui: &mut egui::Ui,
+    name: &str,
     value: Option<Rgb>,
     auto_label: &str,
     dark: bool,
     width: f32,
 ) -> Option<Option<Rgb>> {
-    crate::colour::colour_button(ui, value, Unset::from_label(auto_label), None, dark, width)
+    let unset = Unset::from_label(auto_label);
+    crate::colour::colour_button(ui, name, value, unset, None, dark, width)
 }
 
 /// A line weight's menu, as wide as the room it is given (a row's value column).
@@ -555,13 +592,13 @@ impl DriftApp {
         self.set_status(format!("Current layer: {name}"), false, now);
     }
 
-    /// Leave the open drawing's colours for the colour pickers drawn this frame, wherever
-    /// they are (worked out again only when the drawing changes). Run once a frame, before
-    /// the panels.
+    /// Leave the open drawing's colours for the colour pickers drawn this pass, wherever
+    /// they are (worked out again only when the drawing has changed and a picker is open).
+    /// Run every pass, before the panels.
     pub(crate) fn publish_document_colours(&mut self, ctx: &egui::Context) {
-        self.drawing.layer_counts.update(&self.drawing.editor.doc);
-        let colours = self.drawing.layer_counts.colours.clone();
-        ctx.data_mut(|d| d.insert_temp(crate::colour::document_colours_id(), colours));
+        self.drawing
+            .document_colours
+            .publish(ctx, &self.drawing.editor.doc);
     }
 
     pub(crate) fn layers_panel(&mut self, ui: &mut egui::Ui, now: f64) {
@@ -1177,9 +1214,7 @@ impl DriftApp {
             }
             let (r, resp) =
                 ui.allocate_exact_size(egui::vec2(SWATCH, SWATCH), egui::Sense::click());
-            let stroke_shown = edited
-                .color
-                .map_or(crate::colour::ink(dark), crate::colour::to_color32);
+            let stroke_shown = crate::colour::Follows::of(edited.color);
             let unset = Unset::Named("Match stroke");
             paint_swatch(
                 ui.painter(),
@@ -1502,20 +1537,20 @@ impl DriftApp {
         };
         let dark = ui.visuals().dark_mode;
         let a = first.appearance;
-        // "By layer" shown as the first curve's layer colour.
-        let by_layer = self
-            .drawing
-            .editor
-            .doc
-            .layer(first.layer)
-            .map(|l| to_color32(l.color, dark));
+        let by_layer = by_layer_follows(&self.drawing.editor.doc, curves);
         crate::theme::row(ui, "Color", |ui| {
             ui.push_id((salt, "colour"), |ui| {
                 let width = ui.available_width();
                 let unset = Unset::Named("By layer");
-                if let Some(c) =
-                    crate::colour::colour_button(ui, a.color, unset, by_layer, dark, width)
-                {
+                if let Some(c) = crate::colour::colour_button(
+                    ui,
+                    "Stroke color",
+                    a.color,
+                    unset,
+                    by_layer,
+                    dark,
+                    width,
+                ) {
                     self.drawing
                         .editor
                         .update_appearance(curves, |x| x.color = c);
@@ -1572,6 +1607,21 @@ fn paint_line_sample(
     }
 }
 
+/// What "By layer" shows as for `curves`: their layers' stroke (Ink too) when they all have
+/// the same one; unknown (`None`) when they differ.
+fn by_layer_follows(
+    doc: &drift_core::Document,
+    curves: &[EntityId],
+) -> Option<crate::colour::Follows> {
+    let mut follows = curves
+        .iter()
+        .filter_map(|id| doc.get(*id))
+        .filter_map(|e| doc.layer(e.layer))
+        .map(|l| crate::colour::Follows::of(l.color));
+    let first = follows.next()?;
+    follows.all(|f| f == first).then_some(first)
+}
+
 /// How thick a line of `weight` is drawn in a sample: from a hairline at 0.13 mm to 5 points
 /// at 2.00 mm, every ISO weight a different width.
 fn sample_width(weight: LineWeight) -> f32 {
@@ -1579,10 +1629,11 @@ fn sample_width(weight: LineWeight) -> f32 {
     (0.8 * (mm / 0.13).powf(0.67)).clamp(0.8, 5.0)
 }
 
-/// The drawn runs (start, end) of a `line_type` sample `length` points long: its pattern at a
-/// size that reads in a row (a dash of 4 paper units as 8 points). A pattern of a long dash
-/// and dots (centre, phantom) starts just after the long dash, so even a short sample shows
-/// its dots.
+/// The drawn runs (start, end) of a `line_type` sample `length` points long, flush with
+/// both ends: its pattern at a size that reads in a row (a dash of 4 paper units as 8
+/// points). A pattern of a long dash and dots (centre, phantom) shows as the end of one long
+/// dash, its dots, and the start of the next, shrunk to fit if it must, so even a short
+/// sample shows a long dash and every dot.
 fn dash_runs(line_type: LineType, length: f32) -> Vec<(f32, f32)> {
     let dashes = line_type.paper_dashes();
     if dashes.is_empty() {
@@ -1590,7 +1641,28 @@ fn dash_runs(line_type: LineType, length: f32) -> Vec<(f32, f32)> {
     }
     let scale = 2.0;
     let mut runs = Vec::new();
-    let (mut t, mut i) = (0.0_f32, usize::from(dashes.len() > 2));
+    if dashes.len() > 2 {
+        // The long dash's stubs each side are at least this long.
+        const STUB: f32 = 4.0;
+        let dots = &dashes[1..];
+        let group = dots.iter().sum::<f64>() as f32;
+        let scale = ((length - 2.0 * STUB) / group).clamp(0.5, scale);
+        let stub = ((length - group * scale) / 2.0).max(0.0);
+        runs.push((0.0, stub));
+        let mut t = stub;
+        // Gap, dot, gap, … after the long dash.
+        for (k, d) in dots.iter().enumerate() {
+            let end = t + *d as f32 * scale;
+            if k % 2 == 1 {
+                runs.push((t, end));
+            }
+            t = end;
+        }
+        runs.push((t.min(length), length));
+        return runs;
+    }
+    let mut t = 0.0_f32;
+    let mut i = 0;
     while t < length {
         let d = dashes[i % dashes.len()] as f32 * scale;
         let end = (t + d).min(length);
@@ -1727,6 +1799,82 @@ fn can_rename(id: LayerId, layer: &Layer) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::colour::Follows;
+
+    #[test]
+    fn by_layer_shows_as_the_layers_stroke_ink_too_or_unknown_when_they_differ() {
+        let mut doc = drift_core::Document::new();
+        let mut layer = |c: Option<Rgb>| {
+            let mut l = Layer::new("L");
+            l.color = c;
+            doc.add_layer(l)
+        };
+        let (ink, red, blue) = (
+            layer(None),
+            layer(Some(Rgb([0xff, 0, 0]))),
+            layer(Some(Rgb([0, 0, 0xff]))),
+        );
+        let mut curve_on = |layer: LayerId| {
+            let a = doc.add_point(glam::DVec2::ZERO);
+            let b = doc.add_point(glam::DVec2::X);
+            let l = doc.add_line(a, b).unwrap();
+            doc.set_entity_layer(l, layer).unwrap();
+            l
+        };
+        let (on_ink, on_red, on_red2, on_blue) =
+            (curve_on(ink), curve_on(red), curve_on(red), curve_on(blue));
+        assert_eq!(by_layer_follows(&doc, &[on_ink]), Some(Follows::Ink));
+        assert_eq!(
+            by_layer_follows(&doc, &[on_red, on_red2]),
+            Some(Follows::Colour(Rgb([0xff, 0, 0])))
+        );
+        assert_eq!(by_layer_follows(&doc, &[on_red, on_blue]), None);
+        assert_eq!(by_layer_follows(&doc, &[on_ink, on_red]), None);
+    }
+
+    /// Accessibility events of one frame.
+    fn clicked_events(h: &egui_kittest::Harness<'_, bool>) -> Vec<egui::WidgetInfo> {
+        h.output()
+            .platform_output
+            .events
+            .iter()
+            .filter_map(|e| match e {
+                egui::output::OutputEvent::Clicked(info) => Some(info.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_toggle_says_it_was_clicked_once_with_its_new_state() {
+        use egui_kittest::kittest::Queryable as _;
+        let mut h = egui_kittest::Harness::builder()
+            .with_size([200.0, 100.0])
+            .build_ui_state(
+                |ui, on: &mut bool| {
+                    icon_toggle(ui, on, Glyph::Eye, true, "Show or hide");
+                },
+                false,
+            );
+        h.run();
+        let at = h.get_by_label("Show or hide").rect().center();
+        h.hover_at(at);
+        h.run();
+        let mut events = Vec::new();
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+            h.step();
+            events.extend(clicked_events(&h));
+        }
+        assert!(*h.state(), "switched on");
+        assert_eq!(events.len(), 1, "one click said: {events:?}");
+        assert_eq!(events[0].selected, Some(true), "said as it is now");
+    }
 
     #[test]
     fn every_line_type_and_weight_looks_its_own_in_a_row() {
@@ -1744,8 +1892,28 @@ mod tests {
                 );
             }
         }
-        // Centre shows its dot, not one solid dash.
-        assert!(dash_runs(LineType::Center, 14.0).len() >= 2);
+        // Every sample, in a row (14) and in the menu (40), starts and ends flush.
+        for t in LineType::ALL {
+            for length in [14.0, 40.0] {
+                let r = dash_runs(t, length);
+                assert_eq!(r[0].0, 0.0, "{t:?} at {length} starts flush");
+                let end = r.last().unwrap().1;
+                assert!((end - length).abs() < 1e-3, "{t:?} at {length} ends flush");
+            }
+        }
+        // Centre and phantom read as a long dash, their dots (one, two), and a long dash.
+        for (t, dots) in [(LineType::Center, 1), (LineType::Phantom, 2)] {
+            for length in [14.0, 40.0] {
+                let r = dash_runs(t, length);
+                assert_eq!(r.len(), dots + 2, "{t:?} at {length}: {r:?}");
+                let len = |(a, b): (f32, f32)| b - a;
+                let (first, last) = (len(r[0]), len(r[r.len() - 1]));
+                for dot in &r[1..r.len() - 1] {
+                    assert!(len(*dot) > 0.5, "{t:?}: a dot shows");
+                    assert!(first >= 2.0 * len(*dot) && last >= 2.0 * len(*dot), "{r:?}");
+                }
+            }
+        }
         // (Hair draws as the thinnest, 0.13.)
         let widths: Vec<f32> = LineWeight::ISO[1..]
             .iter()

@@ -321,6 +321,8 @@ struct Drawing {
     layer_names: std::collections::HashMap<drift_core::LayerId, String>,
     /// The Layers panel's layers and curve counts, kept until the drawing changes.
     layer_counts: crate::layers_ui::LayerCounts,
+    /// The drawing's colours offered in every colour picker, made while one is open.
+    document_colours: crate::layers_ui::DocumentColours,
     /// What the Inspector shows for the picks that depends only on them and the drawing's
     /// make-up, kept while neither changes.
     pick_memo: app::panels::PickMemo,
@@ -516,6 +518,7 @@ impl Drawing {
             params: Default::default(),
             layer_names: Default::default(),
             layer_counts: Default::default(),
+            document_colours: Default::default(),
             pick_memo: Default::default(),
             layer_drag: None,
             renaming_layer: None,

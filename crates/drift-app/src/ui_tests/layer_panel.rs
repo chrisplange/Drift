@@ -310,25 +310,41 @@ fn rows_the_filter_hides_are_let_go_and_take_no_change() {
 #[test]
 fn every_colour_picker_offers_the_open_drawings_colours() {
     let Some(mut h) = harness() else { return };
-    let ed = &mut h.state_mut().drawing.editor;
-    let id = ed.add_layer("A-WALL");
-    let mut l = ed.doc.layer(id).cloned().unwrap();
-    l.color = Some(Rgb([0x12, 0x34, 0x56]));
-    ed.update_layer(id, l);
-    // With the Layers panel closed, the pickers elsewhere still have them.
+    let id = h.state_mut().drawing.editor.add_layer("A-WALL");
+    // With no picker open, edits (a drag's every frame) make no pass over the drawing for
+    // its colours, the Layers panel shown or not.
     if h.state().layout.is_shown(Panel::Layers) {
         h.state_mut().toggle_panel(Panel::Layers);
     }
     h.run();
-    assert!(!h.state().layout.is_shown(Panel::Layers));
-    let offered = |h: &Harness<'_, DriftApp>| -> Vec<[u8; 3]> {
+    let scans = h.state().drawing.document_colours.scans;
+    for g in 1..=5u8 {
+        let ed = &mut h.state_mut().drawing.editor;
+        let mut l = ed.doc.layer(id).cloned().unwrap();
+        l.color = Some(Rgb([0x12, g, 0x56]));
+        ed.update_layer(id, l);
+        h.run();
+    }
+    assert_eq!(h.state().drawing.document_colours.scans, scans);
+    let offered = |h: &Harness<'_, DriftApp>| -> crate::colour::Offered {
         h.ctx
             .data(|d| d.get_temp(crate::colour::document_colours_id()))
             .unwrap_or_default()
     };
-    assert!(offered(&h).contains(&[0x12, 0x34, 0x56]));
-    // Changed by undo, the list follows.
+    assert!(!offered(&h).fresh, "marked stale for a picker to ask");
+    // A picker opened: the drawing's colours as they are now, worked out once.
+    h.state_mut().show_panel(Panel::Layers);
+    h.run();
+    h.run();
+    let at = control(&h, "A-WALL stroke color");
+    click(&mut h, at, EguiModifiers::NONE);
+    assert!(offered(&h).fresh);
+    assert!(h.query_all_by_label("#120556").next().is_some(), "offered");
+    assert_eq!(h.state().drawing.document_colours.scans, scans + 1);
+    // Changed by undo while the picker is open, the list follows.
     h.state_mut().undo();
     h.run();
-    assert!(!offered(&h).contains(&[0x12, 0x34, 0x56]));
+    h.run();
+    assert!(h.query_all_by_label("#120556").next().is_none());
+    assert!(h.query_all_by_label("#120456").next().is_some());
 }

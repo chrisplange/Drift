@@ -178,7 +178,7 @@ fn fill_style_fields(
     match &mut style.kind {
         FillKind::Solid => {
             theme::row(ui, "Color", |ui| {
-                if let Some(c) = color_choice(ui, style.color, "By layer", dark) {
+                if let Some(c) = color_choice(ui, "Fill color", style.color, "By layer", dark) {
                     style.color = c;
                 }
             });
@@ -227,7 +227,8 @@ fn fill_style_fields(
                 }
             });
             theme::row(ui, "Lines", |ui| {
-                if let Some(c) = color_choice(ui, style.color, "By layer", dark) {
+                if let Some(c) = color_choice(ui, "Hatch line color", style.color, "By layer", dark)
+                {
                     style.color = c;
                 }
             });
@@ -543,7 +544,9 @@ impl DriftApp {
         self.style_kind(ui, style);
         match &mut style.kind {
             FillKind::Solid => {
-                if let Some(c) = color_choice_of(ui, style.color, "By layer", dark, 90.0) {
+                if let Some(c) =
+                    color_choice_of(ui, "Fill color", style.color, "By layer", dark, 90.0)
+                {
                     style.color = c;
                 }
             }
@@ -581,7 +584,7 @@ impl DriftApp {
         match &mut style.kind {
             FillKind::Solid => {
                 theme::row(ui, "Color", |ui| {
-                    if let Some(c) = color_choice(ui, style.color, "By layer", dark) {
+                    if let Some(c) = color_choice(ui, "Fill color", style.color, "By layer", dark) {
                         style.color = c;
                     }
                 });

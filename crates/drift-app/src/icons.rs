@@ -1014,6 +1014,44 @@ pub fn button(
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, selected, label)
     });
+    paint_tile(ui, rect, &response, selected, size, draw);
+    response
+}
+
+/// An icon button that switches `on` when clicked, with the look of an unselected
+/// [`button`] (the icon itself shows the state). It tells assistive tech its state once,
+/// as it is after the click.
+pub fn toggle(
+    ui: &mut egui::Ui,
+    size: f32,
+    on: &mut bool,
+    label: &str,
+    draw: impl FnOnce(&egui::Painter, Rect, Color32, bool),
+) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), egui::Sense::click());
+    if response.clicked() {
+        *on = !*on;
+    }
+    let enabled = ui.is_enabled();
+    let state = *on;
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, state, label)
+    });
+    paint_tile(ui, rect, &response, false, size, |p, r, c| {
+        draw(p, r, c, state)
+    });
+    response
+}
+
+/// An icon button's tile and icon.
+fn paint_tile(
+    ui: &egui::Ui,
+    rect: Rect,
+    response: &egui::Response,
+    selected: bool,
+    size: f32,
+    draw: impl FnOnce(&egui::Painter, Rect, Color32),
+) {
     let dark = ui.visuals().dark_mode;
     let accent = crate::theme::accent(dark);
     // On: a neutral raised tile with the icon in the accent (never a solid accent block).
@@ -1043,5 +1081,4 @@ pub fn button(
     }
     let inner = rect.shrink(size * 0.2);
     draw(ui.painter(), inner, fg);
-    response
 }

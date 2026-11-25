@@ -41,6 +41,28 @@ impl Unset<'_> {
     }
 }
 
+/// What an unset colour follows and so shows as: another colour, or the theme's ink.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Follows {
+    Colour(Rgb),
+    Ink,
+}
+
+impl Follows {
+    /// What a colour that may itself be unset (Ink) shows as.
+    pub(crate) fn of(c: Option<Rgb>) -> Follows {
+        c.map_or(Follows::Ink, Follows::Colour)
+    }
+
+    /// As it shows now, in the theme in use (`dark`).
+    fn shown(self, dark: bool) -> Color32 {
+        match self {
+            Follows::Colour(c) => to_color32(c),
+            Follows::Ink => ink(dark),
+        }
+    }
+}
+
 /// A few colours always offered, after the drawing's own and the recent ones.
 const PALETTE: [[u8; 3]; 12] = [
     [0xe5, 0x48, 0x4d],
@@ -65,9 +87,47 @@ const CELL_GAP: f32 = 4.0;
 /// Swatches in a row of the grid.
 const PER_ROW: usize = 8;
 
-/// Where the open drawing's colours are left for the pickers each frame.
+/// Where the open drawing's colours are left for the pickers each pass.
 pub(crate) fn document_colours_id() -> egui::Id {
     egui::Id::new("colour_picker_document")
+}
+
+/// Set by an open picker whose drawing colours are stale; taken by the app.
+fn document_colours_wanted_id() -> egui::Id {
+    egui::Id::new("colour_picker_document_wanted")
+}
+
+/// The open drawing's colours as left for the pickers: `fresh` is false when the drawing has
+/// changed since they were worked out.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Offered {
+    pub fresh: bool,
+    pub colours: Vec<[u8; 3]>,
+}
+
+/// Leave the drawing's colours for this pass's pickers.
+pub(crate) fn offer_document_colours(ctx: &egui::Context, fresh: bool, colours: Vec<[u8; 3]>) {
+    ctx.data_mut(|d| d.insert_temp(document_colours_id(), Offered { fresh, colours }));
+}
+
+/// True (once) when an open picker asked for the drawing's colours to be worked out afresh.
+pub(crate) fn document_colours_wanted(ctx: &egui::Context) -> bool {
+    take::<bool>(ctx, document_colours_wanted_id()).unwrap_or(false)
+}
+
+/// The drawing's colours for an open picker. Stale ones are asked for afresh and the pass is
+/// run again (its output thrown away), so the picker never shows last edit's colours.
+fn document_colours(ctx: &egui::Context) -> Vec<[u8; 3]> {
+    let Some(offered) = ctx.data(|d| d.get_temp::<Offered>(document_colours_id())) else {
+        return Vec::new();
+    };
+    if !offered.fresh {
+        ctx.data_mut(|d| d.insert_temp(document_colours_wanted_id(), true));
+        ctx.request_discard("the drawing's colours, for an open colour picker");
+        // (If this pass can't be run again, the next frame has them.)
+        ctx.request_repaint();
+    }
+    offered.colours
 }
 
 fn recent_id() -> egui::Id {
@@ -116,15 +176,16 @@ pub(crate) fn ink(dark: bool) -> Color32 {
 }
 
 /// Paint a swatch: the colour, or for Ink a square split white / black corner to corner,
-/// or for a named fallback the colour it falls back to (`fallback`) with a small link in its
-/// corner, or, when that colour isn't known, a neutral square crossed by a fine line.
+/// or for a named fallback what it follows (`fallback`: a colour, or Ink split as above) with
+/// a small link in its corner, or, when that isn't known (several picks following different
+/// colours), a neutral square crossed by a fine line.
 /// A hairline edge keeps white and black swatches visible on either theme.
 pub(crate) fn paint_swatch(
     painter: &egui::Painter,
     rect: Rect,
     value: Option<Rgb>,
     unset: Unset,
-    fallback: Option<Color32>,
+    fallback: Option<Follows>,
     dark: bool,
 ) {
     let radius = 3;
@@ -133,35 +194,32 @@ pub(crate) fn paint_swatch(
     } else {
         Color32::from_black_alpha(60)
     };
-    match (value, unset) {
-        (Some(c), _) => {
+    let paint_ink = || {
+        painter.rect_filled(rect, radius, Color32::from_gray(0x16));
+        let r = rect.shrink(0.5);
+        painter.add(egui::Shape::convex_polygon(
+            vec![r.left_top(), r.right_top(), r.left_bottom()],
+            Color32::from_gray(0xf2),
+            Stroke::NONE,
+        ));
+    };
+    match (value, unset, fallback) {
+        (Some(c), _, _) => {
             painter.rect_filled(rect, radius, to_color32(c));
         }
-        (None, Unset::Ink) => {
-            painter.rect_filled(rect, radius, Color32::from_gray(0x16));
-            let r = rect.shrink(0.5);
-            painter.add(egui::Shape::convex_polygon(
-                vec![r.left_top(), r.right_top(), r.left_bottom()],
-                Color32::from_gray(0xf2),
-                Stroke::NONE,
-            ));
+        (None, Unset::Ink, _) | (None, Unset::Named(_), Some(Follows::Ink)) => paint_ink(),
+        (None, Unset::Named(_), Some(Follows::Colour(c))) => {
+            painter.rect_filled(rect, radius, to_color32(c));
         }
-        (None, Unset::Named(_)) => {
-            let fill = fallback.unwrap_or(if dark {
-                Color32::from_gray(0x3a)
+        (None, Unset::Named(_), None) => {
+            let (fill, slash) = if dark {
+                (Color32::from_gray(0x3a), Color32::from_gray(0xa0))
             } else {
-                Color32::from_gray(0xd8)
-            });
+                (Color32::from_gray(0xd8), Color32::from_gray(0x60))
+            };
             painter.rect_filled(rect, radius, fill);
-            if fallback.is_none() {
-                let slash = if dark {
-                    Color32::from_gray(0xa0)
-                } else {
-                    Color32::from_gray(0x60)
-                };
-                let r = rect.shrink(2.5);
-                painter.line_segment([r.left_bottom(), r.right_top()], Stroke::new(1.2, slash));
-            }
+            let r = rect.shrink(2.5);
+            painter.line_segment([r.left_bottom(), r.right_top()], Stroke::new(1.2, slash));
         }
     }
     painter.rect_stroke(
@@ -190,13 +248,16 @@ fn link_mark(painter: &egui::Painter, r: Rect, dark: bool) {
 }
 
 /// A colour control filling `width`: its swatch and its hex (or what it falls back to), one
-/// click opening the picker. `fallback` is the colour an unset value shows as, when known.
-/// Returns a new colour when one is picked (`Some(None)`: back to unset).
+/// click opening the picker. `name` says what it colours, read out with its colour as the
+/// value (not the row's own label, which would name two controls alike). `fallback` is the
+/// colour an unset value shows as, when known. Returns a new colour when one is picked
+/// (`Some(None)`: back to unset).
 pub(crate) fn colour_button(
     ui: &mut egui::Ui,
+    name: &str,
     value: Option<Rgb>,
     unset: Unset,
-    fallback: Option<Color32>,
+    fallback: Option<Follows>,
     dark: bool,
     width: f32,
 ) -> Option<Option<Rgb>> {
@@ -235,9 +296,7 @@ pub(crate) fn colour_button(
         |c| format!("{} · click to change", hex(c)),
     );
     let response = response.on_hover_text(tip);
-    // (A colour well named by its colour; the row's own label says what it colours.)
-    response
-        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ColorButton, true, &spoken));
+    response.widget_info(|| labeled_with_value(egui::WidgetType::ColorButton, name, &spoken));
     colour_popup(ui, &response, value, unset, fallback, dark)
 }
 
@@ -264,7 +323,7 @@ pub(crate) fn colour_popup(
     response: &egui::Response,
     value: Option<Rgb>,
     unset: Unset,
-    fallback: Option<Color32>,
+    fallback: Option<Follows>,
     dark: bool,
 ) -> Option<Option<Rgb>> {
     let mut out = None;
@@ -296,10 +355,7 @@ pub(crate) fn colour_popup(
                     ui.close();
                 }
             });
-            let document: Vec<[u8; 3]> = ui
-                .ctx()
-                .data(|d| d.get_temp(document_colours_id()))
-                .unwrap_or_default();
+            let document = document_colours(ui.ctx());
             let recent: Vec<[u8; 3]> = ui
                 .ctx()
                 .data(|d| d.get_temp(recent_id()))
@@ -367,7 +423,10 @@ pub(crate) fn colour_popup(
                 // Six digits as typed; three (#abc) only once the field is left, so typing
                 // #abcdef doesn't pass through #AABBCC.
                 let six = text.trim().trim_start_matches('#').len() == 6;
-                let done = r.lost_focus() && out.is_none();
+                // Esc lets go of the field too, but takes back what was typed, as egui's own
+                // fields do.
+                let escaped = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape));
+                let done = r.lost_focus() && out.is_none() && !escaped;
                 if let Some(c) = parsed
                     && ((r.changed() && six) || done)
                 {
@@ -376,7 +435,7 @@ pub(crate) fn colour_popup(
                     }
                     from = Some(c);
                 }
-                if done {
+                if done || escaped {
                     // Left as the colour it gave, or as the colour in use if it gave none.
                     text = from.map_or_else(String::new, hex);
                 }
@@ -397,8 +456,15 @@ pub(crate) fn colour_popup(
                 // A drag in the field is held here and picked once, when the button is let
                 // go: one change (one undo step), not one a frame.
                 let held: Option<Color32> = ui.ctx().data(|d| d.get_temp(field_id));
-                let mut c =
-                    held.unwrap_or_else(|| value.map_or(fallback.unwrap_or(ink(dark)), to_color32));
+                let mut c = held.unwrap_or_else(|| {
+                    value.map_or_else(
+                        || match (unset, fallback) {
+                            (Unset::Named(_), Some(f)) => f.shown(dark),
+                            _ => ink(dark),
+                        },
+                        to_color32,
+                    )
+                });
                 if egui::color_picker::color_picker_color32(
                     ui,
                     &mut c,
@@ -514,15 +580,17 @@ mod tests {
     /// A colour control and every colour it gave.
     struct Picker {
         value: Option<Rgb>,
-        fallback: Option<Color32>,
+        fallback: Option<Follows>,
         picks: Vec<Option<Rgb>>,
     }
 
-    fn picker(value: Option<Rgb>, fallback: Option<Color32>) -> Harness<'static, Picker> {
+    fn picker(value: Option<Rgb>, fallback: Option<Follows>) -> Harness<'static, Picker> {
         let mut h = Harness::builder().with_size([420.0, 640.0]).build_ui_state(
             |ui, p: &mut Picker| {
                 let unset = Unset::Named("By layer");
-                if let Some(c) = colour_button(ui, p.value, unset, p.fallback, true, 120.0) {
+                if let Some(c) =
+                    colour_button(ui, "Stroke color", p.value, unset, p.fallback, true, 120.0)
+                {
                     p.value = c;
                     p.picks.push(c);
                 }
@@ -642,6 +710,40 @@ mod tests {
     }
 
     #[test]
+    fn escape_takes_back_three_hex_digits_not_yet_entered() {
+        let mut h = picker(Some(Rgb([0xd0, 0x40, 0x40])), None);
+        open(&mut h);
+        let field = h.get_by_role(egui::accesskit::Role::TextInput);
+        field.click();
+        h.run();
+        h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        h.run();
+        for c in "#abc".chars() {
+            h.event(egui::Event::Text(c.to_string()));
+            h.run();
+        }
+        h.key_press(egui::Key::Escape);
+        h.run();
+        h.run();
+        assert!(h.state().picks.is_empty(), "{:?}", h.state().picks);
+        assert_eq!(h.state().value, Some(Rgb([0xd0, 0x40, 0x40])));
+    }
+
+    #[test]
+    fn a_colour_well_says_what_it_colours_and_its_colour() {
+        let h = picker(Some(Rgb([0xff, 0, 0])), None);
+        let well = h.get_by_role(egui::accesskit::Role::ColorWell);
+        assert_eq!(
+            well.accesskit_node().label().as_deref(),
+            Some("Stroke color")
+        );
+        assert_eq!(well.accesskit_node().value().as_deref(), Some("#FF0000"));
+        let h = picker(None, Some(Follows::Ink));
+        let well = h.get_by_role(egui::accesskit::Role::ColorWell);
+        assert_eq!(well.accesskit_node().value().as_deref(), Some("By layer"));
+    }
+
+    #[test]
     fn hex_follows_the_colour_when_it_changes_elsewhere() {
         let mut h = picker(Some(Rgb([0xd0, 0x40, 0x40])), None);
         open(&mut h);
@@ -659,10 +761,57 @@ mod tests {
         assert_eq!(shown(&h), "#0000FF");
     }
 
+    /// A drawing's colours, kept as the app keeps them: worked out only when a picker asks.
+    struct Drawing {
+        colours: Vec<[u8; 3]>,
+        revision: u32,
+        made_at: Option<u32>,
+        made: Vec<[u8; 3]>,
+    }
+
+    #[test]
+    fn an_open_picker_shows_the_drawings_colours_as_they_are_this_frame() {
+        let mut h = Harness::builder().with_size([420.0, 640.0]).build_ui_state(
+            |ui, d: &mut Drawing| {
+                if document_colours_wanted(ui.ctx()) {
+                    d.made_at = Some(d.revision);
+                    d.made = d.colours.clone();
+                }
+                offer_document_colours(ui.ctx(), d.made_at == Some(d.revision), d.made.clone());
+                let _ = colour_button(ui, "Stroke color", None, Unset::Ink, None, true, 120.0);
+            },
+            Drawing {
+                colours: vec![[0x12, 0x34, 0x56]],
+                revision: 0,
+                made_at: None,
+                made: Vec::new(),
+            },
+        );
+        h.run();
+        assert_eq!(
+            h.state().made_at,
+            None,
+            "nothing worked out with no picker open"
+        );
+        h.get_by_role(egui::accesskit::Role::ColorWell).click();
+        h.run();
+        assert!(h.query_by_label("#123456").is_some());
+        // The drawing changes (an undo) while the picker is open: the very next frame shows
+        // its colours, not the last ones.
+        h.state_mut().colours = vec![[0x65, 0x43, 0x21]];
+        h.state_mut().revision += 1;
+        h.step();
+        assert!(
+            h.query_by_label("#654321").is_some(),
+            "this frame's colours"
+        );
+        assert!(h.query_by_label("#123456").is_none());
+    }
+
     #[test]
     fn an_unset_colour_opens_the_colour_field_at_what_it_shows() {
         let red = Color32::from_rgb(0xc8, 0x20, 0x20);
-        let mut h = picker(None, Some(red));
+        let mut h = picker(None, Some(Follows::Colour(Rgb([0xc8, 0x20, 0x20]))));
         open_more(&mut h);
         let (_, r) = red_box(&h);
         assert_eq!(

@@ -2198,23 +2198,24 @@ pub struct GlyphLayout {
     pub along: Vec2,
 }
 
-/// [`layout_glyphs_where`] for every relation.
+/// [`layout_glyphs_last`] with every relation in its usual order.
 #[cfg(test)]
 pub fn layout_glyphs(doc: &Document, map: &ScreenMap) -> Vec<GlyphLayout> {
-    layout_glyphs_where(doc, map, |_| true)
+    layout_glyphs_last(doc, map, |_| false)
 }
 
-/// Lay out a glyph for every relation `keep` passes (dimensions are drawn separately); the
-/// others are left out of the layout altogether, so a symbol never shown moves no other out
-/// of its way. Relations between two curves get a glyph on each. Each slides along its
-/// stack direction off the glyphs already placed: those on its own entity always, so they
-/// never overlap; those on others too, unless that would carry it more than two tiles
-/// further than its own entity's need (in a heap of symbols zoomed far out, which would
-/// otherwise spread over the drawing around it).
-pub fn layout_glyphs_where(
+/// Lay out a glyph for every relation (dimensions are drawn separately). Relations between
+/// two curves get a glyph on each. Each slides along its stack direction off the glyphs
+/// already placed: those on its own entity always, so they never overlap; those on others
+/// too, unless that would carry it more than two tiles further than its own entity's need
+/// (in a heap of symbols zoomed far out, which would otherwise spread over the drawing around
+/// it). The relations `last` passes are placed after all the others, so they keep clear of
+/// the others but move none of them: symbols that are only sometimes shown (on a wall's
+/// centreline, while the wall is picked) never push the ones always shown about.
+pub fn layout_glyphs_last(
     doc: &Document,
     map: &ScreenMap,
-    keep: impl Fn(&Constraint) -> bool,
+    last: impl Fn(&Constraint) -> bool,
 ) -> Vec<GlyphLayout> {
     let mut out = Vec::new();
     // The tiles already placed: all of them, and those on each entity (their centres).
@@ -2281,10 +2282,15 @@ pub fn layout_glyphs_where(
         Constraint::Tangent { a, b } => joint_of(doc, &tied, a, b).is_some(),
         _ => false,
     };
-    let in_order = doc
-        .constraints()
-        .filter(|(_, c)| keep(c) && !marks_joint(c))
-        .chain(doc.constraints().filter(|(_, c)| keep(c) && marks_joint(c)));
+    let (last, marks_joint) = (&last, &marks_joint);
+    let group = |late: bool, joint: bool| {
+        doc.constraints()
+            .filter(move |(_, c)| last(c) == late && marks_joint(c) == joint)
+    };
+    let in_order = group(false, false)
+        .chain(group(false, true))
+        .chain(group(true, false))
+        .chain(group(true, true));
     for (id, c) in in_order {
         use GlyphKind::*;
         match *c {

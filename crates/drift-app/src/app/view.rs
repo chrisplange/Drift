@@ -419,11 +419,18 @@ impl DriftApp {
             return Vec::new();
         }
         let ed = &self.drawing.editor;
-        // Not on walls' centrelines unless the wall is picked. Those are left out of the
-        // layout, not only of what is drawn, so no symbol shown moves out of their way.
+        // Not on walls' centrelines unless the wall is picked. Every centreline symbol is laid
+        // out after the rest, picked or not, so picking a wall moves no other symbol.
+        let owners = ed.wall_owners();
+        let on_centreline = |c: &drift_core::Constraint| {
+            c.entities()
+                .any(|e| matches!(owners.of.get(&e), Some(drift_core::walls::Owner::Centre(_))))
+        };
+        let mut glyphs = annotations::layout_glyphs_last(doc, map, on_centreline);
         let hidden = ed.unpicked_centrelines();
-        let mut glyphs = annotations::layout_glyphs_where(doc, map, |c| {
-            !c.entities().any(|e| hidden.contains(&e))
+        glyphs.retain(|g| {
+            doc.constraint(g.id)
+                .is_none_or(|c| !c.entities().any(|e| hidden.contains(&e)))
         });
         // Picked only: the relations on the picked curves and their points, each on everything
         // it holds (so both lines of a parallel pair), and a picked relation itself. They stay

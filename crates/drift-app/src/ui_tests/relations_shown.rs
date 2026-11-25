@@ -352,4 +352,33 @@ fn hidden_centreline_symbols_push_no_shown_symbol() {
     assert_eq!(x_of(&shown, on_centre), None, "the wall isn't picked");
     let x = x_of(&shown, on_line).expect("the line's symbol");
     assert!((x - mid_x).abs() < 0.5, "{x} not over the middle {mid_x}");
+    // Pick the wall: its centreline's symbol shows, and the line's stays where it was, in
+    // All mode and in Picked mode with the line picked too.
+    let rects = |h: &Harness<'_, DriftApp>| {
+        let shown = h.state().relation_glyphs(&map);
+        (x_of(&shown, on_centre), x_of(&shown, on_line))
+    };
+    let curves = {
+        let ed = &h.state().drawing.editor;
+        let (wall, _) = ed.doc.walls().next().expect("a wall");
+        ed.wall_curves(wall)
+    };
+    h.state_mut().drawing.editor.selection = curves.iter().copied().collect();
+    h.run();
+    let (centre_x, line_x) = rects(&h);
+    assert!(centre_x.is_some(), "the picked wall's symbol shows");
+    assert_eq!(line_x, Some(x), "picking the wall moves no other symbol");
+    h.state_mut().show_relations = ShowRelations::Picked;
+    let mut both: Vec<_> = curves;
+    both.push(line);
+    h.state_mut().drawing.editor.selection = both.into_iter().collect();
+    h.run();
+    assert_eq!(
+        rects(&h).1,
+        Some(x),
+        "Picked mode: the line's symbol stays too"
+    );
+    h.state_mut().drawing.editor.selection = [line].into_iter().collect();
+    h.run();
+    assert_eq!(rects(&h), (None, Some(x)), "the wall let go");
 }

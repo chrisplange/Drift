@@ -193,7 +193,9 @@ impl DriftApp {
             pie.held = false;
             if pie.clicked {
                 self.snap_pie = None;
-            } else if let Some(place) = pie_style::flick_place(&rects, pie.from, pointer) {
+            } else if let Some(place) =
+                pie_style::flick_place(&rects, pie.center, pie.from, pointer)
+            {
                 // A flick: let go towards a kind to turn it on or off, and the ring closes.
                 self.snap_pie = None;
                 self.snap_pie_toggle(place);
@@ -274,9 +276,8 @@ impl DriftApp {
                 } else if response.secondary_clicked() {
                     clicked = Some(None);
                 }
-                let hot = pie_style::hot_place(&rects, pointer, flick_from);
-                let aim =
-                    flick_from.and_then(|from| pie_style::flick_aim(&rects, center, from, pointer));
+                let hot = pie_style::hot_place(&rects, center, pointer, flick_from);
+                let aim = flick_from.and_then(|from| pie_style::flick_aim(center, from, pointer));
                 paint(painter, center, switches, aim, &rects, labels, keys, hot);
             });
         if let Some(rects) = shown {

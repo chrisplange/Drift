@@ -117,7 +117,9 @@ impl DriftApp {
             if pie.clicked {
                 // Kinds were clicked with the key down: they stand, and the ring is done.
                 self.select_pie = None;
-            } else if let Some(place) = pie_style::flick_place(&rects, pie.from, pointer) {
+            } else if let Some(place) =
+                pie_style::flick_place(&rects, pie.center, pie.from, pointer)
+            {
                 // A flick: let go towards a kind to pick only it. Let go in the middle and
                 // the ring stays, to click.
                 self.select_pie_flick(place, now);
@@ -200,10 +202,9 @@ impl DriftApp {
                 } else if response.secondary_clicked() {
                     clicked = Some(None);
                 }
-                let hot = pie_style::hot_place(&rects, pointer, flick_from);
+                let hot = pie_style::hot_place(&rects, center, pointer, flick_from);
                 let flicks = flick_from.is_some();
-                let aim =
-                    flick_from.and_then(|from| pie_style::flick_aim(&rects, center, from, pointer));
+                let aim = flick_from.and_then(|from| pie_style::flick_aim(center, from, pointer));
                 paint(
                     painter, center, filter, aim, &rects, labels, keys, hot, flicks,
                 );

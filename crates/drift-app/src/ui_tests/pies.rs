@@ -176,17 +176,17 @@ fn a_flick_near_the_edge_follows_the_gesture() {
     assert_eq!(status(&h), "Quadrant snapping off");
 }
 
-/// Near the window's bottom the hub opens well above the pointer. Hold the key and move up
-/// towards it, onto the bottom pill (Perpendicular), then slide along that pill to its far
-/// end: it stays lit all the way, and letting go there turns Perpendicular off, nothing else.
+/// Near the window's bottom the hub opens well above the pointer. Hold the key and move
+/// straight up, over the bottom pill (Perpendicular) and on: the top place (Grid) is lit all
+/// the way, as the hand heads, and letting go turns Grid off, nothing else.
 #[test]
-fn a_flick_near_the_edge_chooses_the_pill_under_the_pointer() {
+fn a_flick_near_the_edge_goes_the_way_the_hand_moves_over_a_pill_behind() {
     let Some(mut h) = harness() else { return };
     let canvas = h.state().drawing.view.canvas_rect;
     let at = egui::pos2(canvas.center().x, canvas.bottom() - 20.0);
     h.hover_at(at);
     h.run();
-    let before = (h.state().grid_snap, h.state().perp_tangent_snap);
+    let (grid, perp) = (h.state().grid_snap, h.state().perp_tangent_snap);
     h.key_down_modifiers(SHIFT, Key::S);
     h.run();
     let pie = h.state().snap_pie.as_ref().expect("open");
@@ -197,39 +197,25 @@ fn a_flick_near_the_edge_chooses_the_pill_under_the_pointer() {
         bottom.top() + 6.0 < at.y - DEAD_ZONE,
         "the bottom pill is above the pointer"
     );
-    // Up onto the pill, as a hand does, then along it to its left end.
+    let mut crossed = false;
     let mut p = at;
-    let mut path = Vec::new();
-    while p.y > bottom.top() + 6.0 {
-        p.y = (p.y - 4.0).max(bottom.top() + 6.0);
-        path.push(p);
-    }
-    while p.x > bottom.left() + 2.0 {
-        p.x = (p.x - 4.0).max(bottom.left() + 2.0);
-        path.push(p);
-    }
-    assert_ne!(place_at(from, p), Some(6), "the gesture is up and left");
-    for p in path {
+    while p.y > bottom.top() - 20.0 {
+        p.y -= 4.0;
         h.hover_at(p);
         h.run();
-        if bottom.contains(p) && (p - from).length() >= DEAD_ZONE {
-            let lit = hot_place(&h.state().pie_pills, Some(p), Some(from));
-            assert_eq!(lit, Some(6), "lit over the bottom pill at {p:?}");
+        crossed |= bottom.contains(p);
+        if (p - from).length() >= DEAD_ZONE {
+            let lit = hot_place(&h.state().pie_pills, center, Some(p), Some(from));
+            assert_eq!(lit, Some(2), "Grid lit at {p:?}");
         }
     }
+    assert!(crossed, "the gesture passed over the bottom pill");
     h.key_up_modifiers(SHIFT, Key::S);
     h.run();
     assert!(h.state().snap_pie.is_none(), "a flick closes the ring");
-    assert_eq!(
-        kinds(&h),
-        SnapKinds::ALL.with(SnapKind::Perpendicular, false)
-    );
-    assert_eq!(
-        (h.state().grid_snap, h.state().perp_tangent_snap),
-        before,
-        "Grid untouched; Tangent keeps the shared switch on"
-    );
-    assert_eq!(status(&h), "Perpendicular snapping off");
+    assert_eq!(kinds(&h), SnapKinds::ALL, "no kind touched");
+    assert_eq!(h.state().grid_snap, !grid, "Grid turned over");
+    assert_eq!(h.state().perp_tangent_snap, perp, "Perpendicular untouched");
 }
 
 #[test]

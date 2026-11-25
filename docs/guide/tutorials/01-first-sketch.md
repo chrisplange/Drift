@@ -133,6 +133,20 @@ Real points (end points, centres) win over these snaps, and they win over midpoi
 quadrants and points along a curve. Turn them off with **Perpendicular & tangent** in the
 status bar, next to the grid snap.
 
+### Turning snaps on and off
+
+**Shift+S** opens the snap pie: every kind of snap in a ring around the pointer, the ones on
+lit. **Points** covers end points, standalone points and the origin; **Grid** is the same
+switch as **Snap to grid**. Hold Shift+S, move towards a kind and let go to turn it on or off.
+Tap Shift+S and the ring stays open: click kinds, or press the letter shown on each (M for
+**Midpoint**, G for **Grid**), then Shift+S, Esc or a right click to close it. The kinds you
+turn off stay off in this drawing until you turn them on again.
+
+**Perpendicular** and **Tangent** are the two halves of the **Perpendicular & tangent**
+switch: turn both off in the pie and the switch goes off, with its guides; turn one on while
+the switch is off and it comes on for that one alone. Turning the switch on in the status bar
+brings back both.
+
 **Angle snap**, in the status bar beside **Perpendicular & tangent**, makes lines turn in
 steps: every 1°, 5°, 15° or 45° (it's also in **Edit → Preferences… → Drawing aids**).
 

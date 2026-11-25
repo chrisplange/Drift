@@ -59,6 +59,8 @@ pub struct Pointer {
     pub angle_step: Option<f64>,
     /// Perpendicular and tangent guides from the end a line is drawn on from.
     pub perp_tangent: bool,
+    /// Of those, the kinds that are on (the snap pie's Perpendicular and Tangent).
+    pub guide_kinds: drift_geom::SnapKinds,
     /// A snap target an axis lock moved the point off: the point goes in line with it on the
     /// axis instead. Kept so the canvas can mark both it and where the click lands.
     pub overridden: Option<Snap>,
@@ -80,6 +82,7 @@ impl Pointer {
             round_scale: true,
             angle_step: None,
             perp_tangent: false,
+            guide_kinds: drift_geom::SnapKinds::ALL,
             overridden: None,
         }
     }

@@ -4,7 +4,7 @@
 //! lit, and choosing it takes it off; ones that don't fit the selection are dimmed. While it is
 //! open, each relation's letter (shown on it) chooses it outright: Q then H for horizontal.
 
-use super::pie_style::{self, place_at};
+use super::pie_style;
 use crate::annotations::{self, GlyphKind};
 use crate::*;
 use drift_edit::editor::ConstraintOption;
@@ -69,6 +69,8 @@ pub(crate) fn glyph(label: &str) -> GlyphKind {
 /// The open pie.
 pub(crate) struct Pie {
     pub center: egui::Pos2,
+    /// Where the pointer was when it opened: a flick counts once it has moved from there.
+    pub from: egui::Pos2,
     /// Q is still down from opening it: letting go chooses what the pointer is towards.
     pub held: bool,
     /// Whether adding a place's relation would over-define the sketch, as of a revision
@@ -103,12 +105,15 @@ impl DriftApp {
         })
     }
 
-    /// Open the pie to click (from a menu), where the pointer is.
+    /// Open the pie to click (from a menu), where the pointer is, in place of any other pie.
     pub(crate) fn open_pie(&mut self, ctx: &egui::Context) {
         let at = ctx.input(|i| i.pointer.latest_pos());
         let fallback = self.drawing.view.canvas_rect.center();
+        let center = pie_style::pie_center(ctx, at, fallback);
+        self.close_pies();
         self.pie = Some(Pie {
-            center: pie_style::pie_center(ctx, at, fallback),
+            center,
+            from: at.unwrap_or(center),
             held: false,
             conflict: None,
         });
@@ -160,10 +165,11 @@ impl DriftApp {
                 );
                 return true;
             }
-            // (Kept clear of the window's edges, with room for the labels around it.)
+            // (Kept clear of the window's edges, with room for the labels around it.) Down
+            // and up in one frame, a tap, leaves the ring open to click.
             self.open_pie(ctx);
             if let Some(pie) = &mut self.pie {
-                pie.held = true;
+                pie.held = !released;
             }
             return true;
         };
@@ -173,7 +179,8 @@ impl DriftApp {
             pie.held = false;
             // A flick: let go towards a relation to choose it. Let go in the middle and the
             // ring stays, to click.
-            if let Some(place) = pointer.and_then(|p| place_at(pie.center, p)) {
+            let rects = self.pie_pills;
+            if let Some(place) = pie_style::flick_place(&rects, pie.center, pie.from, pointer) {
                 self.pie_choose(place, now);
             }
         }
@@ -234,7 +241,11 @@ impl DriftApp {
 
     /// Draw the open pie and take its clicks.
     pub(crate) fn relation_pie(&mut self, ctx: &egui::Context) {
-        let Some((center, flicks)) = self.pie.as_ref().map(|p| (p.center, p.held)) else {
+        let Some((center, flick_from)) = self
+            .pie
+            .as_ref()
+            .map(|p| (p.center, p.held.then_some(p.from)))
+        else {
             return;
         };
         let slices = self.pie_slices();
@@ -252,7 +263,8 @@ impl DriftApp {
             std::array::from_fn(|p| (labels[p].size().x, keys[p].as_ref().map(|k| k.size().x))),
         );
         self.pie_pills = rects;
-        let hot = pie_style::hot_place(&rects, center, pointer, flicks);
+        let hot = pie_style::hot_place(&rects, center, pointer, flick_from);
+        let aim = pointer.filter(|_| flick_from.is_some() && hot.is_some());
         let conflict = hot.is_some_and(|place| self.pie_conflict(place, &slices[place]));
         let screen = ctx.content_rect();
         let mut clicked = None;
@@ -275,7 +287,7 @@ impl DriftApp {
                 } else {
                     theme::accent(dark)
                 };
-                pie_style::paint_hub(painter, center, pointer, mark);
+                pie_style::paint_hub(painter, center, aim, mark);
                 for (place, (label, key)) in labels.into_iter().zip(keys).enumerate() {
                     let slice = &slices[place];
                     let state = pie_style::PillState {
@@ -296,11 +308,12 @@ impl DriftApp {
                         },
                     );
                 }
-                // What choosing would do, under the ring.
-                if let Some(place) = hot {
+                // What choosing would do, under the ring; with nothing pointed at, the
+                // relations the selection has.
+                let n = theme::neutrals(dark);
+                let (text, color) = if let Some(place) = hot {
                     let slice = &slices[place];
-                    let n = theme::neutrals(dark);
-                    let (text, color) = if slice.option.is_none() {
+                    if slice.option.is_none() {
                         ("Doesn't fit this selection".to_owned(), n.secondary)
                     } else if slice.on {
                         (
@@ -317,9 +330,11 @@ impl DriftApp {
                             format!("Add {}", slice.label.to_lowercase()),
                             ui.visuals().text_color(),
                         )
-                    };
-                    pie_style::paint_caption(painter, center, &rects, text, color);
-                }
+                    }
+                } else {
+                    (idle_caption(&slices), ui.visuals().text_color())
+                };
+                pie_style::paint_caption(painter, center, &rects, text, color);
             });
         if let Some(choice) = clicked {
             let now = ctx.input(|i| i.time);
@@ -328,5 +343,15 @@ impl DriftApp {
                 None => self.pie = None,
             }
         }
+    }
+}
+
+/// The caption with nothing pointed at: the relations already on the selection.
+fn idle_caption(slices: &[Slice; 8]) -> String {
+    let on: Vec<&str> = slices.iter().filter(|s| s.on).map(|s| s.label).collect();
+    if on.is_empty() {
+        "Relations: none on the selection".to_owned()
+    } else {
+        format!("Relations: {}", on.join(", "))
     }
 }

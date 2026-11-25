@@ -101,6 +101,7 @@ impl DriftApp {
         pointer.round_scale = self.round_scale;
         pointer.angle_step = self.angle_snap.filter(|_| snap);
         pointer.perp_tangent = self.perp_tangent_snap;
+        pointer.guide_kinds = self.drawing.editor.prefs.snap_kinds;
         if snap && self.tool.wants_snap() {
             let options = SnapOptions {
                 tolerance: pointer.tolerance,

@@ -11,10 +11,15 @@
 //!   labels face the hub: on the left and at the top and bottom, symbol, label, then an
 //!   optional key; on the right the same mirrored. Symbols are centred in a square at the
 //!   pill's mid-height.
-//! - **Hub.** A ring with a mark that rolls round it with the pointer.
-//! - **Caption.** What choosing would do, in a box under the ring.
-//! - **Choosing.** A flick (let go of the key) goes by direction, as in every pie; a click
-//!   counts only on a pill, and a click anywhere else closes the pie.
+//! - **Hub.** A ring with a mark that rolls round it with the pointer while a flick would
+//!   choose something.
+//! - **Caption.** What choosing would do, in a box under the ring; with nothing pointed at,
+//!   what the pie stands at now.
+//! - **Choosing.** A flick (let go of the key) chooses the pill under the pointer, else goes
+//!   by direction, as in every pie, and only once the pointer has moved from where it was when
+//!   the pie opened. What is lit while the key is held is what a flick chooses. A click counts
+//!   only on a pill, and a click anywhere else closes the pie. While a pie is open, the key
+//!   shown on a pill chooses it too.
 
 use crate::*;
 use std::sync::Arc;
@@ -134,19 +139,35 @@ pub(crate) fn pill_under(rects: &[egui::Rect; 8], pointer: Option<egui::Pos2>) -
     rects.iter().position(|r| r.contains(p))
 }
 
-/// The pill that would be chosen: while the key is held (a flick), the one the pointer is
-/// towards; otherwise the one under it.
+/// What a flick chooses (letting go of the key), and what is lit while the key is held: the
+/// pill under the pointer, else the place it is towards. Nothing until the pointer has moved
+/// [`DEAD_ZONE`] from `from`, where it was when the pie opened, so a tap of the key never
+/// chooses, even where the window's edge kept the hub away from the pointer.
+pub(crate) fn flick_place(
+    rects: &[egui::Rect; 8],
+    center: egui::Pos2,
+    from: egui::Pos2,
+    pointer: Option<egui::Pos2>,
+) -> Option<usize> {
+    let p = pointer?;
+    if (p - from).length() < DEAD_ZONE {
+        return None;
+    }
+    pill_under(rects, Some(p)).or_else(|| place_at(center, p))
+}
+
+/// The pill that would be chosen: while the key is held (`flick_from`, where the pointer was
+/// when the pie opened), what a flick chooses; otherwise the one under the pointer.
 pub(crate) fn hot_place(
     rects: &[egui::Rect; 8],
     center: egui::Pos2,
     pointer: Option<egui::Pos2>,
-    flicks: bool,
+    flick_from: Option<egui::Pos2>,
 ) -> Option<usize> {
-    pill_under(rects, pointer).or_else(|| {
-        flicks
-            .then(|| pointer.and_then(|p| place_at(center, p)))
-            .flatten()
-    })
+    match flick_from {
+        Some(from) => flick_place(rects, center, from, pointer),
+        None => pill_under(rects, pointer),
+    }
 }
 
 /// The label's text, laid out as a pill shows it.
@@ -265,19 +286,20 @@ pub(crate) fn paint_pill(
     }
 }
 
-/// A pie's middle: a ring, with a mark that rolls round it with the pointer (rather than
-/// stepping between the eight places), once the pointer is far enough out to point anywhere.
+/// A pie's middle: a ring, with a mark on it that rolls round towards `aim` (the pointer
+/// while a flick would choose something, `None` otherwise) rather than stepping between the
+/// eight places.
 pub(crate) fn paint_hub(
     painter: &egui::Painter,
     center: egui::Pos2,
-    pointer: Option<egui::Pos2>,
+    aim: Option<egui::Pos2>,
     mark: egui::Color32,
 ) {
     let n = theme::neutrals(painter.ctx().theme() == egui::Theme::Dark);
     let r = DEAD_ZONE - 6.0;
     painter.circle_filled(center, r, n.raised);
     painter.circle_stroke(center, r, egui::Stroke::new(2.0, n.control_border));
-    if let Some(v) = pointer.map(|p| p - center).filter(|v| v.length() > 4.0) {
+    if let Some(v) = aim.map(|p| p - center).filter(|v| v.length() > 1.0) {
         painter.circle_filled(center + v.normalized() * r, 3.5, mark);
     }
 }
@@ -307,21 +329,35 @@ pub(crate) fn paint_caption(
 }
 
 impl DriftApp {
-    /// One pie at a time: a pie's key pressed while another pie is open closes that one, so
-    /// the pie asked for opens in its place instead of on top of it.
-    pub(crate) fn switch_pies(&mut self, ctx: &egui::Context) {
+    /// One pie at a time: a pie's key pressed while another pie is open goes to the pie asked
+    /// for, which opens in that one's place (a pie closes the others as it opens). If it
+    /// can't open now, the open one stays. Returns true if the keyboard was used here.
+    pub(crate) fn switch_pies(&mut self, ctx: &egui::Context) -> bool {
+        let open = [
+            self.pie.is_some(),
+            self.select_pie.is_some(),
+            self.snap_pie.is_some(),
+        ];
+        if !open.contains(&true) {
+            return false;
+        }
         let pressed = |id: &str| ctx.input(|i| crate::keymap::pressed_released(i, id).0);
-        if pressed("edit.relations_pie") && self.pie.is_none() {
-            self.select_pie = None;
-            self.snap_pie = None;
+        if pressed("edit.relations_pie") && !open[0] {
+            self.pie_keys(ctx);
+        } else if pressed("edit.selection_filter_pie") && !open[1] {
+            self.select_pie_keys(ctx);
+        } else if pressed("edit.snap_pie") && !open[2] {
+            self.snap_pie_keys(ctx);
+        } else {
+            return false;
         }
-        if pressed("edit.selection_filter_pie") && self.select_pie.is_none() {
-            self.pie = None;
-            self.snap_pie = None;
-        }
-        if pressed("edit.snap_pie") && self.snap_pie.is_none() {
-            self.pie = None;
-            self.select_pie = None;
-        }
+        true
+    }
+
+    /// Close whichever pie is open.
+    pub(crate) fn close_pies(&mut self) {
+        self.pie = None;
+        self.select_pie = None;
+        self.snap_pie = None;
     }
 }

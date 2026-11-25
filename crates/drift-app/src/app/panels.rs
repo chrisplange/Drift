@@ -2415,15 +2415,19 @@ impl DriftApp {
                             }
                         }
                     });
+                    let mut perp_tangent = self.perp_tangent_snap;
                     toggle(
                         ui,
                         Glyph::PerpTangent,
                         "Perpendicular & tangent",
-                        &mut self.perp_tangent_snap,
+                        &mut perp_tangent,
                         "Perpendicular & tangent: lines snap square onto lines, circles and arcs, \
                          or tangent to circles and arcs, and follow guides square to a line or \
                          along an arc from the end you draw on from",
                     );
+                    if perp_tangent != self.perp_tangent_snap {
+                        self.set_perp_tangent_snap(perp_tangent);
+                    }
                     toggle(
                         ui,
                         Glyph::Snap,

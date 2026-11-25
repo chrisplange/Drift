@@ -54,6 +54,8 @@ mod new_drawing;
 mod note_typing;
 /// Selection filters you can combine.
 mod pick_filters;
+/// The three pies: the snap pie's switches, flicks, taps, keys and switching.
+mod pies;
 /// The quick-constrain bar on the canvas, and the message above it.
 #[cfg(not(feature = "demo"))]
 mod quick_bar;

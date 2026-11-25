@@ -219,6 +219,9 @@ impl DriftApp {
         let now = ctx.input(|i| i.time);
         match command {
             Command::Tool(kind) => self.switch_tool(kind),
+            Command::Toggle(ViewFlag::PerpTangent) => {
+                self.set_perp_tangent_snap(!self.perp_tangent_snap);
+            }
             Command::Toggle(f) => {
                 let v = self.flag(f);
                 *v = !*v;

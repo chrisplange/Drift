@@ -34,7 +34,8 @@ Seeded 2026-11-09 from the command registry, importers/exporters, agent schema a
 - Slot. `crates/drift-edit/src/tools/slot.rs`
 - Point. `crates/drift-edit/src/tools/point.rs`
 - Construction geometry toggle. `crates/drift-app/src/commands.rs`
-- Snaps: grid, end, midpoint, perpendicular, tangent. `crates/drift-geom/src/snap.rs`
+- Snaps: grid, end, midpoint, centre, quadrant, on curve, origin, perpendicular, tangent. `crates/drift-geom/src/snap.rs`
+- Snap pie (Shift+S): each kind of snap on or off, by flick, click or its letter; saved with the drawing. Perpendicular and Tangent are the two halves of the status bar's Perpendicular & tangent switch. `crates/drift-app/src/app/snap_pie.rs`
 - Typed lengths and angles while drawing. `crates/drift-app/src/app/temp_dims_ui.rs`
 
 ## Modify
@@ -117,7 +118,8 @@ Seeded 2026-11-09 from the command registry, importers/exporters, agent schema a
 - Box select and Shift/Ctrl modifiers. `crates/drift-edit/src/tools/select.rs`
 - Pan, zoom, zoom to fit, zoom to selection. `crates/drift-edit/src/tools/view.rs`
 - Grid and origin axes; grid spacing Auto or fixed (typed length, divisions per major square, View → Grid spacing). `crates/drift-app/src/commands.rs`, `crates/drift-render/src/frame.rs`
-- Right-click pie / context menus. `crates/drift-app/src/app/pie.rs`
+- Right-click context menus. `crates/drift-app/src/app/context_ui.rs`
+- Pies, one look and one flick-or-click model (`crates/drift-app/src/app/pie_style.rs`): relations pie (Q, `pie.rs`), Selection filter pie (Shift+Q, `select_pie.rs`), snap pie (Shift+S, `snap_pie.rs`). Hold the key and flick, or tap it and click; each pill's letter chooses it while the pie is open.
 
 ## UI
 - Command palette with CAD aliases (LINE, TRIM, HATCH…). `crates/drift-app/src/app/palette.rs`

@@ -67,6 +67,8 @@ impl DriftApp {
         // The sheet preview takes no drawing keys. Esc never leaves it for the model (Back
         // to model, the Sheet menu, the canvas tabs or Ctrl+PgDn / PgUp do).
         if self.drawing.view.sheet_preview {
+            // The pies work on the model: one left open when the sheet came up goes.
+            self.close_pies();
             // V adds a view, by its region in the model.
             if ctx.input(|i| i.modifiers.is_none() && i.key_pressed(Key::V))
                 && let Some(id) = self.current_sheet()
@@ -145,7 +147,9 @@ impl DriftApp {
             return;
         }
         // A pie's key with another pie open switches to it.
-        self.switch_pies(ctx);
+        if self.switch_pies(ctx) {
+            return;
+        }
         // Q: the relations pie, which keeps the keys while it is open.
         if self.pie_keys(ctx) {
             return;

@@ -42,6 +42,7 @@ pub(crate) enum Command {
     RelationsPie,
     /// The Selection filter pie, to click (its key is held to flick, or tapped).
     SelectionFilterPie,
+    /// The snap pie, to click (its key is held to flick, or tapped).
     SnapPie,
     Panel(Panel),
     HideAllPanels,
@@ -353,6 +354,8 @@ pub(crate) enum When {
     WeldPoints,
     /// A shape with a fill picked whole (its fill can be picked on its own).
     FilledShape,
+    /// The model on the canvas, not a sheet.
+    Model,
     /// Only in development builds (and hidden elsewhere).
     Debug,
     /// Only on the desktop (hidden in the browser).
@@ -407,6 +410,7 @@ impl When {
             When::WeldToActive => ed.can_weld(drift_edit::weld::WeldAt::Active),
             When::WeldPoints => ed.can_weld(drift_edit::weld::WeldAt::Centre),
             When::FilledShape => app.drawing.editor.picked_shape_fill().is_some(),
+            When::Model => !app.drawing.view.sheet_preview,
             When::Desktop => cfg!(not(target_arch = "wasm32")),
             When::Debug => cfg!(debug_assertions),
         }
@@ -440,6 +444,7 @@ impl When {
             When::WeldToActive => "Pick two or more points, the one to weld to last",
             When::WeldPoints => "Pick two or more points",
             When::FilledShape => "Pick a shape that has a fill",
+            When::Model => "Only on the model, not on a sheet",
         }
     }
 
@@ -1351,6 +1356,7 @@ fn table() -> Vec<Spec> {
         )
         .keys(const { &[plain(Key::Q)] })
         .own_keys()
+        .when(When::Model)
         .repeat(false)
         .words("constraint relate"),
         Spec::new(
@@ -1362,6 +1368,7 @@ fn table() -> Vec<Spec> {
         )
         .keys(const { &[shift(Key::Q)] })
         .own_keys()
+        .when(When::Model)
         .repeat(false)
         .words("pick filter kinds points edges fills"),
         Spec::new(
@@ -1373,6 +1380,7 @@ fn table() -> Vec<Spec> {
         )
         .keys(const { &[shift(Key::S)] })
         .own_keys()
+        .when(When::Model)
         .repeat(false)
         .words("snapping snaps endpoint midpoint center grid perpendicular tangent"),
         tool("edit.select", C::Edit, ToolKind::Select)

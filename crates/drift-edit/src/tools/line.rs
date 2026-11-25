@@ -298,6 +298,13 @@ pub(super) fn follow_guides(from: DVec2, guides: &[(GuideKind, DVec2)], p: &mut 
     let tol = p.tolerance;
     let mut best: Option<(f64, DVec2, GuideKind)> = None;
     for &(kind, dir) in guides {
+        let snap_kind = match kind {
+            GuideKind::Tangent(_) => drift_geom::SnapKind::Tangent,
+            _ => drift_geom::SnapKind::Perpendicular,
+        };
+        if !p.guide_kinds.has(snap_kind) {
+            continue;
+        }
         let along = d.dot(dir);
         let off = (d - dir * along).length();
         let level = dir.x.abs() <= 1e-12 || dir.y.abs() <= 1e-12;

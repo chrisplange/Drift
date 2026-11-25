@@ -6676,6 +6676,21 @@ fn drawing_on_from_a_line_follows_a_square_guide() {
     p.perp_tangent = false;
     tool.refine_pointer(&mut p);
     assert_eq!(p.guide, None);
+    // Drawing on from the second line: near the guide square to it, with Perpendicular alone
+    // turned off (the snap pie), no guide; with only Tangent off, the square guide.
+    let near = on_guide + dir.perp() * 10.0 + dir * 0.3;
+    let guide_with = |off: drift_geom::SnapKind| {
+        let mut p = Pointer::new(near, TOL);
+        p.perp_tangent = true;
+        p.guide_kinds = drift_geom::SnapKinds::ALL.with(off, false);
+        tool.refine_pointer(&mut p);
+        p.guide.map(|g| g.kind)
+    };
+    assert_eq!(
+        guide_with(drift_geom::SnapKind::Tangent),
+        Some(GuideKind::Perpendicular(second))
+    );
+    assert_eq!(guide_with(drift_geom::SnapKind::Perpendicular), None);
 }
 
 #[test]

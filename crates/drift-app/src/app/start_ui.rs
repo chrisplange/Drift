@@ -856,14 +856,14 @@ impl DriftApp {
         .on_hover_text(
             format!("Auto merge: a dragged point dropped on another, or a line or arc drawn on another shape's point, shares it (on the same layer only). Ctrl flips it for one drop{}", crate::commands::key_suffix("view.auto_merge")),
         );
-        crate::theme::checkbox(
-            ui,
-            &mut self.perp_tangent_snap,
-            "Snap perpendicular and tangent",
-        )
-        .on_hover_text(
-            "Lines snap square onto lines, circles and arcs, or tangent to circles and arcs",
-        );
+        let mut perp_tangent = self.perp_tangent_snap;
+        crate::theme::checkbox(ui, &mut perp_tangent, "Snap perpendicular and tangent")
+            .on_hover_text(
+                "Lines snap square onto lines, circles and arcs, or tangent to circles and arcs",
+            );
+        if perp_tangent != self.perp_tangent_snap {
+            self.set_perp_tangent_snap(perp_tangent);
+        }
         ui.horizontal(|ui| {
             ui.label("Angle snap");
             let mut options = vec![(None, "Off".to_owned())];

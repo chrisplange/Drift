@@ -585,7 +585,33 @@ impl Editor {
                         .collect::<BTreeMap<_, _>>();
                     (shapes, cache.fills.clone())
                 });
-            if let Some((shapes, fills)) = stale {
+            if let Some((mut shapes, fills)) = stale {
+                // A wall cluster's poché knows its own outline, found at once: shown as it
+                // was before the edit, it would sit askew on the walls' new faces for the
+                // frames until the areas are in.
+                if self.doc.has_walls() {
+                    let walls = self.wall_owners();
+                    let pochés: Vec<FillId> = shapes
+                        .keys()
+                        .copied()
+                        .filter(|id| walls.fills.contains_key(id))
+                        .collect();
+                    for id in pochés {
+                        if let Some(region) = self.wall_fill_region(id) {
+                            let mut curves: Vec<EntityId> = region_curves_of(&self.doc, id);
+                            curves.sort_unstable();
+                            let shape = FillShape {
+                                region,
+                                lost: false,
+                                curves,
+                                crossed: false,
+                                parts: 0,
+                            };
+                            self.last_fill_shapes.insert(id, shape.clone());
+                            shapes.insert(id, shape);
+                        }
+                    }
+                }
                 let shapes = Rc::new(shapes);
                 self.fill_shapes = Some(FillShapesCache {
                     revision,

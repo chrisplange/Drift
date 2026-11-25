@@ -14,7 +14,9 @@
 //! No animation while something is dragged (on the canvas or a slider), while a tool is
 //! part-way through (typed values while drawing), or inside a transaction: those already
 //! move every frame. A change of more than [`MAX_POINTS`] points, or one that carries any
-//! point further than [`MAX_TRAVEL`] of the canvas's diagonal on screen, lands at once.
+//! point further than [`MAX_TRAVEL`] of the canvas's diagonal on screen, lands at once. So
+//! does one that moves what walls or openings make (faces, poché corners, door symbols):
+//! those are made again, not solved, and their poché can't be eased along with them.
 
 use std::collections::{HashMap, HashSet};
 
@@ -199,6 +201,9 @@ impl SolveMotion {
         if points > MAX_POINTS || travel * gate.scale > MAX_TRAVEL * gate.diagonal {
             return;
         }
+        if moves_what_walls_make(doc, &moves) {
+            return;
+        }
         let mut affected: HashSet<EntityId> = moves.keys().copied().collect();
         for (id, e) in doc.iter() {
             if !affected.contains(&id) && e.kind.points().any(|p| moves.contains_key(&p)) {
@@ -332,6 +337,24 @@ impl crate::DriftApp {
         ctx.request_repaint();
         self.solve_motion.frame(&self.drawing.editor.doc, now)
     }
+}
+
+/// Whether any of `moves` is a point walls or openings made (rebuilt, not solved).
+fn moves_what_walls_make(doc: &Document, moves: &HashMap<EntityId, (Datum, Datum)>) -> bool {
+    if !doc.has_walls() {
+        return false;
+    }
+    let walls = doc.walls().flat_map(|(_, w)| {
+        w.made
+            .points
+            .values()
+            .chain(w.made.curves.values())
+            .copied()
+    });
+    let openings = doc
+        .openings()
+        .flat_map(|(_, o)| o.made.entities().collect::<Vec<_>>());
+    walls.chain(openings).any(|id| moves.contains_key(&id))
 }
 
 /// The parameters a curve is sampled at to fit a fill's map.

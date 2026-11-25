@@ -121,3 +121,51 @@ fn smoke_openings_place_pick_delete_and_reopen() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A door moved by its Offset in the Inspector lands at once: the walls' faces and poché are
+/// made again, not solved, so nothing eases (eased, the poché slid askew for a moment).
+#[test]
+fn smoke_openings_moved_by_offset_land_at_once() {
+    let Some(mut h) = harness() else { return };
+    view(&mut h, DVec2::new(-20.0, -20.0), DVec2::new(160.0, 80.0));
+    room(&mut h);
+    h.key_press_modifiers(EguiModifiers::SHIFT, Key::O);
+    h.run();
+    {
+        let ed = &mut h.state_mut().drawing.editor;
+        ed.set_opening_family("door.single");
+        ed.prefs.opening.width = 30.0;
+        ed.prefs.opening.leaf = 28.0;
+    }
+    click_world(&mut h, DVec2::new(50.0, 1.0));
+    h.key_press(Key::Escape);
+    h.run();
+    h.key_press(Key::Escape);
+    h.run();
+    click_world(&mut h, DVec2::new(35.0, 3.0));
+    let o = *h
+        .state()
+        .drawing
+        .editor
+        .selected_openings()
+        .iter()
+        .next()
+        .expect("the door is picked");
+    h.state_mut().animate_solves = true;
+    h.run();
+    let started = h.state().solve_motion.started;
+    h.state_mut()
+        .drawing
+        .editor
+        .set_opening_offset(o, "10")
+        .unwrap();
+    h.step();
+    let first = h.render().expect("render");
+    h.run();
+    assert_eq!(h.state().solve_motion.started, started, "nothing eased");
+    let settled = h.render().expect("render");
+    assert!(
+        first.as_raw() == settled.as_raw(),
+        "the first frame after the move is the settled one"
+    );
+}

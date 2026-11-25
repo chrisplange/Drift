@@ -148,15 +148,58 @@ fn several_layers_picked_take_a_new_weight_together_in_one_step() {
     assert!(picked.contains(&door) && picked.contains(&glaz));
 }
 
+/// Right-click the row of the layer named `name` and click `item` in its menu.
+fn row_menu(h: &mut Harness<'_, DriftApp>, name: &str, item: &str) {
+    let at = layer_row_gap(h, name);
+    h.hover_at(at);
+    h.run();
+    for pressed in [true, false] {
+        h.event(Event::PointerButton {
+            pos: at,
+            button: PointerButton::Secondary,
+            pressed,
+            modifiers: EguiModifiers::NONE,
+        });
+        h.run();
+    }
+    h.get_by_label(item).click();
+    h.run();
+    h.run();
+}
+
+/// The width the name of the layer named `name` is given on its row.
+fn name_room(h: &Harness<'_, DriftApp>, name: &str) -> f32 {
+    let row = h.get_by_label(name).rect();
+    let next = h
+        .query_all_by_label(&format!("{name} line weight and type"))
+        .next()
+        .expect("the line cell")
+        .rect();
+    next.left() - row.left()
+}
+
 #[test]
 fn printing_is_a_switch_on_the_row_and_the_filter_is_always_there() {
     let Some(mut h) = harness() else { return };
-    let [wall, ..] = three(&mut h);
+    let [wall, door, _] = three(&mut h);
     // Four layers: the filter shows all the same.
     let filter = h
         .query_all_by_role(egui::accesskit::Role::TextInput)
         .count();
     assert!(filter >= 1, "the filter field");
+    // At the dock's first width, with every layer printed, the print switch gives its room
+    // to the names (about 16 characters); the row's menu has it.
+    assert_eq!(h.query_all_by_label(PRINT).count(), 0);
+    assert!(
+        name_room(&h, "A-WALL") >= 112.0,
+        "{}",
+        name_room(&h, "A-WALL")
+    );
+    row_menu(&mut h, "A-DOOR", "Printed and exported");
+    assert!(!layer(&h, door).printable);
+    // A layer not printed: the switch is on every row, to show it.
+    assert_eq!(h.query_all_by_label(PRINT).count(), 4);
+    save_png("drift_ui_layer_rows_print_off.png", &mut h);
     let at = on_row(&h, "A-WALL", PRINT);
     // The switch says whether it is on.
     let pressed = |h: &Harness<'_, DriftApp>| {
@@ -178,6 +221,10 @@ fn printing_is_a_switch_on_the_row_and_the_filter_is_always_there() {
     click(&mut h, at, EguiModifiers::NONE);
     assert!(layer(&h, wall).printable);
     assert_eq!(pressed(&h), Some(Toggled::True));
+    // Printed again from the menu (a single undo step), the switch goes.
+    row_menu(&mut h, "A-DOOR", "Printed and exported");
+    assert!(layer(&h, door).printable);
+    assert_eq!(h.query_all_by_label(PRINT).count(), 0);
 }
 
 /// The print switch's label (and tooltip).
@@ -207,7 +254,15 @@ fn hold(h: &mut Harness<'_, DriftApp>, at: Pos2) {
 #[test]
 fn each_control_on_a_layer_row_shows_one_tooltip_its_own() {
     let Some(mut h) = harness() else { return };
-    three(&mut h);
+    let [_, door, _] = three(&mut h);
+    // (A layer not printed, so that every row has its print switch.)
+    {
+        let ed = &mut h.state_mut().drawing.editor;
+        let mut l = ed.doc.layer(door).cloned().unwrap();
+        l.printable = false;
+        ed.update_layer(door, l);
+    }
+    h.run();
     // On the row but on none of its controls: no tooltip (the row has none of its own).
     let gap = layer_row_gap(&h, "A-WALL");
     hold(&mut h, gap);

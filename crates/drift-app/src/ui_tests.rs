@@ -1830,6 +1830,39 @@ fn a_folded_floating_panel_moves_by_the_top_of_its_header() {
     );
 }
 
+/// A layer row with every switch showing (some layer not printed or snapped to) and no
+/// room for its name holds a floating Layers panel wider, the name kept readable.
+#[test]
+fn a_layer_row_short_of_room_holds_the_panel_wider_for_its_name() {
+    let Some(mut h) = harness() else { return };
+    {
+        let ed = &mut h.state_mut().drawing.editor;
+        let id = ed.doc.current_layer();
+        let mut l = ed.doc.layer(id).cloned().unwrap();
+        l.printable = false;
+        l.snappable = false;
+        ed.update_layer(id, l);
+    }
+    h.state_mut()
+        .layout
+        .move_to(Panel::Layers, Place::Float, None);
+    h.run_steps(6);
+    let (_, before) = h.state().floating_rects(Panel::Layers).unwrap();
+    let grab = egui::pos2(before.right() - 1.0, before.top() + 120.0);
+    drag_edge(&mut h, Panel::Layers, grab, grab - egui::vec2(400.0, 0.0));
+    h.run_steps(4);
+    let (panel, _) = h.state().floating_rects(Panel::Layers).unwrap();
+    assert!(h.state().panel_overflow(Panel::Layers) < 0.5, "{panel:?}");
+    assert!(
+        panel.width() > 240.5,
+        "held wider than the least width: {panel:?}"
+    );
+    assert!(
+        h.query_by_label("Layer 1").is_some(),
+        "the layer's name shown whole"
+    );
+}
+
 /// A floating panel can't be made narrower than what it holds, nor than the least width a
 /// floating window has: the Layers panel's rows are never cut off at its right edge.
 #[test]
@@ -1860,6 +1893,12 @@ fn a_floating_panel_is_never_narrower_than_its_contents() {
     let grab = egui::pos2(before.right() - 1.0, before.top() + 120.0);
     let held = drag_edge(&mut h, Panel::Layers, grab, grab - egui::vec2(400.0, 0.0));
     save_png("drift_ui_floating_squeezed.png", &mut h);
+    // The layer's name is still there to read, not just "…" (the row gives up its least
+    // used switches first, and holds the panel wider than that).
+    assert!(
+        h.query_by_label("Layer 1").is_some(),
+        "the layer's name shown whole"
+    );
     let after = fits(&h, "squeezed from the right");
     assert!(held.width() >= after.width() - 0.5, "{held:?} vs {after:?}");
     let needs = h.state().floating_content_width(Panel::Layers).unwrap();

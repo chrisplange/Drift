@@ -620,3 +620,51 @@ fn a_click_with_the_key_held_near_the_edge_chooses_what_is_lit() {
     assert!(!filter.has(PickKind::Points), "Points, the lit pill, off");
     assert!(filter.has(PickKind::Areas), "Areas untouched");
 }
+
+/// The relations pie the same way, where it matters most: the caption and the conflict warning
+/// are for the lit pill. Two lines picked, Q held near the window's bottom, a click over Equal
+/// while the gesture lights Perpendicular adds Perpendicular, not Equal.
+#[test]
+fn a_click_with_q_held_near_the_edge_adds_the_lit_relation() {
+    let Some(mut h) = harness() else { return };
+    let ed = &mut h.state_mut().drawing.editor;
+    ed.doc.begin();
+    let p = [
+        DVec2::new(-40.0, -10.0),
+        DVec2::new(20.0, -8.0),
+        DVec2::new(-40.0, 15.0),
+        DVec2::new(25.0, 20.0),
+    ]
+    .map(|at| ed.doc.add_point(at));
+    let a = ed.doc.add_line(p[0], p[1]).unwrap();
+    let b = ed.doc.add_line(p[2], p[3]).unwrap();
+    ed.commit("Lines");
+    h.state_mut().drawing.editor.selection = [a, b].into();
+    h.run();
+    let canvas = h.state().drawing.view.canvas_rect;
+    let at = egui::pos2(canvas.center().x, canvas.bottom() - 20.0);
+    h.hover_at(at);
+    h.run();
+    h.key_down(Key::Q);
+    h.run();
+    let pie = h.state().pie.as_ref().expect("open");
+    let (center, from) = (pie.center, pie.from);
+    let slices = h.state().pie_slices();
+    assert_eq!(slices[3].label, "Perpendicular");
+    assert_eq!(slices[4].label, "Equal");
+    let equal = pill(&h, 4).center();
+    let lit = hot_place(&h.state().pie_pills, center, Some(equal), Some(from));
+    assert_eq!(lit, Some(3), "over Equal, the gesture lights Perpendicular");
+    click_at(&mut h, equal);
+    let added: Vec<&str> = h
+        .state()
+        .drawing
+        .editor
+        .doc
+        .constraints()
+        .map(|(_, c)| c.type_name())
+        .collect();
+    assert_eq!(added, ["Perpendicular"], "the lit relation, not Equal");
+    h.key_up(Key::Q);
+    h.run();
+}

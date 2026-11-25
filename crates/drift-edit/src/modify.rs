@@ -1830,10 +1830,33 @@ impl Editor {
             .collect()
     }
 
+    /// The curves that make the corner at point `p`: those ending there, less construction
+    /// curves when two others are left. A construction line that ends at a corner (one a
+    /// fillet kept for what was measured to it, or a centre line drawn to it) doesn't make
+    /// it any less a corner of the two solid curves there.
+    fn corner_curves(&self, p: EntityId) -> Vec<EntityId> {
+        let ending = self.curves_ending_at(p);
+        if ending.len() > 2 {
+            let solid: Vec<EntityId> = ending
+                .iter()
+                .copied()
+                .filter(|id| {
+                    self.doc
+                        .get(*id)
+                        .is_some_and(|e| e.style != drift_core::LineKind::Construction)
+                })
+                .collect();
+            if solid.len() == 2 {
+                return solid;
+            }
+        }
+        ending
+    }
+
     /// The two lines meeting at a corner point (and their far ends), for fillets and
     /// chamfers.
     pub fn corner(&self, p: EntityId) -> Result<[(EntityId, EntityId); 2], EditError> {
-        let ending = self.curves_ending_at(p);
+        let ending = self.corner_curves(p);
         let [c1, c2] = ending[..] else {
             return Err(not_a_corner(ending.len(), "lines"));
         };
@@ -1890,7 +1913,7 @@ impl Editor {
     /// The two curves (lines or arcs) meeting at a corner point, and how each runs from it,
     /// for fillets.
     pub fn fillet_corner(&self, p: EntityId) -> Result<[(EntityId, Arm); 2], EditError> {
-        let ending = self.curves_ending_at(p);
+        let ending = self.corner_curves(p);
         let [c1, c2] = ending[..] else {
             return Err(not_a_corner(ending.len(), "lines or arcs"));
         };
@@ -1993,12 +2016,14 @@ impl Editor {
     /// After fillet `arc` at corner `p` takes the curves `taken` whole (each with its far
     /// end, where the arc now ends), inside an open transaction: the curve it keeps, if any,
     /// moves off `p` onto its new end as in [`Editor::cut_corner`]. When anything is
-    /// measured or related to the corner, or to a taken curve beyond which way it runs, the
-    /// taken curves stay as construction: with the kept curve they hold the corner where it
-    /// was, so what was measured to it still means what it did. Otherwise they go. Either
-    /// way the arc is held tangent to a curve it runs smoothly on into. (Not to a taken
-    /// curve that stays: with the arc ending on its far end, a tangency there and the radius
-    /// would together set its length, which is usually measured already.)
+    /// measured or related to the corner (or anything else uses it), or to a taken curve
+    /// beyond which way it runs, the taken curves stay as construction: with the kept curve
+    /// they hold the corner where it was, so what was measured to it still means what it
+    /// did. Otherwise they go, and the arc is held tangent to a curve it runs smoothly on
+    /// into at a far end. (Not when they stay: the arc ends on a kept taken curve's far end,
+    /// which that curve and what is measured to it already place, so a tangency there with
+    /// the radius would set again what those dimensions set, and changing one would then
+    /// fail.)
     fn take_whole(
         &mut self,
         p: EntityId,
@@ -2010,7 +2035,9 @@ impl Editor {
             self.keep_side(curve);
             self.replace_end(curve, p, end)?;
         }
+        let skip: Vec<EntityId> = taken.iter().map(|&(curve, _)| curve).collect();
         let needed = self.doc.is_named(p)
+            || self.doc.users_of(p).any(|u| !skip.contains(&u))
             || taken
                 .iter()
                 .any(|&(curve, _)| self.holds_more_than_its_run(curve));
@@ -2030,20 +2057,134 @@ impl Editor {
                     .map_err(|e| invalid(e.to_string()))?;
             }
         } else {
-            self.doc.delete(taken.iter().map(|&(curve, _)| curve));
+            // One at a time, so what runs through two taken sides (parallel to one that is
+            // square to the other) still carries on.
+            let mut carried = Vec::new();
+            for &curve in &skip {
+                for c in self.orientation_through(curve) {
+                    carried.extend(self.doc.add_constraint(c).ok());
+                }
+                self.doc.delete([curve]);
+            }
             if self.doc.contains(p) && self.doc.users_of(p).next().is_none() {
                 self.doc.delete([p]);
             }
-        }
-        let skip: Vec<EntityId> = taken.iter().map(|&(curve, _)| curve).collect();
-        for &(_, far) in taken {
-            self.join_smoothly(arc, far, &skip);
+            self.keep_independent(carried);
+            for &(_, far) in taken {
+                self.join_smoothly(arc, far, &skip);
+            }
         }
         Ok(())
     }
 
+    /// What line `side`'s orientation relations (horizontal, vertical, parallel and
+    /// perpendicular to other lines) hold between the other lines and the axes through it,
+    /// for when it goes: two lines both parallel to it are parallel to each other, a line
+    /// square to a horizontal side is vertical, and so on. Taken from the first relation
+    /// (one to an axis if there is one) to each of the others; whatever the side was square
+    /// or parallel to alone only held the side itself.
+    fn orientation_through(&self, side: EntityId) -> Vec<Constraint> {
+        #[derive(Clone, Copy)]
+        enum Toward {
+            /// An axis: horizontal (true) or vertical.
+            Axis(bool),
+            Line(EntityId),
+        }
+        // Each partner, and whether the side is square to it.
+        let mut partners: Vec<(Toward, bool)> = self
+            .doc
+            .constraints_on(side)
+            .filter_map(|id| match self.doc.constraint(id).copied()? {
+                Constraint::Horizontal { line } if line == side => {
+                    Some((Toward::Axis(true), false))
+                }
+                Constraint::Vertical { line } if line == side => Some((Toward::Axis(false), false)),
+                Constraint::Parallel { a, b } if (a == side) != (b == side) => {
+                    Some((Toward::Line(if a == side { b } else { a }), false))
+                }
+                Constraint::Perpendicular { a, b } if (a == side) != (b == side) => {
+                    Some((Toward::Line(if a == side { b } else { a }), true))
+                }
+                _ => None,
+            })
+            .collect();
+        partners.sort_by_key(|(t, _)| !matches!(t, Toward::Axis(_)));
+        let Some(&(anchor, anchor_square)) = partners.first() else {
+            return Vec::new();
+        };
+        partners[1..]
+            .iter()
+            .filter_map(|&(toward, square)| {
+                let square = square != anchor_square;
+                match (anchor, toward) {
+                    (Toward::Axis(horizontal), Toward::Line(line)) => {
+                        Some(if horizontal != square {
+                            Constraint::Horizontal { line }
+                        } else {
+                            Constraint::Vertical { line }
+                        })
+                    }
+                    (Toward::Line(a), Toward::Line(b)) if a != b => Some(if square {
+                        Constraint::Perpendicular { a, b }
+                    } else {
+                        Constraint::Parallel { a, b }
+                    }),
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+
+    /// Of the relations `added` (met as drawn), keep those the rest don't already imply, as
+    /// a solve judges it, and take off the others, so carrying a relation on never leaves
+    /// the drawing over-defined.
+    fn keep_independent(&mut self, added: Vec<ConstraintId>) {
+        let added: Vec<(ConstraintId, Constraint)> = added
+            .into_iter()
+            .filter_map(|id| Some((id, *self.doc.constraint(id)?)))
+            .collect();
+        if added.is_empty() {
+            return;
+        }
+        for (id, _) in &added {
+            self.doc.remove_constraint(*id);
+        }
+        let lowering = self.lowering();
+        let seeds: Vec<EntityId> = added.iter().flat_map(|(_, c)| c.entities()).collect();
+        let scope = std::rc::Rc::new(drift_solver::connected_with(
+            &self.doc,
+            seeds,
+            lowering.as_deref(),
+        ));
+        let solved = |doc: &drift_core::Document| {
+            drift_solver::solve(
+                &mut doc.clone(),
+                &drift_solver::SolveOptions {
+                    analyze: true,
+                    scope: Some(scope.clone()),
+                    lowering: lowering.clone(),
+                    ..Default::default()
+                },
+            )
+        };
+        let base = solved(&self.doc).dependent_equations;
+        for (_, c) in added {
+            let Ok(id) = self.doc.add_constraint(c) else {
+                continue;
+            };
+            let report = solved(&self.doc);
+            if report.dependent_equations > base
+                || report.redundant.contains(&id)
+                || report.conflicts.contains(&id)
+            {
+                self.doc.remove_constraint(id);
+            }
+        }
+    }
+
     /// Whether anything is measured or related to line or arc `curve` beyond which way it
-    /// runs (horizontal, vertical) and its tangency to a curve it joins end to end.
+    /// runs (horizontal, vertical, parallel or perpendicular to another line) and its
+    /// tangency to a curve it joins end to end.
     fn holds_more_than_its_run(&self, curve: EntityId) -> bool {
         let kind = |id: EntityId| self.doc.get(id).map(|e| e.kind);
         let joins = |other: EntityId| match (kind(curve), kind(other)) {
@@ -2057,9 +2198,13 @@ impl Editor {
                 .doc
                 .constraints_on(curve)
                 .any(|id| match self.doc.constraint(id).copied() {
-                    Some(Constraint::Horizontal { .. } | Constraint::Vertical { .. }) | None => {
-                        false
-                    }
+                    Some(
+                        Constraint::Horizontal { .. }
+                        | Constraint::Vertical { .. }
+                        | Constraint::Parallel { .. }
+                        | Constraint::Perpendicular { .. },
+                    )
+                    | None => false,
                     Some(Constraint::Tangent { a, b }) => !joins(if a == curve { b } else { a }),
                     Some(_) => true,
                 })
@@ -4215,6 +4360,7 @@ mod tests {
             mut ed,
             corners,
             sides,
+            width,
             ..
         } = plate(false);
         let arcs = ed.fillet_corners(&[corners[0], corners[1]], 50.0).unwrap();
@@ -4229,6 +4375,191 @@ mod tests {
         assert!(ed.out.notice.is_none(), "{:?}", ed.out.notice);
         assert_eq!(dof(&mut ed), 0);
         assert!(ed.analysis().conflicts.is_empty());
+        // The construction sides place where the arcs meet: a tangency between them there
+        // would set again what the width and height set.
+        assert_eq!(tangents(&ed, arcs[0], arcs[1]), 0);
+        assert_eq!(ed.analysis().dependent_equations, 0);
+        // So the dimensions still drive the plate.
+        ed.set_dimension(width, 120.0).unwrap();
+        assert!(close(ed.doc.point(corners[1]).unwrap(), v(120.0, 0.0)));
+        ed.set_dimension(height(&ed, &corners), 60.0).unwrap();
+        assert!(close(ed.doc.point(corners[2]).unwrap(), v(120.0, 60.0)));
+    }
+
+    /// The plate's height dimension (corner to corner up its left side).
+    fn height(ed: &Editor, corners: &[EntityId; 4]) -> ConstraintId {
+        ed.doc
+            .constraints()
+            .find(|(_, c)| {
+                matches!(**c, Constraint::Distance { a, b, .. } if (a, b) == (corners[3], corners[0]))
+            })
+            .map(|(id, _)| id)
+            .expect("a height")
+    }
+
+    /// A fillet taking a measured side whole up to an earlier fillet stays clear of it: no
+    /// tangency between the two arcs over-defines the plate, and its height still drives it.
+    #[test]
+    fn a_fillet_taking_a_measured_side_up_to_another_fillet_leaves_its_height_free() {
+        let Plate {
+            mut ed, corners, ..
+        } = plate(false);
+        let top = ed.fillet(corners[3], 10.0).unwrap();
+        let bottom = ed.fillet(corners[0], 40.0).unwrap();
+        assert_eq!(tangents(&ed, top, bottom), 0);
+        assert_eq!(dof(&mut ed), 0);
+        assert_eq!(ed.analysis().dependent_equations, 0);
+        assert!(ed.analysis().conflicts.is_empty());
+        ed.set_dimension(height(&ed, &corners), 60.0).unwrap();
+        assert!(close(ed.doc.point(corners[2]).unwrap(), v(100.0, 60.0)));
+    }
+
+    /// A side kept as construction doesn't stop its far corner being rounded: the corner is
+    /// still the solid top side's and the arc's, and the construction side stays on it.
+    #[test]
+    fn the_corner_beyond_a_side_kept_as_construction_can_still_be_rounded() {
+        let Plate {
+            mut ed,
+            corners,
+            sides,
+            ..
+        } = plate(false);
+        let arc = ed.fillet(corners[0], 50.0).unwrap();
+        assert_eq!(
+            ed.doc.get(sides[3]).map(|e| e.style),
+            Some(drift_core::LineKind::Construction)
+        );
+        let [(c1, _), (c2, _)] = ed.fillet_corner(corners[3]).unwrap();
+        assert!([c1, c2].contains(&sides[2]) && [c1, c2].contains(&arc));
+        ed.fillet(corners[3], 10.0).unwrap();
+        assert!(ed.doc.contains(sides[3]));
+        assert!(close(ed.doc.point(corners[3]).unwrap(), v(0.0, 50.0)));
+        assert!(ed.out.notice.is_none(), "{:?}", ed.out.notice);
+        assert_eq!(dof(&mut ed), 0);
+        assert!(ed.analysis().conflicts.is_empty());
+    }
+
+    /// A construction line drawn to a rectangle's corner doesn't stop the corner being
+    /// rounded or cut; it stays on the corner, held where the sides would meet.
+    #[test]
+    fn a_construction_line_to_a_corner_doesnt_stop_a_fillet_or_chamfer() {
+        for chamfer in [false, true] {
+            let (mut ed, corners, _) = bare_plate();
+            ed.doc.begin();
+            let centre = ed.doc.add_point(v(50.0, 25.0));
+            let guide = ed.doc.add_line(centre, corners[0]).unwrap();
+            ed.doc.set_style(guide, drift_core::LineKind::Construction);
+            ed.commit("Guide");
+            if chamfer {
+                ed.chamfer(corners[0], 5.0, 5.0).unwrap();
+            } else {
+                ed.fillet(corners[0], 5.0).unwrap();
+            }
+            assert!(ed.doc.contains(guide) && ed.doc.contains(corners[0]));
+            assert_eq!(
+                count(
+                    &ed,
+                    |c| matches!(*c, Constraint::Corner { point, .. } if point == corners[0])
+                ),
+                1
+            );
+        }
+    }
+
+    /// Something else using the corner (a circle centred on it) keeps a side taken whole,
+    /// as construction, so the corner stays held where it was.
+    #[test]
+    fn a_circle_centred_on_the_corner_keeps_a_side_taken_whole() {
+        let (mut ed, corners, sides) = bare_plate();
+        ed.doc.begin();
+        ed.doc.add_circle(corners[0], 5.0).unwrap();
+        ed.commit("Hole");
+        ed.fillet(corners[0], 50.0).unwrap();
+        assert_eq!(
+            ed.doc.get(sides[3]).map(|e| e.style),
+            Some(drift_core::LineKind::Construction)
+        );
+        assert!(close(ed.doc.point(corners[0]).unwrap(), v(0.0, 0.0)));
+    }
+
+    /// A rectangle whose sides are held square and parallel to each other, as the Line
+    /// tool's guides draw a rotated one: a fillet takes a side whole just as on one held
+    /// horizontal and vertical, with no construction line left, and what ran through the
+    /// side (the right side square to the bottom) still holds.
+    #[test]
+    fn a_side_held_square_and_parallel_is_taken_like_one_held_level() {
+        let (mut axes, axes_corners, _) = bare_plate();
+        axes.fillet(axes_corners[0], 50.0).unwrap();
+        let level = dof(&mut axes);
+        let (mut ed, corners, sides) = bare_plate();
+        ed.doc.begin();
+        for (id, c) in ed
+            .doc
+            .constraints()
+            .map(|(id, c)| (id, *c))
+            .collect::<Vec<_>>()
+        {
+            let swap = match c {
+                Constraint::Vertical { line } if line == sides[3] => Constraint::Perpendicular {
+                    a: sides[3],
+                    b: sides[0],
+                },
+                Constraint::Vertical { line } if line == sides[1] => Constraint::Parallel {
+                    a: sides[1],
+                    b: sides[3],
+                },
+                Constraint::Horizontal { line } if line == sides[2] => Constraint::Parallel {
+                    a: sides[2],
+                    b: sides[0],
+                },
+                _ => continue,
+            };
+            ed.doc.set_constraint(id, swap).unwrap();
+        }
+        ed.commit("Square");
+        let free = dof(&mut ed);
+        assert_eq!(free, {
+            let (mut b, ..) = bare_plate();
+            dof(&mut b)
+        });
+        ed.fillet(corners[0], 50.0).unwrap();
+        assert!(!ed.doc.contains(sides[3]), "the left side goes");
+        assert!(!ed.doc.contains(corners[0]));
+        let square = |c: &Constraint| {
+            matches!(*c, Constraint::Perpendicular { a, b }
+                if (a, b) == (sides[0], sides[1]) || (a, b) == (sides[1], sides[0]))
+        };
+        assert_eq!(
+            count(&ed, square),
+            1,
+            "the right side stays square to the bottom"
+        );
+        assert_eq!(dof(&mut ed), level);
+        assert_eq!(ed.analysis().dependent_equations, 0);
+    }
+
+    /// A relation carried through a side taken whole that the others already imply isn't
+    /// added: nothing is left over-defined.
+    #[test]
+    fn a_relation_carried_through_a_taken_side_is_not_added_twice() {
+        let (mut ed, corners, sides) = bare_plate();
+        ed.doc.begin();
+        ed.doc
+            .add_constraint(Constraint::Perpendicular {
+                a: sides[3],
+                b: sides[0],
+            })
+            .unwrap();
+        ed.commit("Square");
+        ed.fillet(corners[0], 50.0).unwrap();
+        assert!(!ed.doc.contains(sides[3]));
+        assert_eq!(
+            count(&ed, |c| *c == Constraint::Horizontal { line: sides[0] }),
+            1
+        );
+        dof(&mut ed);
+        assert!(ed.analysis().redundant.is_empty());
+        assert_eq!(ed.analysis().dependent_equations, 0);
     }
 
     /// A fillet may take an arc whole too: on a D (a line and a half circle), two fillets of

@@ -8007,8 +8007,8 @@ fn fillet_tool_clamps_at_the_whole_side() {
     assert!((size - 6.0).abs() < 1e-9, "{size}");
     tool.handle(Input::Click(far, Modifiers::default()), &mut ed);
     assert_eq!(arcs(&ed.doc), 1, "{:?}", ed.out.notice);
-    let left = sides.iter().filter(|id| !ed.doc.contains(**id)).count();
-    assert_eq!(left, 1, "the short side at the corner is taken whole");
+    let gone = sides.iter().filter(|id| !ed.doc.contains(**id)).count();
+    assert_eq!(gone, 1, "the short side at the corner is taken whole");
 }
 
 #[test]
@@ -8029,10 +8029,28 @@ fn fillet_tool_set_of_arc_corners_applies_at_the_drag_cap() {
     let mut far = ptr(&ed, &tool, v(5.0, 40.0));
     far.alt = true;
     tool.handle(Input::Hover(far), &mut ed);
-    let size = previewed_radius(&tool, &ed);
-    assert!(size > 1.0, "{size}");
+    // Both fillets are previewed at the cap, where they are one circle's two halves.
+    for item in tool.editor_preview(&ed) {
+        if let Shape::Arc { radius, .. } = item.shape {
+            assert!((radius - 5.0).abs() < 1e-9, "{radius}");
+        }
+    }
     tool.handle(Input::Click(far, Modifiers::default()), &mut ed);
-    assert_eq!(radii(&ed).len(), 3, "{:?}", ed.out.notice);
+    // At the cap the two fillets meet on both curves and take them whole: a circle of two
+    // arcs, with no sliver of either curve left between them.
+    assert_eq!(radii(&ed), vec![5.0, 5.0], "{:?}", ed.out.notice);
+    assert_eq!(lines(&ed.doc), 0);
+    assert!(no_sliver(&ed));
+}
+
+/// Whether every line and arc in the drawing is longer than a curve a fillet may take whole
+/// would be.
+fn no_sliver(ed: &Editor) -> bool {
+    ed.doc.iter().all(|(id, _)| match ed.doc.shape(id) {
+        Some(Shape::Line { a, b }) => a.distance(b) > 1e-6,
+        Some(Shape::Arc { radius, sweep, .. }) => radius * sweep > 1e-6,
+        _ => true,
+    })
 }
 
 #[test]
@@ -8059,7 +8077,11 @@ fn fillet_tool_set_sharing_a_short_arc_applies_at_the_drag_cap() {
     far.alt = true;
     tool.handle(Input::Hover(far), &mut ed);
     tool.handle(Input::Click(far, Modifiers::default()), &mut ed);
-    assert_eq!(radii(&ed).len(), 3, "{:?}", ed.out.notice);
+    // The two fillets meet on the arc and take it whole, leaving no sliver of it.
+    assert_eq!(radii(&ed).len(), 2, "{:?}", ed.out.notice);
+    assert!(!ed.doc.contains(arc));
+    assert_eq!(lines(&ed.doc), 2);
+    assert!(no_sliver(&ed));
 }
 
 #[test]

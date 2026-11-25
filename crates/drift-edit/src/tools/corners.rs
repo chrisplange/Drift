@@ -173,9 +173,10 @@ fn is_corner(ed: &Editor, p: EntityId, arcs: bool) -> bool {
     (tolerance::ANGLE..=PI - tolerance::ANGLE).contains(&alpha)
 }
 
-/// The largest fillet `fillet_geometry` makes at `at` between `arms`.
+/// The largest fillet at `at` between `arms` whose tangent points at most reach their far
+/// ends.
 fn largest_fillet(at: DVec2, arms: [Arm; 2]) -> f64 {
-    let fits = |r: f64| crate::modify::fillet_geometry(at, arms, r).is_ok();
+    let fits = |r: f64| crate::modify::fillet_reaches(at, arms, r);
     let (half, room) = corner_angle(at, arms);
     let (mut lo, mut hi) = (0.0, (room * half.tan()).max(tolerance::SAME));
     for _ in 0..64 {
@@ -238,20 +239,9 @@ fn largest(ed: &Editor, set: &[EntityId], arcs: bool) -> f64 {
                 });
             }
         } else {
-            // (A curve shared by two corners keeps a hair between their fillets: the
-            // first's tangent point may land a hair past its share, which counts as
-            // reaching it.)
-            let share = (*arms).map(|(curve, arm)| {
-                let n = on[&curve].0;
-                let margin = if n > 1 {
-                    2.0 * crate::modify::consume_slack(arm.length)
-                } else {
-                    0.0
-                };
-                Arm {
-                    length: arm.length / f64::from(n) - margin,
-                    ..arm
-                }
+            let share = (*arms).map(|(curve, arm)| Arm {
+                length: arm.length / f64::from(on[&curve].0),
+                ..arm
             });
             largest = largest.min(largest_fillet(*at, share));
         }

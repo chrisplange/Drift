@@ -1345,38 +1345,60 @@ impl DriftApp {
             None => std::collections::HashMap::new(),
         };
         if !fill_motions.is_empty() {
+            let editor = &self.drawing.editor;
+            let fill_meshes = &mut self.drawing.fill_meshes;
+            let patterns = &self.hatch_patterns;
+            let px_per_mm = self.drawing.view.camera.scale;
             // A fill on what eases in, made for where it is shown, not culled and cut to
-            // the view where it lands. None if it doesn't show as shown.
-            let eased = |id: drift_core::FillId, motion: &crate::motion::FillMotion| {
-                let over = |region: &drift_geom::regions::Region, view| {
-                    drift_edit::fills::fill_graphics_over(
-                        &self.drawing.editor,
-                        &self.hatch_patterns,
-                        id,
-                        region,
-                        view,
-                        self.drawing.view.camera.scale,
-                        dark,
-                    )
-                };
-                match motion {
-                    crate::motion::FillMotion::Remade(region) => over(region, view),
-                    // Made where it was solved, over what the map carries into the view.
-                    crate::motion::FillMotion::Carried(carry) => {
-                        let solved = &fill_shapes.get(&id)?.region;
-                        let mut g = over(solved, carry.pull_back(view).unwrap_or(view))?;
-                        carry.carry(&mut g.meshes, &mut g.lines);
-                        Some(g)
+            // the view where it lands. `landed` is what was made for where it lands, if it
+            // shows there. None if it doesn't show as shown.
+            let mut eased =
+                |id: drift_core::FillId,
+                 motion: &crate::motion::FillMotion,
+                 landed: Option<drift_edit::fills::FillGroup>| {
+                    match motion {
+                        crate::motion::FillMotion::Remade(region) => {
+                            drift_edit::fills::fill_graphics_over(
+                                editor, patterns, id, region, view, px_per_mm, dark,
+                            )
+                        }
+                        // Made where it was solved, over what the map carries into the view.
+                        crate::motion::FillMotion::Carried(carry) => {
+                            let hatched =
+                                matches!(editor.doc.fill(id)?.kind, drift_core::FillKind::Hatch(_));
+                            let mut g = match landed {
+                                // Nothing in it is cut to the view: its triangles as made.
+                                Some(g) if !hatched => g,
+                                // Its hatch cut to what is shown; its triangles the kept ones.
+                                _ => drift_edit::fills::fill_graphics_kept(
+                                    editor,
+                                    fill_meshes,
+                                    patterns,
+                                    id,
+                                    &fill_shapes.get(&id)?.region,
+                                    carry.pull_back(view).unwrap_or(view),
+                                    px_per_mm,
+                                    dark,
+                                )?,
+                            };
+                            carry.carry(&mut g.meshes, &mut g.lines);
+                            Some(g)
+                        }
                     }
-                }
-            };
+                };
             for g in &mut fills.groups {
                 let drift_edit::stack::FillRef::Fill(id) = g.fill else {
                     continue;
                 };
                 // Out of view as shown: not drawn (not left where it lands).
                 if let Some(motion) = fill_motions.get(&id) {
-                    (g.meshes, g.lines) = eased(id, motion)
+                    let landed = drift_edit::fills::FillGroup {
+                        layer: g.layer,
+                        fill: g.fill,
+                        meshes: std::mem::take(&mut g.meshes),
+                        lines: std::mem::take(&mut g.lines),
+                    };
+                    (g.meshes, g.lines) = eased(id, motion, Some(landed))
                         .map(|eased| (eased.meshes, eased.lines))
                         .unwrap_or_default();
                 }
@@ -1401,7 +1423,7 @@ impl DriftApp {
                 if drawn.contains(id) {
                     continue;
                 }
-                let Some(group) = eased(*id, motion) else {
+                let Some(group) = eased(*id, motion, None) else {
                     continue;
                 };
                 let at = fills
@@ -1628,8 +1650,7 @@ impl DriftApp {
         {
             overlay::base_point(&painter, &map, at, &colors);
         }
-        // Picked and hovered fills.
-        let shapes = self.drawing.editor.fill_shapes();
+        // Picked and hovered fills, lit over the shapes their fills were drawn from.
         for (id, alpha) in self
             .drawing
             .editor
@@ -1638,7 +1659,7 @@ impl DriftApp {
             .map(|id| (*id, 0.3))
             .chain(self.drawing.editor.hovered_fill.map(|id| (id, 0.14)))
         {
-            if let Some(shape) = shapes.get(&id) {
+            if let Some(shape) = fill_shapes.get(&id) {
                 let color = if shape.lost {
                     crate::theme::error_color(dark)
                 } else {
@@ -1663,7 +1684,7 @@ impl DriftApp {
         // kept.
         let dark = ui.visuals().dark_mode;
         for (id, fill) in self.drawing.editor.doc.fills() {
-            let Some(shape) = shapes.get(&id).filter(|s| fill.divided && s.parts > 1) else {
+            let Some(shape) = fill_shapes.get(&id).filter(|s| fill.divided && s.parts > 1) else {
                 continue;
             };
             if self

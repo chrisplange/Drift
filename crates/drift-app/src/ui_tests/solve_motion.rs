@@ -485,7 +485,7 @@ fn a_hatch_easing_past_the_canvas_edge_reaches_the_edge() {
     }
     h.run();
     assert!(ink(&mut h) > 0, "hatched to the edge");
-    // Moved right: where it lands, the view ends 20 short of the rectangle's right side.
+    // Moved right: where it lands, the view ends 30 short of the rectangle's right side.
     {
         let ed = &mut h.state_mut().drawing.editor;
         ed.selection = p.into_iter().collect();
@@ -500,4 +500,78 @@ fn a_hatch_easing_past_the_canvas_edge_reaches_the_edge() {
     );
     h.run();
     assert!(ink(&mut h) > 0);
+}
+
+/// Fills carried as they ease take the triangles the canvas keeps: once the frame a nudge
+/// lands has made them, no frame of the ease tessellates a fill again, whether it is solid,
+/// hatched over a background, or out of view where it lands but shown in view.
+#[test]
+fn carried_fills_are_not_tessellated_again_while_they_ease() {
+    let Some((mut h, _, _)) = dimensioned_line() else {
+        return;
+    };
+    let right = canvas_right(&h);
+    h.hover_at(screen(&h, DVec2::new(20.0, 30.0)));
+    h.run();
+    let solid = loose_filled_rectangle(&mut h, right - 70.0, right - 60.0);
+    let hatched = loose_filled_rectangle(&mut h, right - 55.0, right - 45.0);
+    let leaving = loose_filled_rectangle(&mut h, right - 25.0, right - 5.0);
+    let fills: Vec<FillId> = h
+        .state()
+        .drawing
+        .editor
+        .doc
+        .fills()
+        .map(|(id, _)| id)
+        .collect();
+    assert_eq!(fills.len(), 3);
+    {
+        let ed = &mut h.state_mut().drawing.editor;
+        let shapes = ed.fill_shapes();
+        let id = *fills
+            .iter()
+            .find(|id| shapes[*id].region.contains(DVec2::new(right - 50.0, -25.0)))
+            .unwrap();
+        let mut fill = ed.doc.fill(id).unwrap().clone();
+        fill.kind = drift_core::FillKind::Hatch(drift_core::Hatch {
+            background: Some(drift_core::Rgb([0x30, 0x60, 0x90])),
+            ..drift_core::Hatch::new("ANSI31")
+        });
+        ed.update_fill(id, fill);
+    }
+    h.run();
+    // All moved right: the last lands past the canvas's edge.
+    {
+        let ed = &mut h.state_mut().drawing.editor;
+        ed.selection = solid.into_iter().chain(hatched).chain(leaving).collect();
+        assert_eq!(ed.nudge(DVec2::new(30.0, 0.0)), Some(true));
+        ed.selection.clear();
+    }
+    h.step();
+    assert!(h.state().solve_motion.animating(), "it eases");
+    let made = drift_edit::fills::tessellations();
+    let mut frames = 0;
+    while h.state().solve_motion.animating() {
+        // Every fill is carried by this frame.
+        let t = now(&h);
+        let app = &mut h.state_mut();
+        let shapes = app.drawing.editor.fill_shapes();
+        if let Some(frame) = app.solve_motion.frame(&app.drawing.editor.doc, t) {
+            let motions = frame.fill_motions(&app.drawing.editor.doc, &shapes);
+            for id in &fills {
+                assert!(
+                    matches!(motions.get(id), Some(crate::motion::FillMotion::Carried(_))),
+                    "{id:?} carried"
+                );
+            }
+        }
+        h.step();
+        frames += 1;
+    }
+    assert!(frames >= 3, "several frames of easing: {frames}");
+    assert_eq!(
+        drift_edit::fills::tessellations(),
+        made,
+        "no fill tessellated again while it eases"
+    );
 }

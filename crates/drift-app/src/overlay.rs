@@ -345,6 +345,18 @@ pub fn region_fill(
     region: &drift_geom::regions::Region,
     color: Color32,
 ) {
+    region_fill_carried(painter, map, region, color, &|p| p);
+}
+
+/// Fill a region with a translucent colour where `carry` takes its points (a fill easing
+/// into place, carried from where it was solved).
+pub fn region_fill_carried(
+    painter: &egui::Painter,
+    map: &ScreenMap,
+    region: &drift_geom::regions::Region,
+    color: Color32,
+    carry: &dyn Fn(DVec2) -> DVec2,
+) {
     use lyon_tessellation::geometry_builder::simple_builder;
     use lyon_tessellation::math::point;
     use lyon_tessellation::path::Path;
@@ -363,7 +375,7 @@ pub fn region_fill(
         let poly: Vec<DVec2> = lp
             .polygon(max_angle)
             .into_iter()
-            .map(|p| map.camera.world_to_view(p))
+            .map(|p| map.camera.world_to_view(carry(p)))
             .collect();
         let poly = drift_render::clip_polygon(&poly, half);
         let Some(first) = poly.first() else {

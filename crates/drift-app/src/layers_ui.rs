@@ -275,9 +275,10 @@ impl DocumentColours {
     }
 
     /// Leave the colours for this pass's pickers: brought up to date first while a picker is
-    /// open (it asks every pass, so a change made after it was drawn is caught here, with no
+    /// open (it asks every pass, so a change made during the last pass is caught here, with no
     /// pass run again), and marked stale when `doc` has changed since, so a picker that opens
-    /// on them asks.
+    /// on them runs the pass again. Checked only here, at the top of the pass: a change made
+    /// later in this pass reaches an open picker on the next one.
     pub(crate) fn publish(&mut self, ctx: &egui::Context, doc: &drift_core::Document) {
         if crate::colour::document_colours_wanted(ctx) {
             self.update(doc);

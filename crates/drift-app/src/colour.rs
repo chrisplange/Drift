@@ -98,8 +98,8 @@ fn document_colours_wanted_id() -> egui::Id {
     egui::Id::new("colour_picker_document_wanted")
 }
 
-/// The open drawing's colours as left for the pickers: `fresh` is false when the drawing has
-/// changed since they were worked out.
+/// The open drawing's colours as left for the pickers: `fresh` is false when, at the moment
+/// they were offered, the drawing had changed since they were worked out.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Offered {
     pub fresh: bool,
@@ -117,9 +117,11 @@ pub(crate) fn document_colours_wanted(ctx: &egui::Context) -> bool {
 }
 
 /// The drawing's colours for an open picker, which asks for them every pass so the next one
-/// starts up to date. Stale ones (the picker just opened, or the drawing changed this pass
-/// before it was drawn) make the pass run again (its output thrown away), so the picker never
-/// shows last edit's colours.
+/// starts up to date. Whether they are stale is decided once, when the app offers them at the
+/// top of the pass: offered stale (the picker just opened on colours from before the last
+/// change) makes this pass run again (its output thrown away). A change made later in the same
+/// pass, by a widget drawn before or after the picker, is not seen here: the picker shows the
+/// colours from the top of the pass for that one frame, and the next pass has the new ones.
 fn document_colours(ctx: &egui::Context) -> Vec<[u8; 3]> {
     let Some(offered) = ctx.data(|d| d.get_temp::<Offered>(document_colours_id())) else {
         return Vec::new();

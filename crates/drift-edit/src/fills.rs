@@ -3303,83 +3303,134 @@ pub fn fill_graphics(
         );
     for (id, fill, region) in fills {
         cache.keep(id);
-        let layer = ed.doc.layer(fill.layer);
-        if layer.is_some_and(|l| !l.visible) {
-            continue;
-        }
-        let bounds = region_bounds(region);
-        if !bounds.intersects(&view) {
-            continue;
-        }
-        let mut group = FillGroup {
-            layer: fill.layer,
-            fill: id,
-            meshes: Vec::new(),
-            lines: Vec::new(),
-        };
-        let own = fill.color.or(layer.and_then(|l| l.fill_colour()));
-        let mut tint = |color: Rgb, alpha: f64, group: &mut FillGroup| {
-            let mesh = cache.get(id, region, moving);
-            let [r, g, b] = color.0;
-            group.meshes.push(FillMesh {
-                vertices: mesh.0.clone(),
-                indices: mesh.1.clone(),
-                color: [r, g, b, (alpha.clamp(0.0, 1.0) * 255.0).round() as u8],
-            });
-        };
-        match &fill.kind {
-            FillKind::Solid => {
-                tint(
-                    own.unwrap_or(default_fill_color(dark)),
-                    fill.opacity,
-                    &mut group,
-                );
-            }
-            FillKind::Hatch(h) => {
-                if let Some(bg) = h.background {
-                    tint(bg, 1.0, &mut group);
-                }
-                let line = own.unwrap_or(default_line_color(dark));
-                let scale = h.scale * if h.model { 1.0 } else { draft_scale };
-                let placement = Placement {
-                    scale,
-                    angle: h.angle,
-                    origin: h.origin,
-                };
-                let hatching = patterns
-                    .get(&h.pattern)
-                    .filter(|p| p.min_spacing() * scale * px_per_mm >= MIN_HATCH_SPACING_PX)
-                    .map(|pattern| {
-                        drift_draft::hatch(
-                            region,
-                            pattern,
-                            &placement,
-                            Some(view),
-                            HATCH_SEGMENT_LIMIT,
-                        )
-                    })
-                    .filter(|hatching| !hatching.truncated);
-                match hatching {
-                    // No pattern, too dense to see, or too much of it: a tint instead.
-                    None => tint(line, 0.25, &mut group),
-                    Some(hatching) => {
-                        let weight = fill.weight.unwrap_or_default().0;
-                        group
-                            .lines
-                            .extend(hatching.segments.into_iter().map(|[a, b]| {
-                                let mut item = SketchItem::new(Shape::Line { a, b });
-                                item.color = own.map(|c| c.0);
-                                item.weight = weight;
-                                item
-                            }));
-                    }
-                }
-            }
-        }
-        out.groups.push(group);
+        let group = fill_group(
+            ed,
+            &mut |r| cache.get(id, r, moving),
+            patterns,
+            id,
+            fill,
+            region,
+            view,
+            px_per_mm,
+            dark,
+            draft_scale,
+        );
+        out.groups.extend(group);
     }
     cache.end();
     out
+}
+
+/// The graphics of one fill over `region`, as [`fill_graphics`] draws it, its triangles
+/// found afresh (not kept): for a frame drawn from a changed copy of the drawing, such as a
+/// solve easing into place. None if it doesn't show (a hidden layer, or out of `view`).
+#[allow(clippy::too_many_arguments)]
+pub fn fill_graphics_over(
+    ed: &Editor,
+    patterns: &PatternLibrary,
+    id: FillId,
+    region: &Region,
+    view: Bounds,
+    px_per_mm: f64,
+    dark: bool,
+) -> Option<FillGroup> {
+    let fill = ed.doc.fill(id)?;
+    fill_group(
+        ed,
+        &mut |r| Rc::new(tessellate(r, drift_core::tolerance::FLATTEN_MM).unwrap_or_default()),
+        patterns,
+        MeshKey::Fill(id),
+        fill,
+        region,
+        view,
+        px_per_mm,
+        dark,
+        ed.doc.draft_style().scale,
+    )
+}
+
+/// One fill's graphics over `region`, its triangles from `mesh`. None if it doesn't show.
+#[allow(clippy::too_many_arguments)]
+fn fill_group(
+    ed: &Editor,
+    mesh: &mut dyn FnMut(&Region) -> Mesh,
+    patterns: &PatternLibrary,
+    id: MeshKey,
+    fill: &Fill,
+    region: &Region,
+    view: Bounds,
+    px_per_mm: f64,
+    dark: bool,
+    draft_scale: f64,
+) -> Option<FillGroup> {
+    let layer = ed.doc.layer(fill.layer);
+    if layer.is_some_and(|l| !l.visible) {
+        return None;
+    }
+    let bounds = region_bounds(region);
+    if !bounds.intersects(&view) {
+        return None;
+    }
+    let mut group = FillGroup {
+        layer: fill.layer,
+        fill: id,
+        meshes: Vec::new(),
+        lines: Vec::new(),
+    };
+    let own = fill.color.or(layer.and_then(|l| l.fill_colour()));
+    let mut tint = |color: Rgb, alpha: f64, group: &mut FillGroup| {
+        let mesh = mesh(region);
+        let [r, g, b] = color.0;
+        group.meshes.push(FillMesh {
+            vertices: mesh.0.clone(),
+            indices: mesh.1.clone(),
+            color: [r, g, b, (alpha.clamp(0.0, 1.0) * 255.0).round() as u8],
+        });
+    };
+    match &fill.kind {
+        FillKind::Solid => {
+            tint(
+                own.unwrap_or(default_fill_color(dark)),
+                fill.opacity,
+                &mut group,
+            );
+        }
+        FillKind::Hatch(h) => {
+            if let Some(bg) = h.background {
+                tint(bg, 1.0, &mut group);
+            }
+            let line = own.unwrap_or(default_line_color(dark));
+            let scale = h.scale * if h.model { 1.0 } else { draft_scale };
+            let placement = Placement {
+                scale,
+                angle: h.angle,
+                origin: h.origin,
+            };
+            let hatching = patterns
+                .get(&h.pattern)
+                .filter(|p| p.min_spacing() * scale * px_per_mm >= MIN_HATCH_SPACING_PX)
+                .map(|pattern| {
+                    drift_draft::hatch(region, pattern, &placement, Some(view), HATCH_SEGMENT_LIMIT)
+                })
+                .filter(|hatching| !hatching.truncated);
+            match hatching {
+                // No pattern, too dense to see, or too much of it: a tint instead.
+                None => tint(line, 0.25, &mut group),
+                Some(hatching) => {
+                    let weight = fill.weight.unwrap_or_default().0;
+                    group
+                        .lines
+                        .extend(hatching.segments.into_iter().map(|[a, b]| {
+                            let mut item = SketchItem::new(Shape::Line { a, b });
+                            item.color = own.map(|c| c.0);
+                            item.weight = weight;
+                            item
+                        }));
+                }
+            }
+        }
+    }
+    Some(group)
 }
 
 pub fn region_bounds(region: &Region) -> Bounds {

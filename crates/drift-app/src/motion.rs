@@ -14,9 +14,13 @@
 //! No animation while something is dragged (on the canvas or a slider), while a tool is
 //! part-way through (typed values while drawing), or inside a transaction: those already
 //! move every frame. A change of more than [`MAX_POINTS`] points, or one that carries any
-//! point further than [`MAX_TRAVEL`] of the canvas's diagonal on screen, lands at once. So
-//! does one that moves what walls or openings make (faces, poché corners, door symbols):
-//! those are made again, not solved, and their poché can't be eased along with them.
+//! point further than [`MAX_TRAVEL`] of the canvas's diagonal on screen, lands at once.
+//!
+//! Walls ease too: their faces' points slide like any others, and each frame makes a wall's
+//! poché again from its faces as shown (one map can't carry it: an opening sliding along a
+//! wall leaves the rest of it where it is). A change that remakes walls or openings rather
+//! than moving them (an opening added or taken out, walls joining: points that come or go)
+//! lands at once, with nothing to slide between.
 
 use std::collections::{HashMap, HashSet};
 
@@ -150,12 +154,15 @@ impl SolveMotion {
             return;
         }
         let mut moves = HashMap::new();
+        // Points that came or went: the drawing's make-up changed, not only where things are.
+        let mut remade = false;
         for &id in &changed.entities {
             let now_is = Datum::of(doc, id);
             let was = match now_is {
                 Some(d) => self.known.insert(id, d),
                 None => self.known.remove(&id),
             };
+            remade |= was.is_some() != now_is.is_some();
             if let (Some(was), Some(to)) = (was, now_is)
                 && was != to
                 && std::mem::discriminant(&was) == std::mem::discriminant(&to)
@@ -201,7 +208,7 @@ impl SolveMotion {
         if points > MAX_POINTS || travel * gate.scale > MAX_TRAVEL * gate.diagonal {
             return;
         }
-        if moves_what_walls_make(doc, &moves) {
+        if remade && moves_what_walls_make(doc, &moves) {
             return;
         }
         let mut affected: HashSet<EntityId> = moves.keys().copied().collect();
@@ -282,6 +289,11 @@ impl Frame {
         }
     }
 
+    /// Whether any of `curves` is drawn differently this frame.
+    pub(crate) fn touches(&self, curves: &[EntityId]) -> bool {
+        curves.iter().any(|c| self.affected.contains(c))
+    }
+
     /// The map that carries a fill drawn on `curves` (as solved) to where they are shown:
     /// the affine map that fits them best, exact for a fill moved, turned or stretched. None
     /// if none of them moves.
@@ -339,7 +351,7 @@ impl crate::DriftApp {
     }
 }
 
-/// Whether any of `moves` is a point walls or openings made (rebuilt, not solved).
+/// Whether any of `moves` is a point walls or openings made.
 fn moves_what_walls_make(doc: &Document, moves: &HashMap<EntityId, (Datum, Datum)>) -> bool {
     if !doc.has_walls() {
         return false;

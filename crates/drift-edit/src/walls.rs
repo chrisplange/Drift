@@ -2401,3 +2401,28 @@ fn shift_keeps(c: &drift_core::Constraint) -> bool {
             | C::Angle { .. }
     )
 }
+
+/// The region of wall poché `fill` in `doc` (its cluster's outline and holes), found afresh
+/// from the walls' faces as `doc` has them: for a frame drawn from a changed copy of the
+/// drawing. None if it isn't a wall's poché.
+pub fn wall_poche_region(
+    doc: &drift_core::Document,
+    fill: drift_core::FillId,
+) -> Option<drift_geom::regions::Region> {
+    let (key, wall) = doc.walls().find_map(|(_, w)| {
+        w.made
+            .fills
+            .iter()
+            .find(|(_, f)| **f == fill)
+            .map(|(k, _)| (*k, w))
+    })?;
+    let outer = *wall.made.outlines.get(&key)?;
+    let holes: Vec<drift_core::PathId> = wall
+        .made
+        .outlines
+        .iter()
+        .filter(|(k, _)| k.outer == key.outer && k.hole != 0)
+        .map(|(_, p)| *p)
+        .collect();
+    drift_geom::walls::regen::outline_region(doc, outer, &holes)
+}

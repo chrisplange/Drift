@@ -1342,10 +1342,33 @@ impl DriftApp {
         if let Some(frame) = &motion {
             let shapes = self.drawing.editor.fill_shapes();
             for g in &mut fills.groups {
-                if let drift_edit::stack::FillRef::Fill(id) = g.fill
-                    && let Some(shape) = shapes.get(&id)
-                    && let Some(map) = frame.fill_map(&self.drawing.editor.doc, &shape.curves)
+                let drift_edit::stack::FillRef::Fill(id) = g.fill else {
+                    continue;
+                };
+                let Some(shape) = shapes.get(&id) else {
+                    continue;
+                };
+                // A wall's poché is made again from its faces as shown: no one map carries
+                // it (an opening sliding along leaves the rest where it is).
+                if frame.touches(&shape.curves)
+                    && let Some(region) = drift_edit::walls::wall_poche_region(&frame.doc, id)
                 {
+                    let eased = drift_edit::fills::fill_graphics_over(
+                        &self.drawing.editor,
+                        &self.hatch_patterns,
+                        id,
+                        &region,
+                        view,
+                        self.drawing.view.camera.scale,
+                        dark,
+                    );
+                    if let Some(eased) = eased {
+                        g.meshes = eased.meshes;
+                        g.lines = eased.lines;
+                    }
+                    continue;
+                }
+                if let Some(map) = frame.fill_map(&self.drawing.editor.doc, &shape.curves) {
                     map.carry(&mut g.meshes, &mut g.lines);
                 }
             }
@@ -1579,7 +1602,13 @@ impl DriftApp {
                 } else {
                     colors.window
                 };
-                overlay::region_fill(&painter, &map, &shape.region, color.gamma_multiply(alpha));
+                // A wall's poché easing into place is lit where it is shown.
+                let eased = motion
+                    .as_ref()
+                    .filter(|frame| frame.touches(&shape.curves))
+                    .and_then(|frame| drift_edit::walls::wall_poche_region(&frame.doc, id));
+                let region = eased.as_ref().unwrap_or(&shape.region);
+                overlay::region_fill(&painter, &map, region, color.gamma_multiply(alpha));
             }
         }
         // Fills an edit divided, kept whole: marked at their seed until fitted, split or

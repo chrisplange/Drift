@@ -122,10 +122,12 @@ fn smoke_openings_place_pick_delete_and_reopen() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A door moved by its Offset in the Inspector lands at once: the walls' faces and poché are
-/// made again, not solved, so nothing eases (eased, the poché slid askew for a moment).
+/// A door moved by its Offset in the Inspector eases into place without the walls
+/// wobbling: the faces slide and the poché is made again from them each frame, so the walls
+/// away from the door stay exactly as they are (carried by one map, the whole poché slid
+/// askew for a moment).
 #[test]
-fn smoke_openings_moved_by_offset_land_at_once() {
+fn smoke_openings_moved_by_offset_ease_without_a_wobble() {
     let Some(mut h) = harness() else { return };
     view(&mut h, DVec2::new(-20.0, -20.0), DVec2::new(160.0, 80.0));
     room(&mut h);
@@ -160,12 +162,34 @@ fn smoke_openings_moved_by_offset_land_at_once() {
         .set_opening_offset(o, "10")
         .unwrap();
     h.step();
-    let first = h.render().expect("render");
+    assert_eq!(h.state().solve_motion.started, started + 1, "it eases");
+    assert!(h.state().solve_motion.animating());
+    let mid = h.render().expect("render");
+    save_png("drift_smoke_opening_easing.png", &mut h);
     h.run();
-    assert_eq!(h.state().solve_motion.started, started, "nothing eased");
+    assert!(!h.state().solve_motion.animating());
     let settled = h.render().expect("render");
+    // Patches of wall the door never comes near: the left and top walls' middles, and the
+    // bottom wall's left end.
+    for at in [
+        DVec2::new(0.0, 30.0),
+        DVec2::new(50.0, 60.0),
+        DVec2::new(15.0, 0.0),
+    ] {
+        let c = screen(&h, at);
+        let (x0, y0) = (c.x as u32 - 4, c.y as u32 - 4);
+        for y in y0..y0 + 8 {
+            for x in x0..x0 + 8 {
+                assert_eq!(
+                    mid.get_pixel(x, y),
+                    settled.get_pixel(x, y),
+                    "the wall at {at:?} stays put while the door slides"
+                );
+            }
+        }
+    }
     assert!(
-        first.as_raw() == settled.as_raw(),
-        "the first frame after the move is the settled one"
+        mid.as_raw() != settled.as_raw(),
+        "part-way, the door is between"
     );
 }

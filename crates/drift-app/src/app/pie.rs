@@ -4,7 +4,8 @@
 //! lit, and choosing it takes it off; ones that don't fit the selection are dimmed. While it is
 //! open, each relation's letter (shown on it) chooses it outright: Q then H for horizontal.
 
-use crate::annotations::{self, AnnotationColors, GlyphKind};
+use super::pie_style::{self, place_at};
+use crate::annotations::{self, GlyphKind};
 use crate::*;
 use drift_edit::editor::ConstraintOption;
 
@@ -43,10 +44,6 @@ const KEYS: [(Key, &str); 14] = [
 fn key_for(label: &str) -> Option<Key> {
     KEYS.iter().find(|(_, l)| *l == label).map(|(k, _)| *k)
 }
-
-/// How far from the middle the pointer has to be to choose, and where the labels sit.
-pub(crate) const DEAD_ZONE: f32 = 22.0;
-pub(crate) const RADIUS: f32 = 96.0;
 
 /// The symbol of a relation, by the name it is offered under.
 pub(crate) fn glyph(label: &str) -> GlyphKind {
@@ -89,39 +86,6 @@ pub(crate) struct Slice {
     pub on: bool,
 }
 
-/// The place the pointer is towards, if it is clear of the middle.
-pub(crate) fn place_at(center: egui::Pos2, pointer: egui::Pos2) -> Option<usize> {
-    let v = pointer - center;
-    if v.length() < DEAD_ZONE {
-        return None;
-    }
-    let turns = (-v.y).atan2(v.x) / std::f32::consts::TAU;
-    Some((turns * 8.0).round().rem_euclid(8.0) as usize % 8)
-}
-
-/// A pie's middle: a ring, with a mark that rolls round it with the pointer (rather than
-/// stepping between the eight places), once the pointer is far enough out to point anywhere.
-pub(crate) fn paint_hub(
-    painter: &egui::Painter,
-    center: egui::Pos2,
-    pointer: Option<egui::Pos2>,
-    n: theme::Neutrals,
-    mark: egui::Color32,
-) {
-    let r = DEAD_ZONE - 6.0;
-    painter.circle_filled(center, r, n.raised);
-    painter.circle_stroke(center, r, egui::Stroke::new(2.0, n.control_border));
-    if let Some(v) = pointer.map(|p| p - center).filter(|v| v.length() > 4.0) {
-        painter.circle_filled(center + v.normalized() * r, 3.5, mark);
-    }
-}
-
-/// The middle of a place's label.
-pub(crate) fn place_pos(center: egui::Pos2, place: usize) -> egui::Pos2 {
-    let a = place as f32 * std::f32::consts::FRAC_PI_4;
-    center + egui::vec2(a.cos(), -a.sin()) * RADIUS
-}
-
 impl DriftApp {
     /// The ring's eight places for the selection.
     pub(crate) fn pie_slices(&self) -> [Slice; 8] {
@@ -141,16 +105,10 @@ impl DriftApp {
 
     /// Open the pie to click (from a menu), where the pointer is.
     pub(crate) fn open_pie(&mut self, ctx: &egui::Context) {
-        let at = ctx
-            .input(|i| i.pointer.latest_pos())
-            .unwrap_or(self.drawing.view.canvas_rect.center());
-        let screen = ctx.content_rect().shrink2(egui::vec2(170.0, 130.0));
+        let at = ctx.input(|i| i.pointer.latest_pos());
+        let fallback = self.drawing.view.canvas_rect.center();
         self.pie = Some(Pie {
-            center: if screen.is_positive() {
-                screen.clamp(at)
-            } else {
-                at
-            },
+            center: pie_style::pie_center(ctx, at, fallback),
             held: false,
             conflict: None,
         });
@@ -276,27 +234,92 @@ impl DriftApp {
 
     /// Draw the open pie and take its clicks.
     pub(crate) fn relation_pie(&mut self, ctx: &egui::Context) {
-        let Some(center) = self.pie.as_ref().map(|p| p.center) else {
+        let Some((center, flicks)) = self.pie.as_ref().map(|p| (p.center, p.held)) else {
             return;
         };
         let slices = self.pie_slices();
         let pointer = ctx.input(|i| i.pointer.latest_pos());
-        let towards = pointer.and_then(|p| place_at(center, p));
-        let conflict = towards.is_some_and(|place| self.pie_conflict(place, &slices[place]));
+        let layer = egui::LayerId::new(egui::Order::Foreground, egui::Id::new("relation_pie"));
+        let fonts = ctx.layer_painter(layer);
+        let labels = slices
+            .clone()
+            .map(|s| pie_style::label_galley(&fonts, s.label));
+        let keys = slices
+            .clone()
+            .map(|s| key_for(s.label).map(|k| pie_style::key_galley(&fonts, k.name())));
+        let rects = pie_style::pill_rects(
+            center,
+            std::array::from_fn(|p| (labels[p].size().x, keys[p].as_ref().map(|k| k.size().x))),
+        );
+        self.pie_pills = rects;
+        let hot = pie_style::hot_place(&rects, center, pointer, flicks);
+        let conflict = hot.is_some_and(|place| self.pie_conflict(place, &slices[place]));
         let screen = ctx.content_rect();
         let mut clicked = None;
         egui::Area::new(egui::Id::new("relation_pie"))
             .order(egui::Order::Foreground)
             .fixed_pos(screen.min)
             .show(ctx, |ui| {
-                // The whole window is the pie's while it is open.
+                // The whole window is the pie's while it is open: a click on a pill chooses
+                // it, a click anywhere else closes the pie.
                 let response = ui.allocate_response(screen.size(), egui::Sense::click());
                 if response.clicked() {
-                    clicked = Some(towards);
+                    clicked = Some(pie_style::pill_under(&rects, pointer));
                 } else if response.secondary_clicked() {
                     clicked = Some(None);
                 }
-                paint(ui, center, &slices, pointer, towards, conflict);
+                let painter = ui.painter();
+                let dark = ui.visuals().dark_mode;
+                let mark = if conflict {
+                    theme::amber(dark)
+                } else {
+                    theme::accent(dark)
+                };
+                pie_style::paint_hub(painter, center, pointer, mark);
+                for (place, (label, key)) in labels.into_iter().zip(keys).enumerate() {
+                    let slice = &slices[place];
+                    let state = pie_style::PillState {
+                        on: slice.on,
+                        hot: hot == Some(place),
+                        unavailable: slice.option.is_none(),
+                        warn: conflict,
+                    };
+                    pie_style::paint_pill(
+                        painter,
+                        rects[place],
+                        place,
+                        label,
+                        key,
+                        state,
+                        |p, r, c| {
+                            annotations::paint_glyph_icon(p, r, glyph(slice.label), c);
+                        },
+                    );
+                }
+                // What choosing would do, under the ring.
+                if let Some(place) = hot {
+                    let slice = &slices[place];
+                    let n = theme::neutrals(dark);
+                    let (text, color) = if slice.option.is_none() {
+                        ("Doesn't fit this selection".to_owned(), n.secondary)
+                    } else if slice.on {
+                        (
+                            format!("Remove {}", slice.label.to_lowercase()),
+                            ui.visuals().text_color(),
+                        )
+                    } else if conflict {
+                        (
+                            "Would over-define the sketch".to_owned(),
+                            theme::amber(dark),
+                        )
+                    } else {
+                        (
+                            format!("Add {}", slice.label.to_lowercase()),
+                            ui.visuals().text_color(),
+                        )
+                    };
+                    pie_style::paint_caption(painter, center, &rects, text, color);
+                }
             });
         if let Some(choice) = clicked {
             let now = ctx.input(|i| i.time);
@@ -305,149 +328,5 @@ impl DriftApp {
                 None => self.pie = None,
             }
         }
-    }
-}
-
-fn paint(
-    ui: &egui::Ui,
-    center: egui::Pos2,
-    slices: &[Slice; 8],
-    pointer: Option<egui::Pos2>,
-    towards: Option<usize>,
-    conflict: bool,
-) {
-    let painter = ui.painter();
-    let visuals = ui.visuals();
-    let dark = visuals.dark_mode;
-    let accent = theme::accent(dark);
-    let amber = crate::theme::amber(dark);
-    let n = theme::neutrals(dark);
-    // (The symbols on the pills' own fill, not on a tile of the canvas's.)
-    let glyph_colors = AnnotationColors::new(dark);
-    let radius = theme::radius::MENU;
-    let mark = if conflict && towards.is_some() {
-        amber
-    } else {
-        accent
-    };
-    paint_hub(painter, center, pointer, n, mark);
-    for (place, slice) in slices.iter().enumerate() {
-        let available = slice.option.is_some();
-        let hot = towards == Some(place);
-        let text_color = if !available {
-            n.tertiary.gamma_multiply(0.75)
-        } else if slice.on {
-            visuals.strong_text_color()
-        } else {
-            n.text
-        };
-        let galley = painter.layout_no_wrap(
-            slice.label.to_owned(),
-            egui::FontId::proportional(theme::size::BODY),
-            text_color,
-        );
-        let key = key_for(slice.label).map(|k| {
-            painter.layout_no_wrap(
-                k.name().to_owned(),
-                egui::FontId::proportional(theme::size::CAPTION),
-                n.tertiary,
-            )
-        });
-        let size = egui::vec2(
-            galley.size().x + 46.0 + key.as_ref().map_or(0.0, |k| k.size().x + 14.0),
-            30.0,
-        );
-        // Labels to the sides start at the ring rather than straddling it.
-        let at = place_pos(center, place);
-        let lean = (at.x - center.x) / RADIUS;
-        let rect = egui::Rect::from_center_size(at + egui::vec2(lean * size.x * 0.5, 0.0), size);
-        // Opaque, like everything that floats: what is on is tinted with the accent over
-        // the raised fill, what doesn't fit sinks back to the panel's.
-        let fill = if !available {
-            n.panel
-        } else if hot {
-            n.hover
-        } else {
-            n.raised
-        };
-        painter.rect_filled(rect, radius, fill);
-        if slice.on {
-            painter.rect_filled(rect, radius, theme::accent_soft(dark));
-        }
-        let stroke = if hot && conflict {
-            egui::Stroke::new(1.5, amber)
-        } else if hot && available || slice.on {
-            egui::Stroke::new(1.5, accent)
-        } else if available {
-            egui::Stroke::new(1.0, n.control_border)
-        } else {
-            egui::Stroke::new(1.0, n.border)
-        };
-        painter.rect_stroke(rect, radius, stroke, egui::StrokeKind::Inside);
-        let icon = egui::Rect::from_center_size(
-            egui::pos2(rect.left() + 19.0, rect.center().y),
-            egui::Vec2::splat(18.0),
-        );
-        annotations::paint_glyph_icon(
-            painter,
-            icon,
-            glyph(slice.label),
-            if !available {
-                n.tertiary.gamma_multiply(0.75)
-            } else if slice.on {
-                accent
-            } else {
-                glyph_colors.normal
-            },
-        );
-        painter.galley(
-            egui::pos2(rect.left() + 34.0, rect.center().y - galley.size().y / 2.0),
-            galley,
-            text_color,
-        );
-        // Its key, at the end.
-        if let Some(key) = key {
-            painter.galley(
-                egui::pos2(
-                    rect.right() - 14.0 - key.size().x,
-                    rect.center().y - key.size().y / 2.0,
-                ),
-                key,
-                n.tertiary,
-            );
-        }
-    }
-    // What choosing would do, under the ring.
-    let note = towards.map(|place| {
-        let slice = &slices[place];
-        if slice.option.is_none() {
-            ("Doesn't fit this selection".to_owned(), n.secondary)
-        } else if slice.on {
-            (
-                format!("Remove {}", slice.label.to_lowercase()),
-                visuals.text_color(),
-            )
-        } else if conflict {
-            ("Would over-define the sketch".to_owned(), amber)
-        } else {
-            (
-                format!("Add {}", slice.label.to_lowercase()),
-                visuals.text_color(),
-            )
-        }
-    });
-    if let Some((text, color)) = note {
-        let galley =
-            painter.layout_no_wrap(text, egui::FontId::proportional(theme::size::LABEL), color);
-        let at = egui::pos2(center.x - galley.size().x / 2.0, center.y + RADIUS + 26.0);
-        let back = egui::Rect::from_min_size(at, galley.size()).expand2(egui::vec2(9.0, 5.0));
-        painter.rect(
-            back,
-            theme::radius::CONTROL,
-            n.raised,
-            egui::Stroke::new(1.0, n.control_border),
-            egui::StrokeKind::Outside,
-        );
-        painter.galley(at, galley, color);
     }
 }

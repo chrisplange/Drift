@@ -11,7 +11,7 @@
 //! The same flick-or-click model as the Selection filter pie ([`super::select_pie`]), and the
 //! relations pie's geometry.
 
-use super::pie::{RADIUS, place_at, place_pos};
+use super::pie_style::{self, place_at};
 use crate::*;
 use drift_geom::{SnapKind, SnapKinds};
 
@@ -155,14 +155,9 @@ impl DriftApp {
         at: Option<egui::Pos2>,
         held: bool,
     ) {
-        let at = at.unwrap_or(self.drawing.view.canvas_rect.center());
-        let screen = ctx.content_rect().shrink2(egui::vec2(190.0, 130.0));
+        let fallback = self.drawing.view.canvas_rect.center();
         self.snap_pie = Some(SnapPie {
-            center: if screen.is_positive() {
-                screen.clamp(at)
-            } else {
-                at
-            },
+            center: pie_style::pie_center(ctx, at, fallback),
             held,
             clicked: false,
         });
@@ -179,26 +174,42 @@ impl DriftApp {
 
     /// Draw the snap pie, once it shows, and take its clicks.
     pub(crate) fn snap_pie(&mut self, ctx: &egui::Context) {
-        let Some(center) = self.snap_pie.as_ref().map(|p| p.center) else {
+        let Some((center, flicks)) = self
+            .snap_pie
+            .as_ref()
+            .map(|p| (p.center, p.held && !p.clicked))
+        else {
             return;
         };
         let switches = self.snap_switches();
         let pointer = ctx.input(|i| i.pointer.latest_pos());
-        let towards = pointer.and_then(|p| place_at(center, p));
         let screen = ctx.content_rect();
         let mut clicked = None;
+        let mut shown = None;
         egui::Area::new(egui::Id::new("snap_pie"))
             .order(egui::Order::Foreground)
             .fixed_pos(screen.min)
             .show(ctx, |ui| {
+                // A click on a pill turns it on or off; anywhere else closes the pie.
                 let response = ui.allocate_response(screen.size(), egui::Sense::click());
+                let painter = ui.painter();
+                let labels = PLACES.map(|(l, _)| pie_style::label_galley(painter, l));
+                let rects = pie_style::pill_rects(
+                    center,
+                    std::array::from_fn(|p| (labels[p].size().x, None)),
+                );
+                shown = Some(rects);
                 if response.clicked() {
-                    clicked = Some(towards);
+                    clicked = Some(pie_style::pill_under(&rects, pointer));
                 } else if response.secondary_clicked() {
                     clicked = Some(None);
                 }
-                paint(ui, center, switches, pointer, towards);
+                let hot = pie_style::hot_place(&rects, center, pointer, flicks);
+                paint(painter, center, switches, pointer, &rects, labels, hot);
             });
+        if let Some(rects) = shown {
+            self.pie_pills = rects;
+        }
         match clicked {
             Some(Some(place)) => self.snap_pie_toggle(place),
             Some(None) => self.snap_pie = None,
@@ -208,79 +219,54 @@ impl DriftApp {
 }
 
 fn paint(
-    ui: &egui::Ui,
+    painter: &egui::Painter,
     center: egui::Pos2,
     switches: Switches,
     pointer: Option<egui::Pos2>,
-    towards: Option<usize>,
+    rects: &[egui::Rect; 8],
+    labels: [std::sync::Arc<egui::Galley>; 8],
+    hot: Option<usize>,
 ) {
-    let painter = ui.painter();
-    let visuals = ui.visuals();
-    let dark = visuals.dark_mode;
-    let accent = theme::accent(dark);
-    let n = theme::neutrals(dark);
-    let radius = theme::radius::MENU;
-    super::pie::paint_hub(painter, center, pointer, n, accent);
-    for (place, (label, kinds)) in PLACES.into_iter().enumerate() {
-        let on = switches.lit(place);
-        let hot = towards == Some(place);
-        let text_color = if on {
-            visuals.strong_text_color()
-        } else {
-            n.text
+    let dark = painter.ctx().theme() == egui::Theme::Dark;
+    pie_style::paint_hub(painter, center, pointer, theme::accent(dark));
+    for (place, label) in labels.into_iter().enumerate() {
+        let kind = PLACES[place].1[0];
+        let state = pie_style::PillState {
+            on: switches.lit(place),
+            hot: hot == Some(place),
+            ..Default::default()
         };
-        let galley = painter.layout_no_wrap(
-            label.to_owned(),
-            egui::FontId::proportional(theme::size::BODY),
-            text_color,
-        );
-        let size = egui::vec2(galley.size().x + 50.0, 30.0);
-        let at = place_pos(center, place);
-        let lean = (at.x - center.x) / RADIUS;
-        let rect = egui::Rect::from_center_size(at + egui::vec2(lean * size.x * 0.5, 0.0), size);
-        painter.rect_filled(rect, radius, if hot { n.hover } else { n.raised });
-        if on {
-            painter.rect_filled(rect, radius, theme::accent_soft(dark));
-        }
-        let stroke = if hot {
-            egui::Stroke::new(2.5, accent)
-        } else if on {
-            egui::Stroke::new(1.5, accent)
-        } else {
-            egui::Stroke::new(1.0, n.control_border)
-        };
-        painter.rect_stroke(rect, radius, stroke, egui::StrokeKind::Inside);
-        let icon_color = if on { accent } else { n.text };
-        let mut icon_at = egui::pos2(rect.left() + 19.0, rect.center().y);
-        if matches!(kinds[0], SnapKind::Perpendicular | SnapKind::Tangent) {
-            // (Those glyphs stand on their point: centre them.)
-            icon_at.y += 4.0;
-        }
-        crate::overlay::snap_glyph(painter, icon_at, kinds[0], icon_color);
-        painter.galley(
-            egui::pos2(rect.left() + 36.0, rect.center().y - galley.size().y / 2.0),
-            galley,
-            text_color,
+        pie_style::paint_pill(
+            painter,
+            rects[place],
+            place,
+            label,
+            None,
+            state,
+            |p, icon, color| {
+                // (Those two glyphs stand on their point: a ⊥ rises above it, a tangent's
+                // circle hangs below it. Centre them in the icon's square.)
+                let at = icon.center()
+                    + match kind {
+                        SnapKind::Perpendicular => egui::vec2(0.0, 5.0),
+                        SnapKind::Tangent => egui::vec2(0.0, -5.0),
+                        _ => egui::Vec2::ZERO,
+                    };
+                crate::overlay::snap_glyph(p, at, kind, color);
+            },
         );
     }
-    let text = match towards {
+    let text = match hot {
         Some(place) if switches.lit(place) => format!("Stop snapping to {}", hint(place)),
         Some(place) => format!("Snap to {}", hint(place)),
         None => "Snapping: click kinds on and off".to_owned(),
     };
-    let color = visuals.text_color();
-    let galley =
-        painter.layout_no_wrap(text, egui::FontId::proportional(theme::size::LABEL), color);
-    let at = egui::pos2(center.x - galley.size().x / 2.0, center.y + RADIUS + 26.0);
-    let back = egui::Rect::from_min_size(at, galley.size()).expand2(egui::vec2(9.0, 5.0));
-    painter.rect(
-        back,
-        theme::radius::CONTROL,
-        n.raised,
-        egui::Stroke::new(1.0, n.control_border),
-        egui::StrokeKind::Outside,
-    );
-    painter.galley(at, galley, color);
+    let color = painter
+        .ctx()
+        .style_of(painter.ctx().theme())
+        .visuals
+        .text_color();
+    pie_style::paint_caption(painter, center, rects, text, color);
 }
 
 /// A place's kinds in a sentence.

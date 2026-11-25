@@ -478,10 +478,38 @@ fn pick_filter_review_renders() {
 
 const SHIFT: egui::Modifiers = egui::Modifiers::SHIFT;
 
-/// Where `place` is on a ring around `at` (counter-clockwise from the right).
-fn place_pos(at: egui::Pos2, place: usize) -> egui::Pos2 {
-    let a = place as f32 * std::f32::consts::FRAC_PI_4;
-    at + egui::vec2(a.cos(), -a.sin()) * 90.0
+/// The middle of the open pie's pill at `place` (counter-clockwise from the right).
+fn pill(h: &Harness<'_, DriftApp>, place: usize) -> egui::Pos2 {
+    h.state().pie_pills[place].center()
+}
+
+#[test]
+fn a_click_off_the_pills_closes_a_pie_and_pies_switch() {
+    let Some(mut h) = harness() else { return };
+    h.set_size(egui::vec2(1720.0, 720.0));
+    let at = h.state().drawing.view.canvas_rect.center();
+    h.hover_at(at);
+    h.run();
+    h.key_press_modifiers(SHIFT, Key::Q);
+    h.run();
+    let center = h.state().select_pie.as_ref().expect("open").center;
+    // Between the hub and the bottom pill: no pill there.
+    click_at(&mut h, center + egui::vec2(0.0, 50.0));
+    assert!(
+        h.state().select_pie.is_none(),
+        "a click off the pills closes it"
+    );
+    assert!(filter(&h).is_all(), "and changes nothing");
+    // Shift+S over the open Selection filter pie switches to the snap pie, and back.
+    h.key_press_modifiers(SHIFT, Key::Q);
+    h.run();
+    h.key_press_modifiers(SHIFT, Key::S);
+    h.run();
+    assert!(h.state().snap_pie.is_some() && h.state().select_pie.is_none());
+    save_png("drift_ui_snap_pie.png", &mut h);
+    h.key_press_modifiers(SHIFT, Key::Q);
+    h.run();
+    assert!(h.state().select_pie.is_some() && h.state().snap_pie.is_none());
 }
 
 /// A click at `p`.
@@ -515,8 +543,9 @@ fn pie_down(h: &mut Harness<'_, DriftApp>) -> egui::Pos2 {
 
 /// Hold Shift+Q, move towards `place`, let go.
 fn pie_flick(h: &mut Harness<'_, DriftApp>, place: usize) {
-    let at = pie_down(h);
-    h.hover_at(place_pos(at, place));
+    pie_down(h);
+    let p = pill(h, place);
+    h.hover_at(p);
     h.run();
     h.key_up_modifiers(SHIFT, Key::Q);
     h.run();
@@ -561,10 +590,13 @@ fn kinds_clicked_with_shift_q_held_all_stand() {
     let Some(mut h) = harness() else { return };
     h.set_size(egui::vec2(1720.0, 720.0));
     let place = |k| PLACES.iter().position(|p| *p == Some(k)).unwrap();
-    let at = pie_down(&mut h);
-    click_at(&mut h, place_pos(at, place(PickKind::Edges)));
-    click_at(&mut h, place_pos(at, place(PickKind::Points)));
-    click_at(&mut h, place_pos(at, place(PickKind::Text)));
+    pie_down(&mut h);
+    let p = pill(&h, place(PickKind::Edges));
+    click_at(&mut h, p);
+    let p = pill(&h, place(PickKind::Points));
+    click_at(&mut h, p);
+    let p = pill(&h, place(PickKind::Text));
+    click_at(&mut h, p);
     // Let go still over Text.
     h.key_up_modifiers(SHIFT, Key::Q);
     h.run();
@@ -598,14 +630,18 @@ fn a_tap_of_shift_q_leaves_the_ring_to_click() {
     assert!(filter(&h).is_all(), "no flick, no change");
     let place = |k| PLACES.iter().position(|p| *p == Some(k)).unwrap();
     // Each click turns that one kind on or off, from everything too: it never isolates.
-    click_at(&mut h, place_pos(at, place(PickKind::Annotations)));
+    let p = pill(&h, place(PickKind::Annotations));
+    click_at(&mut h, p);
     assert_eq!(
         filter(&h),
         PickFilter::ALL.with(PickKind::Annotations, false)
     );
-    click_at(&mut h, place_pos(at, place(PickKind::Text)));
-    click_at(&mut h, place_pos(at, place(PickKind::Edges)));
-    click_at(&mut h, place_pos(at, place(PickKind::Text)));
+    let p = pill(&h, place(PickKind::Text));
+    click_at(&mut h, p);
+    let p = pill(&h, place(PickKind::Edges));
+    click_at(&mut h, p);
+    let p = pill(&h, place(PickKind::Text));
+    click_at(&mut h, p);
     let kept = PickFilter::ALL
         .with(PickKind::Annotations, false)
         .with(PickKind::Edges, false);

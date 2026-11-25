@@ -394,3 +394,24 @@ fn an_opened_empty_drawing_keeps_its_units_and_logo() {
     assert_eq!(units(&next), Units::metric());
     assert_eq!(logo(&next), OTHER_LOGO);
 }
+
+/// Switching the start screen's units never moves what is below the switch (the two
+/// captions under it wrap differently), and the picked segment slides there, settling on
+/// the one clicked.
+#[test]
+fn start_screen_units_switch_keeps_the_layout() {
+    let Some(mut h) = harness() else { return };
+    h.state_mut().show_start = true;
+    h.run();
+    h.run();
+    let open = |h: &Harness<'_, DriftApp>| h.get_by_label("Open…").rect();
+    let before = open(&h);
+    h.get_by_label("Imperial").click();
+    h.run();
+    h.run();
+    assert_eq!(open(&h), before, "imperial");
+    h.get_by_label("Metric").click();
+    h.run();
+    h.run();
+    assert_eq!(open(&h), before, "metric again");
+}

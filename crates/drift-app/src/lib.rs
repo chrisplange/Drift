@@ -626,6 +626,8 @@ pub struct DriftApp {
     /// The Selection filter pie (Shift+Q), open.
     select_pie: Option<app::select_pie::SelectPie>,
     snap_pie: Option<app::snap_pie::SnapPie>,
+    /// The open pie's pills as last drawn (one pie is open at a time).
+    pie_pills: [egui::Rect; 8],
     /// Text filtering the shortcuts list.
     shortcut_filter: String,
     /// Where the side panels are (docked, floating or hidden).
@@ -893,6 +895,7 @@ impl DriftApp {
             pie: None,
             select_pie: None,
             snap_pie: None,
+            pie_pills: [egui::Rect::NOTHING; 8],
             shortcut_filter: String::new(),
             layout: Default::default(),
             dock_view: Default::default(),

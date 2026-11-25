@@ -144,6 +144,8 @@ impl DriftApp {
             }
             return;
         }
+        // A pie's key with another pie open switches to it.
+        self.switch_pies(ctx);
         // Q: the relations pie, which keeps the keys while it is open.
         if self.pie_keys(ctx) {
             return;

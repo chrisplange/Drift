@@ -32,6 +32,7 @@ pub(crate) mod palette;
 pub(crate) mod panels;
 pub(crate) mod pick_filter_ui;
 pub(crate) mod pie;
+pub(crate) mod pie_style;
 pub(crate) mod quick_bar;
 pub(crate) mod rail;
 pub(crate) mod recovery;

@@ -256,14 +256,41 @@ impl DriftApp {
                                         self.new_drawing.units =
                                             NewUnits::of(self.drawing.editor.doc.units());
                                     }
-                                    ui.label(
-                                        egui::RichText::new(if units.length.is_metric() {
-                                            "Millimeters; more in File → Drawing settings."
-                                        } else {
-                                            "Feet and inches; more in File → Drawing settings."
+                                    // As tall as the taller of the two, so switching units
+                                    // never moves what is below (one wraps, the other not).
+                                    let captions = [
+                                        "Millimeters; more in File → Drawing settings.",
+                                        "Feet and inches; more in File → Drawing settings.",
+                                    ];
+                                    let caption = |t: &str| {
+                                        egui::RichText::new(t)
+                                            .size(theme::size::CAPTION)
+                                            .color(n.tertiary)
+                                    };
+                                    let wide = ui.available_width();
+                                    let tall = captions
+                                        .iter()
+                                        .map(|t| {
+                                            egui::WidgetText::from(caption(t))
+                                                .into_galley(
+                                                    ui,
+                                                    Some(egui::TextWrapMode::Wrap),
+                                                    wide,
+                                                    egui::TextStyle::Body,
+                                                )
+                                                .size()
+                                                .y
                                         })
-                                        .size(theme::size::CAPTION)
-                                        .color(n.tertiary),
+                                        .fold(0.0_f32, f32::max);
+                                    ui.allocate_ui_with_layout(
+                                        egui::vec2(wide, tall),
+                                        egui::Layout::top_down(egui::Align::Min),
+                                        |ui| {
+                                            ui.set_min_height(tall);
+                                            ui.label(caption(
+                                                captions[usize::from(!units.length.is_metric())],
+                                            ));
+                                        },
                                     );
                                     ui.add_space(10.0);
                                     if ui

@@ -10810,12 +10810,18 @@ fn saved_preferences_read_back_unchanged() {
     // didn't write. Auto merge reads back off, its default.)
     // (And whether the rail shows names since the Studio rail: appended, off unless set.)
     // (And where floating panels last stood: none here.)
+    // (And the snap pie's kinds since: every kind, its default.)
     let written = h
         .state()
         .view_prefs()
         .replace("rels=all;", "")
         .replace("merge=0;", "")
-        .replace("dock_spots=;", "");
+        .replace("dock_spots=;", "")
+        .replace("snapk=1023;", "");
+    assert_eq!(
+        h.state().drawing.editor.prefs.snap_kinds,
+        drift_geom::SnapKinds::ALL
+    );
     // (And the grid's spacing since #506: appended, Auto unless set.)
     assert_eq!(
         written.strip_suffix(";gfixed=0;gspace=304.8;gdiv=12;gtext=1';railnames=0"),
@@ -10974,4 +10980,50 @@ fn fixed_grid_snaps_to_its_divisions_and_auto_restores() {
     h.state_mut().grid_fixed = false;
     h.run();
     assert_eq!(h.state().grid(), auto);
+}
+
+/// A floating panel's left edge dragged in and out: its right edge holds still on every
+/// frame of the drag, not only where it ends up (it wobbled while the contents' width was
+/// fed back into the window's).
+#[test]
+fn a_left_edge_resize_never_wobbles_the_right_edge() {
+    let Some(mut h) = harness() else { return };
+    h.state_mut()
+        .layout
+        .move_to(Panel::Layers, Place::Float, None);
+    h.run_steps(6);
+    // Away from the canvas's right edge first, by its header.
+    let (_, w) = h.state().floating_rects(Panel::Layers).unwrap();
+    let from = egui::pos2(w.left() + 80.0, w.top() + 12.0);
+    drag_steps(&mut h, from, from - egui::vec2(300.0, 0.0), 20, None);
+    h.run_steps(4);
+    let (_, before) = h.state().floating_rects(Panel::Layers).unwrap();
+    let right = before.right();
+    let grab = egui::pos2(before.left() + 1.0, before.top() + 160.0);
+    h.hover_at(grab);
+    h.run_steps(2);
+    button(&h, grab, true);
+    h.run_steps(2);
+    let mut seen = Vec::new();
+    // In (narrower, past the least width), then out (wider), a few pixels a frame.
+    let path: Vec<f32> = (0..=60)
+        .map(|i| i as f32 * 4.0)
+        .chain((0..=90).rev().map(|i| i as f32 * 4.0 - 120.0))
+        .collect();
+    for dx in path {
+        h.hover_at(grab + egui::vec2(dx, 0.0));
+        h.run_steps(1);
+        let (_, w) = h.state().floating_rects(Panel::Layers).unwrap();
+        seen.push((dx, w.left(), w.right(), w.width()));
+    }
+    button(&h, grab, false);
+    h.run_steps(4);
+    let worst = seen
+        .iter()
+        .map(|s| (s.2 - right).abs())
+        .fold(0.0_f32, f32::max);
+    assert!(
+        worst < 0.5,
+        "the right edge moved by up to {worst} px (start {right}): {seen:?}"
+    );
 }

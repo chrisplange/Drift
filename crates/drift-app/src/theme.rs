@@ -687,8 +687,58 @@ pub fn segment_picked(dark: bool) -> Color32 {
 /// The least room either side of a segment's label.
 const SEGMENT_PAD: f32 = 6.0;
 
-/// A segmented control: a track with the picked segment standing in it. Returns the clicked
-/// segment.
+/// How long a segmented control's picked segment takes to slide to a new pick.
+const SEGMENT_SLIDE: f64 = 0.22;
+
+/// Where a segmented control's picked segment is drawn this frame: at `target` (segment
+/// `index`'s place), or on its way there from where it was when the pick changed, easing in
+/// and out like a macOS segmented control. Kept per control (`id`). With animations off
+/// (an animation time of zero) it moves at once.
+fn segment_slide(ui: &egui::Ui, id: egui::Id, index: usize, target: egui::Rect) -> egui::Rect {
+    #[derive(Clone, Copy)]
+    struct Slide {
+        from: egui::Rect,
+        to: usize,
+        start: f64,
+    }
+    let id = id.with("segment_slide");
+    let now = ui.input(|i| i.time);
+    let animate = ui.style().animation_time > 0.0;
+    let shown_at = |s: Slide, now: f64| {
+        let t = ((now - s.start) / SEGMENT_SLIDE).clamp(0.0, 1.0) as f32;
+        let e = egui::emath::easing::cubic_in_out(t);
+        egui::Rect::from_min_max(
+            s.from.min.lerp(target.min, e),
+            s.from.max.lerp(target.max, e),
+        )
+    };
+    let slide = ui.data_mut(|d| {
+        let was = d.get_temp::<Slide>(id);
+        let slide = match was {
+            Some(s) if s.to == index => s,
+            // A new pick: from wherever it is drawn now.
+            Some(s) if animate => Slide {
+                from: shown_at(s, now),
+                to: index,
+                start: now,
+            },
+            _ => Slide {
+                from: target,
+                to: index,
+                start: f64::NEG_INFINITY,
+            },
+        };
+        d.insert_temp(id, slide);
+        slide
+    });
+    if now - slide.start < SEGMENT_SLIDE {
+        ui.ctx().request_repaint();
+    }
+    shown_at(slide, now)
+}
+
+/// A segmented control: a track with the picked segment standing in it, sliding to a new
+/// pick. Returns the clicked segment.
 pub fn segmented<T: Copy + PartialEq>(
     ui: &mut egui::Ui,
     current: T,
@@ -741,26 +791,39 @@ pub fn segmented<T: Copy + PartialEq>(
     // The room left over is shared evenly, so every label has the same space around it.
     let spare = ((room - widths.iter().sum::<f32>()) / options.len().max(1) as f32).max(0.0);
     let mut x = rect.min.x + 2.0;
+    let rects: Vec<egui::Rect> = widths
+        .iter()
+        .map(|w| {
+            let r = egui::Rect::from_min_size(
+                egui::pos2(x, rect.min.y + 2.0),
+                vec2(w + spare, height - 4.0),
+            );
+            x += w + spare;
+            r
+        })
+        .collect();
+    // The picked segment slides to a new pick, easing in and out (see [`segment_slide`]).
+    let picked = options.iter().position(|(value, _)| *value == current);
+    let shown = picked.map(|i| segment_slide(ui, track_response.id, i, rects[i]));
+    if let Some(r) = shown {
+        ui.painter().rect(
+            r,
+            radius::CONTROL - 1,
+            segment_picked(dark),
+            Stroke::new(1.0, n.control_border),
+            egui::StrokeKind::Inside,
+        );
+    }
     let mut clicked = None;
     for (i, (value, label)) in options.iter().enumerate() {
-        let seg = widths[i] + spare;
-        let r = egui::Rect::from_min_size(egui::pos2(x, rect.min.y + 2.0), vec2(seg, height - 4.0));
-        x += seg;
+        let r = rects[i];
         // Ids from the track's own (unique) id, so several controls can share a parent.
         let response = ui.interact(r, track_response.id.with(("seg", i)), egui::Sense::click());
         let selected = *value == current;
         response.widget_info(|| {
             egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, *label)
         });
-        if selected {
-            ui.painter().rect(
-                r,
-                radius::CONTROL - 1,
-                segment_picked(dark),
-                Stroke::new(1.0, n.control_border),
-                egui::StrokeKind::Inside,
-            );
-        } else if response.hovered() {
+        if !selected && response.hovered() && shown.is_none_or(|s| !s.intersects(r.shrink(1.0))) {
             ui.painter()
                 .rect_filled(r, radius::CONTROL - 1, if dark { n.faint } else { n.hover });
         }

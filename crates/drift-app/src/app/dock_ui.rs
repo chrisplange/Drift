@@ -76,6 +76,11 @@ pub(crate) struct DockView {
     /// Each floating window as it stood when the pointer went down, held until it comes up:
     /// what a resize measures its room from (#505). And which of its edges the press was on.
     pressed_at: HashMap<Panel, (egui::Rect, Grip)>,
+    /// The least width each floating window was found to need while its left edge is held
+    /// (learnt from what was cut off, as a dock's is: see `dock_needs`).
+    /// And the width it was given last frame, which what was cut off then was measured at
+    /// (the window's own rect reports a frame late while it is sized this way).
+    float_needs: HashMap<Panel, (f32, f32)>,
     /// How much wider than shown each panel's contents were when last drawn.
     overflow: HashMap<Panel, f32>,
     /// The least width each dock was found to need while its edge is held (see `dock`).
@@ -599,6 +604,9 @@ impl DriftApp {
         let most = canvas.height().floor();
         let down = ctx.input(|i| i.pointer.primary_down());
         // The presses just let go of.
+        if !down {
+            self.dock_view.float_needs.clear();
+        }
         let released = if down {
             HashMap::new()
         } else {
@@ -816,6 +824,66 @@ impl DriftApp {
             }
             if let Some(at) = self.dock_view.float_at.remove(&top) {
                 window = window.current_pos(at);
+            }
+            // A left or top edge (or a corner with one) held: the window is sized here, from
+            // where it stood when the pointer went down and how far the pointer has gone, the
+            // far edges staying put. Left to egui, the left edge followed the pointer a frame
+            // before the width did, so the right edge wobbled by each frame's move, and past
+            // the least width the whole window walked on with the pointer.
+            if down
+                && !shut
+                && let Some((from, grip)) = self.dock_view.pressed_at.get(&top).copied()
+                && (grip.left || grip.top)
+                && let (Some(o), Some(at)) =
+                    ctx.input(|i| (i.pointer.press_origin(), i.pointer.latest_pos()))
+            {
+                let d = at - o;
+                // Never narrower than what it holds: what was cut off while held raises the
+                // least width, from the next frame.
+                let over = stack
+                    .iter()
+                    .filter(|p| !self.layout.folded.contains(p))
+                    .filter_map(|p| self.dock_view.overflow.get(p).copied())
+                    .fold(0.0_f32, f32::max);
+                let (needs, given) = self
+                    .dock_view
+                    .float_needs
+                    .entry(top)
+                    .or_insert((MIN_WIDTH, from.width()));
+                if over > 0.5 {
+                    *needs = needs.max(*given + over);
+                }
+                let least_w = needs.clamp(MIN_WIDTH, MOST_NEEDED);
+                let least_h = least.min(most);
+                let mut r = from;
+                if grip.left {
+                    r.min.x = (from.min.x + d.x)
+                        .round()
+                        .min(from.max.x - least_w)
+                        .max(canvas.left());
+                } else if grip.right {
+                    r.max.x = (from.max.x + d.x)
+                        .round()
+                        .min(canvas.right())
+                        .max(from.min.x + least_w);
+                }
+                if grip.top {
+                    r.min.y = (from.min.y + d.y)
+                        .round()
+                        .min(from.max.y - least_h)
+                        .max(from.max.y - most)
+                        .max(canvas.top());
+                } else if grip.bottom {
+                    r.max.y = (from.max.y + d.y)
+                        .round()
+                        .min(canvas.bottom())
+                        .min(from.min.y + most)
+                        .max(from.min.y + least_h);
+                }
+                *given = r.width();
+                // (Already inside the canvas. egui's own fitting would use last frame's size
+                // with this frame's place, and push the left edge back by a frame's move.)
+                window = window.fixed_rect(r).constrain(false);
             }
             let alt = ctx.input(|i| i.modifiers.alt);
             let shown = window.show(ctx, |ui| {
